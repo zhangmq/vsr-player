@@ -56,12 +56,6 @@ class App:
             self._playing = not self._playing
         elif key in (glfw.KEY_Q, glfw.KEY_ESCAPE):
             glfw.set_window_should_close(window, True)
-        elif key == glfw.KEY_F:
-            monitor = glfw.get_primary_monitor()
-            mode = glfw.get_video_mode(monitor)
-            glfw.set_window_monitor(window, monitor,
-                                    0, 0, mode.size.width, mode.size.height,
-                                    mode.refresh_rate)
 
     def _on_resize(self, win_w: int, win_h: int):
         in_w, in_h = self._decoder.width, self._decoder.height
@@ -91,7 +85,7 @@ class App:
         print(f"Playing: {self._decoder.width}x{self._decoder.height}, "
               f"{self._fps:.1f} fps")
         print(f"VSR: x{self._scale} {self._eff_name}")
-        print("Keys: SPACE=pause, F=fullscreen, Q/ESC=quit")
+        print("Keys: SPACE=pause, Q/ESC=quit")
 
         t_frame_start = time.perf_counter()
 
