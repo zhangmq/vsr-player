@@ -73,6 +73,7 @@ class Overlay:
         y = (TEXT_H + th) // 2
         cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                     (220, 220, 220, 255), 2, cv2.LINE_AA)
+        img = cv2.flip(img, 0)  # flip for OpenGL bottom-left origin
         self._text_img = img
 
     def draw_bar(self, win_w: int, win_h: int, quality_name: str,
@@ -84,21 +85,25 @@ class Overlay:
         GL.glMatrixMode(GL.GL_MODELVIEW)
         GL.glLoadIdentity()
 
-        # ── Bar rect in NDC ──
-        bar_y1 = -1.0 + (2.0 * BAR_H / win_h)
+        # ── Bar at the BOTTOM of the window (NDC y from -1 upward) ──
+        bar_h_ndc = 2.0 * BAR_H / win_h     # bar height in NDC
+        bar_y2 = -1.0 + bar_h_ndc            # top of bar (NDC)
+        bar_y1 = -1.0                        # bottom = window bottom
 
         GL.glEnable(GL.GL_BLEND)
         GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
 
         # Semi-transparent bar background
         GL.glColor4f(0.08, 0.08, 0.08, 0.65)
-        GL.glRectf(-1.0, bar_y1, 1.0, 1.0)
+        GL.glRectf(-1.0, bar_y1, 1.0, bar_y2)
 
-        # ── Play/pause button ──
+        # ── Play/pause button (centered vertically in bar) ──
         btn_x1 = -1.0 + (2.0 * BTN_MARGIN / win_w)
         btn_x2 = btn_x1 + (2.0 * BTN_W / win_w)
-        btn_y1 = bar_y1 + (2.0 * (BAR_H - BTN_H) / (2.0 * win_h))
-        btn_y2 = btn_y1 + (2.0 * BTN_H / win_h)
+        btn_y_center = -1.0 + bar_h_ndc / 2.0
+        btn_h_ndc = 2.0 * BTN_H / win_h
+        btn_y1 = btn_y_center - btn_h_ndc / 2.0
+        btn_y2 = btn_y_center + btn_h_ndc / 2.0
         GL.glColor4f(0.27, 0.51, 0.71, 1.0)
         GL.glRectf(btn_x1, btn_y1, btn_x2, btn_y2)
         self._btn_playpause = (btn_x1, btn_y1, btn_x2, btn_y2)
@@ -118,7 +123,6 @@ class Overlay:
         GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, TEXT_W, TEXT_H,
                            GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, self._text_img)
 
-        # Draw text quad in the bar area
         GL.glEnable(GL.GL_TEXTURE_2D)
         GL.glEnable(GL.GL_BLEND)
         GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
@@ -126,14 +130,12 @@ class Overlay:
 
         tx1 = btn_x2 + 0.02
         tx2 = min(tx1 + 0.55, exit_x1 - 0.02)
-        ty2 = btn_y2
-        ty1 = btn_y1
 
         GL.glBegin(GL.GL_QUADS)
-        GL.glTexCoord2f(0.0, 0.0); GL.glVertex2f(tx1, ty1)
-        GL.glTexCoord2f(1.0, 0.0); GL.glVertex2f(tx2, ty1)
-        GL.glTexCoord2f(1.0, 1.0); GL.glVertex2f(tx2, ty2)
-        GL.glTexCoord2f(0.0, 1.0); GL.glVertex2f(tx1, ty2)
+        GL.glTexCoord2f(0.0, 0.0); GL.glVertex2f(tx1, btn_y1)
+        GL.glTexCoord2f(1.0, 0.0); GL.glVertex2f(tx2, btn_y1)
+        GL.glTexCoord2f(1.0, 1.0); GL.glVertex2f(tx2, btn_y2)
+        GL.glTexCoord2f(0.0, 1.0); GL.glVertex2f(tx1, btn_y2)
         GL.glEnd()
 
         GL.glDisable(GL.GL_TEXTURE_2D)

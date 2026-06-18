@@ -1,54 +1,189 @@
-"""GPU-native GL renderer — GLFW window + OpenGL texture + CUDA-GL interop PBO."""
+"""GPU-native GL renderer — GLFW window + OpenGL texture + CUDA-GL interop PBO.
+
+Uses the CUDA *runtime* API (libcudart.so) — the same API that PyTorch uses
+internally — so that context management is shared.  We select a CUDA device
+that is compatible with the current OpenGL context via cudaGLGetDevices.
+"""
 import ctypes
-from ctypes import c_void_p, c_int, c_size_t, c_uint, byref, pointer, POINTER
+from ctypes import (c_void_p, c_int, c_uint, c_size_t,
+                    byref, pointer, POINTER, cast)
 import glfw
 from OpenGL import GL
 from OpenGL.GL import shaders
 import numpy as np
 
-# ── CUDA driver API (libcuda.so) ──
+# ── CUDA runtime API (libcudart.so) — shared context with PyTorch ──
 
-_libcuda = ctypes.CDLL("libcuda.so")
+def _find_libcudart():
+    """Locate libcudart.so on the system."""
+    import glob as _glob, os as _os
+    # nvidia-cuda-runtime wheels install into site-packages/nvidia/cu*/lib/
+    candidates = []
+    for pattern in [
+        # pip-installed nvidia-cuXX wheels
+        "/home/zmq/miniforge3/envs/vsr-player/lib/python*/site-packages/nvidia/cu*/lib/libcudart.so*",
+        # system CUDA toolkit (Arch)
+        "/opt/cuda/lib64/libcudart.so*",
+        "/opt/cuda/targets/*/lib/libcudart.so*",
+        # standard
+        "/usr/lib/libcudart.so*",
+        "/usr/local/cuda/lib64/libcudart.so*",
+    ]:
+        candidates.extend(sorted(_glob.glob(pattern)))
+    # Prefer unversioned, then highest version
+    unversioned = [p for p in candidates if p.endswith('.so')]
+    if unversioned:
+        return unversioned[0]
+    if candidates:
+        return candidates[-1]  # highest version number
+    raise RuntimeError(
+        "libcudart.so not found. Install the nvidia-cuda-runtime package "
+        "or CUDA toolkit."
+    )
 
-_cu_check = _libcuda.cuGetErrorString
-_cu_check.argtypes = [c_int, POINTER(ctypes.c_char_p)]
+_cudart = ctypes.CDLL(_find_libcudart())
+
+# cudaError_t constants
+_cudaSuccess = 0
+
+# cudaMemcpyKind
+_cudaMemcpyDeviceToDevice = 3
+
+# cudaGLDeviceList
+_cudaGLDeviceListAll = 3
+
+# cudaGraphicsRegisterFlags
+_cudaGraphicsRegisterFlagsWriteDiscard = 1
 
 
-def _check(ret: int):
-    if ret != 0:
-        msg = ctypes.c_char_p()
-        _libcuda.cuGetErrorString(ret, byref(msg))
-        raise RuntimeError(f"CUDA error {ret}: {msg.value.decode() if msg.value else 'unknown'}")
+def _cuda_check(ret: int, fn_name: str = ""):
+    if ret != _cudaSuccess:
+        err_str = ctypes.c_char_p()
+        _cudart.cudaGetErrorString(ret, byref(err_str))
+        msg = err_str.value.decode() if err_str.value else "unknown"
+        raise RuntimeError(f"CUDA error {ret} ({fn_name}): {msg}")
+
+
+# Setup function signatures (cudaError_t return, defined as needed)
+
+_cudart.cudaGetErrorString.argtypes = [c_int, POINTER(ctypes.c_char_p)]
+
+# int cudaGLGetDevices(unsigned int *count, int *devices, unsigned int ndev,
+#                      cudaGLDeviceList list)
+_cudart.cudaGLGetDevices.argtypes = [POINTER(c_uint), POINTER(c_int),
+                                     c_uint, c_uint]
+_cudart.cudaGLGetDevices.restype = c_int
+
+# cudaError_t cudaSetDevice(int device)
+_cudart.cudaSetDevice.argtypes = [c_int]
+_cudart.cudaSetDevice.restype = c_int
+
+# cudaError_t cudaGraphicsGLRegisterBuffer(cudaGraphicsResource_t *res,
+#                                          GLuint buf, unsigned int flags)
+_cudart.cudaGraphicsGLRegisterBuffer.argtypes = [
+    POINTER(c_void_p), c_uint, c_uint
+]
+_cudart.cudaGraphicsGLRegisterBuffer.restype = c_int
+
+# cudaError_t cudaGraphicsMapResources(int count,
+#                                      cudaGraphicsResource_t *res,
+#                                      cudaStream_t stream)
+_cudart.cudaGraphicsMapResources.argtypes = [c_int, POINTER(c_void_p), c_void_p]
+_cudart.cudaGraphicsMapResources.restype = c_int
+
+# cudaError_t cudaGraphicsResourceGetMappedPointer(void **devPtr,
+#                                                  size_t *size,
+#                                                  cudaGraphicsResource_t res)
+_cudart.cudaGraphicsResourceGetMappedPointer.argtypes = [
+    POINTER(c_void_p), POINTER(c_size_t), c_void_p
+]
+_cudart.cudaGraphicsResourceGetMappedPointer.restype = c_int
+
+# cudaError_t cudaGraphicsUnmapResources(int count,
+#                                        cudaGraphicsResource_t *res,
+#                                        cudaStream_t stream)
+_cudart.cudaGraphicsUnmapResources.argtypes = [c_int, POINTER(c_void_p), c_void_p]
+_cudart.cudaGraphicsUnmapResources.restype = c_int
+
+# cudaError_t cudaGraphicsUnregisterResource(cudaGraphicsResource_t res)
+_cudart.cudaGraphicsUnregisterResource.argtypes = [c_void_p]
+_cudart.cudaGraphicsUnregisterResource.restype = c_int
+
+# cudaError_t cudaMemcpy(void *dst, const void *src, size_t count,
+#                        cudaMemcpyKind kind)
+_cudart.cudaMemcpy.argtypes = [c_void_p, c_void_p, c_size_t, c_int]
+_cudart.cudaMemcpy.restype = c_int
+
+# cudaError_t cudaDeviceSynchronize(void)
+_cudart.cudaDeviceSynchronize.argtypes = []
+_cudart.cudaDeviceSynchronize.restype = c_int
+
+
+def _pick_gl_device() -> int:
+    """Return a CUDA device index compatible with the current GL context."""
+    count = c_uint(0)
+    _cuda_check(_cudart.cudaGLGetDevices(byref(count), None, 0,
+                                         _cudaGLDeviceListAll),
+                "cudaGLGetDevices(count)")
+    if count.value == 0:
+        raise RuntimeError("No CUDA device supports the current OpenGL context")
+    devices = (c_int * count.value)()
+    _cuda_check(_cudart.cudaGLGetDevices(byref(count), devices, count.value,
+                                         _cudaGLDeviceListAll),
+                "cudaGLGetDevices(list)")
+    return devices[0]
+
+
+def _ensure_gl_device() -> int:
+    """Set the CUDA device to the one compatible with the GL context."""
+    dev = _pick_gl_device()
+    _cuda_check(_cudart.cudaSetDevice(dev), "cudaSetDevice")
+    _cuda_check(_cudart.cudaDeviceSynchronize(), "cudaDeviceSynchronize")
+    return dev
 
 
 def cuda_gl_register_buffer(gl_buffer: int) -> c_void_p:
     """Register a GL buffer object with CUDA for interop."""
     resource = c_void_p()
-    _check(_libcuda.cuGraphicsGLRegisterBuffer(
-        byref(resource), c_uint(gl_buffer), 0x1  # WRITE_DISCARD
-    ))
+    _cuda_check(
+        _cudart.cudaGraphicsGLRegisterBuffer(
+            byref(resource), c_uint(gl_buffer),
+            _cudaGraphicsRegisterFlagsWriteDiscard),
+        "cudaGraphicsGLRegisterBuffer")
     return resource
 
 
 def cuda_gl_map(resource: c_void_p):
     """Map a registered GL buffer, returning (device_ptr, size_bytes)."""
-    _check(_libcuda.cuGraphicsMapResources(1, byref(resource), c_void_p(0)))
-    dev_ptr = c_size_t()
+    _cuda_check(
+        _cudart.cudaGraphicsMapResources(1, byref(resource), c_void_p(0)),
+        "cudaGraphicsMapResources")
+    dev_ptr = c_void_p()
     size = c_size_t()
-    _check(_libcuda.cuGraphicsResourceGetMappedPointer(byref(dev_ptr), byref(size), resource))
+    _cuda_check(
+        _cudart.cudaGraphicsResourceGetMappedPointer(
+            byref(dev_ptr), byref(size), resource),
+        "cudaGraphicsResourceGetMappedPointer")
     return dev_ptr.value, size.value
 
 
 def cuda_gl_unmap(resource: c_void_p):
-    _check(_libcuda.cuGraphicsUnmapResources(1, byref(resource), c_void_p(0)))
+    _cuda_check(
+        _cudart.cudaGraphicsUnmapResources(1, byref(resource), c_void_p(0)),
+        "cudaGraphicsUnmapResources")
 
 
 def cuda_gl_unregister(resource: c_void_p):
-    _check(_libcuda.cuGraphicsUnregisterResource(resource))
+    _cuda_check(
+        _cudart.cudaGraphicsUnregisterResource(resource),
+        "cudaGraphicsUnregisterResource")
 
 
 def cuda_memcpy_dtod(dst_ptr: int, src_ptr: int, size: int):
-    _check(_libcuda.cuMemcpyDtoD(c_void_p(dst_ptr), c_void_p(src_ptr), c_size_t(size)))
+    _cuda_check(
+        _cudart.cudaMemcpy(c_void_p(dst_ptr), c_void_p(src_ptr),
+                           c_size_t(size), _cudaMemcpyDeviceToDevice),
+        "cudaMemcpy D2D")
 
 
 # ── Shaders ──
@@ -70,7 +205,7 @@ in vec2 vTexCoord;
 out vec4 FragColor;
 uniform sampler2D uTexture;
 void main() {
-    FragColor = texture(uTexture, vTexCoord);
+    FragColor = texture(uTexture, vec2(vTexCoord.x, 1.0 - vTexCoord.y));
 }
 """
 
@@ -95,11 +230,16 @@ class Renderer:
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_COMPAT_PROFILE)
         glfw.window_hint(glfw.RESIZABLE, glfw.TRUE)
+        glfw.window_hint(glfw.DECORATED, glfw.FALSE)
 
+        # Create a borderless window at the primary-monitor resolution, but
+        # without forcing a specific monitor.  On tiling Wayland compositors
+        # (niri, Hyprland, Sway) this lets the compositor place the window
+        # on the currently-active monitor instead of the primary one.
         monitor = glfw.get_primary_monitor()
         mode = glfw.get_video_mode(monitor)
         self._window = glfw.create_window(
-            mode.size.width, mode.size.height, title, monitor, None
+            mode.size.width, mode.size.height, title, None, None
         )
         if not self._window:
             glfw.terminate()
@@ -108,13 +248,26 @@ class Renderer:
         glfw.make_context_current(self._window)
         glfw.swap_interval(1)  # vsync
 
-        self._win_w = mode.size.width
-        self._win_h = mode.size.height
+        # Select the CUDA device that can interop with this GL context.
+        # Uses the CUDA *runtime* API — same API PyTorch uses — so the
+        # context is shared automatically.  No manual push/pop needed.
+        import torch
+        assert torch.cuda.is_available(), "CUDA GPU required"
+        self._cu_device = _ensure_gl_device()
+        print(f"CUDA-GL interop: using device {self._cu_device} "
+              f"({torch.cuda.get_device_name(self._cu_device)})")
+
         self._tex_w = width
         self._tex_h = height
         self._on_resize = None  # callback(win_w, win_h)
 
         glfw.set_window_size_callback(self._window, self._on_window_resize)
+        glfw.set_framebuffer_size_callback(self._window, self._on_fb_resize)
+
+        # Use framebuffer size (physical pixels) for OpenGL — not window
+        # size (logical pixels on HiDPI / scaled Wayland desktops).
+        self._win_w, self._win_h = glfw.get_framebuffer_size(self._window)
+        self._update_viewport()
 
         # Compile shaders
         vs = shaders.compileShader(_VERT_SHADER, GL.GL_VERTEX_SHADER)
@@ -152,11 +305,38 @@ class Renderer:
 
         GL.glBindVertexArray(0)
 
-    def _on_window_resize(self, window, w, h):
+    def _update_viewport(self):
+        """Compute a centred, aspect-ratio-preserving viewport.
+
+        The VSR output (`_tex_w` × `_tex_h`) is mapped to the largest centred
+        rectangle that fits inside the window without stretching or cropping.
+        Black bars (letterbox / pillarbox) fill any remaining area.
+        """
+        tex_aspect = self._tex_w / self._tex_h
+        win_aspect = self._win_w / self._win_h
+        if win_aspect > tex_aspect:
+            # Window is wider → pillarbox
+            vp_h = self._win_h
+            vp_w = int(self._win_h * tex_aspect)
+        else:
+            # Window is taller → letterbox
+            vp_w = self._win_w
+            vp_h = int(self._win_w / tex_aspect)
+        self._vp_x = (self._win_w - vp_w) // 2
+        self._vp_y = (self._win_h - vp_h) // 2
+        self._vp_w = vp_w
+        self._vp_h = vp_h
+
+    def _on_fb_resize(self, window, w, h):
+        """Framebuffer resize — physical pixels, correct for HiDPI."""
         self._win_w, self._win_h = w, h
-        GL.glViewport(0, 0, w, h)
+        self._update_viewport()
         if self._on_resize:
             self._on_resize(w, h)
+
+    def _on_window_resize(self, window, w, h):
+        """Window (logical) resize — forwarded for completeness."""
+        pass  # framebuffer callback above handles the real work
 
     def set_resize_callback(self, cb):
         self._on_resize = cb
@@ -182,6 +362,7 @@ class Renderer:
         GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
 
         self._cu_resource = cuda_gl_register_buffer(self._pbo)
+        self._update_viewport()
 
     def upload_texture(self, rgba_gpu):
         """Upload a GPU RGBA uint8 tensor (H,W,4) to GL texture via CUDA-GL PBO."""
@@ -206,8 +387,11 @@ class Renderer:
         GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
 
     def begin_frame(self):
-        """Clear and prepare for a new frame."""
+        """Clear the entire window to black, then set the letterboxed viewport."""
+        GL.glViewport(0, 0, self._win_w, self._win_h)
+        GL.glClearColor(0.0, 0.0, 0.0, 1.0)
         GL.glClear(GL.GL_COLOR_BUFFER_BIT)
+        GL.glViewport(self._vp_x, self._vp_y, self._vp_w, self._vp_h)
 
     def draw_quad(self):
         """Draw the fullscreen textured quad."""
