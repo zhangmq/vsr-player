@@ -82,3 +82,19 @@ class VSRPipeline:
             gpu_out = torch.from_dlpack(result.image).clone()
             rgba = gpu_to_texture(gpu_out)
             return rgba
+
+    def process_gpu_frame(self, rgb_float32):
+        """GPU-native pipeline: GPU float32 RGB -> VSR -> RGBA GPU tensor.
+
+        Skips ``frame_to_gpu()`` — the input is already a GPU tensor in the
+        correct format: ``(3, H, W)``, ``float32``, ``[0.0, 1.0]``.
+
+        All GPU work runs on ``self.stream`` for ordering.
+        """
+        with torch.cuda.stream(self.stream):
+            result = self.vsr.run(rgb_float32, non_blocking=True,
+                                  stream_ptr=self.stream.cuda_stream)
+            self.stream.synchronize()
+            gpu_out = torch.from_dlpack(result.image).clone()
+            rgba = gpu_to_texture(gpu_out)
+            return rgba

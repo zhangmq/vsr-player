@@ -5,6 +5,8 @@ from .decoder import Decoder
 from .vsr_pipeline import VSRPipeline
 from .renderer import Renderer
 from .config import adaptive_scale, DEBOUNCE_MS, DEFAULT_FPS, QUALITY_MAP, DENOISE_MAP
+from .nv12_to_rgb import convert_frame_to_rgb
+from .audio import AudioPlayer
 
 
 def _effective_quality(scale: int, user_quality: str):
@@ -24,6 +26,7 @@ class App:
         self._decoder = Decoder(video_path)
         self._user_quality = quality
         self._playing = True
+        self._audio = AudioPlayer(video_path)
 
         # Initial scale: compute from window dimensions
         in_w, in_h = self._decoder.width, self._decoder.height
@@ -81,10 +84,12 @@ class App:
 
     def run(self):
         print(f"Playing: {self._decoder.width}x{self._decoder.height}, "
-              f"{self._fps:.1f} fps")
+              f"{self._fps:.1f} fps"
+              f"{' [NVDEC]' if self._decoder.is_hardware else ' [SW]'}")
         print(f"VSR: x{self._scale} {self._eff_name}")
         print("Keys: SPACE=pause, Q/ESC=quit")
 
+        self._audio.start()
         t_frame_start = time.perf_counter()
 
         while not self._renderer.should_close():
@@ -101,8 +106,11 @@ class App:
                 break
             self._decoder.prefetch()
 
-            # VSR pipeline
-            rgba_gpu = self._pipeline.process_frame(frame)
+            # Convert PyAV frame → GPU float32 RGB (HW NV12 or SW RGB)
+            rgb_gpu = convert_frame_to_rgb(frame, self._decoder.is_hardware)
+
+            # VSR pipeline (GPU tensor in, RGBA GPU tensor out)
+            rgba_gpu = self._pipeline.process_gpu_frame(rgb_gpu)
 
             # Render (video only, no overlay)
             self._renderer.begin_frame()
@@ -117,5 +125,6 @@ class App:
                 time.sleep(sleep_time)
             t_frame_start = time.perf_counter()
 
+        self._audio.stop()
         self._decoder.release()
         self._renderer.destroy()
