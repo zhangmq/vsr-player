@@ -56,8 +56,42 @@ class App:
             return
         if key == glfw.KEY_SPACE:
             self._playing = not self._playing
+            if self._playing:
+                self._audio.resume()
+            else:
+                self._audio.pause()
+        elif key == glfw.KEY_RIGHT:
+            self._seek_relative(5.0)
+        elif key == glfw.KEY_LEFT:
+            self._seek_relative(-5.0)
         elif key in (glfw.KEY_Q, glfw.KEY_ESCAPE):
             glfw.set_window_should_close(window, True)
+
+    def _seek_relative(self, delta_sec: float):
+        """Seek video + audio by *delta_sec* from current position."""
+        current = self._audio.clock if self._audio.is_active else 0.0
+        target = max(0.0, current + delta_sec)
+        self._perform_seek(target)
+
+    def _perform_seek(self, target_sec: float):
+        """Coordinated seek: audio + video to *target_sec*."""
+        was_playing = self._playing
+        # Pause both while seeking
+        if self._audio.is_active:
+            self._audio.pause()
+        self._playing = False
+
+        # Seek video
+        self._decoder.seek_seconds(target_sec)
+
+        # Seek audio (restarts stream + decode at new position)
+        if self._audio.is_active:
+            self._audio.seek(target_sec)
+
+        # Resume
+        self._playing = was_playing
+        if self._playing and self._audio.is_active:
+            self._audio.resume()
 
     def _on_resize(self, win_w: int, win_h: int):
         in_w, in_h = self._decoder.width, self._decoder.height

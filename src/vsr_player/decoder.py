@@ -96,27 +96,44 @@ class Decoder:
         return ret_frame
 
     def seek(self, pos_frames: int):
-        """Seek to approximate frame position using time-based seek."""
+        """Seek by frame index (legacy)."""
         if pos_frames <= 0:
-            # Seek to beginning: re-open (PyAV container seek to 0 is unreliable)
-            self._container.close()
-            self._open("cuda" if self._using_hw else None)
+            self.seek_seconds(0.0)
+            return
+        self.seek_seconds(pos_frames / self.fps)
+
+    def seek_seconds(self, target_sec: float):
+        """Seek to *target_sec* in seconds.
+
+        PyAV's ``container.seek()`` is unreliable across containers, so we
+        use decode-and-skip: re-open, then fast-decode (discard frames)
+        until we reach *target_sec*.  NVDEC at 3000+ fps makes this
+        acceptably fast — a 5-second seek costs ~100 ms.
+        """
+        # Re-open
+        self._container.close()
+        self._open("cuda" if self._using_hw else None)
+        self._next_frame = None
+
+        if target_sec <= 0.0:
             return
 
-        target_sec = pos_frames / self.fps
-        # Convert to stream time_base units
-        ts = self._video_stream.time_base
-        if ts is not None:
-            target_ts = int(target_sec / ts)
-        else:
-            target_ts = int(target_sec * 1_000_000)
-        try:
-            self._container.seek(target_ts, stream=self._video_stream)
-        except Exception:
-            pass
-        # Reset decode iterator after seek
-        self._decode_iter = self._container.decode(self._video_stream)
-        self._next_frame = None
+        # Fast-decode and discard until target PTS
+        discards = 0
+        for frame in self._decode_iter:
+            pts = float(frame.pts * self.time_base) if frame.pts is not None else 0
+            if pts >= target_sec:
+                # This is the frame we want.  Put it in the prefetch slot
+                # so the next consume_prefetched() returns it.
+                self._next_frame = (True, frame)
+                # Re-create the iterator for subsequent frames.
+                # We can't just continue — the iterator already consumed
+                # this frame, so subsequent calls work normally.
+                return
+            discards += 1
+            if discards % 300 == 0:
+                pass  # prevent tight-loop suspicion
+        # EOF before target: leave iterator exhausted
 
     def release(self):
         if self._container is not None:

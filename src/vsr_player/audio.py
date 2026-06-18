@@ -1,9 +1,10 @@
 """Audio playback with sounddevice + ring buffer, providing the master clock.
 
 Decodes audio in a background thread, feeds PCM into a ring buffer consumed
-by a sounddevice OutputStream callback.  The audio clock (total samples
-played / sample rate) serves as the master clock for A/V sync — matching
-the mpv/VLC model.
+by a sounddevice OutputStream callback.  The audio clock (elapsed stream time)
+serves as the master clock for A/V sync — matching the mpv/VLC model.
+
+Supports pause/resume (tied to video pause) and seek (future scrub/seekbar).
 """
 
 import threading
@@ -20,13 +21,12 @@ class _RingBuffer:
     def __init__(self, capacity_frames: int, channels: int):
         self._buf = np.empty((capacity_frames, channels), dtype=np.float32)
         self._cap = capacity_frames
-        self._read = 0       # next frame to consume
-        self._write = 0      # next frame to write
-        self._filled = 0     # frames available to read
+        self._read = 0
+        self._write = 0
+        self._filled = 0
         self._lock = threading.Lock()
 
     def write(self, data: np.ndarray) -> int:
-        """Write interleaved float32 PCM. Returns frames actually written."""
         frames = data.shape[0]
         with self._lock:
             avail = self._cap - self._filled
@@ -44,8 +44,7 @@ class _RingBuffer:
             self._filled += n
             return n
 
-    def read(self, dst: np.ndarray):
-        """Read up to len(dst) frames into dst. Returns frames actually read."""
+    def read(self, dst: np.ndarray) -> int:
         frames = dst.shape[0]
         with self._lock:
             n = min(frames, self._filled)
@@ -62,16 +61,28 @@ class _RingBuffer:
             self._filled -= n
             return n
 
+    def clear(self):
+        with self._lock:
+            self._read = 0
+            self._write = 0
+            self._filled = 0
+
     @property
     def filled(self) -> int:
         return self._filled
 
 
 class AudioPlayer:
-    """Background audio decoder + sounddevice output.
+    """Audio decoder + sounddevice output with pause/resume/seek.
 
-    The audio device drives the master clock.  Call :meth:`start` before
-    the main loop and :meth:`stop` on exit.
+    Lifecycle::
+
+        ap = AudioPlayer("video.mp4")
+        ap.start()       # begin playback
+        ap.pause()       # pause (SPACE)
+        ap.resume()      # resume
+        ap.seek(10.0)    # jump to 10s (future)
+        ap.stop()        # shutdown
     """
 
     def __init__(self, path: str, buffer_sec: float = 0.5):
@@ -82,7 +93,11 @@ class AudioPlayer:
         self._stream: sd.OutputStream | None = None
         self._thread: threading.Thread | None = None
         self._running = False
-        self._start_time: float | None = None
+        self._paused = False
+
+        # Clock state
+        self._start_time: float | None = None   # stream.time at last start/resume
+        self._frozen_clock: float = 0.0          # clock value when paused
 
         # ── Probe audio stream ──
         container = av.open(path)
@@ -98,7 +113,6 @@ class AudioPlayer:
         ctx = a_stream.codec_context
         self._sample_rate = ctx.sample_rate or 48000
         self._channels = ctx.channels or 2
-        # Layout for resampling; sounddevice expects interleaved float32 [-1,1]
         self._resampler = av.AudioResampler(
             format="flt",
             layout="stereo" if self._channels == 2 else f"{self._channels}c",
@@ -117,16 +131,23 @@ class AudioPlayer:
 
     @property
     def clock(self) -> float:
-        """Master clock in seconds — elapsed time since start."""
+        """Master clock in seconds — elapsed stream time since start.
+
+        Freezes at the current value when paused, so video frames will
+        wait at the pause point rather than falling behind.
+        """
         if self._stream is None or self._start_time is None:
             return 0.0
+        if self._paused:
+            return self._frozen_clock
         try:
             t = self._stream.time
-            return (t - self._start_time) if t is not None else 0.0
+            return (t - self._start_time) if t is not None else self._frozen_clock
         except Exception:
-            return 0.0
+            return self._frozen_clock
 
     def start(self):
+        """Begin audio playback (pre-buffers ~250ms)."""
         if self._ring is None:
             return
         self._running = True
@@ -134,36 +155,102 @@ class AudioPlayer:
         def _callback(outdata, frames, _time_info, _status):
             read = self._ring.read(outdata)
             if read < frames:
-                outdata[read:] = 0.0  # silence underrun
+                outdata[read:] = 0.0
 
-        # Pre-buffer: decode a few frames so the callback doesn't start dry
-        self._thread = threading.Thread(target=self._decode_loop, daemon=True)
+        self._thread = threading.Thread(target=self._decode_loop,
+                                        args=(None,), daemon=True)
         self._thread.start()
-        while self._ring.filled < self._sample_rate // 4:  # ~250ms
+        while self._ring.filled < self._sample_rate // 4:
             time.sleep(0.005)
 
         self._stream = sd.OutputStream(
-            samplerate=self._sample_rate,
-            channels=self._channels,
-            dtype="float32",
-            blocksize=1024,
-            callback=_callback,
+            samplerate=self._sample_rate, channels=self._channels,
+            dtype="float32", blocksize=1024, callback=_callback,
         )
         self._stream.start()
         self._start_time = self._stream.time
 
+    def pause(self):
+        """Pause audio output. Clock freezes. Thread keeps decoding."""
+        if self._stream is None or self._paused:
+            return
+        self._frozen_clock = self.clock
+        self._paused = True
+        self._stream.stop()
+
+    def resume(self):
+        """Resume audio output. Clock continues from freeze point."""
+        if self._stream is None or not self._paused:
+            return
+        self._stream.start()
+        self._start_time = self._stream.time - self._frozen_clock
+        self._paused = False
+
     def stop(self):
+        """Shut down audio and join decode thread."""
+        self._running = False
+        if self._stream is not None:
+            try:
+                if not self._paused:
+                    self._stream.stop()
+            except Exception:
+                pass
+            self._stream.close()
+            self._stream = None
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+    def seek(self, target_sec: float):
+        """Seek audio to *target_sec* and restart decode from that position.
+
+        Clears the ring buffer, restarts the decode thread at the new
+        position, and resets the clock so it aligns with the new timeline.
+        """
+        was_paused = self._paused
+        # Stop stream and decode thread
         self._running = False
         if self._thread is not None:
             self._thread.join(timeout=2.0)
         if self._stream is not None:
-            self._stream.stop()
+            if not self._paused:
+                self._stream.stop()
             self._stream.close()
             self._stream = None
+        self._ring.clear()
+        self._paused = False
+        self._frozen_clock = 0.0
+
+        # Restart everything at the new position
+        self._running = True
+        self._thread = threading.Thread(target=self._decode_loop,
+                                        args=(target_sec,), daemon=True)
+        self._thread.start()
+        while self._ring.filled < self._sample_rate // 4:
+            time.sleep(0.005)
+
+        def _callback(outdata, frames, _time_info, _status):
+            read = self._ring.read(outdata)
+            if read < frames:
+                outdata[read:] = 0.0
+
+        self._stream = sd.OutputStream(
+            samplerate=self._sample_rate, channels=self._channels,
+            dtype="float32", blocksize=1024, callback=_callback,
+        )
+        self._stream.start()
+        self._start_time = self._stream.time
+
+        if was_paused:
+            self.pause()
 
     # ── Decode thread ───────────────────────────────────────────────
 
-    def _decode_loop(self):
+    def _decode_loop(self, seek_target: float | None = None):
+        """Decode audio frames into the ring buffer.
+
+        If *seek_target* is given, seek to that position in seconds before
+        decoding.
+        """
         container = av.open(self._path)
         try:
             a_stream = None
@@ -174,21 +261,24 @@ class AudioPlayer:
             if a_stream is None:
                 return
 
+            if seek_target is not None:
+                ts = a_stream.time_base
+                target_ts = int(seek_target / ts) if ts else int(seek_target * 1_000_000)
+                container.seek(target_ts, stream=a_stream)
+
             for frame in container.decode(a_stream):
                 if not self._running:
                     break
-                # Resample / convert to interleaved float32
                 resampled = self._resampler.resample(frame)
                 if resampled is None:
                     continue
                 for rf in resampled:
-                    arr = rf.to_ndarray()                # (channels, samples)
+                    arr = rf.to_ndarray()
                     if arr.size == 0:
                         continue
                     if arr.ndim == 2 and arr.shape[0] > 1:
-                        arr = arr.transpose(1, 0)       # (samples, channels)
+                        arr = arr.transpose(1, 0)
                     arr = arr.reshape(-1, self._channels)
-                    # Throttle: wait if ring buffer is nearly full
                     while self._ring.filled > self._ring._cap * 0.8:
                         if not self._running:
                             return
