@@ -13,10 +13,16 @@ A Linux desktop video player that applies real-time AI super-resolution to video
 mamba activate vsr-player
 
 # Install dependencies (once)
-pip install torch opencv-python nvidia-vfx
+pip install torch opencv-python nvidia-vfx glfw PyOpenGL
 
-# Run prototype player
-python prototype.py <video_file> [--scale 2] [--quality HIGH]
+# Run player (scale auto-adapted from window size)
+python -m vsr_player <video_file> [--quality HIGH]
+
+# Controls
+#   SPACE = play/pause
+#   F     = toggle fullscreen
+#   Q/ESC = quit
+#   Click overlay bar buttons
 
 # Lint
 ruff check .
