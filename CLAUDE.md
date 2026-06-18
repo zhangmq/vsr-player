@@ -9,26 +9,20 @@ A Linux desktop video player that applies real-time AI super-resolution to video
 ## Build / Run / Test
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Activate environment
+mamba activate vsr-player
 
-# Run the player (exact invocation will vary by implementation)
-python -m vsr_player <video_file>
+# Install dependencies (once)
+pip install torch opencv-python nvidia-vfx
 
-# Run with specific quality/scale
-python -m vsr_player <video_file> --scale 2 --quality HIGH
+# Run prototype player
+python prototype.py <video_file> [--scale 2] [--quality HIGH]
 
 # Lint
 ruff check .
 
-# Type-check
-mypy src/
-
-# Run tests
+# Run tests (when test suite exists)
 pytest
-
-# Run a single test
-pytest tests/test_vsr_pipeline.py::test_single_frame
 ```
 
 ## Architecture
