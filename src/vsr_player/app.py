@@ -4,20 +4,18 @@ import glfw
 from .decoder import Decoder
 from .vsr_pipeline import VSRPipeline
 from .renderer import Renderer
-from .config import adaptive_scale, DEBOUNCE_MS, DEFAULT_FPS, QUALITY_MAP
-
-from nvvfx import VideoSuperRes
+from .config import adaptive_scale, DEBOUNCE_MS, DEFAULT_FPS, QUALITY_MAP, DENOISE_MAP
 
 
 def _effective_quality(scale: int, user_quality: str):
     """Return (QualityLevel, display_name) for the given scale.
 
-    scale == 1  → same-resolution denoise (no upscale overhead)
-    scale >  1  → user-chosen upscale mode (HIGH/ULTRA already
-                   include built-in denoise + sharpening)
+    scale == 1  → same-resolution denoise matching the user's quality tier
+    scale >  1  → user-chosen upscale mode (already includes denoise + sharpening)
     """
     if scale == 1:
-        return VideoSuperRes.QualityLevel.DENOISE_HIGH, "DENOISE_HIGH"
+        q = DENOISE_MAP[user_quality]
+        return q, q.name
     return QUALITY_MAP[user_quality], user_quality
 
 

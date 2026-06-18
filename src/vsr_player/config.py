@@ -9,6 +9,14 @@ QUALITY_MAP = {
     "ULTRA": VideoSuperRes.QualityLevel.ULTRA,
 }
 
+# scale==1 uses the corresponding DENOISE level
+DENOISE_MAP = {
+    "LOW": VideoSuperRes.QualityLevel.DENOISE_LOW,
+    "MEDIUM": VideoSuperRes.QualityLevel.DENOISE_MEDIUM,
+    "HIGH": VideoSuperRes.QualityLevel.DENOISE_HIGH,
+    "ULTRA": VideoSuperRes.QualityLevel.DENOISE_ULTRA,
+}
+
 MIN_SCALE = 1
 MAX_SCALE = 4
 DEBOUNCE_MS = 500  # delay before VSR reload on resize
