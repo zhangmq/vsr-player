@@ -238,7 +238,8 @@ class AudioPlayer:
             dtype="float32", blocksize=1024, callback=_callback,
         )
         self._stream.start()
-        self._start_time = self._stream.time
+        # Align: clock should read target_sec after restart, not 0
+        self._start_time = self._stream.time - target_sec
 
         if was_paused:
             self.pause()

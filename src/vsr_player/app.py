@@ -27,6 +27,7 @@ class App:
         self._user_quality = quality
         self._playing = True
         self._audio = AudioPlayer(video_path)
+        self._last_seek_time = 0.0
 
         # Initial scale: compute from window dimensions
         in_w, in_h = self._decoder.width, self._decoder.height
@@ -69,6 +70,10 @@ class App:
 
     def _seek_relative(self, delta_sec: float):
         """Seek video + audio by *delta_sec* from current position."""
+        now = time.time()
+        if now - self._last_seek_time < 0.3:
+            return  # debounce: ignore rapid repeats
+        self._last_seek_time = now
         current = self._audio.clock if self._audio.is_active else 0.0
         target = max(0.0, current + delta_sec)
         self._perform_seek(target)
