@@ -100,14 +100,19 @@ class App:
             while not self._playing and not self._renderer.should_close():
                 glfw.wait_events_timeout(0.1)
 
-            # Decode (prefetch next frame for pipeline overlap)
+            # Decode
             ret, frame = self._decoder.consume_prefetched()
             if not ret:
                 break
-            self._decoder.prefetch()
 
-            # Convert PyAV frame → GPU float32 RGB (HW NV12 or SW RGB)
+            # Convert PyAV frame → GPU float32 RGB (HW NV12 or SW RGB).
+            # MUST happen before prefetch() — NVDEC reuses GPU buffers,
+            # so the D2D copy must complete before the next decode overwrites
+            # the underlying NV12 plane data.
             rgb_gpu = convert_frame_to_rgb(frame, self._decoder.is_hardware)
+
+            # Prefetch next frame (pipeline overlap)
+            self._decoder.prefetch()
 
             # VSR pipeline (GPU tensor in, RGBA GPU tensor out)
             rgba_gpu = self._pipeline.process_gpu_frame(rgb_gpu)
