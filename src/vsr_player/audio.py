@@ -113,11 +113,6 @@ class AudioPlayer:
         ctx = a_stream.codec_context
         self._sample_rate = ctx.sample_rate or 48000
         self._channels = ctx.channels or 2
-        self._resampler = av.AudioResampler(
-            format="flt",
-            layout="stereo" if self._channels == 2 else f"{self._channels}c",
-            rate=self._sample_rate,
-        )
         container.close()
 
         cap = int(self._sample_rate * buffer_sec)
@@ -147,8 +142,8 @@ class AudioPlayer:
             return self._frozen_clock
 
     def start(self):
-        """Begin audio playback (pre-buffers ~250ms)."""
-        if self._ring is None:
+        """Begin audio playback (pre-buffers ~250ms). Idempotent."""
+        if self._ring is None or self._running:
             return
         self._running = True
 
@@ -270,20 +265,17 @@ class AudioPlayer:
             for frame in container.decode(a_stream):
                 if not self._running:
                     break
-                resampled = self._resampler.resample(frame)
-                if resampled is None:
+                arr = frame.to_ndarray()          # (channels, samples) float32 planar
+                if arr.size == 0:
                     continue
-                for rf in resampled:
-                    arr = rf.to_ndarray()
-                    if arr.size == 0:
-                        continue
-                    if arr.ndim == 2 and arr.shape[0] > 1:
-                        arr = arr.transpose(1, 0)
-                    arr = arr.reshape(-1, self._channels)
-                    while self._ring.filled > self._ring._cap * 0.8:
-                        if not self._running:
-                            return
-                        time.sleep(0.002)
-                    self._ring.write(arr)
+                if arr.ndim == 2 and arr.shape[0] > 1:
+                    arr = arr.transpose(1, 0)     # (samples, channels) interleaved
+                arr = arr.reshape(-1, self._channels)
+                # Throttle if ring buffer is nearly full
+                while self._ring.filled > self._ring._cap * 0.8:
+                    if not self._running:
+                        return
+                    time.sleep(0.002)
+                self._ring.write(arr)
         finally:
             container.close()

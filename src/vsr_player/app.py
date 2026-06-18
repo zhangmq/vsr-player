@@ -147,16 +147,11 @@ class App:
             # A/V sync — audio master clock (mpv/VLC model)
             if self._audio.is_active and frame.pts is not None:
                 pts = float(frame.pts * self._decoder.time_base)
-                audio_clock = self._audio.clock
-                delay = pts - audio_clock
-
-                if delay > 0.001:
+                delay = pts - self._audio.clock
+                if delay > 0.002:
                     # Video ahead — wait for audio to catch up
-                    time.sleep(delay)
-                elif delay < -self._frame_delay:
-                    # Video behind by more than one frame — skip to catch up
-                    self._skipped_frames += 1
-                    continue
+                    time.sleep(min(delay, 0.05))
+                # Video behind — render immediately, no skip
             else:
                 # No audio — simple frame pacing
                 time.sleep(self._frame_delay)
@@ -177,6 +172,7 @@ class App:
             self._renderer.draw_quad()
             self._renderer.end_frame()
 
+        print("End of file.")
         self._audio.stop()
         self._decoder.release()
         self._renderer.destroy()
