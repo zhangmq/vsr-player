@@ -6,6 +6,8 @@ from nvvfx import VideoSuperRes
 
 def frame_to_gpu(bgr_uint8):
     """OpenCV BGR uint8 (H,W,3) -> GPU RGB float32 (3,H,W) in [0,1]. Async H2D."""
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA-capable GPU with NVIDIA driver required")
     tensor = torch.from_numpy(bgr_uint8).cuda(non_blocking=True)
     tensor = tensor[..., [2, 1, 0]]          # BGR -> RGB
     tensor = tensor.float().mul_(1.0 / 255.0)
@@ -16,7 +18,7 @@ def frame_to_gpu(bgr_uint8):
 def gpu_to_texture(rgb_float32):
     """GPU float32 RGB (3,H,W) [0,1] -> GPU uint8 RGBA (H,W,4) for GL texture."""
     tensor = rgb_float32.permute(1, 2, 0)    # CHW -> HWC
-    tensor = tensor.mul_(255.0).clamp_(0, 255).to(torch.uint8)
+    tensor = tensor.mul(255.0).clamp(0, 255).to(torch.uint8)
     out_h, out_w = tensor.shape[:2]
     rgba = torch.zeros(out_h, out_w, 4, device=tensor.device, dtype=torch.uint8)
     rgba[..., :3] = tensor                    # RGB -> RGBA (alpha=255)
@@ -60,9 +62,16 @@ class VSRPipeline:
         self.vsr.load()
 
     def process_frame(self, bgr_uint8):
-        """Full per-frame pipeline: BGR numpy -> VSR -> RGBA GPU tensor."""
-        gpu_in = frame_to_gpu(bgr_uint8)
-        result = self.run_async(gpu_in)
-        gpu_out = self.sync_and_clone(result)
-        rgba = gpu_to_texture(gpu_out)
-        return rgba
+        """Full per-frame pipeline: BGR numpy -> VSR -> RGBA GPU tensor.
+
+        All GPU work (H2D, VSR, format conversion) runs on self.stream
+        to eliminate stream-level data hazards.
+        """
+        with torch.cuda.stream(self.stream):
+            gpu_in = frame_to_gpu(bgr_uint8)
+            result = self.vsr.run(gpu_in, non_blocking=True,
+                                  stream_ptr=self.stream.cuda_stream)
+            self.stream.synchronize()
+            gpu_out = torch.from_dlpack(result.image).clone()
+            rgba = gpu_to_texture(gpu_out)
+            return rgba

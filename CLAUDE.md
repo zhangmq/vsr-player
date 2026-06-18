@@ -49,22 +49,21 @@ Video File → Demux → Decode (HW) → GPU Tensor → VSR Effect → GPU Tenso
 
 3. **VSR Processing** — Apply `nvvfx.VideoSuperRes` effect. Set `output_width`/`output_height` before `load()`. Call `run(frame)` per frame. **Critical:** clone the output immediately (`torch.from_dlpack(result.image).clone()`) — the internal buffer is reused on the next `run()` call.
 
-4. **Display** — Convert back to a format the display layer consumes (RGBA uint8 for OpenGL/Vulkan, or BGR for simpler backends). Render with presentation timestamps from the source file to maintain A/V sync.
+4. **Display** — VSR output (RGBA uint8 on GPU) is copied device-to-device into a GL PBO via CUDA-GL interop, then uploaded to a GL texture and rendered as a fullscreen quad. Overlay UI is drawn with immediate-mode GL.
 
 5. **Audio** — Demuxed audio passes through to the audio backend (PulseAudio/ALSA/PipeWire) independently. Audio clock serves as the master clock for A/V sync.
 
-### Module Layout (planned)
+### Module Layout (v2)
 
 ```
 src/vsr_player/
-├── __main__.py        # Entry point, CLI arg parsing
-├── app.py             # Application/playback controller, A/V sync loop
-├── pipeline.py        # Per-frame VSR pipeline: convert → VSR → convert
-├── decoder.py         # Video demux + HW decode (NVDEC via PyAV or FFmpeg)
-├── display.py         # Frame presentation (OpenGL render or fallback)
-├── audio.py           # Audio output (PulseAudio/pipewire-pulse)
-├── clock.py           # Master clock tied to audio, used for A/V sync
-└── config.py          # QualityLevel mapping, scale factors, defaults
+├── __main__.py       # Entry point + argparse (--quality only)
+├── app.py             # Main loop, adaptive scale, pipeline coordination
+├── config.py          # Quality constants, adaptive_scale() calculator
+├── decoder.py         # cv2.VideoCapture wrapper with prefetch support
+├── vsr_pipeline.py    # Async VSR: frame_to_gpu, gpu_to_texture, VSRPipeline
+├── renderer.py        # GLFW + OpenGL fullscreen renderer, CUDA-GL PBO interop
+└── overlay.py         # GL-drawn UI: control bar, buttons, status text
 ```
 
 ### Critical GPU Buffer Rules (nvidia-vfx)

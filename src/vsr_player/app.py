@@ -103,10 +103,11 @@ class App:
                    not self._renderer.should_close()):
                 glfw.wait_events_timeout(0.1)
 
-            # Decode
-            ret, frame = self._decoder.read()
+            # Decode (prefetch next frame for pipeline overlap)
+            ret, frame = self._decoder.consume_prefetched()
             if not ret:
                 break
+            self._decoder.prefetch()
 
             # VSR pipeline
             rgba_gpu = self._pipeline.process_frame(frame)
