@@ -76,6 +76,9 @@ class App:
         self._last_seek_time = now
         current = self._audio.clock if self._audio.is_active else 0.0
         target = max(0.0, current + delta_sec)
+        # Clamp to video duration to avoid seeking past EOF
+        duration = self._decoder.frame_count / self._fps if self._decoder.frame_count > 0 else float("inf")
+        target = min(target, duration - 1.0)  # 1s before estimated end
         self._perform_seek(target)
 
     def _perform_seek(self, target_sec: float):

@@ -127,7 +127,8 @@ class Decoder:
             if pts >= target_sec:
                 self._next_frame = (True, frame)
                 return
-        # EOF before target — iterator exhausted, main loop will exit
+        # Past EOF — iterator exhausted.  Leave _next_frame=None so the
+        # main loop hits EOF on the next consume_prefetched() call.
 
     def release(self):
         if self._container is not None:

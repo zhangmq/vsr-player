@@ -220,8 +220,15 @@ class AudioPlayer:
         self._thread = threading.Thread(target=self._decode_loop,
                                         args=(target_sec,), daemon=True)
         self._thread.start()
-        while self._ring.filled < self._sample_rate // 4:
+        # Pre-buffer with timeout (3s) — past-EOF seek produces no data
+        waited = 0.0
+        while self._ring.filled < self._sample_rate // 4 and waited < 3.0:
             time.sleep(0.005)
+            waited += 0.005
+        if self._ring.filled == 0:
+            self._running = False
+            self._ring.clear()
+            return  # nothing to play
 
         def _callback(outdata, frames, _time_info, _status):
             read = self._ring.read(outdata)
