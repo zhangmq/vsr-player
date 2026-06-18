@@ -52,11 +52,18 @@ class VSRPipeline:
         self.stream.synchronize()
         return torch.from_dlpack(result.image).clone()
 
-    def reload(self, out_w: int, out_h: int, quality=None):
-        """Reconfigure output resolution and reload the VSR model."""
+    def reconfigure(self, out_w: int, out_h: int, quality=None):
+        """Replace the VSR instance with one configured to new params.
+
+        A fresh ``VideoSuperRes`` is created because calling ``load()``
+        after ``run()`` on the same instance produces an NvVFX invalid-
+        parameter error (code -7).
+        """
         if quality is not None:
             self.quality = quality
         self.out_w, self.out_h = out_w, out_h
+        self.stream = torch.cuda.Stream()
+        self.vsr = VideoSuperRes(quality=self.quality)
         self.vsr.output_width = out_w
         self.vsr.output_height = out_h
         self.vsr.load()

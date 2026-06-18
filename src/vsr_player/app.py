@@ -80,7 +80,7 @@ class App:
         out_h = in_h * self._pending_scale
         eff_quality, eff_name = _effective_quality(self._pending_scale,
                                                    self._user_quality)
-        self._pipeline.reload(out_w, out_h, quality=eff_quality)
+        self._pipeline.reconfigure(out_w, out_h, quality=eff_quality)
         self._renderer.resize_texture(out_w, out_h)
         self._scale = self._pending_scale
         self._eff_name = eff_name
