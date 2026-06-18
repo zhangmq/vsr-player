@@ -45,6 +45,7 @@ class App:
         self._fps = self._decoder.fps
         self._frame_delay = 1.0 / self._fps if self._fps > 0 else 1.0 / DEFAULT_FPS
         self._last_resize_time = 0.0
+        self._skipped_frames = 0
         self._pending_scale = scale
 
         glfw.set_key_callback(self._renderer.window, self._on_key)
@@ -90,7 +91,6 @@ class App:
         print("Keys: SPACE=pause, Q/ESC=quit")
 
         self._audio.start()
-        t_frame_start = time.perf_counter()
 
         while not self._renderer.should_close():
             glfw.poll_events()
@@ -105,10 +105,25 @@ class App:
             if not ret:
                 break
 
+            # A/V sync — audio master clock (mpv/VLC model)
+            if self._audio.is_active and frame.pts is not None:
+                pts = float(frame.pts * self._decoder.time_base)
+                audio_clock = self._audio.clock
+                delay = pts - audio_clock
+
+                if delay > 0.001:
+                    # Video ahead — wait for audio to catch up
+                    time.sleep(delay)
+                elif delay < -self._frame_delay:
+                    # Video behind by more than one frame — skip to catch up
+                    self._skipped_frames += 1
+                    continue
+            else:
+                # No audio — simple frame pacing
+                time.sleep(self._frame_delay)
+
             # Convert PyAV frame → GPU float32 RGB (HW NV12 or SW RGB).
-            # MUST happen before prefetch() — NVDEC reuses GPU buffers,
-            # so the D2D copy must complete before the next decode overwrites
-            # the underlying NV12 plane data.
+            # MUST happen before prefetch() — NVDEC reuses GPU buffers.
             rgb_gpu = convert_frame_to_rgb(frame, self._decoder.is_hardware)
 
             # Prefetch next frame (pipeline overlap)
@@ -122,13 +137,6 @@ class App:
             self._renderer.upload_texture(rgba_gpu)
             self._renderer.draw_quad()
             self._renderer.end_frame()
-
-            # Frame pacing
-            elapsed = time.perf_counter() - t_frame_start
-            sleep_time = self._frame_delay - elapsed
-            if sleep_time > 0.001:
-                time.sleep(sleep_time)
-            t_frame_start = time.perf_counter()
 
         self._audio.stop()
         self._decoder.release()

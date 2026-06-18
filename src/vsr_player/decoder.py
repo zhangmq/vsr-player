@@ -129,6 +129,12 @@ class Decoder:
     # ── New properties ────────────────────────────────────────────────
 
     @property
+    def time_base(self) -> float:
+        """Stream time base in seconds (for PTS conversion)."""
+        tb = self._video_stream.time_base
+        return float(tb) if tb is not None else 0.0
+
+    @property
     def is_hardware(self) -> bool:
         """True when using NVDEC hardware decode (frames are GPU NV12)."""
         return self._using_hw
