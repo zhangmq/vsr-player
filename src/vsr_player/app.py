@@ -6,11 +6,25 @@ from .vsr_pipeline import VSRPipeline
 from .renderer import Renderer
 from .config import adaptive_scale, DEBOUNCE_MS, DEFAULT_FPS, QUALITY_MAP
 
+from nvvfx import VideoSuperRes
+
+
+def _effective_quality(scale: int, user_quality: str):
+    """Return (QualityLevel, display_name) for the given scale.
+
+    scale == 1  → same-resolution denoise (no upscale overhead)
+    scale >  1  → user-chosen upscale mode (HIGH/ULTRA already
+                   include built-in denoise + sharpening)
+    """
+    if scale == 1:
+        return VideoSuperRes.QualityLevel.DENOISE_HIGH, "DENOISE_HIGH"
+    return QUALITY_MAP[user_quality], user_quality
+
 
 class App:
     def __init__(self, video_path: str, quality: str = "HIGH"):
         self._decoder = Decoder(video_path)
-        quality_level = QUALITY_MAP[quality]
+        self._user_quality = quality
         self._playing = True
 
         # Initial scale: compute from window dimensions
@@ -21,11 +35,12 @@ class App:
 
         out_w = in_w * scale
         out_h = in_h * scale
-        self._pipeline = VSRPipeline(in_w, in_h, out_w, out_h, quality_level)
+        eff_quality, eff_name = _effective_quality(scale, quality)
+        self._pipeline = VSRPipeline(in_w, in_h, out_w, out_h, eff_quality)
         self._renderer.resize_texture(out_w, out_h)
 
         self._scale = scale
-        self._quality_name = quality
+        self._eff_name = eff_name
         self._fps = self._decoder.fps
         self._frame_delay = 1.0 / self._fps if self._fps > 0 else 1.0 / DEFAULT_FPS
         self._last_resize_time = 0.0
@@ -63,16 +78,19 @@ class App:
         in_w, in_h = self._decoder.width, self._decoder.height
         out_w = in_w * self._pending_scale
         out_h = in_h * self._pending_scale
-        self._pipeline.reload(out_w, out_h)
+        eff_quality, eff_name = _effective_quality(self._pending_scale,
+                                                   self._user_quality)
+        self._pipeline.reload(out_w, out_h, quality=eff_quality)
         self._renderer.resize_texture(out_w, out_h)
         self._scale = self._pending_scale
-        print(f"VSR scale changed to x{self._scale}  "
+        self._eff_name = eff_name
+        print(f"VSR: x{self._scale}  {eff_name}  "
               f"({in_w}x{in_h} -> {out_w}x{out_h})")
 
     def run(self):
         print(f"Playing: {self._decoder.width}x{self._decoder.height}, "
               f"{self._fps:.1f} fps")
-        print(f"VSR: x{self._scale} ({self._quality_name})")
+        print(f"VSR: x{self._scale} {self._eff_name}")
         print("Keys: SPACE=pause, F=fullscreen, Q/ESC=quit")
 
         t_frame_start = time.perf_counter()
