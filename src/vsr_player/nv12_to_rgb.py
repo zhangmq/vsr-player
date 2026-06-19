@@ -117,6 +117,23 @@ def _sw_frame_to_rgb(frame: "av.VideoFrame") -> torch.Tensor:
     return rgb_gpu
 
 
+# ── RGB → RGBA texture conversion (for A/B comparison) ─────────────
+
+def rgb_to_rgba_texture(rgb_float32: torch.Tensor) -> torch.Tensor:
+    """GPU float32 RGB (3,H,W) [0,1] → GPU uint8 RGBA (H,W,4).
+
+    Produces the same output format as VSRPipeline's gpu_to_texture(),
+    suitable for uploading to the original-frame GL texture.
+    """
+    tensor = rgb_float32.permute(1, 2, 0)        # CHW → HWC
+    tensor = tensor.mul(255.0).clamp(0, 255).to(torch.uint8)
+    out_h, out_w = tensor.shape[:2]
+    rgba = torch.zeros(out_h, out_w, 4, device=tensor.device, dtype=torch.uint8)
+    rgba[..., :3] = tensor
+    rgba[..., 3] = 255
+    return rgba
+
+
 # ── Public API ───────────────────────────────────────────────────────
 
 def convert_frame_to_rgb(frame: "av.VideoFrame",

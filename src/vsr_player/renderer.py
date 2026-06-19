@@ -209,6 +209,22 @@ void main() {
 }
 """
 
+_FRAG_COMPARE = """
+#version 330 core
+in vec2 vTexCoord;
+out vec4 FragColor;
+uniform sampler2D uTextureOrig;
+uniform sampler2D uTextureVSR;
+void main() {
+    vec2 uv = vec2(vTexCoord.x, 1.0 - vTexCoord.y);
+    if (vTexCoord.x < 0.5) {
+        FragColor = texture(uTextureOrig, uv);
+    } else {
+        FragColor = texture(uTextureVSR, uv);
+    }
+}
+"""
+
 # Fullscreen quad: position (x,y) + texcoord (u,v) interleaved
 _QUAD = np.array([
     -1.0, -1.0,  0.0, 0.0,
@@ -271,8 +287,14 @@ class Renderer:
 
         # Compile shaders
         vs = shaders.compileShader(_VERT_SHADER, GL.GL_VERTEX_SHADER)
-        fs = shaders.compileShader(_FRAG_SHADER, GL.GL_FRAGMENT_SHADER)
-        self._program = shaders.compileProgram(vs, fs)
+
+        fs_normal = shaders.compileShader(_FRAG_SHADER, GL.GL_FRAGMENT_SHADER)
+        self._program = shaders.compileProgram(vs, fs_normal)
+
+        fs_compare = shaders.compileShader(_FRAG_COMPARE, GL.GL_FRAGMENT_SHADER)
+        self._program_compare = shaders.compileProgram(vs, fs_compare)
+
+        self._compare_mode = False
         GL.glUseProgram(self._program)
 
         # VAO + VBO
@@ -302,6 +324,20 @@ class Renderer:
         GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
 
         self._cu_resource = cuda_gl_register_buffer(self._pbo)
+
+        # Second texture + PBO for original (pre-VSR) frame in compare mode
+        self._tex_orig = GL.glGenTextures(1)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._tex_orig)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
+        GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8,
+                        width, height, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, None)
+
+        self._pbo_orig = GL.glGenBuffers(1)
+        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_orig)
+        GL.glBufferData(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_size, None, GL.GL_DYNAMIC_DRAW)
+        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
+        self._cu_resource_orig = cuda_gl_register_buffer(self._pbo_orig)
 
         GL.glBindVertexArray(0)
 
@@ -342,26 +378,34 @@ class Renderer:
         self._on_resize = cb
 
     def resize_texture(self, width: int, height: int):
-        """Resize the GL texture and PBO for new VSR output dimensions."""
+        """Resize GL textures and PBOs for new VSR output dimensions."""
         self._tex_w, self._tex_h = width, height
         self._pbo_size = width * height * 4
 
-        # Unregister old PBO, delete, recreate
+        # VSR texture + PBO
         cuda_gl_unregister(self._cu_resource)
         GL.glDeleteBuffers(1, [self._pbo])
-
-        # New texture
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture)
         GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8,
                         width, height, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, None)
-
-        # New PBO
         self._pbo = GL.glGenBuffers(1)
         GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo)
         GL.glBufferData(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_size, None, GL.GL_DYNAMIC_DRAW)
         GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
-
         self._cu_resource = cuda_gl_register_buffer(self._pbo)
+
+        # Original texture + PBO
+        cuda_gl_unregister(self._cu_resource_orig)
+        GL.glDeleteBuffers(1, [self._pbo_orig])
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._tex_orig)
+        GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8,
+                        width, height, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, None)
+        self._pbo_orig = GL.glGenBuffers(1)
+        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_orig)
+        GL.glBufferData(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_size, None, GL.GL_DYNAMIC_DRAW)
+        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
+        self._cu_resource_orig = cuda_gl_register_buffer(self._pbo_orig)
+
         self._update_viewport()
 
     def upload_texture(self, rgba_gpu):
@@ -393,12 +437,45 @@ class Renderer:
         GL.glClear(GL.GL_COLOR_BUFFER_BIT)
         GL.glViewport(self._vp_x, self._vp_y, self._vp_w, self._vp_h)
 
+    def set_compare_mode(self, enabled: bool):
+        """Enable or disable split-screen A/B comparison."""
+        self._compare_mode = enabled
+
+    def upload_original(self, rgba_gpu):
+        """Upload the original (pre-VSR) RGBA tensor to the second GL texture."""
+        if rgba_gpu.shape[1] != self._tex_w or rgba_gpu.shape[0] != self._tex_h:
+            self.resize_texture(rgba_gpu.shape[1], rgba_gpu.shape[0])
+
+        dev_ptr, size = cuda_gl_map(self._cu_resource_orig)
+        assert size >= self._pbo_size
+        cuda_memcpy_dtod(dev_ptr, rgba_gpu.data_ptr(), self._pbo_size)
+        cuda_gl_unmap(self._cu_resource_orig)
+
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._tex_orig)
+        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_orig)
+        GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0,
+                           self._tex_w, self._tex_h,
+                           GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
+        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
+
     def draw_quad(self):
         """Draw the fullscreen textured quad."""
-        GL.glUseProgram(self._program)
-        GL.glBindVertexArray(self._vao)
-        GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture)
-        GL.glDrawArrays(GL.GL_TRIANGLES, 0, 6)
+        if self._compare_mode:
+            GL.glUseProgram(self._program_compare)
+            GL.glBindVertexArray(self._vao)
+            GL.glActiveTexture(GL.GL_TEXTURE0)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self._tex_orig)
+            GL.glActiveTexture(GL.GL_TEXTURE1)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture)
+            GL.glUniform1i(GL.glGetUniformLocation(self._program_compare, "uTextureOrig"), 0)
+            GL.glUniform1i(GL.glGetUniformLocation(self._program_compare, "uTextureVSR"), 1)
+            GL.glDrawArrays(GL.GL_TRIANGLES, 0, 6)
+            GL.glActiveTexture(GL.GL_TEXTURE0)
+        else:
+            GL.glUseProgram(self._program)
+            GL.glBindVertexArray(self._vao)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture)
+            GL.glDrawArrays(GL.GL_TRIANGLES, 0, 6)
 
     def end_frame(self):
         GL.glBindVertexArray(0)
@@ -417,10 +494,12 @@ class Renderer:
 
     def destroy(self):
         cuda_gl_unregister(self._cu_resource)
-        GL.glDeleteTextures(1, [self._texture])
-        GL.glDeleteBuffers(1, [self._pbo])
+        cuda_gl_unregister(self._cu_resource_orig)
+        GL.glDeleteTextures(2, [self._texture, self._tex_orig])
+        GL.glDeleteBuffers(2, [self._pbo, self._pbo_orig])
         GL.glDeleteBuffers(1, [self._vbo])
         GL.glDeleteVertexArrays(1, [self._vao])
         GL.glDeleteProgram(self._program)
+        GL.glDeleteProgram(self._program_compare)
         glfw.destroy_window(self._window)
         glfw.terminate()

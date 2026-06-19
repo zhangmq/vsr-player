@@ -5,7 +5,7 @@ from .decoder import Decoder
 from .vsr_pipeline import VSRPipeline
 from .renderer import Renderer
 from .config import adaptive_scale, DEBOUNCE_MS, DEFAULT_FPS, QUALITY_MAP, DENOISE_MAP
-from .nv12_to_rgb import convert_frame_to_rgb
+from .nv12_to_rgb import convert_frame_to_rgb, rgb_to_rgba_texture
 from .audio import AudioPlayer
 
 
@@ -22,12 +22,13 @@ def _effective_quality(scale: int, user_quality: str):
 
 
 class App:
-    def __init__(self, video_path: str, quality: str = "HIGH"):
+    def __init__(self, video_path: str, quality: str = "HIGH", compare: bool = False):
         self._decoder = Decoder(video_path)
         self._user_quality = quality
         self._playing = True
         self._audio = AudioPlayer(video_path)
         self._last_seek_time = 0.0
+        self._compare = compare
 
         # Initial scale: compute from window dimensions
         in_w, in_h = self._decoder.width, self._decoder.height
@@ -51,6 +52,7 @@ class App:
 
         glfw.set_key_callback(self._renderer.window, self._on_key)
         self._renderer.set_resize_callback(self._on_resize)
+        self._renderer.set_compare_mode(self._compare)
 
     def _on_key(self, window, key, scancode, action, mods):
         if action != glfw.PRESS:
@@ -65,6 +67,9 @@ class App:
             self._seek_relative(5.0)
         elif key == glfw.KEY_LEFT:
             self._seek_relative(-5.0)
+        elif key == glfw.KEY_C:
+            self._compare = not self._compare
+            self._renderer.set_compare_mode(self._compare)
         elif key in (glfw.KEY_Q, glfw.KEY_ESCAPE):
             glfw.set_window_should_close(window, True)
 
@@ -169,8 +174,12 @@ class App:
             # VSR pipeline (GPU tensor in, RGBA GPU tensor out)
             rgba_gpu = self._pipeline.process_gpu_frame(rgb_gpu)
 
-            # Render (video only, no overlay)
+            # Render
             self._renderer.begin_frame()
+            if self._compare:
+                # Upload original frame for left-half display
+                orig_rgba = rgb_to_rgba_texture(rgb_gpu)
+                self._renderer.upload_original(orig_rgba)
             self._renderer.upload_texture(rgba_gpu)
             self._renderer.draw_quad()
             self._renderer.end_frame()

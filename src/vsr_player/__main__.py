@@ -12,10 +12,12 @@ def main():
     parser.add_argument("--quality", default="HIGH",
                         choices=["LOW", "MEDIUM", "HIGH", "ULTRA"],
                         help="VSR quality level (default: HIGH)")
+    parser.add_argument("--compare", action="store_true",
+                        help="Split-screen A/B comparison mode (C key toggles)")
     args = parser.parse_args()
 
     try:
-        app = App(args.video_file, args.quality)
+        app = App(args.video_file, args.quality, compare=args.compare)
     except FileNotFoundError as e:
         print(f"Error: {e}")
         sys.exit(1)
