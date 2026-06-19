@@ -172,14 +172,21 @@ class App:
             # Prefetch next frame (pipeline overlap)
             self._decoder.prefetch()
 
+            # In compare mode, snapshot the original before VSR may touch it
+            if self._compare:
+                orig_rgba = rgb_to_rgba_texture(rgb_gpu)
+                # Clone for VSR so it can't corrupt the original snapshot
+                vsr_input = rgb_gpu.clone()
+            else:
+                vsr_input = rgb_gpu
+
             # VSR pipeline (GPU tensor in, RGBA GPU tensor out)
-            rgba_gpu = self._pipeline.process_gpu_frame(rgb_gpu)
+            rgba_gpu = self._pipeline.process_gpu_frame(vsr_input)
 
             # Render
             self._renderer.begin_frame()
             if self._compare:
-                # Original frame at input res → upscale to VSR res for side-by-side
-                orig_rgba = rgb_to_rgba_texture(rgb_gpu)
+                # Upscale original to VSR output size for side-by-side
                 vsr_h, vsr_w = rgba_gpu.shape[0], rgba_gpu.shape[1]
                 if orig_rgba.shape[0] != vsr_h or orig_rgba.shape[1] != vsr_w:
                     orig_rgba = torch.nn.functional.interpolate(

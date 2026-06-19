@@ -293,6 +293,8 @@ class Renderer:
 
         fs_compare = shaders.compileShader(_FRAG_COMPARE, GL.GL_FRAGMENT_SHADER)
         self._program_compare = shaders.compileProgram(vs, fs_compare)
+        self._uloc_orig = GL.glGetUniformLocation(self._program_compare, "uTextureOrig")
+        self._uloc_vsr = GL.glGetUniformLocation(self._program_compare, "uTextureVSR")
 
         self._compare_mode = False
         GL.glUseProgram(self._program)
@@ -466,10 +468,10 @@ class Renderer:
             GL.glBindVertexArray(self._vao)
             GL.glActiveTexture(GL.GL_TEXTURE0)
             GL.glBindTexture(GL.GL_TEXTURE_2D, self._tex_orig)
+            GL.glUniform1i(self._uloc_orig, 0)
             GL.glActiveTexture(GL.GL_TEXTURE1)
             GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture)
-            GL.glUniform1i(GL.glGetUniformLocation(self._program_compare, "uTextureOrig"), 0)
-            GL.glUniform1i(GL.glGetUniformLocation(self._program_compare, "uTextureVSR"), 1)
+            GL.glUniform1i(self._uloc_vsr, 1)
             GL.glDrawArrays(GL.GL_TRIANGLES, 0, 6)
             GL.glActiveTexture(GL.GL_TEXTURE0)
         else:
