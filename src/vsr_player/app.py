@@ -1,6 +1,7 @@
 """Application controller — main loop, adaptive scaling, pipeline coordination."""
 import time
 import glfw
+import torch
 from .decoder import Decoder
 from .vsr_pipeline import VSRPipeline
 from .renderer import Renderer
@@ -177,8 +178,14 @@ class App:
             # Render
             self._renderer.begin_frame()
             if self._compare:
-                # Upload original frame for left-half display
+                # Original frame at input res → upscale to VSR res for side-by-side
                 orig_rgba = rgb_to_rgba_texture(rgb_gpu)
+                vsr_h, vsr_w = rgba_gpu.shape[0], rgba_gpu.shape[1]
+                if orig_rgba.shape[0] != vsr_h or orig_rgba.shape[1] != vsr_w:
+                    orig_rgba = torch.nn.functional.interpolate(
+                        orig_rgba.permute(2, 0, 1).unsqueeze(0).float(),
+                        size=(vsr_h, vsr_w), mode='bilinear'
+                    ).squeeze(0).permute(1, 2, 0).clamp(0, 255).to(torch.uint8).contiguous()
                 self._renderer.upload_original(orig_rgba)
             self._renderer.upload_texture(rgba_gpu)
             self._renderer.draw_quad()
