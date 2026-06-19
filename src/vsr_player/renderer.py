@@ -415,6 +415,9 @@ class Renderer:
         if rgba_gpu.shape[1] != self._tex_w or rgba_gpu.shape[0] != self._tex_h:
             self.resize_texture(rgba_gpu.shape[1], rgba_gpu.shape[0])
 
+        # Ensure all prior GPU work is complete before touching the PBO
+        _cudart.cudaDeviceSynchronize()
+
         # Map PBO → get CUDA device pointer
         dev_ptr, size = cuda_gl_map(self._cu_resource)
         assert size >= self._pbo_size, f"PBO too small: {size} < {self._pbo_size}"
@@ -452,6 +455,7 @@ class Renderer:
         """
         if rgba_gpu.shape[1] != self._tex_w or rgba_gpu.shape[0] != self._tex_h:
             return  # texture not sized yet — skip this frame
+        _cudart.cudaDeviceSynchronize()
         dev_ptr, size = cuda_gl_map(self._cu_resource_orig)
         assert size >= self._pbo_size
         cuda_memcpy_dtod(dev_ptr, rgba_gpu.data_ptr(), self._pbo_size)
