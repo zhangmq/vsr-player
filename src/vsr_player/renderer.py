@@ -217,11 +217,9 @@ uniform sampler2D uTextureOrig;
 uniform sampler2D uTextureVSR;
 void main() {
     vec2 uv = vec2(vTexCoord.x, 1.0 - vTexCoord.y);
-    if (vTexCoord.x < 0.5) {
-        FragColor = texture(uTextureOrig, uv);
-    } else {
-        FragColor = texture(uTextureVSR, uv);
-    }
+    // Diagnostic: render VSR fullscreen — if flickering stops, the
+    // if-branch or uTextureOrig binding is the problem
+    FragColor = texture(uTextureVSR, uv);
 }
 """
 
