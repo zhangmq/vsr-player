@@ -331,8 +331,8 @@ class Renderer:
         self._orig_pbo_size = width * height * 4
         self._tex_orig = GL.glGenTextures(1)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._tex_orig)
-        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST)
-        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
         GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8,
                         width, height, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, None)
 
