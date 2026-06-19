@@ -39,6 +39,19 @@ class VSRPipeline:
         self.in_w, self.in_h = in_w, in_h
         self.out_w, self.out_h = out_w, out_h
         self.quality = quality
+        self._warmup()
+
+    def _warmup(self):
+        """Prime the VSR: first run after load() produces black output.
+
+        The DLPack output MUST be cloned — otherwise the internal buffer
+        is reused and the VSR state doesn't advance for the next frame.
+        """
+        dummy = torch.rand(3, self.in_h, self.in_w, device='cuda', dtype=torch.float32)
+        with torch.cuda.stream(self.stream):
+            result = self.vsr.run(dummy, non_blocking=True, stream_ptr=self.stream.cuda_stream)
+            self.stream.synchronize()
+            _ = torch.from_dlpack(result.image).clone()
 
     def run_async(self, gpu_input):
         """Submit VSR on the managed CUDA stream, non-blocking."""
@@ -67,6 +80,7 @@ class VSRPipeline:
         self.vsr.output_width = out_w
         self.vsr.output_height = out_h
         self.vsr.load()
+        self._warmup()
 
     def process_frame(self, bgr_uint8):
         """Full per-frame pipeline: BGR numpy -> VSR -> RGBA GPU tensor.
