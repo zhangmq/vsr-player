@@ -171,14 +171,16 @@ class App:
             # Prefetch next frame (pipeline overlap)
             self._decoder.prefetch()
 
+            # Snapshot original BEFORE VSR may touch rgb_gpu
+            if self._compare:
+                orig_rgba = rgb_to_rgba_texture(rgb_gpu)
+
             # VSR pipeline (GPU tensor in, RGBA GPU tensor out)
             rgba_gpu = self._pipeline.process_gpu_frame(rgb_gpu)
 
             # Render
             self._renderer.begin_frame()
             if self._compare:
-                # Upload original frame for left-half display
-                orig_rgba = rgb_to_rgba_texture(rgb_gpu)
                 self._renderer.upload_original(orig_rgba)
             self._renderer.upload_texture(rgba_gpu)
             self._renderer.draw_quad()
