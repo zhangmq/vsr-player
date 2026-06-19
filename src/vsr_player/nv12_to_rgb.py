@@ -46,24 +46,28 @@ _CUDA_MEMCPY_D2D = 3
 
 def _d2d_copy_plane(frame: "av.VideoFrame", plane_idx: int
                     ) -> torch.Tensor:
-    """Copy one plane from a GPU NV12 frame into a new PyTorch tensor."""
+    """Copy one plane from a GPU NV12 frame into a new PyTorch tensor.
+
+    Handles NVDEC stride/pitch: ``line_size`` may be larger than ``width``
+    (e.g. 768-byte rows for a 720-pixel-wide image).  Copies the padded
+    buffer into a ``(height, line_size)`` tensor, then slices to ``(height, width)``.
+    """
     plane = frame.planes[plane_idx]
-    size = plane.buffer_size
+    stride = plane.line_size
     if plane_idx == 0:
         h, w = frame.height, frame.width
     else:
-        h, w = frame.height // 2, frame.width  # UV interleaved row width = W
+        h, w = frame.height // 2, frame.width
 
-    tensor = torch.empty(h, w, dtype=torch.uint8, device="cuda")
-    ret = _cudart.cudaMemcpy(
-        c_void_p(tensor.data_ptr()),
+    # Copy full padded buffer, then drop stride padding
+    padded = torch.empty(h, stride, dtype=torch.uint8, device="cuda")
+    _cudart.cudaMemcpy(
+        c_void_p(padded.data_ptr()),
         c_void_p(plane.buffer_ptr),
-        c_size_t(size),
+        c_size_t(plane.buffer_size),
         _CUDA_MEMCPY_D2D,
     )
-    if ret != 0:
-        raise RuntimeError(f"cudaMemcpy D2D plane {plane_idx} failed: {ret}")
-    return tensor
+    return padded[:, :w].contiguous()
 
 
 # ── Hardware path: NV12 on GPU → float32 RGB (3,H,W) [0,1] ──────────
