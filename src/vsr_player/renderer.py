@@ -446,9 +446,12 @@ class Renderer:
     def upload_original(self, rgba_gpu):
         """Upload the original (pre-VSR) RGBA tensor to the second GL texture.
 
-        The texture must already be sized correctly (same as VSR output)
-        — the caller is responsible for upscaling the original frame.
+        Expects the texture to already be at the correct size (upload_texture
+        is called first to handle any resize).  Silently skips if dimensions
+        don't match.
         """
+        if rgba_gpu.shape[1] != self._tex_w or rgba_gpu.shape[0] != self._tex_h:
+            return  # texture not sized yet — skip this frame
         dev_ptr, size = cuda_gl_map(self._cu_resource_orig)
         assert size >= self._pbo_size
         cuda_memcpy_dtod(dev_ptr, rgba_gpu.data_ptr(), self._pbo_size)

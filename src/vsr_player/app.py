@@ -183,10 +183,10 @@ class App:
             # VSR pipeline (GPU tensor in, RGBA GPU tensor out)
             rgba_gpu = self._pipeline.process_gpu_frame(vsr_input)
 
-            # Render
+            # Render — upload VSR first (may trigger resize), then original
             self._renderer.begin_frame()
+            self._renderer.upload_texture(rgba_gpu)
             if self._compare:
-                # Upscale original to VSR output size for side-by-side
                 vsr_h, vsr_w = rgba_gpu.shape[0], rgba_gpu.shape[1]
                 if orig_rgba.shape[0] != vsr_h or orig_rgba.shape[1] != vsr_w:
                     orig_rgba = torch.nn.functional.interpolate(
@@ -194,7 +194,6 @@ class App:
                         size=(vsr_h, vsr_w), mode='bilinear'
                     ).squeeze(0).permute(1, 2, 0).clamp(0, 255).to(torch.uint8).contiguous()
                 self._renderer.upload_original(orig_rgba)
-            self._renderer.upload_texture(rgba_gpu)
             self._renderer.draw_quad()
             self._renderer.end_frame()
 
