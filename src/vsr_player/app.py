@@ -1,7 +1,6 @@
 """Application controller — main loop, adaptive scaling, pipeline coordination."""
 import time
 import glfw
-import torch
 from .decoder import Decoder
 from .vsr_pipeline import VSRPipeline
 from .renderer import Renderer
@@ -172,25 +171,16 @@ class App:
             # Prefetch next frame (pipeline overlap)
             self._decoder.prefetch()
 
-            # In compare mode, snapshot the original before VSR may touch it
-            if self._compare:
-                orig_rgba = rgb_to_rgba_texture(rgb_gpu)
-                # Clone for VSR so it can't corrupt the original snapshot
-                vsr_input = rgb_gpu.clone()
-            else:
-                vsr_input = rgb_gpu
-
             # VSR pipeline (GPU tensor in, RGBA GPU tensor out)
-            rgba_gpu = self._pipeline.process_gpu_frame(vsr_input)
+            rgba_gpu = self._pipeline.process_gpu_frame(rgb_gpu)
 
             # Render
             self._renderer.begin_frame()
-            self._renderer.upload_texture(rgba_gpu)
             if self._compare:
-                # Diagnostic: use VSR for both sides.
-                # If flickering STOPS → bug is in upload_original / _tex_orig
-                # If flickering CONTINUES → bug is in compare shader / dual-texture draw
-                self._renderer.upload_original(rgba_gpu)
+                # Upload original frame for left-half display
+                orig_rgba = rgb_to_rgba_texture(rgb_gpu)
+                self._renderer.upload_original(orig_rgba)
+            self._renderer.upload_texture(rgba_gpu)
             self._renderer.draw_quad()
             self._renderer.end_frame()
 

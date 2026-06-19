@@ -217,9 +217,11 @@ uniform sampler2D uTextureOrig;
 uniform sampler2D uTextureVSR;
 void main() {
     vec2 uv = vec2(vTexCoord.x, 1.0 - vTexCoord.y);
-    // Diagnostic: render VSR fullscreen — if flickering stops, the
-    // if-branch or uTextureOrig binding is the problem
-    FragColor = texture(uTextureVSR, uv);
+    if (vTexCoord.x < 0.5) {
+        FragColor = texture(uTextureOrig, uv);
+    } else {
+        FragColor = texture(uTextureVSR, uv);
+    }
 }
 """
 
@@ -291,8 +293,6 @@ class Renderer:
 
         fs_compare = shaders.compileShader(_FRAG_COMPARE, GL.GL_FRAGMENT_SHADER)
         self._program_compare = shaders.compileProgram(vs, fs_compare)
-        self._uloc_orig = GL.glGetUniformLocation(self._program_compare, "uTextureOrig")
-        self._uloc_vsr = GL.glGetUniformLocation(self._program_compare, "uTextureVSR")
 
         self._compare_mode = False
         GL.glUseProgram(self._program)
@@ -325,7 +325,10 @@ class Renderer:
 
         self._cu_resource = cuda_gl_register_buffer(self._pbo)
 
-        # Second texture + PBO for original (pre-VSR) frame in compare mode
+        # Second texture + PBO for original (pre-VSR) frame in compare mode.
+        # Independently sized — GL auto-scales when sampling with same UVs.
+        self._tex_orig_w, self._tex_orig_h = width, height
+        self._orig_pbo_size = width * height * 4
         self._tex_orig = GL.glGenTextures(1)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._tex_orig)
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
@@ -335,7 +338,7 @@ class Renderer:
 
         self._pbo_orig = GL.glGenBuffers(1)
         GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_orig)
-        GL.glBufferData(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_size, None, GL.GL_DYNAMIC_DRAW)
+        GL.glBufferData(GL.GL_PIXEL_UNPACK_BUFFER, self._orig_pbo_size, None, GL.GL_DYNAMIC_DRAW)
         GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
         self._cu_resource_orig = cuda_gl_register_buffer(self._pbo_orig)
 
@@ -378,11 +381,10 @@ class Renderer:
         self._on_resize = cb
 
     def resize_texture(self, width: int, height: int):
-        """Resize GL textures and PBOs for new VSR output dimensions."""
+        """Resize the VSR GL texture and PBO. Original texture is independent."""
         self._tex_w, self._tex_h = width, height
         self._pbo_size = width * height * 4
 
-        # VSR texture + PBO
         cuda_gl_unregister(self._cu_resource)
         GL.glDeleteBuffers(1, [self._pbo])
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture)
@@ -394,27 +396,12 @@ class Renderer:
         GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
         self._cu_resource = cuda_gl_register_buffer(self._pbo)
 
-        # Original texture + PBO
-        cuda_gl_unregister(self._cu_resource_orig)
-        GL.glDeleteBuffers(1, [self._pbo_orig])
-        GL.glBindTexture(GL.GL_TEXTURE_2D, self._tex_orig)
-        GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8,
-                        width, height, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, None)
-        self._pbo_orig = GL.glGenBuffers(1)
-        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_orig)
-        GL.glBufferData(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_size, None, GL.GL_DYNAMIC_DRAW)
-        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
-        self._cu_resource_orig = cuda_gl_register_buffer(self._pbo_orig)
-
         self._update_viewport()
 
     def upload_texture(self, rgba_gpu):
         """Upload a GPU RGBA uint8 tensor (H,W,4) to GL texture via CUDA-GL PBO."""
         if rgba_gpu.shape[1] != self._tex_w or rgba_gpu.shape[0] != self._tex_h:
             self.resize_texture(rgba_gpu.shape[1], rgba_gpu.shape[0])
-
-        # Ensure all prior GPU work is complete before touching the PBO
-        _cudart.cudaDeviceSynchronize()
 
         # Map PBO → get CUDA device pointer
         dev_ptr, size = cuda_gl_map(self._cu_resource)
@@ -447,23 +434,37 @@ class Renderer:
     def upload_original(self, rgba_gpu):
         """Upload the original (pre-VSR) RGBA tensor to the second GL texture.
 
-        Expects the texture to already be at the correct size (upload_texture
-        is called first to handle any resize).  Silently skips if dimensions
-        don't match.
+        Uses its own texture at the original resolution — independent of the
+        VSR texture size, so no resize fight occurs.  GL automatically
+        upscales when sampling both textures with the same UV coordinates.
         """
-        if rgba_gpu.shape[1] != self._tex_w or rgba_gpu.shape[0] != self._tex_h:
-            return  # texture not sized yet — skip this frame
-        _cudart.cudaDeviceSynchronize()
+        h, w = rgba_gpu.shape[0], rgba_gpu.shape[1]
+
+        # Resize the original texture only if needed (does not touch VSR tex)
+        if h != self._tex_orig_h or w != self._tex_orig_w:
+            self._tex_orig_h, self._tex_orig_w = h, w
+            size = w * h * 4
+            cuda_gl_unregister(self._cu_resource_orig)
+            GL.glDeleteBuffers(1, [self._pbo_orig])
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self._tex_orig)
+            GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8,
+                            w, h, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, None)
+            self._pbo_orig = GL.glGenBuffers(1)
+            GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_orig)
+            GL.glBufferData(GL.GL_PIXEL_UNPACK_BUFFER, size, None, GL.GL_DYNAMIC_DRAW)
+            GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
+            self._cu_resource_orig = cuda_gl_register_buffer(self._pbo_orig)
+            self._orig_pbo_size = size
+
         dev_ptr, size = cuda_gl_map(self._cu_resource_orig)
-        assert size >= self._pbo_size
-        cuda_memcpy_dtod(dev_ptr, rgba_gpu.data_ptr(), self._pbo_size)
+        assert size >= self._orig_pbo_size
+        cuda_memcpy_dtod(dev_ptr, rgba_gpu.data_ptr(), self._orig_pbo_size)
         cuda_gl_unmap(self._cu_resource_orig)
 
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._tex_orig)
         GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, self._pbo_orig)
         GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0,
-                           self._tex_w, self._tex_h,
-                           GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
+                           w, h, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
         GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
 
     def draw_quad(self):
@@ -473,10 +474,10 @@ class Renderer:
             GL.glBindVertexArray(self._vao)
             GL.glActiveTexture(GL.GL_TEXTURE0)
             GL.glBindTexture(GL.GL_TEXTURE_2D, self._tex_orig)
-            GL.glUniform1i(self._uloc_orig, 0)
             GL.glActiveTexture(GL.GL_TEXTURE1)
             GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture)
-            GL.glUniform1i(self._uloc_vsr, 1)
+            GL.glUniform1i(GL.glGetUniformLocation(self._program_compare, "uTextureOrig"), 0)
+            GL.glUniform1i(GL.glGetUniformLocation(self._program_compare, "uTextureVSR"), 1)
             GL.glDrawArrays(GL.GL_TRIANGLES, 0, 6)
             GL.glActiveTexture(GL.GL_TEXTURE0)
         else:
