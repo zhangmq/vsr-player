@@ -187,16 +187,10 @@ class App:
             self._renderer.begin_frame()
             self._renderer.upload_texture(rgba_gpu)
             if self._compare:
-                # Upload original — both textures at VSR size now
-                vsr_h, vsr_w = rgba_gpu.shape[0], rgba_gpu.shape[1]
-                if orig_rgba.shape[0] != vsr_h or orig_rgba.shape[1] != vsr_w:
-                    orig_rgba = torch.nn.functional.interpolate(
-                        orig_rgba.permute(2, 0, 1).unsqueeze(0).float(),
-                        size=(vsr_h, vsr_w), mode='bilinear'
-                    ).squeeze(0).permute(1, 2, 0).clamp(0, 255).to(torch.uint8).contiguous()
-                self._renderer.upload_original(orig_rgba)
-                # Diagnostic: copy VSR to original slot to test shader
-                # Uncomment to test: self._renderer.upload_original(rgba_gpu)
+                # Diagnostic: use VSR for both sides.
+                # If flickering STOPS → bug is in upload_original / _tex_orig
+                # If flickering CONTINUES → bug is in compare shader / dual-texture draw
+                self._renderer.upload_original(rgba_gpu)
             self._renderer.draw_quad()
             self._renderer.end_frame()
 
