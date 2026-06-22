@@ -2,12 +2,17 @@
 
 #include "VulkanRenderer.h"
 
+#include "VulkanRenderer.h"
+
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
+#define VK_USE_PLATFORM_WAYLAND_KHR
 #define VK_USE_PLATFORM_XLIB_KHR
 #include <vulkan/vulkan.h>
 #include <X11/Xlib.h>
+#include <wayland-client.h>
 
 // Generated SPIR-V arrays
 #include "../../../build/video_vert_spv.h"
@@ -35,7 +40,7 @@ VulkanRenderer::~VulkanRenderer() { release(); }
 
 // ── Init ────────────────────────────────────────────────────────────
 
-bool VulkanRenderer::init(void* window, void* /*display*/) {
+bool VulkanRenderer::init(Platform platform, void* native_window, void* native_display) {
     VkResult res;
 
     // ---- Instance ----
@@ -43,8 +48,11 @@ bool VulkanRenderer::init(void* window, void* /*display*/) {
     ai.pApplicationName = "vsr-player";
     ai.apiVersion = VK_API_VERSION_1_3;
 
-    const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME,
-                          VK_KHR_XLIB_SURFACE_EXTENSION_NAME};
+    const char* surface_ext = (platform == Platform::WAYLAND)
+        ? VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME
+        : VK_KHR_XLIB_SURFACE_EXTENSION_NAME;
+
+    const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME, surface_ext};
 
     VkInstanceCreateInfo ici = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ici.pApplicationInfo = &ai;
@@ -56,13 +64,26 @@ bool VulkanRenderer::init(void* window, void* /*display*/) {
     if (res != VK_SUCCESS) { fprintf(stderr, "Vulkan: instance failed\n"); return false; }
     instance_ = inst;
 
-    // ---- Surface (X11) ----
-    Display* dpy = XOpenDisplay(nullptr);
-    if (!dpy) { fprintf(stderr, "Vulkan: cannot open X display\n"); return false; }
-    VkXlibSurfaceCreateInfoKHR sci = {VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR};
-    sci.dpy = dpy;
-    sci.window = (Window)(uintptr_t)window;
-    res = vkCreateXlibSurfaceKHR(inst, &sci, nullptr, (VkSurfaceKHR*)&surface_);
+    // ---- Surface ----
+    if (platform == Platform::WAYLAND) {
+        if (!native_display) native_display = wl_display_connect(nullptr);
+        VkWaylandSurfaceCreateInfoKHR sci = {
+            VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR};
+        sci.display = (wl_display*)native_display;
+        sci.surface = (wl_surface*)native_window;
+        res = vkCreateWaylandSurfaceKHR(inst, &sci, nullptr,
+                                        (VkSurfaceKHR*)&surface_);
+    } else {
+        Display* dpy = native_display ? (Display*)native_display
+                                      : XOpenDisplay(nullptr);
+        if (!dpy) { fprintf(stderr, "Vulkan: cannot open X display\n"); return false; }
+        VkXlibSurfaceCreateInfoKHR sci = {
+            VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR};
+        sci.dpy = dpy;
+        sci.window = (Window)(uintptr_t)native_window;
+        res = vkCreateXlibSurfaceKHR(inst, &sci, nullptr,
+                                     (VkSurfaceKHR*)&surface_);
+    }
     if (res != VK_SUCCESS) { fprintf(stderr, "Vulkan: surface failed\n"); return false; }
 
     // ---- Physical device ----

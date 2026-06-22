@@ -12,6 +12,7 @@ add_library(vsrplayer STATIC
     # Utils
     utils/CUDAContext.h utils/CUDAContext.cpp
     utils/VulkanContext.h utils/VulkanContext.cpp
+    utils/VulkanRenderer.h utils/VulkanRenderer.cpp
     utils/NV12ToRGB.h utils/NV12ToRGB.cpp
 )
 
@@ -24,18 +25,22 @@ target_link_libraries(vsrplayer PUBLIC
     ${FFMPEG_LIBRARIES}
     Vulkan::Vulkan
     ${PORTAUDIO_LIBRARIES}
+    ${WAYLAND_LIBRARIES}
+    ${X11_LIBRARIES}
     ${CUDA_LIBRARY}
 )
 
 target_include_directories(vsrplayer SYSTEM PRIVATE
     ${FFMPEG_INCLUDE_DIRS}
     ${PORTAUDIO_INCLUDE_DIRS}
+    ${WAYLAND_INCLUDE_DIRS}
+    ${X11_INCLUDE_DIRS}
     ${NVVFX_INCLUDE_DIR}
 )
 
 target_link_directories(vsrplayer PRIVATE "${NVVFX_LIB_DIR}")
 
-# VFX SDK libs are loaded at runtime via dlopen or linked directly
+# VFX SDK libs (loaded at runtime)
 target_link_libraries(vsrplayer PRIVATE
     ${NVVFX_LIB_DIR}/libnvVFXVideoSuperRes.so
     ${NVVFX_LIB_DIR}/libVideoFX.so

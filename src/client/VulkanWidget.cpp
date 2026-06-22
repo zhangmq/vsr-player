@@ -1,8 +1,8 @@
 #include "VulkanWidget.h"
 
-#include <QCoreApplication>
 #include <QGuiApplication>
-#include <QResizeEvent>
+#include <cstdio>
+#include <cstdlib>
 
 namespace vsr {
 
@@ -16,12 +16,24 @@ VulkanWidget::VulkanWidget(QWidget* parent) : QWidget(parent) {
 VulkanWidget::~VulkanWidget() = default;
 
 bool VulkanWidget::init_vulkan() {
-    // winId() returns the X11 Window ID.
-    // For X11: pass the Window + X11 Display (from QX11NativeInterface).
-    // For Wayland: pass wl_surface + wl_display.
-    WId wid = winId();
+    // Detect platform: check Qt platform name + env vars
+    QString qpa = QGuiApplication::platformName();
+    const char* session = getenv("XDG_SESSION_TYPE");
 
-    return renderer_.init(reinterpret_cast<void*>(wid), nullptr);
+    Platform plat;
+    void* display = nullptr;
+
+    if (qpa == "wayland" || (session && strcmp(session, "wayland") == 0)) {
+        plat = Platform::WAYLAND;
+        // display = nullptr → let VulkanRenderer connect internally
+    } else {
+        plat = Platform::XLIB;
+    }
+
+    WId wid = winId();
+    fprintf(stderr, "VulkanWidget: platform=%s\n",
+            plat == Platform::WAYLAND ? "wayland" : "x11");
+    return renderer_.init(plat, reinterpret_cast<void*>(wid), display);
 }
 
 bool VulkanWidget::present_frame(const uint8_t* rgb_data, int width, int height) {
@@ -29,23 +41,12 @@ bool VulkanWidget::present_frame(const uint8_t* rgb_data, int width, int height)
         if (!init_vulkan()) return false;
         renderer_.resize(width, height);
     }
-    if (width != frame_width_ || height != frame_height_) {
-        renderer_.resize(width, height);
-        frame_width_ = width;
-        frame_height_ = height;
-    }
     return renderer_.render_frame(rgb_data, width, height);
-}
-
-void VulkanWidget::resizeEvent(QResizeEvent* event) {
-    QWidget::resizeEvent(event);
 }
 
 void VulkanWidget::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
-    if (!vulkan_ready_) {
-        vulkan_ready_ = true;
-    }
+    vulkan_ready_ = true;
 }
 
 }  // namespace vsr
