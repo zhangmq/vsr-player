@@ -4,95 +4,128 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A Linux desktop video player that applies real-time AI super-resolution to video playback using the [nvidia-vfx](https://pypi.org/project/nvidia-vfx/) library (NVIDIA Video Effects SDK Python bindings). The player decodes video, upscales/denoises each frame on the GPU via Tensor Cores, and displays the enhanced output — all in real time during playback.
+A Linux desktop video player that applies real-time AI super-resolution to video playback using the NVIDIA Video Effects SDK C API. The player decodes video via NVDEC, upscales/denoises each frame on the GPU via Tensor Cores, and displays the enhanced output through Vulkan — all in real time during playback.
 
-## Build / Run / Test
+**This is likely the first open-source Linux player using the VFX SDK directly (not driver-level RTX VSR).** The Linux VFX SDK is still Early Access on NGC. Existing players (mpv, VLC, Moonlight) use driver-level VSR paths that are Windows-only or incomplete on Linux.
 
-```bash
-# Activate environment
-mamba activate vsr-player
+## Tech Stack
 
-# Install dependencies (once)
-pip install torch opencv-python nvidia-vfx glfw PyOpenGL
-
-# Run player (scale auto-adapted from window size)
-python -m vsr_player <video_file> [--quality HIGH]
-
-# Controls
-#   SPACE = play/pause
-#   F     = toggle fullscreen
-#   Q/ESC = quit
-#   Click overlay bar buttons
-
-# Lint
-ruff check .
-
-# Run tests (when test suite exists)
-pytest
-```
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| Language | C++20 | Application + core library |
+| Build | CMake 3.22+ | Cross-platform build |
+| Client | Qt 6 (Widgets) | Window, controls, playlist, event loop |
+| Decode | FFmpeg libav* C API | NVDEC hardware decode (`av1_cuvid` + `hw_device_ctx`) |
+| Super-Res | NvVFX C API (`libnvVFXVideoSuperRes.so`) | AI upscaling on Tensor Cores |
+| Render | Vulkan 1.3 | Display pipeline, CUDA-Vulkan interop |
+| Window | GLFW (via Qt embedding) or Qt Vulkan | Vulkan surface management |
+| Audio | PortAudio | PCM output, master clock for A/V sync |
+| CUDA | CUDA Driver API (`libcuda.so`) | GPU context, streams, device pointers |
 
 ## Architecture
 
-The core data flow is a real-time pipeline:
-
 ```
-Video File → Demux → Decode (HW) → GPU Tensor → VSR Effect → GPU Tensor → Display
-                                    ↑ (3,H,W) float32 [0,1]      ↓ DLPack → clone
-                              Audio Track → Audio Sink (separate path)
-```
-
-### Key Pipeline Stages
-
-1. **Demux & Decode** — Extract video frames from the container (mp4/mkv/webm). Use hardware-accelerated decode (NVDEC via FFmpeg) to keep frames on GPU and avoid PCIe round-trips.
-
-2. **Frame Conversion** — Decoded frames arrive as NV12/YUV on GPU. Convert to channels-first RGB float32 `(3, H, W)` normalized to `[0,1]` to match nvidia-vfx input requirements. Keep the tensor on CUDA throughout.
-
-3. **VSR Processing** — Apply `nvvfx.VideoSuperRes` effect. Set `output_width`/`output_height` before `load()`. Call `run(frame)` per frame. **Critical:** clone the output immediately (`torch.from_dlpack(result.image).clone()`) — the internal buffer is reused on the next `run()` call.
-
-4. **Display** — VSR output (RGBA uint8 on GPU) is copied device-to-device into a GL PBO via CUDA-GL interop, then uploaded to a GL texture and rendered as a fullscreen quad. Overlay UI is drawn with immediate-mode GL.
-
-5. **Audio** — Demuxed audio passes through to the audio backend (PulseAudio/ALSA/PipeWire) independently. Audio clock serves as the master clock for A/V sync.
-
-### Module Layout (v2)
-
-```
-src/vsr_player/
-├── __main__.py       # Entry point + argparse (--quality only)
-├── app.py             # Main loop, adaptive scale, pipeline coordination
-├── config.py          # Quality constants, adaptive_scale() calculator
-├── decoder.py         # cv2.VideoCapture wrapper with prefetch support
-├── vsr_pipeline.py    # Async VSR: frame_to_gpu, gpu_to_texture, VSRPipeline
-├── renderer.py        # GLFW + OpenGL fullscreen renderer, CUDA-GL PBO interop
-└── overlay.py         # GL-drawn UI: control bar, buttons, status text
+┌─────────────────────────────────┐
+│  Qt Client (main thread)        │
+│  MainWindow → controls, playlist│
+│  VulkanWidget → render embed    │
+│  PlayerProxy → command bridge   │
+├─────────────────────────────────┤
+│  libvsrplayer (worker threads)  │
+│  PlayerCore → command dispatch  │
+│  Demuxer → Decoder → VSRProc    │
+│  → Renderer → Vulkan display    │
+│  AudioOutput → PortAudio        │
+│  ClockManager → A/V sync        │
+└─────────────────────────────────┘
 ```
 
-### Critical GPU Buffer Rules (nvidia-vfx)
+**Design:** Single-process, dual-layer (reference: mpv + IINA, VLC + Qt GUI). Qt client and libvsrplayer communicate through a thread-safe command queue — no shared mutable state beyond frame buffers.
 
-- Input: float32 RGB (3, H, W) on CUDA, range [0.0, 1.0]
-- Output: DLPack capsule → **must clone** before next `run()` — use `.clone()` (PyTorch) or `.copy()` (CuPy)
-- For real-time, use `non_blocking=True` + CUDA streams to overlap VSR with decode
-- Call `load()` once after setting dimensions/quality; reuse the `VideoSuperRes` instance across all frames — never reload per frame
+### Data Flow
 
-### Quality Levels (nvidia-vfx)
+```
+Container → Demux → NVDEC → NV12(GPU) → NV12→RGB → float32 RGB(3,H,W) [0,1]
+                                                       ↓
+                                              VSR Processor (NvVFX)
+                                                       ↓
+                                        RGBA uint8(GPU) → Vulkan render pass
+Audio track → PortAudio → master clock → A/V sync
+```
 
-| Group | Levels (IntEnum 0–19) | Purpose |
-|---|---|---|
-| Standard Upscaling | BICUBIC, LOW, MEDIUM, HIGH, ULTRA | Upscale compressed video |
-| Denoise | DENOISE_LOW … DENOISE_ULTRA | Same-resolution noise reduction |
-| Deblur | DEBLUR_LOW … DEBLUR_ULTRA | Same-resolution sharpening |
-| High-bitrate | HIGHBITRATE_LOW … HIGHBITRATE_ULTRA | Upscale clean/lossless sources |
+### Module Layout
 
-## Constraints & Requirements
+```
+src/
+├── client/                    ← Qt client (links libvsrplayer)
+│   ├── main.cpp               ← QApplication entry
+│   ├── MainWindow.h/cpp       ← QMainWindow
+│   ├── PlaylistPanel.h/cpp    ← QListView + model
+│   ├── ControlBar.h/cpp       ← play/pause/seek/volume
+│   ├── StatusBar.h/cpp        ← fps, resolution, quality info
+│   ├── SettingsDialog.h/cpp   ← quality/scale settings
+│   ├── VulkanWidget.h/cpp     ← embedded Vulkan render surface
+│   └── PlayerProxy.h/cpp      ← libvsrplayer command wrapper + signal relay
+│
+├── core/                      ← libvsrplayer static library
+│   ├── api/
+│   │   └── Player.h           ← public C API
+│   ├── PlayerCore.h/cpp       ← core controller, event loop
+│   ├── CommandQueue.h/cpp      ← thread-safe command queue
+│   ├── ClockManager.h/cpp      ← audio-master A/V sync
+│   ├── Demuxer.h/cpp           ← FFmpeg demux
+│   ├── Decoder.h/cpp           ← NVDEC with hw_device_ctx
+│   ├── VSRProcessor.h/cpp      ← NvVFX VideoSuperRes wrapper
+│   ├── Renderer.h/cpp          ← Vulkan render pipeline
+│   ├── AudioOutput.h/cpp       ← PortAudio wrapper
+│   ├── FramePool.h/cpp         ← GPU frame buffer pool
+│   └── utils/
+│       ├── CUDAContext.h/cpp   ← CUDA device management
+│       ├── VulkanContext.h/cpp ← Vulkan instance/device
+│       └── NV12ToRGB.h/cpp     ← GPU NV12→RGB conversion
+│
+└── CMakeLists.txt
+```
 
-- **GPU:** NVIDIA with Tensor Cores (Turing/Ampere/Ada/Blackwell/Hopper)
-- **Driver (Linux):** 570.190+ or 580.82+ or 590.44+
-- **Python:** 3.10+
-- **OS:** Ubuntu 20.04/22.04/24.04, Debian 12, RHEL 8/9
-- VSR processing is the bottleneck; expect ~2–10ms per frame depending on quality level and resolution
-- Keep PCIe transfers minimal — decode → VSR → display should ideally stay entirely on GPU
+## Build / Run
+
+```bash
+# Prerequisites: NVIDIA driver 570+, Vulkan SDK, Qt 6, FFmpeg dev, PortAudio dev
+# NvVFX SDK headers from NGC (EA program) — placed in third_party/nvvfx/
+
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+
+# Run
+./vsr-player <video_file>
+```
+
+## SDK Isolation
+
+VFX SDK .so files (~1.1GB) are bundled with the application. No CUDA Toolkit, TensorRT SDK, or cuDNN installation needed on the user's system. Only `libcuda.so.1` (NVIDIA driver) is required at runtime.
+
+```
+build/
+├── vsr-player
+└── lib/          ← bundled .so files (RPATH: $ORIGIN/lib)
+    ├── libnvVFXVideoSuperRes.so
+    ├── libVideoFX.so
+    ├── libnvinfer.so.10
+    ├── libnpp*.so.12  (9 files)
+    └── ...
+```
+
+## Key Findings from Python Prototype (archive/python-v1/)
+
+- **av1_cuvid without hw_device_ctx → duplicate frames:** `av1_cuvid` requires a CUDA `hw_device_ctx` for proper NVDEC surface management. Using bare `_cuvid` (as PyAV does) produces periodic duplicates (~9/300 frames). The fix is `avctx->hw_device_ctx = av_buffer_ref(hw_device_ctx)` before `avcodec_open2()` — this is available in C API but not exposed by PyAV.
+- **VFX SDK bundles all NVIDIA deps:** The pip package includes TensorRT, NPP, cuDNN, NGX in `libs/`. Only `libcuda.so.1` (driver) is external. Portable distribution is feasible.
+- **VSR internal CUDA streams:** `torch.cuda.Stream.synchronize()` does NOT cover VSR internal streams. `torch.cuda.synchronize()` (device-level) is required.
 
 ## References
 
-- [nvidia-vfx on PyPI](https://pypi.org/project/nvidia-vfx/)
-- [Official API Reference](https://docs.nvidia.com/maxine/vfx-python/latest/index.html)
+- [NVIDIA Video Effects SDK](https://developer.nvidia.com/video-effects-sdk)
+- [NVIDIA Maxine Linux VFX SDK (EA) on NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/maxine/collections/maxine_linux_vfx_sdk_collection_ea)
 - [NVIDIA VFX Python Samples](https://github.com/NVIDIA-Maxine/nvidia-vfx-python-samples)
+- [FFmpeg hw_decode.c — CUDA decode example](https://github.com/FFmpeg/FFmpeg/blob/master/doc/examples/hw_decode.c)
+- [FFmpeg cuvid hw_device_ctx patch (c0f17a90)](https://trac.ffmpeg.org/changeset/c0f17a905f3588bf61ba6d86a83c6835d431ed3d/ffmpeg)
