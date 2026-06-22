@@ -45,13 +45,17 @@ bool VulkanWidget::init_vulkan() {
     return false;
 }
 
-bool VulkanWidget::present_frame(const uint8_t* rgb_data, int width, int height) {
+bool VulkanWidget::present_frame(const uint8_t* rgb_data, int video_w, int video_h) {
     if (!vulkan_ready_) return false;
     if (!renderer_.is_ready()) {
         if (!init_vulkan()) return false;
-        renderer_.resize(width, height);
     }
-    return renderer_.render_frame(rgb_data, width, height);
+    // Keep swapchain sized to the widget (window), not the video.
+    // render_frame will letterbox the video within the swapchain.
+    int ww = width(), wh = height();
+    if (ww > 0 && wh > 0)
+        renderer_.resize(ww, wh);
+    return renderer_.render_frame(rgb_data, video_w, video_h);
 }
 
 void VulkanWidget::showEvent(QShowEvent* event) {

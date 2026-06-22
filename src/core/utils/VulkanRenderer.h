@@ -16,11 +16,12 @@ public:
     /// @param native_display wl_display* from Qt's platform native interface
     bool init(void* native_window, void* native_display);
 
-    /// Render one RGB24 frame.
-    bool render_frame(const uint8_t* rgb_data, int width, int height);
+    /// Render one RGB24 frame. Video is letterboxed to maintain aspect ratio
+    /// within the swapchain (which matches the window/surface size).
+    bool render_frame(const uint8_t* rgb_data, int video_w, int video_h);
 
-    /// Handle resize. Recreates swapchain.
-    bool resize(int width, int height);
+    /// Recreate swapchain at the given surface (window) size.
+    bool resize(int surface_w, int surface_h);
 
     void release();
     bool is_ready() const { return device_ != nullptr; }

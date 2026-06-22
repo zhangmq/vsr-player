@@ -492,22 +492,29 @@ bool VulkanRenderer::update_texture(const uint8_t* data, int w, int h) {
 
 // ── Resize ──────────────────────────────────────────────────────────
 
-bool VulkanRenderer::resize(int w, int h) {
-    return create_swapchain_and_pipeline(w, h);
+bool VulkanRenderer::resize(int surface_w, int surface_h) {
+    if (swapchain_width_ == surface_w && swapchain_height_ == surface_h)
+        return true;
+    return create_swapchain_and_pipeline(surface_w, surface_h);
 }
 
 // ── Render frame ────────────────────────────────────────────────────
 
-bool VulkanRenderer::render_frame(const uint8_t* rgb_data, int width, int height) {
+bool VulkanRenderer::render_frame(const uint8_t* rgb_data, int video_w, int video_h) {
     VkDevice dev = (VkDevice)device_;
-    if (!dev || !surface_) return false;
+    if (!dev || !surface_ || !swapchain_) return false;
 
-    // Lazy-init swapchain on first frame
-    if (!swapchain_ || swapchain_width_ != width || swapchain_height_ != height) {
-        if (!create_swapchain_and_pipeline(width, height)) return false;
-    }
+    if (!update_texture(rgb_data, video_w, video_h)) return false;
 
-    if (!update_texture(rgb_data, width, height)) return false;
+    // Calculate letterboxed viewport: fit video in swapchain, keep aspect ratio
+    float scale_w = (float)swapchain_width_  / (float)video_w;
+    float scale_h = (float)swapchain_height_ / (float)video_h;
+    float scale   = (scale_w < scale_h) ? scale_w : scale_h;
+
+    int vp_w = (int)(video_w * scale);
+    int vp_h = (int)(video_h * scale);
+    int vp_x = (swapchain_width_  - vp_w) / 2;
+    int vp_y = (swapchain_height_ - vp_h) / 2;
 
     // Acquire swapchain image
     uint32_t idx;
@@ -534,6 +541,14 @@ bool VulkanRenderer::render_frame(const uint8_t* rgb_data, int width, int height
     rpbi.pClearValues = &cv;
 
     vkCmdBeginRenderPass(cb, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+
+    // Viewport + scissor for letterboxed video area
+    VkViewport vp = {(float)vp_x, (float)vp_y, (float)vp_w, (float)vp_h, 0.0f, 1.0f};
+    vkCmdSetViewport(cb, 0, 1, &vp);
+
+    VkRect2D scissor = {{(int32_t)vp_x, (int32_t)vp_y}, {(uint32_t)vp_w, (uint32_t)vp_h}};
+    vkCmdSetScissor(cb, 0, 1, &scissor);
+
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, (VkPipeline)pipeline_);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
         (VkPipelineLayout)pipeline_layout_, 0, 1,
