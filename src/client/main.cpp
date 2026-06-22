@@ -1,24 +1,16 @@
 /// VSR Player — Qt client entry point.
 
 #include <QApplication>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 
 #include "MainWindow.h"
 
 int main(int argc, char* argv[]) {
-    // NVIDIA Vulkan driver: VK_KHR_wayland_surface present support = false.
-    // We must use X11 surfaces, so Qt needs to run on XCB (XWayland).
-    // This is transparent — the window still appears as a native Wayland
-    // window through the compositor's XWayland bridge.
-    const char* session = getenv("XDG_SESSION_TYPE");
-    if (session && strcmp(session, "wayland") == 0) {
-        if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
-            fprintf(stderr, "Note: NVIDIA Vulkan → forcing XCB QPA (XWayland)\n");
-            qputenv("QT_QPA_PLATFORM", "xcb");
-        }
-    }
+    // We probe Vulkan Wayland surface support at runtime.
+    // If VK_KHR_wayland_surface is not supported by the physical device,
+    // VulkanWidget will detect the failure and inform the user.
+    // Native Wayland works when nvidia_drm.modeset=1 is set (kernel cmdline).
+    // With modeset=0, VkSurfaceSupportKHR returns false for Wayland surfaces
+    // even though the extension is present at instance level.
 
     QApplication app(argc, argv);
     app.setApplicationName("VSR Player");

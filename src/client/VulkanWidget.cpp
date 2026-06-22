@@ -23,15 +23,20 @@ bool VulkanWidget::init_vulkan() {
     const char* session = getenv("XDG_SESSION_TYPE");
 
     if (qpa == "wayland" || (session && strcmp(session, "wayland") == 0)) {
-        // Wayland: Qt creates the wl_surface for us via WA_NativeWindow.
-        // Connect to the same Wayland display via the standard env var.
-        // The compositor multiplexes connections — separate wl_display
-        // connections to the same socket share the same server context.
+        // Native Wayland Vulkan surface.
+        // Requires nvidia_drm.modeset=1 for NVIDIA GPUs.
         void* display = wl_display_connect(nullptr);
         void* window  = reinterpret_cast<void*>(winId());
-        fprintf(stderr, "VulkanWidget: wayland display=%p surface=%p\n",
-                display, window);
-        return renderer_.init(Platform::WAYLAND, window, display);
+        if (renderer_.init(Platform::WAYLAND, window, display))
+            return true;
+
+        // Wayland surface failed. This is expected on NVIDIA when
+        // nvidia_drm.modeset=1 is NOT set in kernel cmdline.
+        fprintf(stderr,
+                "VulkanWidget: Wayland Vulkan surface failed.\n"
+                "  NVIDIA GPUs require nvidia_drm.modeset=1 for native Wayland.\n"
+                "  Workaround: QT_QPA_PLATFORM=xcb ./build/vsr-player <video>\n");
+        return false;
     } else {
         void* window = reinterpret_cast<void*>(winId());
         return renderer_.init(Platform::XLIB, window, nullptr);
