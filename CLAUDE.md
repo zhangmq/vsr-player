@@ -116,9 +116,34 @@ build/
     └── ...
 ```
 
-## Key Findings from Python Prototype (archive/python-v1/)
+## Key Findings from Prototype
 
-- **av1_cuvid without hw_device_ctx → duplicate frames:** `av1_cuvid` requires a CUDA `hw_device_ctx` for proper NVDEC surface management. Using bare `_cuvid` (as PyAV does) produces periodic duplicates (~9/300 frames). The fix is `avctx->hw_device_ctx = av_buffer_ref(hw_device_ctx)` before `avcodec_open2()` — this is available in C API but not exposed by PyAV.
+### av1_cuvid duplicate-frame bug — root cause and fix
+
+**Root cause:** `av1_cuvid` decoder wrapper has a surface management bug that produces periodic duplicate frames (~9/300). Setting `hw_device_ctx` alone is NOT sufficient — the cuvid wrapper's internal NVDEC surface pool is the problem.
+
+**Fix:** Use the native decoder (`av1`, not `libdav1d`, not `av1_cuvid`) with the hwaccel framework:
+```c
+codec = avcodec_find_decoder_by_name("av1");  // native decoder, NOT libdav1d!
+codec_ctx->get_format = get_hw_format;         // returns AV_PIX_FMT_CUDA
+codec_ctx->hw_device_ctx = av_buffer_ref(hw_dev_ctx);
+```
+FFmpeg automatically initializes `av1_nvdec` hwaccel → proper NVDEC surface management → 0 duplicates.
+
+**Verified:** `tests/test_decoder.cpp` — 7202 frames, 0 duplicates on catlove_720p.webm.
+
+### Codec selection rules
+
+| Codec ID | HW decoder | SW fallback | Notes |
+|----------|-----------|-------------|-------|
+| AV1 | `av1` native + `av1_nvdec` hwaccel | `libdav1d` | Never use `av1_cuvid` |
+| H.264 | `h264` native + `h264_nvdec` hwaccel | software | Never use `h264_cuvid` |
+| HEVC | `hevc` native + `hevc_nvdec` hwaccel | software | Never use `hevc_cuvid` |
+
+**Golden rule:** Use native decoders + get_format hwaccel path. Avoid all `_cuvid` variants.
+
+### Other findings from Python prototype
+
 - **VFX SDK bundles all NVIDIA deps:** The pip package includes TensorRT, NPP, cuDNN, NGX in `libs/`. Only `libcuda.so.1` (driver) is external. Portable distribution is feasible.
 - **VSR internal CUDA streams:** `torch.cuda.Stream.synchronize()` does NOT cover VSR internal streams. `torch.cuda.synchronize()` (device-level) is required.
 

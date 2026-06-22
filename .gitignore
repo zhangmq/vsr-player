@@ -10,3 +10,6 @@ third_party/nvvfx/
 *.swp
 *.swo
 .clangd/
+# Compiled test binaries
+tests/test_decoder
+tests/*.o

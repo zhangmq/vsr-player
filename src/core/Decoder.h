@@ -1,43 +1,58 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
+
+struct AVCodecContext;
+struct AVBufferRef;
+struct AVFrame;
 
 namespace vsr {
 
-/// NVDEC hardware decoder via FFmpeg cuvid.
+/// FFmpeg NVDEC hardware decoder via hwaccel framework.
 ///
-/// Uses hw_device_ctx for proper CUDA surface management — this is the fix
-/// for the av1_cuvid duplicate-frame bug identified in the Python prototype.
+/// Uses the native decoder + get_format → AV_PIX_FMT_CUDA callback to trigger
+/// NVDEC hwaccel initialization (e.g., av1_nvdec, h264_nvdec, hevc_nvdec).
+/// This avoids the av1_cuvid duplicate-frame bug — the hwaccel path uses
+/// proper NVDEC surface management through FFmpeg's hwcontext framework.
+///
+/// Decoded frames are AV_PIX_FMT_CUDA (NV12 on GPU, CUDA device pointers).
 class Decoder {
 public:
     Decoder();
     ~Decoder();
 
-    /// Initialize decoder with video dimensions and codec parameters.
-    bool init(void* codec_params, int width, int height);
+    /// Open decoder for a codec. Uses hwaccel when available, falls
+    /// back to software decode.
+    bool open(int codec_id, int width, int height);
 
-    /// Decode a packet. Returns true if a frame was produced.
-    /// On success, frame data is on GPU as NV12 (CUDA device pointers).
-    bool decode(void* packet);
+    /// Feed a compressed packet. Returns true if frames are available.
+    bool send_packet(const uint8_t* data, int size, int64_t pts);
 
-    /// Get the decoded frame's CUDA device pointer and pitch for a plane.
-    /// plane=0: Y, plane=1: interleaved UV.
-    uint8_t* plane_data(int plane) const;
-    int plane_pitch(int plane) const;
+    /// Receive a decoded frame. Returns nullptr when no more frames.
+    /// Caller must call release_frame() after processing.
+    AVFrame* receive_frame();
 
-    /// Decoded frame PTS in microseconds.
-    int64_t frame_pts_us() const;
+    /// Release a frame obtained from receive_frame().
+    void release_frame(AVFrame* frame);
 
-    /// Flush decoder buffers (e.g., after seek).
+    /// Flush decoder (after seek).
     void flush();
 
-private:
-    void* codec_ctx_ = nullptr;     // AVCodecContext*
-    void* hw_device_ctx_ = nullptr; // AVBufferRef* — CUDA device context
-    void* hw_frames_ctx_ = nullptr; // AVBufferRef* — CUDA frames context
+    /// Close decoder and free resources.
+    void close();
 
-    int width_ = 0;
-    int height_ = 0;
+    /// True if hardware decode (NVDEC) is active.
+    bool is_hardware() const;
+
+private:
+    bool try_open_hwaccel(int codec_id, int width, int height);
+    bool try_open_software(int codec_id, int width, int height);
+
+    AVCodecContext* codec_ctx_ = nullptr;
+    AVBufferRef* hw_device_ctx_ = nullptr;
+    int width_ = 0, height_ = 0;
+    bool is_hw_ = false;
 };
 
 }  // namespace vsr
