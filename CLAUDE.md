@@ -208,6 +208,26 @@ Verified: 7202 frames, 0 duplicates (`tests/test_decoder.cpp`).
 
 **Golden rule:** Native decoders + get_format hwaccel. Never `_cuvid` variants.
 
+### NVIDIA Vulkan + Wayland — judgment chain
+
+**Conclusion:** NVIDIA proprietary driver **does** support `VK_KHR_wayland_surface` and native Wayland Vulkan presentation — **if** `nvidia_drm.modeset=1` is set.
+
+**Judgment chain (verified 2026-06-22 on CachyOS + Niri + RTX 5060 Ti):**
+
+1. `vulkaninfo --summary` lists `VK_KHR_wayland_surface : extension revision 6` — the instance extension is present at the loader/ICD level regardless of modesetting.
+
+2. The extension alone is not enough. `vkGetPhysicalDeviceSurfaceSupportKHR` is the actual gate — it returns `VK_TRUE` only when `nvidia_drm.modeset=1` (kernel cmdline). Without modesetting, the extension loads but every queue returns `VK_FALSE`.
+
+3. Check with: `sudo cat /sys/module/nvidia_drm/parameters/modeset` → `Y` means enabled. Also verify `lsmod | grep nvidia_drm` — the module must be loaded (or built-in).
+
+4. Runtime probe (full Wayland surface creation + `vkGetPhysicalDeviceSurfaceSupportKHR`) confirmed on this system: queue 0 returns `VK_TRUE`, native Wayland Vulkan works.
+
+5. If a user's system has `modeset=N` or `nvidia_drm` not loaded: `vkGetPhysicalDeviceSurfaceSupportKHR` returns `VK_FALSE` for all queues. Fallback: `QT_QPA_PLATFORM=xcb` (XWayland) — transparent to the compositor.
+
+**Code approach:** `main.cpp` no longer forces XCB. `VulkanWidget::init_vulkan()` tries native Wayland first; on failure, prints a message explaining the `nvidia_drm.modeset=1` requirement and the XCB workaround.
+
+**Previous misdiagnosis (corrected):** An earlier `vulkaninfo` check was misread as "NVIDIA doesn't support Wayland Vulkan," leading to an unconditional `QT_QPA_PLATFORM=xcb` override. This was wrong. The driver supports it; modesetting is the prerequisite.
+
 ### Other findings
 
 - VFX SDK bundles all deps (TensorRT, NPP, cuDNN). Only `libcuda.so.1` is external.
