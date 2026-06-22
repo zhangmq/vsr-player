@@ -1,23 +1,23 @@
 /// VSR Player — Qt client entry point.
-///
-/// Build:
-///   g++ -std=c++20 -O2 -Wall -o build/vsr-player \
-///       src/client/main.cpp src/client/MainWindow.cpp \
-///       src/client/VulkanWidget.cpp \
-///       src/core/Demuxer.cpp src/core/Decoder.cpp \
-///       src/core/utils/VulkanRenderer.cpp \
-///       $(pkg-config --cflags --libs Qt6Widgets vulkan \
-///         libavcodec libavformat libavutil libswscale) \
-///       -lcuda -Isrc/core -Isrc/core/api -Isrc/client -Isrc/core/utils
 
 #include <QApplication>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
 #include "MainWindow.h"
 
 int main(int argc, char* argv[]) {
-    // NVIDIA Vulkan driver does not support VK_KHR_wayland_surface.
-    // Force XCB QPA so we can create Xlib/XCB Vulkan surfaces.
-    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
-        qputenv("QT_QPA_PLATFORM", "xcb");
+    // NVIDIA Vulkan driver: VK_KHR_wayland_surface present support = false.
+    // We must use X11 surfaces, so Qt needs to run on XCB (XWayland).
+    // This is transparent — the window still appears as a native Wayland
+    // window through the compositor's XWayland bridge.
+    const char* session = getenv("XDG_SESSION_TYPE");
+    if (session && strcmp(session, "wayland") == 0) {
+        if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+            fprintf(stderr, "Note: NVIDIA Vulkan → forcing XCB QPA (XWayland)\n");
+            qputenv("QT_QPA_PLATFORM", "xcb");
+        }
     }
 
     QApplication app(argc, argv);
@@ -27,7 +27,6 @@ int main(int argc, char* argv[]) {
     vsr::MainWindow window;
     window.show();
 
-    // Open file from command line
     if (argc > 1) {
         window.open_file(argv[1]);
     }
