@@ -22,9 +22,10 @@ public:
     Decoder();
     ~Decoder();
 
-    /// Open decoder for a codec. Uses hwaccel when available, falls
-    /// back to software decode.
-    bool open(int codec_id, int width, int height);
+    /// Open decoder from codec parameters.
+    /// @param codecpar  AVCodecParameters* from the demuxer stream
+    /// Uses hwaccel when available, falls back to software decode.
+    bool open(void* codecpar);
 
     /// Feed a compressed packet. Returns true if frames are available.
     bool send_packet(const uint8_t* data, int size, int64_t pts);
@@ -46,8 +47,8 @@ public:
     bool is_hardware() const;
 
 private:
-    bool try_open_hwaccel(int codec_id, int width, int height);
-    bool try_open_software(int codec_id, int width, int height);
+    bool try_open_hwaccel(void* codecpar);
+    bool try_open_software(void* codecpar);
 
     AVCodecContext* codec_ctx_ = nullptr;
     AVBufferRef* hw_device_ctx_ = nullptr;

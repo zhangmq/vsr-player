@@ -1,6 +1,8 @@
 #include "Decoder.h"
 
 #include <cstdio>
+#include <cstring>
+#include <vector>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -12,12 +14,11 @@ namespace vsr {
 
 // ── get_format callback — requests CUDA hardware frames ─────────────
 
-static AVPixelFormat decoder_get_hw_format(AVCodecContext* ctx,
+static AVPixelFormat decoder_get_hw_format(AVCodecContext*,
                                            const AVPixelFormat* pix_fmts) {
     for (const AVPixelFormat* p = pix_fmts; *p != AV_PIX_FMT_NONE; p++) {
         if (*p == AV_PIX_FMT_CUDA) return AV_PIX_FMT_CUDA;
     }
-    // CUDA not available — fall back to first offered format
     return pix_fmts[0];
 }
 
@@ -29,9 +30,10 @@ Decoder::~Decoder() { close(); }
 
 // ── Open ────────────────────────────────────────────────────────────
 
-bool Decoder::open(int codec_id, int width, int height) {
-    width_ = width;
-    height_ = height;
+bool Decoder::open(void* codecpar_ptr) {
+    AVCodecParameters* codecpar = static_cast<AVCodecParameters*>(codecpar_ptr);
+    width_  = codecpar->width;
+    height_ = codecpar->height;
 
     // Create CUDA device context (shared across all codecs)
     int ret = av_hwdevice_ctx_create(&hw_device_ctx_, AV_HWDEVICE_TYPE_CUDA,
@@ -41,58 +43,80 @@ bool Decoder::open(int codec_id, int width, int height) {
     }
 
     // Try hwaccel path first
-    if (hw_device_ctx_ && try_open_hwaccel(codec_id, width, height)) {
+    if (hw_device_ctx_ && try_open_hwaccel(codecpar)) {
         is_hw_ = true;
         return true;
     }
 
     // Fall back to software
-    return try_open_software(codec_id, width, height);
+    return try_open_software(codecpar);
 }
 
-bool Decoder::try_open_hwaccel(int codec_id, int width, int height) {
-    // Find the native decoder (NOT libdav1d, NOT _cuvid).
-    // The native decoder supports hwaccel (e.g., av1 → av1_nvdec).
-    const AVCodec* codec = avcodec_find_decoder(static_cast<AVCodecID>(codec_id));
-    if (!codec) return false;
+bool Decoder::try_open_hwaccel(void* codecpar_ptr) {
+    AVCodecParameters* codecpar = static_cast<AVCodecParameters*>(codecpar_ptr);
+    int codec_id = static_cast<int>(codecpar->codec_id);
+    // Build a list of decoder names to try. The first one with CUDA
+    // hwaccel support wins. Order: native name → default decoder.
+    // For AV1: "av1" has av1_nvdec, but "libdav1d" (the default) doesn't.
+    std::vector<const char*> decoders_to_try;
 
-    // Check this codec actually supports CUDA hwaccel
-    bool has_cuda_hwaccel = false;
-    for (int i = 0;; i++) {
-        const AVCodecHWConfig* cfg = avcodec_get_hw_config(codec, i);
-        if (!cfg) break;
-        if (cfg->device_type == AV_HWDEVICE_TYPE_CUDA) {
-            has_cuda_hwaccel = true;
-            break;
-        }
+    // Native decoder name (e.g., "av1", "h264", "hevc", "vp9")
+    const char* native_name = avcodec_get_name(static_cast<AVCodecID>(codec_id));
+    decoders_to_try.push_back(native_name);
+
+    // Default decoder for this codec_id (may differ, e.g., libdav1d for AV1)
+    const AVCodec* default_codec =
+        avcodec_find_decoder(static_cast<AVCodecID>(codec_id));
+    if (default_codec && strcmp(default_codec->name, native_name) != 0) {
+        decoders_to_try.push_back(default_codec->name);
     }
-    if (!has_cuda_hwaccel) return false;
+
+    const AVCodec* codec = nullptr;
+    for (const char* name : decoders_to_try) {
+        const AVCodec* c = avcodec_find_decoder_by_name(name);
+        if (!c) continue;
+        for (int i = 0;; i++) {
+            const AVCodecHWConfig* cfg = avcodec_get_hw_config(c, i);
+            if (!cfg) break;
+            if (cfg->device_type == AV_HWDEVICE_TYPE_CUDA) {
+                codec = c;
+                break;
+            }
+        }
+        if (codec) break;
+    }
+
+    if (!codec) return false;
 
     codec_ctx_ = avcodec_alloc_context3(codec);
     if (!codec_ctx_) return false;
 
-    codec_ctx_->width = width;
-    codec_ctx_->height = height;
+    // Copy codec parameters (extradata etc. — REQUIRED for hwaccel init)
+    avcodec_parameters_to_context(codec_ctx_, codecpar);
     codec_ctx_->get_format = decoder_get_hw_format;
     codec_ctx_->hw_device_ctx = av_buffer_ref(hw_device_ctx_);
 
     int ret = avcodec_open2(codec_ctx_, codec, nullptr);
     if (ret < 0) {
+        char err[128]; av_strerror(ret, err, sizeof(err));
+        fprintf(stderr, "Decoder: avcodec_open2 failed: %s\n", err);
         avcodec_free_context(&codec_ctx_);
         return false;
     }
 
-    fprintf(stderr, "Decoder: hwaccel=%s active\n",
-            codec_ctx_->hwaccel ? codec_ctx_->hwaccel->name : "NONE");
+    // Note: hwaccel is set after the first frame is decoded, not here.
+    // get_format was called — CUDA was requested — hwaccel will activate.
     return true;
 }
 
-bool Decoder::try_open_software(int codec_id, int, int) {
-    const AVCodec* codec = avcodec_find_decoder(static_cast<AVCodecID>(codec_id));
+bool Decoder::try_open_software(void* codecpar_ptr) {
+    AVCodecParameters* codecpar = static_cast<AVCodecParameters*>(codecpar_ptr);
+    const AVCodec* codec = avcodec_find_decoder(codecpar->codec_id);
     if (!codec) return false;
 
     codec_ctx_ = avcodec_alloc_context3(codec);
     if (!codec_ctx_) return false;
+    avcodec_parameters_to_context(codec_ctx_, codecpar);
 
     int ret = avcodec_open2(codec_ctx_, codec, nullptr);
     if (ret < 0) {
