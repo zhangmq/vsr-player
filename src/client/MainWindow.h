@@ -15,10 +15,11 @@ class VulkanWidget;
 class Demuxer;
 class Decoder;
 
-/// Minimal Qt main window with Vulkan video display.
+/// Qt main window with Vulkan video filling the window
+/// and overlay controls (play/pause, status).
 ///
-/// For the prototype, the decode loop runs on a QTimer in the main thread.
-/// Full architecture will move it to a worker thread via PlayerCore.
+/// Prototype: decode loop on QTimer in main thread.
+/// Full architecture will move to worker thread via PlayerCore.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -28,14 +29,20 @@ public:
 
     void open_file(const QString& path);
 
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
 private slots:
     void on_timer_tick();
 
 private:
     void setup_ui();
 
-    // UI
+    // Video display (fills entire window)
     VulkanWidget* vulkan_widget_ = nullptr;
+
+    // Overlay controls (floating on top of video)
+    QWidget* overlay_ = nullptr;
     QPushButton* play_btn_ = nullptr;
     QLabel* status_label_ = nullptr;
 

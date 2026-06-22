@@ -10,5 +10,6 @@ void main() {
     );
     gl_Position = vec4(pos, 0.0, 1.0);
     frag_texcoord = (pos + 1.0) * 0.5;
-    frag_texcoord.y = 1.0 - frag_texcoord.y;
+    // Vulkan: framebuffer (0,0) = top-left, matching texture coordinate origin.
+    // No Y-flip needed (unlike OpenGL where texture origin is bottom-left).
 }

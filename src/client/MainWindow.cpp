@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QVBoxLayout>
 
 extern "C" {
@@ -36,22 +37,43 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::setup_ui() {
-    auto* central = new QWidget(this);
+    // No layout — we manage positions manually for overlay effect.
+    QWidget* central = new QWidget(this);
     setCentralWidget(central);
-    auto* root = new QVBoxLayout(central);
+    // Let children fill by resizing in resizeEvent.
 
-    // Vulkan display area
-    vulkan_widget_ = new VulkanWidget(this);
-    root->addWidget(vulkan_widget_, 1);
+    // Video display — fills entire window
+    vulkan_widget_ = new VulkanWidget(central);
 
-    // Bottom bar
-    auto* bar = new QHBoxLayout;
+    // Overlay control bar — semi-transparent, bottom-aligned
+    overlay_ = new QWidget(central);
+    overlay_->setStyleSheet(
+        "QWidget {"
+        "  background: rgba(0, 0, 0, 0.55);"
+        "  border-radius: 6px;"
+        "}"
+    );
+    overlay_->setFixedHeight(48);
+
+    auto* bar = new QHBoxLayout(overlay_);
+    bar->setContentsMargins(12, 4, 12, 4);
+    bar->setSpacing(10);
+
     play_btn_ = new QPushButton("▶ Play");
+    play_btn_->setStyleSheet(
+        "QPushButton {"
+        "  background: rgba(255,255,255,0.15); color: white;"
+        "  border: none; border-radius: 4px; padding: 6px 16px;"
+        "  font-size: 13px;"
+        "}"
+        "QPushButton:hover { background: rgba(255,255,255,0.25); }"
+    );
+
     status_label_ = new QLabel("No file loaded");
+    status_label_->setStyleSheet("color: rgba(255,255,255,0.85); font-size: 13px;");
 
     bar->addWidget(play_btn_);
     bar->addWidget(status_label_, 1);
-    root->addLayout(bar);
 
     // Timer for frame pacing
     timer_ = new QTimer(this);
@@ -62,9 +84,21 @@ void MainWindow::setup_ui() {
         if (!pipeline_ready_) return;
         playing_ = !playing_;
         play_btn_->setText(playing_ ? "⏸ Pause" : "▶ Play");
-        if (playing_) timer_->start(1); // 1ms tick, pacing via frame_delay
+        if (playing_) timer_->start(1);
         else timer_->stop();
     });
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event) {
+    QMainWindow::resizeEvent(event);
+    // Video fills entire window
+    const int w = centralWidget()->width();
+    const int h = centralWidget()->height();
+    vulkan_widget_->setGeometry(0, 0, w, h);
+    // Overlay bar at the bottom, with margins
+    const int margin = 12;
+    overlay_->setGeometry(margin, h - overlay_->height() - margin,
+                          w - margin * 2, overlay_->height());
 }
 
 void MainWindow::open_file(const QString& path) {
@@ -96,7 +130,7 @@ void MainWindow::open_file(const QString& path) {
     rgb_buf_.resize(video_width_ * video_height_ * 3);
 
     pipeline_ready_ = true;
-    status_label_->setText(QString("Ready — %1x%2 @ %3fps %4")
+    status_label_->setText(QString("%1x%2 @ %3fps %4")
         .arg(video_width_).arg(video_height_)
         .arg(demuxer_->video_fps(), 0, 'f', 1)
         .arg(decoder_->is_hardware() ? "[NVDEC]" : "[SW]"));
@@ -113,7 +147,7 @@ void MainWindow::on_timer_tick() {
     // Read next packet
     AVPacket* pkt = demuxer_->read_packet();
     if (!pkt) {
-        // EOF — loop?
+        // EOF
         playing_ = false;
         timer_->stop();
         status_label_->setText("End of file");
@@ -153,7 +187,7 @@ void MainWindow::on_timer_tick() {
     av_frame_free(&sw_frame);
     decoder_->release_frame(hw_frame);
 
-    // Frame pacing — sleep remainder
+    // Frame pacing
     static auto last_frame = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
     last_frame = now;
