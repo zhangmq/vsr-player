@@ -45,11 +45,18 @@ bool Decoder::open(void* codecpar_ptr) {
     // Try hwaccel path first
     if (hw_device_ctx_ && try_open_hwaccel(codecpar)) {
         is_hw_ = true;
+        fprintf(stderr, "Decoder: open ok — %dx%d, hwaccel (NVDEC)\n",
+                width_, height_);
         return true;
     }
 
     // Fall back to software
-    return try_open_software(codecpar);
+    if (try_open_software(codecpar)) {
+        fprintf(stderr, "Decoder: open ok — %dx%d, software\n",
+                width_, height_);
+        return true;
+    }
+    return false;
 }
 
 bool Decoder::try_open_hwaccel(void* codecpar_ptr) {
@@ -72,6 +79,7 @@ bool Decoder::try_open_hwaccel(void* codecpar_ptr) {
     }
 
     const AVCodec* codec = nullptr;
+    const char* hwaccel_name = nullptr;
     for (const char* name : decoders_to_try) {
         const AVCodec* c = avcodec_find_decoder_by_name(name);
         if (!c) continue;
@@ -80,6 +88,7 @@ bool Decoder::try_open_hwaccel(void* codecpar_ptr) {
             if (!cfg) break;
             if (cfg->device_type == AV_HWDEVICE_TYPE_CUDA) {
                 codec = c;
+                hwaccel_name = av_hwdevice_get_type_name(AV_HWDEVICE_TYPE_CUDA);
                 break;
             }
         }
@@ -106,6 +115,9 @@ bool Decoder::try_open_hwaccel(void* codecpar_ptr) {
 
     // Note: hwaccel is set after the first frame is decoded, not here.
     // get_format was called — CUDA was requested — hwaccel will activate.
+    fprintf(stderr, "Decoder: hwaccel init — decoder=%s hwaccel=%s "
+            "(activates on first frame)\n",
+            codec->name, hwaccel_name);
     return true;
 }
 
@@ -123,7 +135,7 @@ bool Decoder::try_open_software(void* codecpar_ptr) {
         avcodec_free_context(&codec_ctx_);
         return false;
     }
-    fprintf(stderr, "Decoder: software decode (codec=%s)\n", codec->name);
+    fprintf(stderr, "Decoder: software codec=%s\n", codec->name);
     return true;
 }
 
@@ -146,6 +158,19 @@ AVFrame* Decoder::receive_frame() {
         av_frame_free(&frame);
         return nullptr;
     }
+
+    // Log hwaccel activation on first decoded frame
+    if (codec_ctx_->hwaccel && is_hw_) {
+        static bool hwaccel_logged = false;
+        if (!hwaccel_logged) {
+            hwaccel_logged = true;
+            fprintf(stderr, "Decoder: hwaccel active — %s, pix_fmt=%s (%d)\n",
+                    codec_ctx_->hwaccel->name,
+                    av_get_pix_fmt_name((AVPixelFormat)frame->format),
+                    frame->format);
+        }
+    }
+
     return frame;
 }
 

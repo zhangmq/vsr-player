@@ -6,7 +6,9 @@ __pycache__/
 dist/
 build/
 cmake-build-*/
-third_party/nvvfx/
+third_party/*
+!third_party/.gitkeep
+!third_party/README.md
 *.swp
 *.swo
 .clangd/

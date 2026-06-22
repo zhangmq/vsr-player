@@ -15,7 +15,8 @@ public:
     ~VulkanWidget() override;
 
     bool init_vulkan();
-    bool present_frame(const uint8_t* rgb_data, int width, int height);
+    bool present_frame(const uint8_t* data, int video_w, int video_h,
+                       bool is_rgba = false);
 
     QPaintEngine* paintEngine() const override { return nullptr; }
 

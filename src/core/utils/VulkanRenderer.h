@@ -16,9 +16,11 @@ public:
     /// @param native_display wl_display* from Qt's platform native interface
     bool init(void* native_window, void* native_display);
 
-    /// Render one RGB24 frame. Video is letterboxed to maintain aspect ratio
+    /// Render one frame. Video is letterboxed to maintain aspect ratio
     /// within the swapchain (which matches the window/surface size).
-    bool render_frame(const uint8_t* rgb_data, int video_w, int video_h);
+    /// @param is_rgba  If true, data is RGBA (4 bytes/pixel), else RGB24 (3 bytes/pixel).
+    bool render_frame(const uint8_t* data, int video_w, int video_h,
+                      bool is_rgba = false);
 
     /// Recreate swapchain at the given surface (window) size.
     bool resize(int surface_w, int surface_h);
@@ -28,7 +30,7 @@ public:
 
 private:
     bool create_swapchain_and_pipeline(int w, int h);
-    bool update_texture(const uint8_t* data, int w, int h);
+    bool update_texture(const uint8_t* data, int w, int h, int bpp);
 
     // Handles
     void* instance_ = nullptr;

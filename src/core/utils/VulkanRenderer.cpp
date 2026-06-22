@@ -5,6 +5,7 @@
 #include "VulkanRenderer.h"
 
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 #define VK_USE_PLATFORM_WAYLAND_KHR
@@ -380,7 +381,7 @@ bool VulkanRenderer::create_swapchain_and_pipeline(int w, int h) {
 
 // ── Texture update ──────────────────────────────────────────────────
 
-bool VulkanRenderer::update_texture(const uint8_t* data, int w, int h) {
+bool VulkanRenderer::update_texture(const uint8_t* data, int w, int h, int bpp) {
     VkDevice dev = (VkDevice)device_;
     if (!dev) return false;
 
@@ -452,18 +453,22 @@ bool VulkanRenderer::update_texture(const uint8_t* data, int w, int h) {
         vkWaitForFences(dev, 1, (VkFence*)&f, VK_TRUE, UINT64_MAX);
     }
 
-    // Upload RGBA data to linear-tiled image
+    // Upload data to linear-tiled image
     void* mapped;
     vkMapMemory(dev, (VkDeviceMemory)texture_memory_, 0, VK_WHOLE_SIZE, 0, &mapped);
     uint8_t* dst = (uint8_t*)mapped;
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
-            int si = (y * w + x) * 3;
+            int si = (y * w + x) * bpp;
             int di = y * w * 4 + x * 4;
-            dst[di + 0] = data[si + 0];  // R
-            dst[di + 1] = data[si + 1];  // G
-            dst[di + 2] = data[si + 2];  // B
-            dst[di + 3] = 255;           // A
+            if (bpp == 4) {
+                memcpy(&dst[di], &data[si], 4);
+            } else {
+                dst[di + 0] = data[si + 0];
+                dst[di + 1] = data[si + 1];
+                dst[di + 2] = data[si + 2];
+                dst[di + 3] = 255;
+            }
         }
     }
     vkUnmapMemory(dev, (VkDeviceMemory)texture_memory_);
@@ -507,11 +512,11 @@ bool VulkanRenderer::resize(int surface_w, int surface_h) {
 
 // ── Render frame ────────────────────────────────────────────────────
 
-bool VulkanRenderer::render_frame(const uint8_t* rgb_data, int video_w, int video_h) {
+bool VulkanRenderer::render_frame(const uint8_t* data, int video_w, int video_h, bool is_rgba) {
     VkDevice dev = (VkDevice)device_;
     if (!dev || !surface_ || !swapchain_) return false;
 
-    if (!update_texture(rgb_data, video_w, video_h)) return false;
+    if (!update_texture(data, video_w, video_h, is_rgba ? 4 : 3)) return false;
 
     // Calculate letterboxed viewport: fit video in swapchain, keep aspect ratio
     float scale_w = (float)swapchain_width_  / (float)video_w;

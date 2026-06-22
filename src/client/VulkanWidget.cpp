@@ -45,7 +45,7 @@ bool VulkanWidget::init_vulkan() {
     return false;
 }
 
-bool VulkanWidget::present_frame(const uint8_t* rgb_data, int video_w, int video_h) {
+bool VulkanWidget::present_frame(const uint8_t* data, int video_w, int video_h, bool is_rgba) {
     if (!vulkan_ready_) return false;
     if (!renderer_.is_ready()) {
         if (!init_vulkan()) return false;
@@ -55,7 +55,7 @@ bool VulkanWidget::present_frame(const uint8_t* rgb_data, int video_w, int video
     int ww = width(), wh = height();
     if (ww > 0 && wh > 0)
         renderer_.resize(ww, wh);
-    return renderer_.render_frame(rgb_data, video_w, video_h);
+    return renderer_.render_frame(data, video_w, video_h, is_rgba);
 }
 
 void VulkanWidget::showEvent(QShowEvent* event) {

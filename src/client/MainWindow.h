@@ -14,17 +14,22 @@ namespace vsr {
 class VulkanWidget;
 class Demuxer;
 class Decoder;
+class CUDAContext;
+class NV12ToRGB;
+class VSRProcessor;
+class AudioOutput;
 
-/// Qt main window with Vulkan video filling the window
-/// and overlay controls (play/pause, status).
+/// Qt main window with Vulkan video, VSR processing, audio playback,
+/// and overlay controls.
 ///
-/// Prototype: decode loop on QTimer in main thread.
-/// Full architecture will move to worker thread via PlayerCore.
+/// Prototype pipeline: decode on QTimer in main thread, GPU NV12→RGB,
+/// NvVFX VSR, PortAudio audio.  Full architecture will move to PlayerCore.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    explicit MainWindow(bool use_vsr = true, Quality quality = Quality::HIGH,
+                        QWidget* parent = nullptr);
     ~MainWindow() override;
 
     void open_file(const QString& path);
@@ -37,6 +42,9 @@ private slots:
 
 private:
     void setup_ui();
+    void update_scale();
+    void apply_scale(int scale);
+    int adaptive_scale(int in_w, int in_h, int win_w, int win_h) const;
 
     // Video display (fills entire window)
     VulkanWidget* vulkan_widget_ = nullptr;
@@ -49,17 +57,40 @@ private:
     // Pipeline (prototype: direct, no PlayerCore threading yet)
     Demuxer* demuxer_ = nullptr;
     Decoder* decoder_ = nullptr;
-    void* sws_ctx_ = nullptr;  // SwsContext*
+
+    // GPU pipeline
+    CUDAContext* cuda_ctx_ = nullptr;
+    NV12ToRGB* nv12_to_rgb_ = nullptr;
+    VSRProcessor* vsr_ = nullptr;
+    AudioOutput* audio_ = nullptr;
 
     QTimer* timer_;
+    QTimer* resize_timer_ = nullptr;  // debounce resize → VSR reconfigure
+    int pending_scale_ = 0;           // scale to apply after debounce (0 = none)
     bool playing_ = false;
     bool pipeline_ready_ = false;
+    bool use_vsr_ = true;
 
-    // Frame buffer
-    std::vector<uint8_t> rgb_buf_;
+    // Video info
     int video_width_ = 0;
     int video_height_ = 0;
     double frame_delay_ms_ = 0.0;
+
+    // GPU buffers (device memory)
+    float* rgb_gpu_ = nullptr;    // NV12ToRGB output: (3,H,W) float32
+    uint8_t* rgba_gpu_ = nullptr; // VSR output: (H',W',4) uint8
+    void* cuda_stream_ = nullptr;
+
+
+    int vsr_w_ = 0, vsr_h_ = 0;   // current VSR output dimensions
+
+    // Host buffer for VSR output (before Vulkan upload)
+    // TODO: replace with CUDA-Vulkan interop
+    std::vector<uint8_t> rgba_host_;
+
+    // Adaptive scale
+    int current_scale_ = 1;
+    Quality quality_ = Quality::HIGH;
 };
 
 }  // namespace vsr

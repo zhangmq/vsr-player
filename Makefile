@@ -6,7 +6,12 @@ COREDIR := src/core
 CLIENTDIR := src/client
 
 CXX := g++
-PKGS := Qt6Widgets vulkan libavcodec libavformat libavutil libswscale wayland-client
+PKGS := Qt6Widgets vulkan libavcodec libavformat libavutil libswscale wayland-client portaudio-2.0
+
+# CUDA include / lib paths (bundled in third_party/)
+CUDA_DIR := third_party/cuda
+CUDA_INC  := $(CUDA_DIR)/include
+CUDA_LIB  := $(CUDA_DIR)/lib
 
 QT6_GUI_VER := $(shell pkg-config --modversion Qt6Gui 2>/dev/null)
 QPA_INC := /usr/include/qt6/QtGui/$(QT6_GUI_VER)/
@@ -14,8 +19,16 @@ CXXFLAGS := -std=c++20 -Wall -Wextra -fPIC -O2 -DNDEBUG \
             -Wno-missing-field-initializers \
             $(shell pkg-config --cflags $(PKGS)) \
             -I$(QPA_INC) \
-            -Isrc/core -Isrc/core/api -Isrc/client -Isrc/core/utils -I$(BUILD_DIR)/shaders
-LDFLAGS  := $(shell pkg-config --libs $(PKGS)) -lcuda
+            -I$(CUDA_INC) \
+            -Isrc/core -Isrc/core/api -Isrc/client -Isrc/core/utils -I$(BUILD_DIR)/shaders \
+            -Ithird_party/nvvfx/include
+LDFLAGS  := $(shell pkg-config --libs $(PKGS)) \
+            -L$(CUDA_LIB) -lnvrtc -lnvrtc-builtins \
+            -lcuda -ldl \
+            -Wl,--disable-new-dtags \
+            -Wl,-rpath,/home/zmq/projects/vsr-player/third_party/cuda/lib \
+            -Lthird_party/nvvfx/lib -lNVCVImage \
+            -Wl,-rpath,/home/zmq/projects/vsr-player/third_party/nvvfx/lib
 
 MOC := /usr/lib/qt6/moc
 GLSLC := glslc
@@ -36,7 +49,11 @@ MOC_SRC := $(BUILD_DIR)/moc_MainWindow.cpp $(BUILD_DIR)/moc_VulkanWidget.cpp
 # ---- Object lists ----
 CORE_OBJS := $(BUILD_DIR)/src/core/Demuxer.o \
              $(BUILD_DIR)/src/core/Decoder.o \
-             $(BUILD_DIR)/src/core/utils/VulkanRenderer.o
+             $(BUILD_DIR)/src/core/VSRProcessor.o \
+             $(BUILD_DIR)/src/core/AudioOutput.o \
+             $(BUILD_DIR)/src/core/utils/VulkanRenderer.o \
+             $(BUILD_DIR)/src/core/utils/CUDAContext.o \
+             $(BUILD_DIR)/src/core/utils/NV12ToRGB.o
 
 CLIENT_OBJS := $(BUILD_DIR)/src/client/main.o \
                $(BUILD_DIR)/src/client/MainWindow.o \
@@ -48,7 +65,10 @@ OBJS := $(CORE_OBJS) $(CLIENT_OBJS) $(MOC_OBJS)
 
 # ── Targets ──────────────────────────────────────────────────────────
 
-all: $(BIN)
+all: check-deps $(BIN)
+
+check-deps:
+	@scripts/check-deps.sh
 
 $(BIN): $(OBJS)
 	@echo "  LINK  $(notdir $@)"
@@ -125,7 +145,7 @@ clean:
 	@echo "  Cleaned"
 
 debug:
-	$(MAKE) CXXFLAGS="-std=c++20 -Wall -Wextra -fPIC -O0 -g $(shell pkg-config --cflags $(PKGS)) -Isrc/core -Isrc/core/api -Isrc/client -Isrc/core/utils -Ibuild/shaders"
+	$(MAKE) CXXFLAGS="-std=c++20 -Wall -Wextra -fPIC -O0 -g $(shell pkg-config --cflags $(PKGS)) -Isrc/core -Isrc/core/api -Isrc/client -Isrc/core/utils -Ibuild/shaders -I$(CUDA_INC)"
 
 help:
 	@echo "make         — release build"
