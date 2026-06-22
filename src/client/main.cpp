@@ -14,6 +14,12 @@
 #include "MainWindow.h"
 
 int main(int argc, char* argv[]) {
+    // NVIDIA Vulkan driver does not support VK_KHR_wayland_surface.
+    // Force XCB QPA so we can create Xlib/XCB Vulkan surfaces.
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+        qputenv("QT_QPA_PLATFORM", "xcb");
+    }
+
     QApplication app(argc, argv);
     app.setApplicationName("VSR Player");
     app.setApplicationVersion("0.1.0");

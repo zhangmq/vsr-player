@@ -61,7 +61,21 @@ bool VulkanRenderer::init(Platform platform, void* native_window, void* native_d
 
     VkInstance inst;
     res = vkCreateInstance(&ici, nullptr, &inst);
-    if (res != VK_SUCCESS) { fprintf(stderr, "Vulkan: instance failed\n"); return false; }
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "Vulkan: vkCreateInstance failed (error %d, ext=%s)\n",
+                res, surface_ext);
+        // Fall back to X11 if Wayland instance creation fails
+        if (platform == Platform::WAYLAND) {
+            fprintf(stderr, "Vulkan: Wayland failed, trying X11 fallback\n");
+            surface_ext = VK_KHR_XLIB_SURFACE_EXTENSION_NAME;
+            exts[1] = surface_ext;
+            res = vkCreateInstance(&ici, nullptr, &inst);
+        }
+        if (res != VK_SUCCESS) {
+            fprintf(stderr, "Vulkan: instance creation failed (%d)\n", res);
+            return false;
+        }
+    }
     instance_ = inst;
 
     // ---- Surface ----
