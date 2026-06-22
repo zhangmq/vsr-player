@@ -1,29 +1,24 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QTimer>
+#include <vector>
 
-class QListView;
-class QStringListModel;
+#include "api/Player.h"
+
 class QPushButton;
-class QSlider;
 class QLabel;
 
 namespace vsr {
 
 class VulkanWidget;
-class PlayerProxy;
+class Demuxer;
+class Decoder;
 
-/// Main application window — Qt client for the VSR player.
+/// Minimal Qt main window with Vulkan video display.
 ///
-/// Layout:
-///   ┌──────────────────────────────────┐
-///   │  PlaylistPanel  │  VulkanWidget  │
-///   │                 │  (video area)  │
-///   ├─────────────────┴───────────────┤
-///   │  ControlBar (play/pause/seek)   │
-///   ├─────────────────────────────────┤
-///   │  StatusBar (fps, res, quality)  │
-///   └─────────────────────────────────┘
+/// For the prototype, the decode loop runs on a QTimer in the main thread.
+/// Full architecture will move it to a worker thread via PlayerCore.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -31,34 +26,33 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
 
-    /// Open a video file or playlist.
     void open_file(const QString& path);
 
 private slots:
-    void on_play_pause();
-    void on_stop();
-    void on_seek(int64_t ms);
-    void on_quality_changed(int index);
-    void on_playlist_item_activated(const QModelIndex& index);
+    void on_timer_tick();
 
 private:
     void setup_ui();
-    void setup_connections();
-    void connect_player_events();
 
-    // UI components
-    QListView* playlist_view_ = nullptr;
-    QStringListModel* playlist_model_ = nullptr;
+    // UI
     VulkanWidget* vulkan_widget_ = nullptr;
     QPushButton* play_btn_ = nullptr;
-    QPushButton* stop_btn_ = nullptr;
-    QSlider* seek_slider_ = nullptr;
     QLabel* status_label_ = nullptr;
 
-    // Player proxy (bridge to libvsrplayer)
-    PlayerProxy* player_proxy_ = nullptr;
+    // Pipeline (prototype: direct, no PlayerCore threading yet)
+    Demuxer* demuxer_ = nullptr;
+    Decoder* decoder_ = nullptr;
+    void* sws_ctx_ = nullptr;  // SwsContext*
 
+    QTimer* timer_;
     bool playing_ = false;
+    bool pipeline_ready_ = false;
+
+    // Frame buffer
+    std::vector<uint8_t> rgb_buf_;
+    int video_width_ = 0;
+    int video_height_ = 0;
+    double frame_delay_ms_ = 0.0;
 };
 
 }  // namespace vsr

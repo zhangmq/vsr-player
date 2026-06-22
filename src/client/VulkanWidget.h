@@ -2,10 +2,13 @@
 
 #include <QWidget>
 
+#include "utils/VulkanRenderer.h"
+
 namespace vsr {
 
-/// Embedded Vulkan render surface widget.
-/// Owns a Vulkan surface that libvsrplayer renders into.
+/// QWidget embedding a Vulkan render surface.
+///
+/// Disables Qt painting, provides winId() as the VkSurfaceKHR target.
 class VulkanWidget : public QWidget {
     Q_OBJECT
 
@@ -13,16 +16,23 @@ public:
     explicit VulkanWidget(QWidget* parent = nullptr);
     ~VulkanWidget() override;
 
-    /// Get the native Vulkan surface handle for the player core.
-    void* vulkan_surface() const { return surface_; }
+    /// Initialize Vulkan and create surface from this widget's native window.
+    bool init_vulkan();
+
+    /// Render one RGB24 frame.
+    bool present_frame(const uint8_t* rgb_data, int width, int height);
+
+    QPaintEngine* paintEngine() const override { return nullptr; }
 
 protected:
-    QPaintEngine* paintEngine() const override { return nullptr; }
     void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
-    bool init_vulkan();
-    void* surface_ = nullptr;  // VkSurfaceKHR
+    VulkanRenderer renderer_;
+    bool vulkan_ready_ = false;
+    int frame_width_ = 0;
+    int frame_height_ = 0;
 };
 
 }  // namespace vsr
