@@ -14,9 +14,9 @@
 #include <X11/Xlib.h>
 #include <wayland-client.h>
 
-// Generated SPIR-V arrays
-#include "../../../build/video_vert_spv.h"
-#include "../../../build/video_frag_spv.h"
+// Generated SPIR-V headers (by Makefile: glslc + xxd)
+#include "video_vert_spv.h"
+#include "video_frag_spv.h"
 
 namespace vsr {
 
