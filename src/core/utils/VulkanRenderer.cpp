@@ -316,11 +316,18 @@ bool VulkanRenderer::create_swapchain_and_pipeline(int w, int h) {
     vkCreatePipelineLayout(dev, &plci, nullptr, &pl);
     pipeline_layout_ = pl;
 
+    // Dynamic viewport + scissor (needed for letterboxing)
+    VkDynamicState dyn_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dsi = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dsi.dynamicStateCount = 2;
+    dsi.pDynamicStates = dyn_states;
+
     VkGraphicsPipelineCreateInfo pci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
     pci.stageCount = 2; pci.pStages = stages;
     pci.pVertexInputState = &vis; pci.pInputAssemblyState = &ias;
     pci.pViewportState = &vps; pci.pRasterizationState = &rs;
     pci.pMultisampleState = &ms; pci.pColorBlendState = &cbs;
+    pci.pDynamicState = &dsi;
     pci.layout = pl; pci.renderPass = rp; pci.subpass = 0;
 
     VkPipeline pipe;
