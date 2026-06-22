@@ -405,14 +405,26 @@ void MainWindow::on_timer_tick() {
     if (vsr_) {
         // VSR: float32 RGB GPU → RGBA uint8 GPU
         void* vsr_out_ptr = nullptr;
-        int vsr_out_w = 0, vsr_out_h = 0;
-        bool vsr_ok = vsr_->process(rgb_gpu_, &vsr_out_ptr, &vsr_out_w, &vsr_out_h);
+        int vsr_out_w = 0, vsr_out_h = 0, vsr_out_pitch = 0;
+        bool vsr_ok = vsr_->process(rgb_gpu_, &vsr_out_ptr, &vsr_out_w, &vsr_out_h,
+                                     &vsr_out_pitch);
 
         if (vsr_ok && vsr_out_ptr) {
-            size_t rgba_bytes = (size_t)vsr_out_w * vsr_out_h * 4;
+            size_t row_bytes = (size_t)vsr_out_w * 4;
+            size_t rgba_bytes = row_bytes * vsr_out_h;
             if (rgba_bytes > rgba_host_.size()) rgba_host_.resize(rgba_bytes);
-            cuMemcpyDtoHAsync(rgba_host_.data(), (CUdeviceptr)vsr_out_ptr,
-                               rgba_bytes, (CUstream)cuda_stream_);
+
+            // Use pitched 2D copy — VSR GPU output has row alignment padding
+            CUDA_MEMCPY2D copy_desc = {};
+            copy_desc.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+            copy_desc.srcDevice     = (CUdeviceptr)vsr_out_ptr;
+            copy_desc.srcPitch      = (size_t)vsr_out_pitch;
+            copy_desc.dstMemoryType = CU_MEMORYTYPE_HOST;
+            copy_desc.dstHost       = rgba_host_.data();
+            copy_desc.dstPitch      = row_bytes;
+            copy_desc.WidthInBytes  = row_bytes;
+            copy_desc.Height        = (size_t)vsr_out_h;
+            cuMemcpy2DAsync(&copy_desc, (CUstream)cuda_stream_);
             cuStreamSynchronize((CUstream)cuda_stream_);
             vsr_w_ = vsr_out_w;
             vsr_h_ = vsr_out_h;

@@ -256,7 +256,7 @@ bool VSRProcessor::init(int in_w, int in_h, int out_w, int out_h, Quality qualit
 // ── Process ───────────────────────────────────────────────────────────
 
 bool VSRProcessor::process(void* input_cuda_ptr, void** output_cuda_ptr,
-                           int* out_w, int* out_h) {
+                           int* out_w, int* out_h, int* out_pitch) {
     if (!vsr_handle_) return false;
 
     int ret;
@@ -326,6 +326,7 @@ bool VSRProcessor::process(void* input_cuda_ptr, void** output_cuda_ptr,
     *output_cuda_ptr = out_img_.pixels;
     *out_w = (int)out_img_.width;
     *out_h = (int)out_img_.height;
+    if (out_pitch) *out_pitch = (int)out_img_.pitch;
 
     return true;
 }

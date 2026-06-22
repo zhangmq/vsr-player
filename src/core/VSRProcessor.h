@@ -25,7 +25,9 @@ public:
 
     /// Process one frame. Input must be a CUDA float32 RGB planar pointer.
     /// Returns the output RGBA CUDA device pointer.
-    bool process(void* input_cuda_ptr, void** output_cuda_ptr, int* out_w, int* out_h);
+    /// out_pitch: GPU row pitch of output buffer (may be > out_w * 4 due to alignment).
+    bool process(void* input_cuda_ptr, void** output_cuda_ptr,
+                 int* out_w, int* out_h, int* out_pitch = nullptr);
 
     /// Reconfigure for new dimensions or quality.
     bool reconfigure(int out_w, int out_h, Quality quality);

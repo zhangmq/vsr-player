@@ -420,7 +420,13 @@ bool VulkanRenderer::update_texture(const uint8_t* data, int w, int h, int bpp) 
         texture_ = img; texture_memory_ = mem;
         tex_width_ = w; tex_height_ = h;
 
-        // Transition to shader-read layout
+        // Query actual row pitch (LINEAR tiling may require padding)
+        VkImageSubresource sub = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0};
+        VkSubresourceLayout srl;
+        vkGetImageSubresourceLayout(dev, img, &sub, &srl);
+        tex_row_pitch_ = srl.rowPitch;
+        fprintf(stderr, "Vulkan: texture %dx%d rowPitch=%zu (w*4=%d)\n",
+                w, h, tex_row_pitch_, w * 4);
         VkFence f = (VkFence)fence_;
         vkWaitForFences(dev, 1, (VkFence*)&f, VK_TRUE, UINT64_MAX);
         vkResetFences(dev, 1, (VkFence*)&f);
@@ -453,14 +459,15 @@ bool VulkanRenderer::update_texture(const uint8_t* data, int w, int h, int bpp) 
         vkWaitForFences(dev, 1, (VkFence*)&f, VK_TRUE, UINT64_MAX);
     }
 
-    // Upload data to linear-tiled image
+    // Upload data to linear-tiled image, respecting actual row pitch
     void* mapped;
     vkMapMemory(dev, (VkDeviceMemory)texture_memory_, 0, VK_WHOLE_SIZE, 0, &mapped);
     uint8_t* dst = (uint8_t*)mapped;
+    size_t row_pitch = tex_row_pitch_;
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             int si = (y * w + x) * bpp;
-            int di = y * w * 4 + x * 4;
+            size_t di = y * row_pitch + (size_t)x * 4;
             if (bpp == 4) {
                 memcpy(&dst[di], &data[si], 4);
             } else {
