@@ -6,7 +6,7 @@
 
 namespace vsr {
 
-/// QWidget embedding a Vulkan render surface (Wayland or X11).
+/// QWidget embedding a Vulkan render surface (Wayland).
 class VulkanWidget : public QWidget {
     Q_OBJECT
 

@@ -5,19 +5,16 @@
 
 namespace vsr {
 
-/// Platform for Vulkan surface creation.
-enum class Platform { WAYLAND, XLIB };
-
-/// Minimal Vulkan renderer for video frames.
+/// Minimal Vulkan renderer for video frames — Wayland only.
 class VulkanRenderer {
 public:
     VulkanRenderer();
     ~VulkanRenderer();
 
-    /// Initialize Vulkan and create surface.
-    /// @param native_window  wl_surface* (Wayland) or Window (X11)
-    /// @param native_display wl_display* (Wayland) or Display* (X11)
-    bool init(Platform platform, void* native_window, void* native_display = nullptr);
+    /// Initialize Vulkan and create Wayland surface.
+    /// @param native_window  wl_surface* from Qt's winId()
+    /// @param native_display wl_display* from Qt's platform native interface
+    bool init(void* native_window, void* native_display);
 
     /// Render one RGB24 frame.
     bool render_frame(const uint8_t* rgb_data, int width, int height);

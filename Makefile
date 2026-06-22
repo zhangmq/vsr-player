@@ -6,11 +6,14 @@ COREDIR := src/core
 CLIENTDIR := src/client
 
 CXX := g++
-PKGS := Qt6Widgets vulkan libavcodec libavformat libavutil libswscale x11 wayland-client
+PKGS := Qt6Widgets vulkan libavcodec libavformat libavutil libswscale wayland-client
 
+QT6_GUI_VER := $(shell pkg-config --modversion Qt6Gui 2>/dev/null)
+QPA_INC := /usr/include/qt6/QtGui/$(QT6_GUI_VER)/
 CXXFLAGS := -std=c++20 -Wall -Wextra -fPIC -O2 -DNDEBUG \
             -Wno-missing-field-initializers \
             $(shell pkg-config --cflags $(PKGS)) \
+            -I$(QPA_INC) \
             -Isrc/core -Isrc/core/api -Isrc/client -Isrc/core/utils -I$(BUILD_DIR)/shaders
 LDFLAGS  := $(shell pkg-config --libs $(PKGS)) -lcuda
 

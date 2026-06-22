@@ -1,6 +1,6 @@
 #include "VulkanWidget.h"
 
-#include <wayland-client.h>
+#include <QtGui/qpa/qplatformnativeinterface.h>
 
 #include <QGuiApplication>
 #include <cstdio>
@@ -19,31 +19,34 @@ VulkanWidget::VulkanWidget(QWidget* parent) : QWidget(parent) {
 VulkanWidget::~VulkanWidget() = default;
 
 bool VulkanWidget::init_vulkan() {
-    QString qpa = QGuiApplication::platformName();
-    const char* session = getenv("XDG_SESSION_TYPE");
+    // Use Qt's wl_display — MUST match the connection that owns
+    // the wl_surface from winId(). Wayland objects are per-connection.
+    auto* native = QGuiApplication::platformNativeInterface();
+    void* display = native->nativeResourceForIntegration("wl_display");
+    void* window  = reinterpret_cast<void*>(winId());
 
-    if (qpa == "wayland" || (session && strcmp(session, "wayland") == 0)) {
-        // Native Wayland Vulkan surface.
-        // Requires nvidia_drm.modeset=1 for NVIDIA GPUs.
-        void* display = wl_display_connect(nullptr);
-        void* window  = reinterpret_cast<void*>(winId());
-        if (renderer_.init(Platform::WAYLAND, window, display))
-            return true;
+    fprintf(stderr, "VulkanWidget: wl_display=%p surface=%p\n",
+            display, window);
 
-        // Wayland surface failed. This is expected on NVIDIA when
-        // nvidia_drm.modeset=1 is NOT set in kernel cmdline.
-        fprintf(stderr,
-                "VulkanWidget: Wayland Vulkan surface failed.\n"
-                "  NVIDIA GPUs require nvidia_drm.modeset=1 for native Wayland.\n"
-                "  Workaround: QT_QPA_PLATFORM=xcb ./build/vsr-player <video>\n");
+    if (!display || !window) {
+        fprintf(stderr, "VulkanWidget: null display or window handle\n");
         return false;
-    } else {
-        void* window = reinterpret_cast<void*>(winId());
-        return renderer_.init(Platform::XLIB, window, nullptr);
     }
+
+    if (renderer_.init(window, display)) {
+        fprintf(stderr, "VulkanWidget: Vulkan initialized\n");
+        return true;
+    }
+
+    fprintf(stderr,
+            "VulkanWidget: Vulkan init failed.\n"
+            "  NVIDIA GPUs require nvidia_drm.modeset=1 for native Wayland.\n"
+            "  Verify: cat /sys/module/nvidia_drm/parameters/modeset\n");
+    return false;
 }
 
 bool VulkanWidget::present_frame(const uint8_t* rgb_data, int width, int height) {
+    if (!vulkan_ready_) return false;
     if (!renderer_.is_ready()) {
         if (!init_vulkan()) return false;
         renderer_.resize(width, height);
@@ -53,7 +56,10 @@ bool VulkanWidget::present_frame(const uint8_t* rgb_data, int width, int height)
 
 void VulkanWidget::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
-    vulkan_ready_ = true;
+    // Initialize Vulkan as soon as the widget has a valid native window.
+    if (!vulkan_ready_) {
+        vulkan_ready_ = init_vulkan();
+    }
 }
 
 }  // namespace vsr

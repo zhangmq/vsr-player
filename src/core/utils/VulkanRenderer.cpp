@@ -5,13 +5,10 @@
 #include "VulkanRenderer.h"
 
 #include <cstdio>
-#include <cstdlib>
 #include <vector>
 
 #define VK_USE_PLATFORM_WAYLAND_KHR
-#define VK_USE_PLATFORM_XLIB_KHR
 #include <vulkan/vulkan.h>
-#include <X11/Xlib.h>
 #include <wayland-client.h>
 
 // Generated SPIR-V headers (by Makefile: glslc + xxd)
@@ -40,19 +37,29 @@ VulkanRenderer::~VulkanRenderer() { release(); }
 
 // ── Init ────────────────────────────────────────────────────────────
 
-bool VulkanRenderer::init(Platform platform, void* native_window, void* native_display) {
+bool VulkanRenderer::init(void* native_window, void* native_display) {
     VkResult res;
 
     // ---- Instance ----
+    uint32_t avail_ver = 0;
+    vkEnumerateInstanceVersion(&avail_ver);
+    fprintf(stderr, "Vulkan: loader instance version %d.%d.%d\n",
+            VK_API_VERSION_MAJOR(avail_ver),
+            VK_API_VERSION_MINOR(avail_ver),
+            VK_API_VERSION_PATCH(avail_ver));
+
+    uint32_t api_ver = VK_API_VERSION_1_3;
+    if (avail_ver > 0 && api_ver > avail_ver)
+        api_ver = avail_ver;
+
     VkApplicationInfo ai = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
     ai.pApplicationName = "vsr-player";
-    ai.apiVersion = VK_API_VERSION_1_3;
+    ai.apiVersion = api_ver;
 
-    const char* surface_ext = (platform == Platform::WAYLAND)
-        ? VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME
-        : VK_KHR_XLIB_SURFACE_EXTENSION_NAME;
-
-    const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME, surface_ext};
+    const char* exts[] = {
+        VK_KHR_SURFACE_EXTENSION_NAME,
+        VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME
+    };
 
     VkInstanceCreateInfo ici = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ici.pApplicationInfo = &ai;
@@ -62,43 +69,27 @@ bool VulkanRenderer::init(Platform platform, void* native_window, void* native_d
     VkInstance inst;
     res = vkCreateInstance(&ici, nullptr, &inst);
     if (res != VK_SUCCESS) {
-        fprintf(stderr, "Vulkan: vkCreateInstance failed (error %d, ext=%s)\n",
-                res, surface_ext);
-        // Fall back to X11 if Wayland instance creation fails
-        if (platform == Platform::WAYLAND) {
-            fprintf(stderr, "Vulkan: Wayland failed, trying X11 fallback\n");
-            surface_ext = VK_KHR_XLIB_SURFACE_EXTENSION_NAME;
-            exts[1] = surface_ext;
-            res = vkCreateInstance(&ici, nullptr, &inst);
-        }
-        if (res != VK_SUCCESS) {
-            fprintf(stderr, "Vulkan: instance creation failed (%d)\n", res);
-            return false;
-        }
+        fprintf(stderr, "Vulkan: vkCreateInstance failed (error %d)\n", res);
+        return false;
     }
     instance_ = inst;
 
-    // ---- Surface ----
-    if (platform == Platform::WAYLAND) {
-        if (!native_display) native_display = wl_display_connect(nullptr);
-        VkWaylandSurfaceCreateInfoKHR sci = {
-            VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR};
-        sci.display = (wl_display*)native_display;
-        sci.surface = (wl_surface*)native_window;
-        res = vkCreateWaylandSurfaceKHR(inst, &sci, nullptr,
-                                        (VkSurfaceKHR*)&surface_);
-    } else {
-        Display* dpy = native_display ? (Display*)native_display
-                                      : XOpenDisplay(nullptr);
-        if (!dpy) { fprintf(stderr, "Vulkan: cannot open X display\n"); return false; }
-        VkXlibSurfaceCreateInfoKHR sci = {
-            VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR};
-        sci.dpy = dpy;
-        sci.window = (Window)(uintptr_t)native_window;
-        res = vkCreateXlibSurfaceKHR(inst, &sci, nullptr,
-                                     (VkSurfaceKHR*)&surface_);
+    // ---- Wayland Surface ----
+    if (!native_display || !native_window) {
+        fprintf(stderr, "Vulkan: native_display and native_window required\n");
+        return false;
     }
-    if (res != VK_SUCCESS) { fprintf(stderr, "Vulkan: surface failed\n"); return false; }
+
+    VkWaylandSurfaceCreateInfoKHR sci = {
+        VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR};
+    sci.display = (wl_display*)native_display;
+    sci.surface = (wl_surface*)native_window;
+    res = vkCreateWaylandSurfaceKHR(inst, &sci, nullptr,
+                                    (VkSurfaceKHR*)&surface_);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "Vulkan: Wayland surface creation failed (%d)\n", res);
+        return false;
+    }
 
     // ---- Physical device ----
     uint32_t count;
