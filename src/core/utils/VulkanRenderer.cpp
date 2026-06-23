@@ -231,8 +231,11 @@ bool VulkanRenderer::resize(int w, int h) {
     VkDevice dev = (VkDevice)ctx_.device();
     if (!dev) return false;
 
-    // SwapchainManager preserves the render pass (created once), so
-    // pipelines remain valid across resize — only framebuffers change.
+    // Must wait for in-flight render operations to complete before
+    // destroying the old swapchain — otherwise pending presents or
+    // acquire operations on old swapchain images become invalid.
+    vkDeviceWaitIdle(dev);
+
     return swapchain_.create(ctx_.physicalDevice(), ctx_.device(),
                               ctx_.surface(), ctx_.queueFamily(), w, h);
 }

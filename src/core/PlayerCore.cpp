@@ -232,14 +232,15 @@ bool PlayerCore::build_pipeline(const std::string& path) {
     size_t rgb_bytes = NV12ToRGB::output_size(video_w_, video_h_);
     cuMemAlloc((CUdeviceptr*)&rgb_gpu_, rgb_bytes);
 
-    // ── Audio ──
+    // ── Audio (file-based: AudioOutput opens its own FFmpeg instance) ──
     {
         int audio_idx = demuxer_->audio_stream_index();
         if (audio_idx >= 0) {
             audio_ = std::make_unique<AudioOutput>();
-            audio_->open(demuxer_->audio_sample_rate(),
-                         demuxer_->audio_channels());
-            audio_->start();
+            if (!audio_->open(path.c_str())) {
+                fprintf(stderr, "PlayerCore: audio open failed\n");
+                audio_.reset();
+            }
         }
     }
 
@@ -306,7 +307,12 @@ void PlayerCore::teardown_pipeline() {
 void PlayerCore::cmd_play() {
     if (!demuxer_) return;
     state_ = PlaybackState::PLAYING;
-    if (audio_) audio_->resume();
+    if (audio_) {
+        if (!audio_->is_active())
+            audio_->start();  // first play: start audio
+        else
+            audio_->resume();
+    }
     emit_event({PlayerEvent::STATE_CHANGED, state_});
 }
 
