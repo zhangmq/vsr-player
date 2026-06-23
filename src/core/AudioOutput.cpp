@@ -68,6 +68,27 @@ bool AudioOutput::open(const char* file_path) {
     return true;
 }
 
+// ── Open (PCM, no file) ──────────────────────────────────────────────
+
+bool AudioOutput::open(int sample_rate, int channels) {
+    sample_rate_ = sample_rate;
+    channels_ = channels;
+
+    ring_capacity_ = static_cast<int>(sample_rate_ * kBufferSec);
+    ring_buf_.resize(ring_capacity_ * channels_);
+    clear_ring();
+
+    has_audio_ = true;
+    return true;
+}
+
+// ── PCM write ────────────────────────────────────────────────────────
+
+void AudioOutput::write_pcm(const float* data, int num_samples) {
+    if (!has_audio_ || !running_.load() || paused_.load()) return;
+    write_ring(data, num_samples);
+}
+
 // ── Ring buffer ───────────────────────────────────────────────────────
 
 void AudioOutput::clear_ring() {
@@ -145,12 +166,14 @@ bool AudioOutput::start() {
 
     running_.store(true);
 
-    // Spawn decode thread
-    decode_thread_ = std::thread(&AudioOutput::decode_loop, this, -1.0);
+    // Spawn decode thread (file mode only)
+    if (!file_path_.empty()) {
+        decode_thread_ = std::thread(&AudioOutput::decode_loop, this, -1.0);
 
-    // Pre-buffer (~250ms)
-    while (ring_filled_.load() < sample_rate_ / 4) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        // Pre-buffer (~250ms)
+        while (ring_filled_.load() < sample_rate_ / 4) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
     }
 
     // Open PortAudio stream

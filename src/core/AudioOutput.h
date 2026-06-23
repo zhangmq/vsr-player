@@ -26,6 +26,17 @@ public:
     /// Open and probe the audio stream. Must call before start().
     bool open(const char* file_path);
 
+    /// Open for PCM playback (no file — data fed via write_pcm).
+    /// @param sample_rate  Audio sample rate (e.g. 48000)
+    /// @param channels     Channel count (1 = mono, 2 = stereo)
+    bool open(int sample_rate, int channels);
+
+    /// Write interleaved float32 PCM to the ring buffer.
+    /// Thread-safe. Non-blocking; data is dropped if buffer is full.
+    /// @param data         Interleaved float32 PCM ([-1.0, 1.0])
+    /// @param num_samples  Frame count (not float count!)
+    void write_pcm(const float* data, int num_samples);
+
     /// Start playback: spawns decode thread and opens PortAudio stream.
     bool start();
 
