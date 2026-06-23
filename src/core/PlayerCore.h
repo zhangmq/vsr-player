@@ -11,7 +11,6 @@
 
 namespace vsr {
 
-class ClockManager;
 class Demuxer;
 class Decoder;
 class VSRProcessor;
@@ -66,7 +65,6 @@ private:
     std::unique_ptr<VSRProcessor>  vsr_;
     std::unique_ptr<NV12ToRGB>     nv12_to_rgb_;
     std::unique_ptr<AudioOutput>   audio_;
-    std::unique_ptr<ClockManager>  clock_;
 
     // ── GPU resources ──
     float* rgb_gpu_ = nullptr;
