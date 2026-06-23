@@ -28,6 +28,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     vulkan_widget_ = new VulkanWidget(central);
 
+    // Connect native window ready → deferred player init
+    connect(vulkan_widget_, &VulkanWidget::nativeWindowReady,
+            this, &MainWindow::on_native_window_ready);
+
     // Overlay control bar — semi-transparent, bottom-aligned
     overlay_ = new QWidget(central);
     overlay_->setStyleSheet(
@@ -61,7 +65,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     connect(play_btn_, &QPushButton::clicked, this, [this]() {
         if (!player_initialized_) return;
-        // Toggle play/pause based on button text
         if (play_btn_->text() == "▶ Play")
             player_->send_command({PlayerCommand::PLAY});
         else
@@ -74,15 +77,29 @@ MainWindow::~MainWindow() {
         player_->shutdown();
 }
 
-// ── Player init ──────────────────────────────────────────────────────
+// ── Player init (deferred until native window ready) ─────────────────
 
 void MainWindow::init_player(bool use_vsr, Quality quality) {
+    deferred_use_vsr_ = use_vsr;
+    deferred_quality_ = quality;
+
+    // If native window already exists (e.g. init_player called after
+    // showEvent already fired), initialize immediately.
+    if (vulkan_widget_->isNativeReady())
+        on_native_window_ready();
+}
+
+void MainWindow::on_native_window_ready() {
+    if (player_initialized_) return;
+
     auto* native = QGuiApplication::platformNativeInterface();
     void* display = native->nativeResourceForIntegration("wl_display");
     void* window  = reinterpret_cast<void*>(vulkan_widget_->winId());
 
     if (!display || !window) {
-        status_label_->setText("Wayland display/surface not available");
+        fprintf(stderr, "MainWindow: native window ready but "
+                "wl_display=%p wl_surface=%p\n", display, window);
+        status_label_->setText("Wayland surface not available");
         return;
     }
 
@@ -95,14 +112,29 @@ void MainWindow::init_player(bool use_vsr, Quality quality) {
         }, Qt::QueuedConnection);
     });
 
-    if (player_->initialize(window, display, use_vsr, quality))
-        player_initialized_ = true;
-    else
+    if (!player_->initialize(window, display,
+                              deferred_use_vsr_, deferred_quality_)) {
         status_label_->setText("Player init failed");
+        return;
+    }
+
+    player_initialized_ = true;
+    fprintf(stderr, "MainWindow: player initialized\n");
+
+    // Load deferred file (set before init)
+    if (!deferred_file_.isEmpty()) {
+        open_file(deferred_file_);
+        deferred_file_.clear();
+    }
 }
 
 void MainWindow::open_file(const QString& path) {
-    if (!player_initialized_) return;
+    if (!player_initialized_) {
+        // Defer until player is ready
+        deferred_file_ = path;
+        status_label_->setText("Waiting for player...");
+        return;
+    }
     status_label_->setText("Loading...");
     play_btn_->setText("⏸ Pause");
     player_->send_command({PlayerCommand::LOAD_FILE, path.toStdString()});
@@ -113,7 +145,6 @@ void MainWindow::open_file(const QString& path) {
 void MainWindow::on_player_event(const PlayerEvent& e) {
     switch (e.type) {
     case PlayerEvent::VIDEO_INFO: {
-        // Resize window to match video dimensions (clamped to 90% screen)
         if (e.in_width > 0 && e.in_height > 0) {
             auto* screen = QGuiApplication::primaryScreen();
             if (screen) {
@@ -126,7 +157,6 @@ void MainWindow::on_player_event(const PlayerEvent& e) {
             } else {
                 resize(e.in_width, e.in_height);
             }
-            // resizeEvent will fire → send_resize()
         }
         setWindowTitle(QString("VSR Player — %1 fps").arg(e.fps, 0, 'f', 1));
         player_->send_command({PlayerCommand::PLAY});

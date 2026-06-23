@@ -20,6 +20,10 @@ class VulkanWidget;
 /// and a Player instance.  All video pipeline logic lives in PlayerCore
 /// on its worker thread.  Commands are sent via send_command(); events
 /// arrive on the worker thread and are marshaled to the Qt main thread.
+///
+/// Player initialization is gated on VulkanWidget::nativeWindowReady()
+/// — the signal is emitted from showEvent() when the native Wayland
+/// surface exists and winId() is valid.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -27,16 +31,22 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
 
-    /// Initialize the player engine. Must be called after show()
-    /// so the VulkanWidget has a valid wl_surface.
+    /// Request player initialization.  If the VulkanWidget's native
+    /// window is already ready, init happens immediately; otherwise
+    /// it is deferred until nativeWindowReady() fires.
     void init_player(bool use_vsr, Quality quality);
 
-    /// Load a media file (file path or URL).  Sends LOAD_FILE command.
+    /// Load a media file.  If the player is not yet initialized,
+    /// the path is stored and loaded automatically after init.
     void open_file(const QString& path);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+
+private slots:
+    /// Called when VulkanWidget emits nativeWindowReady().
+    void on_native_window_ready();
 
 private:
     void on_player_event(const PlayerEvent& e);
@@ -51,6 +61,11 @@ private:
     // Player engine
     std::unique_ptr<Player> player_;
     bool player_initialized_ = false;
+
+    // Deferred init params (set before nativeWindowReady)
+    bool   deferred_use_vsr_ = true;
+    Quality deferred_quality_ = Quality::HIGH;
+    QString deferred_file_;   // file to open after init
 
     // Screenshot
     int screenshot_counter_ = 0;
