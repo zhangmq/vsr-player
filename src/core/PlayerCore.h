@@ -65,6 +65,7 @@ private:
     std::unique_ptr<VSRProcessor>  vsr_;
     std::unique_ptr<NV12ToRGB>     nv12_to_rgb_;
     std::unique_ptr<AudioOutput>   audio_;
+    bool audio_started_ = false;  // true after first AudioOutput::start()
 
     // ── GPU resources ──
     float* rgb_gpu_ = nullptr;

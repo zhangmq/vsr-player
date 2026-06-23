@@ -300,6 +300,7 @@ void PlayerCore::teardown_pipeline() {
     video_w_ = video_h_ = 0;
     video_fps_ = 0.0;
     frame_count_ = 0;
+    audio_started_ = false;
 }
 
 // ── Simple command handlers ──────────────────────────────────────────
@@ -308,10 +309,12 @@ void PlayerCore::cmd_play() {
     if (!demuxer_) return;
     state_ = PlaybackState::PLAYING;
     if (audio_) {
-        if (!audio_->is_active())
-            audio_->start();  // first play: start audio
-        else
+        if (!audio_started_) {
+            audio_->start();
+            audio_started_ = true;
+        } else {
             audio_->resume();
+        }
     }
     emit_event({PlayerEvent::STATE_CHANGED, state_});
 }
@@ -391,18 +394,19 @@ void PlayerCore::cmd_resize(int phys_w, int phys_h) {
         int sh = (phys_h + video_h_ - 1) / video_h_;
         new_scale = std::clamp(std::min(sw, sh), 1, 4);
     }
+    bool scale_changed = (new_scale != current_scale_);
 
-    // ── Reconfigure VSR if scale changed ──
-    if (new_scale != current_scale_) {
+    // Store desired size. Actual swapchain resize is handled by
+    // VulkanRenderer::render_frame() via VK_ERROR_OUT_OF_DATE_KHR
+    // recovery — that path properly coordinates with the compositor.
+    renderer_->resize(phys_w, phys_h);
+
+    // First time: create swapchain + pipelines
+    if (!renderer_->is_ready() || !renderer_->swapchainWidth()) {
         current_scale_ = new_scale;
         vsr_w_ = video_w_ * current_scale_;
         vsr_h_ = video_h_ * current_scale_;
         reconfigure_vsr();
-    }
-
-    // ── Init/recreate swapchain + pipelines ──
-    renderer_->resize(phys_w, phys_h);
-    if (!renderer_->is_ready() || !renderer_->swapchainWidth()) {
         renderer_->set_shader_data(
             reinterpret_cast<const uint32_t*>(video_frag_spv),
             video_frag_spv_len,
@@ -410,6 +414,14 @@ void PlayerCore::cmd_resize(int phys_w, int phys_h) {
             nv12_frag_spv_len,
             reinterpret_cast<const uint32_t*>(video_vert_spv),
             video_vert_spv_len);
+        renderer_->init_pipelines_with_saved_spv(
+            video_w_, video_h_, current_scale_, phys_w, phys_h);
+    } else if (scale_changed) {
+        // Scale changed — recreate InteropTextures (swapchain untouched)
+        current_scale_ = new_scale;
+        vsr_w_ = video_w_ * current_scale_;
+        vsr_h_ = video_h_ * current_scale_;
+        reconfigure_vsr();
         renderer_->init_pipelines_with_saved_spv(
             video_w_, video_h_, current_scale_, phys_w, phys_h);
     }

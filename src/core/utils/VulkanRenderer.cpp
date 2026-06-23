@@ -224,20 +224,13 @@ bool VulkanRenderer::render_frame(Path path) {
 // ── Resize ──────────────────────────────────────────────────────────
 
 bool VulkanRenderer::resize(int w, int h) {
+    // Only store the desired size. Actual swapchain recreation is
+    // handled by render_frame() via VK_ERROR_OUT_OF_DATE_KHR recovery —
+    // that path properly waits for the compositor to release images
+    // before destroying the old swapchain.
     last_widget_w_ = w;
     last_widget_h_ = h;
-    if (swapchain_.width() == w && swapchain_.height() == h)
-        return true;
-    VkDevice dev = (VkDevice)ctx_.device();
-    if (!dev) return false;
-
-    // Must wait for in-flight render operations to complete before
-    // destroying the old swapchain — otherwise pending presents or
-    // acquire operations on old swapchain images become invalid.
-    vkDeviceWaitIdle(dev);
-
-    return swapchain_.create(ctx_.physicalDevice(), ctx_.device(),
-                              ctx_.surface(), ctx_.queueFamily(), w, h);
+    return true;
 }
 
 // ── Release ─────────────────────────────────────────────────────────
