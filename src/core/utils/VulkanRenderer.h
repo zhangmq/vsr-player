@@ -3,9 +3,14 @@
 #include <cstdint>
 #include <vector>
 
+#include "VulkanContext.h"
+#include "SwapchainManager.h"
+
 namespace vsr {
 
 /// Minimal Vulkan renderer for video frames — Wayland only.
+/// Delegates instance/device/surface management to VulkanContext
+/// and swapchain/render-pass/framebuffer management to SwapchainManager.
 class VulkanRenderer {
 public:
     VulkanRenderer();
@@ -26,44 +31,31 @@ public:
     bool resize(int surface_w, int surface_h);
 
     void release();
-    bool is_ready() const { return device_ != nullptr; }
+    bool is_ready() const { return ctx_.ready(); }
 
 private:
     bool create_swapchain_and_pipeline(int w, int h);
     bool update_texture(const uint8_t* data, int w, int h, int bpp);
 
-    // Handles
-    void* instance_ = nullptr;
-    void* physical_device_ = nullptr;
-    void* device_ = nullptr;
-    void* surface_ = nullptr;      // VkSurfaceKHR
-    void* swapchain_ = nullptr;
-    void* render_pass_ = nullptr;
+    // Owned sub-resource managers
+    VulkanContext ctx_;
+    SwapchainManager swapchain_;
+
+    // Pipeline / descriptor
     void* pipeline_ = nullptr;
     void* pipeline_layout_ = nullptr;
     void* descriptor_set_layout_ = nullptr;
     void* descriptor_pool_ = nullptr;
     void* descriptor_set_ = nullptr;
-    void* command_pool_ = nullptr;
-    void* command_buffer_ = nullptr;
-    void* sampler_ = nullptr;
 
-    std::vector<void*> swapchain_images_;
-    std::vector<void*> swapchain_image_views_;
-    std::vector<void*> framebuffers_;
-    int swapchain_width_ = 0, swapchain_height_ = 0;
-
+    // Texture (uploaded CPU-side data)
     void* texture_ = nullptr;
     void* texture_memory_ = nullptr;
     int tex_width_ = 0, tex_height_ = 0;
     size_t tex_row_pitch_ = 0;  // from vkGetImageSubresourceLayout
 
-    void* queue_ = nullptr;
-    int queue_family_ = -1;
-
-    void* image_available_semaphore_ = nullptr;
-    void* render_finished_semaphore_ = nullptr;
-    void* fence_ = nullptr;
+    // Cached swapchain dimensions (for letterbox calculation)
+    int swapchain_width_ = 0, swapchain_height_ = 0;
 };
 
 }  // namespace vsr

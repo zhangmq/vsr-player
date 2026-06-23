@@ -51,6 +51,8 @@ CORE_OBJS := $(BUILD_DIR)/src/core/Demuxer.o \
              $(BUILD_DIR)/src/core/Decoder.o \
              $(BUILD_DIR)/src/core/VSRProcessor.o \
              $(BUILD_DIR)/src/core/AudioOutput.o \
+             $(BUILD_DIR)/src/core/utils/VulkanContext.o \
+             $(BUILD_DIR)/src/core/utils/SwapchainManager.o \
              $(BUILD_DIR)/src/core/utils/VulkanRenderer.o \
              $(BUILD_DIR)/src/core/utils/CUDAContext.o \
              $(BUILD_DIR)/src/core/utils/NV12ToRGB.o \
@@ -113,7 +115,7 @@ $(BUILD_DIR):
 # ── Compilation ──────────────────────────────────────────────────────
 
 # Header dependency — VulkanRenderer includes generated shader headers
-$(BUILD_DIR)/src/core/utils/VulkanRenderer.o: $(CLIENTDIR)/VulkanWidget.cpp $(SHADERS)
+$(BUILD_DIR)/src/core/utils/VulkanRenderer.o: $(SHADERS)
 
 # MOC dependencies
 $(BUILD_DIR)/src/client/MainWindow.o: $(BUILD_DIR)/moc_MainWindow.cpp
