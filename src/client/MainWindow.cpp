@@ -63,6 +63,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     bar->addWidget(play_btn_);
     bar->addWidget(status_label_, 1);
 
+    // Resize debounce: avoid swapchain rebuild storm during WM animation
+    resize_debounce_ = new QTimer(this);
+    resize_debounce_->setSingleShot(true);
+    resize_debounce_->setInterval(200);  // wait for animation to settle
+    connect(resize_debounce_, &QTimer::timeout, this, &MainWindow::send_resize);
+
     connect(play_btn_, &QPushButton::clicked, this, [this]() {
         if (!player_initialized_) return;
         if (play_btn_->text() == "▶ Play")
@@ -145,19 +151,9 @@ void MainWindow::open_file(const QString& path) {
 void MainWindow::on_player_event(const PlayerEvent& e) {
     switch (e.type) {
     case PlayerEvent::VIDEO_INFO: {
-        if (e.in_width > 0 && e.in_height > 0) {
-            auto* screen = QGuiApplication::primaryScreen();
-            if (screen) {
-                QSize avail = screen->availableGeometry().size();
-                int max_w = avail.width() * 9 / 10;
-                int max_h = avail.height() * 9 / 10;
-                float s = std::min((float)max_w / e.in_width,
-                                   (float)max_h / e.in_height);
-                resize((int)(e.in_width * s), (int)(e.in_height * s));
-            } else {
-                resize(e.in_width, e.in_height);
-            }
-        }
+        // Do NOT resize — let the window manager decide initial size.
+        // The initial resizeEvent (from window show) already triggered
+        // RESIZE with the correct swapchain dimensions.
         setWindowTitle(QString("VSR Player — %1 fps").arg(e.fps, 0, 'f', 1));
         player_->send_command({PlayerCommand::PLAY});
         break;
@@ -197,7 +193,7 @@ void MainWindow::on_player_event(const PlayerEvent& e) {
     }
 }
 
-// ── Resize ───────────────────────────────────────────────────────────
+// ── Resize (debounced — avoids swapchain rebuild storm during WM animation) ──
 
 void MainWindow::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
@@ -207,8 +203,13 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
     vulkan_widget_->setGeometry(0, 0, w, h);
     overlay_->setGeometry(12, h - 60, w - 24, 48);
 
+    // Debounce: only send RESIZE after the resize animation settles
     if (player_initialized_)
-        send_resize();
+        request_resize();
+}
+
+void MainWindow::request_resize() {
+    resize_debounce_->start();  // restart the 200ms timer
 }
 
 void MainWindow::send_resize() {

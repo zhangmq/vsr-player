@@ -2,6 +2,7 @@
 
 #include <QKeyEvent>
 #include <QMainWindow>
+#include <QTimer>
 #include <memory>
 #include <string>
 
@@ -50,13 +51,17 @@ private slots:
 
 private:
     void on_player_event(const PlayerEvent& e);
-    void send_resize();
+    void request_resize();            // start/restart debounce timer
+    void send_resize();               // actual RESIZE command (after debounce)
 
     // UI
     VulkanWidget* vulkan_widget_ = nullptr;
     QWidget*      overlay_ = nullptr;
     QPushButton*  play_btn_ = nullptr;
     QLabel*       status_label_ = nullptr;
+
+    // Resize debounce (avoids swapchain-rebuild storm during WM animation)
+    QTimer* resize_debounce_ = nullptr;
 
     // Player engine
     std::unique_ptr<Player> player_;
