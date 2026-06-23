@@ -2,9 +2,8 @@
 
 #include <QKeyEvent>
 #include <QMainWindow>
-#include <QTimer>
+#include <memory>
 #include <string>
-#include <vector>
 
 #include "api/Player.h"
 
@@ -14,91 +13,51 @@ class QLabel;
 namespace vsr {
 
 class VulkanWidget;
-class Demuxer;
-class Decoder;
-class CUDAContext;
-class NV12ToRGB;
-class VSRProcessor;
-class AudioOutput;
 
-/// Qt main window with Vulkan video, VSR processing, audio playback,
-/// and overlay controls.
+/// Qt main window — thin shell over the Player engine.
 ///
-/// Prototype pipeline: decode on QTimer in main thread, GPU NV12→RGB,
-/// NvVFX VSR, PortAudio audio.  Full architecture will move to PlayerCore.
+/// MainWindow owns UI controls, the VulkanWidget (Wayland surface),
+/// and a Player instance.  All video pipeline logic lives in PlayerCore
+/// on its worker thread.  Commands are sent via send_command(); events
+/// arrive on the worker thread and are marshaled to the Qt main thread.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit MainWindow(bool use_vsr = true, Quality quality = Quality::HIGH,
-                        QWidget* parent = nullptr);
+    explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
 
+    /// Initialize the player engine. Must be called after show()
+    /// so the VulkanWidget has a valid wl_surface.
+    void init_player(bool use_vsr, Quality quality);
+
+    /// Load a media file (file path or URL).  Sends LOAD_FILE command.
     void open_file(const QString& path);
-    void set_no_hwaccel(bool v) { no_hwaccel_ = v; }
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
-private slots:
-    void on_timer_tick();
-
 private:
-    void setup_ui();
-    void update_scale();
-    void apply_scale(int scale);
-    int adaptive_scale(int in_w, int in_h, int win_w, int win_h) const;
+    void on_player_event(const PlayerEvent& e);
+    void send_resize();
 
-    // Video display (fills entire window)
+    // UI
     VulkanWidget* vulkan_widget_ = nullptr;
+    QWidget*      overlay_ = nullptr;
+    QPushButton*  play_btn_ = nullptr;
+    QLabel*       status_label_ = nullptr;
 
-    // Overlay controls (floating on top of video)
-    QWidget* overlay_ = nullptr;
-    QPushButton* play_btn_ = nullptr;
-    QLabel* status_label_ = nullptr;
-
-    // Pipeline (prototype: direct, no PlayerCore threading yet)
-    Demuxer* demuxer_ = nullptr;
-    Decoder* decoder_ = nullptr;
-
-    // GPU pipeline
-    CUDAContext* cuda_ctx_ = nullptr;
-    NV12ToRGB* nv12_to_rgb_ = nullptr;
-    VSRProcessor* vsr_ = nullptr;
-    AudioOutput* audio_ = nullptr;
-
-    QTimer* timer_;
-    QTimer* resize_timer_ = nullptr;  // debounce resize → VSR reconfigure
-    int pending_scale_ = 0;           // scale to apply after debounce (0 = none)
-    bool playing_ = false;
-    bool pipeline_ready_ = false;
-    bool use_vsr_ = true;
-    bool no_hwaccel_ = false;
-
-    // Video info
-    int video_width_ = 0;
-    int video_height_ = 0;
-    double frame_delay_ms_ = 0.0;
-
-    // GPU buffers (device memory)
-    float* rgb_gpu_ = nullptr;    // NV12ToRGB output: (3,H,W) float32
-    void* cuda_stream_ = nullptr;
-
-
-    int vsr_w_ = 0, vsr_h_ = 0;   // current VSR output dimensions
-
-    // Adaptive scale
-    int current_scale_ = 1;
-    Quality quality_ = Quality::HIGH;
-    bool pipelines_initialized_ = false;
+    // Player engine
+    std::unique_ptr<Player> player_;
+    bool player_initialized_ = false;
 
     // Screenshot
-    bool screenshot_requested_ = false;
     int screenshot_counter_ = 0;
     std::string screenshot_dir_ = "./screenshots";
-    void save_screenshots(void* vsr_out_ptr, int vsr_out_w, int vsr_out_h,
-                          int vsr_out_pitch);
+    void save_screenshots(const PlayerEvent& e);
+    static void save_png(const std::string& path, const uint8_t* rgb,
+                         int w, int h);
 };
 
 }  // namespace vsr
