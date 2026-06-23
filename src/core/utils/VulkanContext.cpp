@@ -71,6 +71,7 @@ bool VulkanContext::init(void* native_window, void* native_display) {
     // ---- Wayland Surface ----
     if (!native_display || !native_window) {
         fprintf(stderr, "Vulkan: native_display and native_window required\n");
+        release();
         return false;
     }
 
@@ -82,12 +83,18 @@ bool VulkanContext::init(void* native_window, void* native_display) {
                                     (VkSurfaceKHR*)&surface_);
     if (res != VK_SUCCESS) {
         fprintf(stderr, "Vulkan: Wayland surface creation failed (%d)\n", res);
+        release();
         return false;
     }
 
     // ---- Physical device ----
     uint32_t count;
     vkEnumeratePhysicalDevices(inst, &count, nullptr);
+    if (count == 0) {
+        fprintf(stderr, "Vulkan: no physical devices found\n");
+        release();
+        return false;
+    }
     std::vector<VkPhysicalDevice> pds(count);
     vkEnumeratePhysicalDevices(inst, &count, pds.data());
     VkPhysicalDevice pd = pds[0];
@@ -105,7 +112,11 @@ bool VulkanContext::init(void* native_window, void* native_display) {
             queue_family_ = (int)i; break;
         }
     }
-    if (queue_family_ < 0) { fprintf(stderr, "Vulkan: no graphics+present queue\n"); return false; }
+    if (queue_family_ < 0) {
+        fprintf(stderr, "Vulkan: no graphics+present queue\n");
+        release();
+        return false;
+    }
 
     // ---- Device ----
     float qp = 1.0f;
@@ -126,7 +137,12 @@ bool VulkanContext::init(void* native_window, void* native_display) {
     dci.ppEnabledExtensionNames = dev_exts;
 
     VkDevice dev;
-    vkCreateDevice(pd, &dci, nullptr, &dev);
+    res = vkCreateDevice(pd, &dci, nullptr, &dev);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "Vulkan: vkCreateDevice failed (%d)\n", res);
+        release();
+        return false;
+    }
     device_ = dev;
     vkGetDeviceQueue(dev, queue_family_, 0, (VkQueue*)&queue_);
 
@@ -135,7 +151,12 @@ bool VulkanContext::init(void* native_window, void* native_display) {
     cpci.queueFamilyIndex = queue_family_;
     cpci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     VkCommandPool cp;
-    vkCreateCommandPool(dev, &cpci, nullptr, &cp);
+    res = vkCreateCommandPool(dev, &cpci, nullptr, &cp);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "Vulkan: vkCreateCommandPool failed (%d)\n", res);
+        release();
+        return false;
+    }
     command_pool_ = cp;
 
     VkCommandBufferAllocateInfo cbai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
@@ -143,17 +164,37 @@ bool VulkanContext::init(void* native_window, void* native_display) {
     cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cbai.commandBufferCount = 1;
     VkCommandBuffer cb;
-    vkAllocateCommandBuffers(dev, &cbai, &cb);
+    res = vkAllocateCommandBuffers(dev, &cbai, &cb);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "Vulkan: vkAllocateCommandBuffers failed (%d)\n", res);
+        release();
+        return false;
+    }
     command_buffer_ = cb;
 
     // ---- Sync ----
     VkSemaphoreCreateInfo si = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    vkCreateSemaphore(dev, &si, nullptr, (VkSemaphore*)&image_available_semaphore_);
-    vkCreateSemaphore(dev, &si, nullptr, (VkSemaphore*)&render_finished_semaphore_);
+    res = vkCreateSemaphore(dev, &si, nullptr, (VkSemaphore*)&image_available_semaphore_);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "Vulkan: vkCreateSemaphore (image_available) failed (%d)\n", res);
+        release();
+        return false;
+    }
+    res = vkCreateSemaphore(dev, &si, nullptr, (VkSemaphore*)&render_finished_semaphore_);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "Vulkan: vkCreateSemaphore (render_finished) failed (%d)\n", res);
+        release();
+        return false;
+    }
 
     VkFenceCreateInfo fci = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    vkCreateFence(dev, &fci, nullptr, (VkFence*)&fence_);
+    res = vkCreateFence(dev, &fci, nullptr, (VkFence*)&fence_);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "Vulkan: vkCreateFence failed (%d)\n", res);
+        release();
+        return false;
+    }
 
     // ---- Sampler ----
     VkSamplerCreateInfo sci2 = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -162,7 +203,12 @@ bool VulkanContext::init(void* native_window, void* native_display) {
     sci2.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci2.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     VkSampler sp2;
-    vkCreateSampler(dev, &sci2, nullptr, &sp2);
+    res = vkCreateSampler(dev, &sci2, nullptr, &sp2);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "Vulkan: vkCreateSampler failed (%d)\n", res);
+        release();
+        return false;
+    }
     sampler_ = sp2;
 
     printf("Vulkan: initialized\n");
@@ -172,20 +218,36 @@ bool VulkanContext::init(void* native_window, void* native_display) {
 // ── Release ─────────────────────────────────────────────────────────
 
 void VulkanContext::release() {
+    // Always destroy surface and instance even if device creation
+    // failed partway through init(). Handle device-specific resources
+    // only when the device was successfully created.
+    VkInstance inst = (VkInstance)instance_;
+    VkSurfaceKHR surf = (VkSurfaceKHR)surface_;
     VkDevice dev = (VkDevice)device_;
-    if (!dev) return;
-    vkDeviceWaitIdle(dev);
 
-    if (sampler_) { vkDestroySampler(dev, (VkSampler)sampler_, nullptr); sampler_ = nullptr; }
-    if (fence_) { vkDestroyFence(dev, (VkFence)fence_, nullptr); fence_ = nullptr; }
-    if (image_available_semaphore_) { vkDestroySemaphore(dev, (VkSemaphore)image_available_semaphore_, nullptr); image_available_semaphore_ = nullptr; }
-    if (render_finished_semaphore_) { vkDestroySemaphore(dev, (VkSemaphore)render_finished_semaphore_, nullptr); render_finished_semaphore_ = nullptr; }
-    if (command_buffer_) { /* freed with command pool */ command_buffer_ = nullptr; }
-    if (command_pool_) { vkDestroyCommandPool(dev, (VkCommandPool)command_pool_, nullptr); command_pool_ = nullptr; }
-    if (queue_) { queue_ = nullptr; }
-    if (device_) { vkDestroyDevice(dev, nullptr); device_ = nullptr; }
-    if (surface_) { vkDestroySurfaceKHR((VkInstance)instance_, (VkSurfaceKHR)surface_, nullptr); surface_ = nullptr; }
-    if (instance_) { vkDestroyInstance((VkInstance)instance_, nullptr); instance_ = nullptr; }
+    if (dev) {
+        vkDeviceWaitIdle(dev);
+
+        if (sampler_) { vkDestroySampler(dev, (VkSampler)sampler_, nullptr); sampler_ = nullptr; }
+        if (fence_) { vkDestroyFence(dev, (VkFence)fence_, nullptr); fence_ = nullptr; }
+        if (image_available_semaphore_) { vkDestroySemaphore(dev, (VkSemaphore)image_available_semaphore_, nullptr); image_available_semaphore_ = nullptr; }
+        if (render_finished_semaphore_) { vkDestroySemaphore(dev, (VkSemaphore)render_finished_semaphore_, nullptr); render_finished_semaphore_ = nullptr; }
+        if (command_buffer_) { /* freed with command pool */ command_buffer_ = nullptr; }
+        if (command_pool_) { vkDestroyCommandPool(dev, (VkCommandPool)command_pool_, nullptr); command_pool_ = nullptr; }
+        if (queue_) { queue_ = nullptr; }
+
+        vkDestroyDevice(dev, nullptr);
+        device_ = nullptr;
+    }
+
+    if (surf) {
+        vkDestroySurfaceKHR(inst, surf, nullptr);
+        surface_ = nullptr;
+    }
+    if (inst) {
+        vkDestroyInstance(inst, nullptr);
+        instance_ = nullptr;
+    }
 }
 
 }  // namespace vsr

@@ -267,9 +267,10 @@ bool VulkanRenderer::update_texture(const uint8_t* data, int w, int h, int bpp) 
     ivci.subresourceRange.levelCount = 1;
     ivci.subresourceRange.layerCount = 1;
 
-    static VkImageView tex_view = nullptr;
+    VkImageView tex_view = (VkImageView)tex_view_;
     if (tex_view) vkDestroyImageView(dev, tex_view, nullptr);
     vkCreateImageView(dev, &ivci, nullptr, &tex_view);
+    tex_view_ = tex_view;
 
     VkDescriptorImageInfo dii = {};
     dii.sampler = (VkSampler)ctx_.sampler();
@@ -383,8 +384,11 @@ void VulkanRenderer::release() {
     vkDeviceWaitIdle(dev);
 
     // Destroy own resources
+    if (tex_view_) {
+        vkDestroyImageView(dev, (VkImageView)tex_view_, nullptr);
+        tex_view_ = nullptr;
+    }
     if (texture_) {
-        // Destroy the static tex_view too if needed (best effort)
         vkDestroyImage(dev, (VkImage)texture_, nullptr);
         texture_ = nullptr;
     }

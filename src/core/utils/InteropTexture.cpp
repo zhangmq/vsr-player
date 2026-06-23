@@ -13,6 +13,8 @@
 
 #include "InteropTexture.h"
 
+#include "VulkanContext.h"
+
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
@@ -20,21 +22,6 @@
 #include <vulkan/vulkan.h>
 
 namespace vsr {
-
-// ── Helper ──────────────────────────────────────────────────────────
-
-/// Find the first memory type that satisfies both the image's requirements
-/// (via type_bits) and the caller's property flags.
-static uint32_t find_memory_type(VkPhysicalDevice pd, uint32_t type_bits,
-                                 VkMemoryPropertyFlags props) {
-    VkPhysicalDeviceMemoryProperties mem_props;
-    vkGetPhysicalDeviceMemoryProperties(pd, &mem_props);
-    for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++)
-        if ((type_bits & (1 << i)) &&
-            (mem_props.memoryTypes[i].propertyFlags & props) == props)
-            return i;
-    return ~0u;
-}
 
 // ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -94,10 +81,10 @@ bool InteropTexture::init(VkDevice_T* dev, VkPhysicalDevice_T* pd,
     // Prefer DEVICE_LOCAL for GPU-only access via CUDA.
     // Fall back to HOST_VISIBLE|HOST_COHERENT if needed (some implementations
     // only allow linear images in host-visible memory).
-    uint32_t memType = find_memory_type(physDev, memReq.memoryTypeBits,
+    uint32_t memType = find_memory_type((void*)physDev, memReq.memoryTypeBits,
                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (memType == ~0u) {
-        memType = find_memory_type(physDev, memReq.memoryTypeBits,
+        memType = find_memory_type((void*)physDev, memReq.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     }

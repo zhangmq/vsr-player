@@ -51,6 +51,7 @@ private:
     // Texture (uploaded CPU-side data)
     void* texture_ = nullptr;
     void* texture_memory_ = nullptr;
+    void* tex_view_ = nullptr;
     int tex_width_ = 0, tex_height_ = 0;
     size_t tex_row_pitch_ = 0;  // from vkGetImageSubresourceLayout
 
