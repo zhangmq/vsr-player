@@ -45,6 +45,7 @@ private:
 
     std::thread worker_thread_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> thread_done_{false};  // worker sets on exit
     CommandQueue<PlayerCommand> cmd_queue_;
     EventCallback event_cb_;
 

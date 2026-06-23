@@ -123,21 +123,15 @@ bool VulkanRenderer::render_frame(Path path) {
     VkQueue queue = (VkQueue)ctx_.queue();
     if (!dev || !ctx_.surface()) return false;
 
-    // Wait for previous frame's fence before touching anything
     VkFence fence = (VkFence)ctx_.fence();
-    vkWaitForFences(dev, 1, &fence, VK_TRUE, UINT64_MAX);
-    vkResetFences(dev, 1, &fence);
 
     // Proactively recreate swapchain if desired size changed.
-    // NVIDIA Wayland may return VK_SUBOPTIMAL_KHR from acquire instead
-    // of VK_ERROR_OUT_OF_DATE_KHR — we can't rely on acquire failure
-    // alone to detect resize.
+    // Must wait for the fence first so old swapchain images are idle.
     if (last_widget_w_ > 0 && last_widget_h_ > 0 &&
         swapchain_.swapchain() &&
         (swapchain_.width() != last_widget_w_ ||
          swapchain_.height() != last_widget_h_)) {
-        // Old swapchain not in use (fence already signaled above),
-        // safe to destroy and recreate.
+        vkWaitForFences(dev, 1, &fence, VK_TRUE, UINT64_MAX);
         swapchain_.create(ctx_.physicalDevice(), ctx_.device(),
                           ctx_.surface(), ctx_.queueFamily(),
                           last_widget_w_, last_widget_h_);
@@ -152,8 +146,12 @@ bool VulkanRenderer::render_frame(Path path) {
                               last_widget_w_, last_widget_h_);
             idx = swapchain_.acquire(dev, ctx_.imageAvailableSemaphore());
         }
-        if (idx == ~0u) return false;
+        if (idx == ~0u) return false;  // fence stays signaled, next call OK
     }
+
+    // Now committed to rendering — wait for previous frame and reset
+    vkWaitForFences(dev, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkResetFences(dev, 1, &fence);
 
     VkCommandBuffer cb = (VkCommandBuffer)ctx_.commandBuffer();
     vkResetCommandBuffer(cb, 0);

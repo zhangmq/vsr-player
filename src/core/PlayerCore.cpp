@@ -69,8 +69,23 @@ bool PlayerCore::initialize(void* native_window, void* native_display,
 void PlayerCore::shutdown() {
     if (!running_) return;
     send_command({PlayerCommand::QUIT});
-    if (worker_thread_.joinable())
-        worker_thread_.join();
+
+    // Wait for worker to finish, with timeout to prevent hang on exit
+    auto deadline = std::chrono::steady_clock::now() +
+                    std::chrono::seconds(3);
+    while (!thread_done_.load() &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    if (thread_done_.load()) {
+        if (worker_thread_.joinable())
+            worker_thread_.join();
+    } else {
+        fprintf(stderr, "PlayerCore: worker thread did not exit "
+                "within 3s — detaching\n");
+        worker_thread_.detach();
+    }
     running_ = false;
 }
 
@@ -98,6 +113,7 @@ void PlayerCore::run_loop() {
     }
     teardown_pipeline();
 
+    thread_done_ = true;
     emit_event({PlayerEvent::STATE_CHANGED, PlaybackState::STOPPED});
 }
 

@@ -9,10 +9,12 @@
 #include "api/Player.h"
 
 int main(int argc, char* argv[]) {
-    // Parse flags BEFORE QApplication — Qt may modify argc/argv.
+    // Parse flags BEFORE QApplication — Qt modifies argc/argv in-place,
+    // potentially reordering entries.  Store results in local variables.
     bool use_vsr = true;
     vsr::Quality quality = vsr::Quality::HIGH;
-    int file_arg = 0;  // 0 = no file
+    QString file_path;  // captured as value BEFORE Qt touches argv
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--no-vsr") == 0) {
             use_vsr = false;
@@ -30,11 +32,11 @@ int main(int argc, char* argv[]) {
                     argv[0]);
             return 0;
         } else if (argv[i][0] != '-') {
-            file_arg = i;
+            file_path = QString::fromLocal8Bit(argv[i]);  // copy now, before Qt
         }
     }
 
-    // Now Qt can safely consume its own args
+    // Qt may now safely modify argc/argv
     QApplication app(argc, argv);
     app.setApplicationName("VSR Player");
     app.setApplicationVersion("0.1.0");
@@ -49,16 +51,13 @@ int main(int argc, char* argv[]) {
     vsr::MainWindow window;
     window.show();
 
-    // Defer player init + file load to the first event loop iteration,
-    // after the native Wayland surface has been created.
-    QTimer::singleShot(0, [&window, use_vsr, quality] {
+    // Defer player init + file load to after the native Wayland surface
+    // exists (first event-loop iteration, showEvent already processed).
+    QTimer::singleShot(0, [&window, use_vsr, quality, file_path] {
         window.init_player(use_vsr, quality);
+        if (!file_path.isEmpty())
+            window.open_file(file_path);
     });
-    if (file_arg > 0) {
-        QTimer::singleShot(0, [&window, path = QString::fromLocal8Bit(argv[file_arg])] {
-            window.open_file(path);
-        });
-    }
 
     return app.exec();
 }
