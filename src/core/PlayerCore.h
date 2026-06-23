@@ -34,7 +34,8 @@ public:
     void set_event_callback(EventCallback cb) override;
     void send_command(PlayerCommand cmd) override;
     bool initialize(void* native_window, void* native_display,
-                    bool use_vsr, Quality quality) override;
+                    bool use_vsr, Quality quality,
+                    bool no_hwaccel = false) override;
     void shutdown() override;
 
 private:
@@ -54,6 +55,7 @@ private:
 
     // ── Config ──
     bool use_vsr_ = true;
+    bool no_hwaccel_ = false;
     Quality quality_ = Quality::HIGH;
     PlaybackState state_ = PlaybackState::STOPPED;
 

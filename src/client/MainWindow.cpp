@@ -90,9 +90,11 @@ MainWindow::~MainWindow() {
 
 // ── Player init (deferred until native window ready) ─────────────────
 
-void MainWindow::init_player(bool use_vsr, Quality quality) {
+void MainWindow::init_player(bool use_vsr, Quality quality,
+                               bool no_hwaccel) {
     deferred_use_vsr_ = use_vsr;
     deferred_quality_ = quality;
+    deferred_no_hwaccel_ = no_hwaccel;
 
     if (player_initialized_) {
         // Player already initialized.  Apply quality change if needed.
@@ -141,7 +143,8 @@ void MainWindow::on_native_window_ready() {
     });
 
     if (!player_->initialize(window, display,
-                              deferred_use_vsr_, deferred_quality_)) {
+                              deferred_use_vsr_, deferred_quality_,
+                              deferred_no_hwaccel_)) {
         status_label_->setText("Player init failed");
         return;
     }
@@ -189,15 +192,22 @@ void MainWindow::on_player_event(const PlayerEvent& e) {
         const char* qstr = e.quality == Quality::LOW    ? "LOW" :
                            e.quality == Quality::MEDIUM ? "MEDIUM" :
                            e.quality == Quality::HIGH   ? "HIGH" : "ULTRA";
-        const char* mode = e.vsr_active
-            ? (e.scale > 1 ? "UPSCALE" : "DENOISE") : "NO-VSR";
-        status_label_->setText(
-            QString("%1×%2 → %3×%4 x%5 [%6-%7] %8 %9")
-                .arg(e.in_width).arg(e.in_height)
-                .arg(e.out_width).arg(e.out_height)
-                .arg(e.scale).arg(mode).arg(qstr)
-                .arg(e.hw_decoding ? "[NVDEC]" : "[SW]")
-                .arg(e.has_audio ? "[AUDIO]" : ""));
+        if (e.vsr_active) {
+            const char* mode = e.scale > 1 ? "UPSCALE" : "DENOISE";
+            status_label_->setText(
+                QString("%1×%2 → %3×%4 x%5 [%6-%7] %8 %9")
+                    .arg(e.in_width).arg(e.in_height)
+                    .arg(e.out_width).arg(e.out_height)
+                    .arg(e.scale).arg(mode).arg(qstr)
+                    .arg(e.hw_decoding ? "[NVDEC]" : "[SW]")
+                    .arg(e.has_audio ? "[AUDIO]" : ""));
+        } else {
+            status_label_->setText(
+                QString("%1×%2 [NO-VSR] %3 %4")
+                    .arg(e.in_width).arg(e.in_height)
+                    .arg(e.hw_decoding ? "[NVDEC]" : "[SW]")
+                    .arg(e.has_audio ? "[AUDIO]" : ""));
+        }
         break;
     }
     case PlayerEvent::ERROR:

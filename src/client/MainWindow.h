@@ -35,7 +35,8 @@ public:
     /// Request player initialization.  If the VulkanWidget's native
     /// window is already ready, init happens immediately; otherwise
     /// it is deferred until nativeWindowReady() fires.
-    void init_player(bool use_vsr, Quality quality);
+    void init_player(bool use_vsr, Quality quality,
+                     bool no_hwaccel = false);
 
     /// Load a media file.  If the player is not yet initialized,
     /// the path is stored and loaded automatically after init.
@@ -71,6 +72,7 @@ private:
     // Deferred init params (set before nativeWindowReady)
     bool   deferred_use_vsr_ = true;
     Quality deferred_quality_ = Quality::HIGH;
+    bool   deferred_no_hwaccel_ = false;
     QString deferred_file_;   // file to open after init
 
     // Screenshot

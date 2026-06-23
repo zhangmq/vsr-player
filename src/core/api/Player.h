@@ -160,9 +160,11 @@ public:
     /// @param native_display  wl_display from the Qt platform
     /// @param use_vsr         Enable VSR AI super-resolution
     /// @param quality         Initial VSR quality level
+    /// @param no_hwaccel      If true, disable NVDEC — force software decode
     virtual bool initialize(void* native_window, void* native_display,
                             bool use_vsr = true,
-                            Quality quality = Quality::HIGH) = 0;
+                            Quality quality = Quality::HIGH,
+                            bool no_hwaccel = false) = 0;
 
     /// Shut down: stops playback, joins worker thread, releases all GPU
     /// resources.

@@ -55,11 +55,13 @@ void PlayerCore::send_command(PlayerCommand cmd) {
 }
 
 bool PlayerCore::initialize(void* native_window, void* native_display,
-                             bool use_vsr, Quality quality) {
+                             bool use_vsr, Quality quality,
+                             bool no_hwaccel) {
     native_window_ = native_window;
     native_display_ = native_display;
     use_vsr_ = use_vsr;
     quality_ = quality;
+    no_hwaccel_ = no_hwaccel;
 
     running_ = true;
     worker_thread_ = std::thread(&PlayerCore::run_loop, this);
@@ -211,7 +213,7 @@ bool PlayerCore::build_pipeline(const std::string& path) {
 
     // ── Decoder ──
     decoder_ = std::make_unique<Decoder>();
-    if (!decoder_->open(demuxer_->video_codecpar())) {
+    if (!decoder_->open(demuxer_->video_codecpar(), no_hwaccel_)) {
         fprintf(stderr, "PlayerCore: decoder open failed\n");
         return false;
     }
