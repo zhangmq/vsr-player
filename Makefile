@@ -53,7 +53,8 @@ CORE_OBJS := $(BUILD_DIR)/src/core/Demuxer.o \
              $(BUILD_DIR)/src/core/AudioOutput.o \
              $(BUILD_DIR)/src/core/utils/VulkanRenderer.o \
              $(BUILD_DIR)/src/core/utils/CUDAContext.o \
-             $(BUILD_DIR)/src/core/utils/NV12ToRGB.o
+             $(BUILD_DIR)/src/core/utils/NV12ToRGB.o \
+             $(BUILD_DIR)/src/core/utils/InteropTexture.o
 
 CLIENT_OBJS := $(BUILD_DIR)/src/client/main.o \
                $(BUILD_DIR)/src/client/MainWindow.o \
@@ -137,6 +138,16 @@ $(BUILD_DIR)/moc_%.o: $(BUILD_DIR)/moc_%.cpp
 	@mkdir -p $(dir $@)
 	@echo "  CXX   $(notdir $<)"
 	@$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+# ── Tests ────────────────────────────────────────────────────────────
+
+test_interop: $(BUILD_DIR)/tests/test_interop
+	@echo "  Running test_interop..."
+	@./build/tests/test_interop
+
+$(BUILD_DIR)/tests/test_interop: tests/test_interop.cpp src/core/utils/InteropTexture.cpp
+	@mkdir -p $(BUILD_DIR)/tests
+	$(CXX) -std=c++20 -O0 -g -Wall -Isrc/core -Isrc/core/utils -I$(CUDA_INC) $(shell pkg-config --cflags vulkan) $^ $(shell pkg-config --libs vulkan) -L$(CUDA_LIB) -lcuda -ldl -o $@
 
 # ── Clean ────────────────────────────────────────────────────────────
 
