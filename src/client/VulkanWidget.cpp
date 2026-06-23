@@ -58,6 +58,7 @@ bool VulkanWidget::init_pipelines(int videoW, int videoH, int scale) {
 
     return renderer_.init_pipelines(
         videoW, videoH, scale,
+        width(), height(),
         reinterpret_cast<const uint32_t*>(video_frag_spv), video_frag_spv_len,
         reinterpret_cast<const uint32_t*>(nv12_frag_spv), nv12_frag_spv_len,
         reinterpret_cast<const uint32_t*>(video_vert_spv), video_vert_spv_len);

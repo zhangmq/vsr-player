@@ -403,11 +403,44 @@ void MainWindow::on_timer_tick() {
         pipelines_initialized_ = true;
     }
 
-    // NV12 planes from decoder (HW: GPU pointers, SW: CPU pointers)
+    // NV12 planes from decoder (HW: GPU pointers, SW: CPU pointers).
+    // YUV420P (planar, e.g. libdav1d SW output) must be converted to NV12
+    // (semi-planar interleaved UV) before the H2D/D2D paths below.
+    bool is_yuv420p = (hw_frame->format == AV_PIX_FMT_YUV420P);
+    std::vector<uint8_t> uv_interleaved;
     uint8_t* y_plane  = hw_frame->data[0];
     uint8_t* uv_plane = hw_frame->data[1];
     int y_pitch  = hw_frame->linesize[0];
     int uv_pitch = hw_frame->linesize[1];
+
+    if (is_yuv420p) {
+        uint8_t* u_plane = hw_frame->data[1];
+        uint8_t* v_plane = hw_frame->data[2];
+        int u_pitch = hw_frame->linesize[1];
+        int v_pitch = hw_frame->linesize[2];
+        int uv_w = video_width_ / 2;
+        int uv_h = video_height_ / 2;
+        // New UV row stride = W bytes (W/2 pairs × 2 bytes), no padding
+        int nv12_uv_pitch = video_width_;
+        uv_interleaved.resize((size_t)nv12_uv_pitch * uv_h);
+        for (int row = 0; row < uv_h; row++) {
+            for (int col = 0; col < uv_w; col++) {
+                uv_interleaved[row * nv12_uv_pitch + col * 2] =
+                    u_plane[row * u_pitch + col];
+                uv_interleaved[row * nv12_uv_pitch + col * 2 + 1] =
+                    v_plane[row * v_pitch + col];
+            }
+        }
+        uv_plane = uv_interleaved.data();
+        uv_pitch = nv12_uv_pitch;
+        static bool yuv420p_logged = false;
+        if (!yuv420p_logged) {
+            yuv420p_logged = true;
+            fprintf(stderr, "MainWindow: YUV420P→NV12 interleave "
+                    "(%dx%d, u_pitch=%d v_pitch=%d nv12_pitch=%d)\n",
+                    uv_w, uv_h, u_pitch, v_pitch, nv12_uv_pitch);
+        }
+    }
 
     if (vsr_) {
         // ── VSR path: NV12 → float32 RGB → VSR → RGBA InteropTexture ──

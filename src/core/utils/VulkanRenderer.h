@@ -20,7 +20,9 @@ public:
     /// Creates both RGBA (VSR) and NV12 (NO-VSR) pipelines.
     /// @param videoW, videoH  Native (pre-scale) video frame dimensions.
     /// @param scale  VSR scale factor (1 for 1:1, 2 for 2x, etc.)
+    /// @param widgetW, widgetH  Widget pixel dimensions for initial swapchain size.
     bool init_pipelines(int videoW, int videoH, int scale,
+                        int widgetW, int widgetH,
                         const uint32_t* rgbaFragSpv, size_t rgbaFragSpvLen,
                         const uint32_t* nv12FragSpv, size_t nv12FragSpvLen,
                         const uint32_t* vertSpv, size_t vertSpvLen);
@@ -49,6 +51,7 @@ private:
     bool pipelines_ready_ = false;
     int video_w_ = 0, video_h_ = 0;
     int vsr_scale_ = 1;
+    int last_widget_w_ = 0, last_widget_h_ = 0;
 
     // Saved SPIR-V pointers for pipeline recreation on resize
     const uint32_t* saved_vert_spv_ = nullptr;

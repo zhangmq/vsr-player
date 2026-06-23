@@ -30,6 +30,7 @@ bool VulkanRenderer::init(void* native_window, void* native_display) {
 // ── Init pipelines ──────────────────────────────────────────────────
 
 bool VulkanRenderer::init_pipelines(int videoW, int videoH, int scale,
+                                     int widgetW, int widgetH,
                                      const uint32_t* rgbaFragSpv,
                                      size_t rgbaFragSpvLen,
                                      const uint32_t* nv12FragSpv,
@@ -55,11 +56,12 @@ bool VulkanRenderer::init_pipelines(int videoW, int videoH, int scale,
     int vsrW = videoW * scale;
     int vsrH = videoH * scale;
 
-    // Create swapchain if it doesn't exist yet
+    // Create swapchain if it doesn't exist yet, using widget pixel dimensions
     if (!swapchain_.swapchain()) {
-        // Default initial size — will be resized to widget on first render_frame
+        int sw_w = widgetW > 0 ? widgetW : 1280;
+        int sw_h = widgetH > 0 ? widgetH : 720;
         if (!swapchain_.create(pd, dev, ctx_.surface(), ctx_.queueFamily(),
-                                1280, 720)) {
+                                sw_w, sw_h)) {
             fprintf(stderr, "VulkanRenderer: swapchain create failed\n");
             return false;
         }
@@ -121,9 +123,19 @@ bool VulkanRenderer::render_frame(Path path) {
     VkQueue queue = (VkQueue)ctx_.queue();
     if (!dev || !ctx_.surface() || !swapchain_.swapchain()) return false;
 
-    // Acquire swapchain image
+    // Acquire swapchain image.
+    // On failure (timeout or surface mismatch), recreate the swapchain
+    // at the last known widget size and retry once.
     uint32_t idx = swapchain_.acquire(dev, ctx_.imageAvailableSemaphore());
-    if (idx == ~0u) return false;
+    if (idx == ~0u) {
+        if (last_widget_w_ > 0 && last_widget_h_ > 0) {
+            swapchain_.create(ctx_.physicalDevice(), ctx_.device(),
+                              ctx_.surface(), ctx_.queueFamily(),
+                              last_widget_w_, last_widget_h_);
+            idx = swapchain_.acquire(dev, ctx_.imageAvailableSemaphore());
+        }
+        if (idx == ~0u) return false;
+    }
 
     // Wait for fence, reset
     VkFence fence = (VkFence)ctx_.fence();
@@ -212,6 +224,8 @@ bool VulkanRenderer::render_frame(Path path) {
 // ── Resize ──────────────────────────────────────────────────────────
 
 bool VulkanRenderer::resize(int w, int h) {
+    last_widget_w_ = w;
+    last_widget_h_ = h;
     if (swapchain_.width() == w && swapchain_.height() == h)
         return true;
     VkDevice dev = (VkDevice)ctx_.device();

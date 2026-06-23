@@ -158,11 +158,12 @@ uint32_t SwapchainManager::acquire(void* device, void* semaphore,
     uint32_t idx;
     VkResult res = vkAcquireNextImageKHR(
         (VkDevice)device, (VkSwapchainKHR)swapchain_,
-        UINT64_MAX,
+        100'000'000,  // 100ms — finite to avoid permanent UI freeze
         semaphore ? (VkSemaphore)semaphore : VK_NULL_HANDLE,
         fence ? (VkFence)fence : VK_NULL_HANDLE,
         &idx);
     if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
+        fprintf(stderr, "Swapchain: acquire failed (%d), recreating\n", res);
         return ~0u;
     }
     return idx;
