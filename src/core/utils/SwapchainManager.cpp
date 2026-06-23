@@ -19,15 +19,12 @@ bool SwapchainManager::create(void* physical_device, void* device,
     VkPhysicalDevice pd = (VkPhysicalDevice)physical_device;
     if (!dev) return false;
 
-    // Destroy old swapchain resources (keep render pass alive)
+    // Destroy old framebuffers and image views (they reference images
+    // from the old swapchain that will be retired by the new swapchain).
     for (auto* fb : framebuffers_)
         vkDestroyFramebuffer(dev, (VkFramebuffer)fb, nullptr);
     for (auto* iv : swapchain_image_views_)
         vkDestroyImageView(dev, (VkImageView)iv, nullptr);
-    if (swapchain_) {
-        vkDestroySwapchainKHR(dev, (VkSwapchainKHR)swapchain_, nullptr);
-        swapchain_ = nullptr;
-    }
     framebuffers_.clear();
     swapchain_image_views_.clear();
     swapchain_images_.clear();
@@ -68,6 +65,10 @@ bool SwapchainManager::create(void* physical_device, void* device,
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     sci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
     sci.clipped = VK_TRUE;
+    // Pass the old swapchain so the driver can properly retire images
+    // that are still in the presentation engine.  The old swapchain is
+    // destroyed AFTER the new one is created.
+    sci.oldSwapchain = (VkSwapchainKHR)swapchain_;
 
     VkSwapchainKHR sc;
     if (vkCreateSwapchainKHR(dev, &sci, nullptr, &sc) != VK_SUCCESS) {
@@ -75,6 +76,12 @@ bool SwapchainManager::create(void* physical_device, void* device,
         return false;
     }
     swapchain_ = sc;
+
+    // Now safe to destroy the old swapchain — the new one owns any
+    // in-flight presentation images that were transferred via oldSwapchain.
+    if (sci.oldSwapchain) {
+        vkDestroySwapchainKHR(dev, sci.oldSwapchain, nullptr);
+    }
 
     uint32_t ic = 0;
     vkGetSwapchainImagesKHR(dev, sc, &ic, nullptr);

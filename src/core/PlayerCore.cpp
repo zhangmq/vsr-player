@@ -71,7 +71,7 @@ void PlayerCore::shutdown() {
     // Signal the worker to leave render_frame() as soon as possible.
     // This avoids the main thread timing out while the worker is blocked
     // in Vulkan presentation calls (vkAcquireNextImageKHR / vkQueuePresentKHR).
-    shutting_down_ = true;
+    *shutting_down_ = true;
     send_command({PlayerCommand::QUIT});
 
     // Wait for worker to finish, with timeout to prevent hang on exit
@@ -407,7 +407,7 @@ void PlayerCore::cmd_resize(int phys_w, int phys_h) {
         }
         // Wire shutdown signal so blocking Vulkan waits in render_frame()
         // can be interrupted when the main thread calls shutdown().
-        renderer_->set_shutdown_flag(&shutting_down_);
+        renderer_->set_shutdown_flag(shutting_down_);
     }
 
     // ── Adaptive scale ──
@@ -590,7 +590,7 @@ bool PlayerCore::process_one_frame() {
     // 7. D2D copy → InteropTexture + Vulkan render.
     // If shutting down, skip all rendering — the worker should exit its
     // main loop as quickly as possible to process QUIT and tear down.
-    if (renderer_ && renderer_->is_ready() && !shutting_down_) {
+    if (renderer_ && renderer_->is_ready() && !shutting_down_->load()) {
         if (vsr_out_ptr) {
             // ── VSR path: RGBA → rgbaInterop ──
             auto& rgbaTex = renderer_->rgbaInterop();

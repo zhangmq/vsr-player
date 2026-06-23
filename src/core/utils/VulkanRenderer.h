@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include "VulkanContext.h"
 #include "SwapchainManager.h"
 #include "VideoPipeline.h"
@@ -54,11 +55,13 @@ public:
     bool init_pipelines_with_saved_spv(int videoW, int videoH, int scale,
                                         int widgetW, int widgetH);
 
-    /// Set a shutdown flag pointer.  render_frame() checks this flag
+    /// Set a shared shutdown flag.  render_frame() checks this flag
     /// after every finite Vulkan wait — when set, it returns early so the
     /// worker thread can process QUIT and tear down cleanly.
-    void set_shutdown_flag(const std::atomic<bool>* flag) {
-        shutting_down_ = flag;
+    /// Using shared_ptr ensures the flag remains valid even if the worker
+    /// thread outlives PlayerCore (detach case).
+    void set_shutdown_flag(std::shared_ptr<std::atomic<bool>> flag) {
+        shutting_down_ = std::move(flag);
     }
 
 private:
@@ -71,9 +74,9 @@ private:
     int vsr_scale_ = 1;
     int last_widget_w_ = 0, last_widget_h_ = 0;
 
-    // Shutdown signal — checked in render_frame() to break out of
-    // blocking Vulkan waits. Points to PlayerCore::shutting_down_.
-    const std::atomic<bool>* shutting_down_ = nullptr;
+    // Shutdown signal — shared ownership with PlayerCore so the flag
+    // stays alive even if the worker is detached during shutdown.
+    std::shared_ptr<std::atomic<bool>> shutting_down_;
 
     // Saved SPIR-V pointers for pipeline recreation on resize
     const uint32_t* saved_vert_spv_ = nullptr;
