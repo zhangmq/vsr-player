@@ -17,7 +17,6 @@
 #include <cstring>
 #include <unistd.h>
 
-#define VK_USE_PLATFORM_WAYLAND_KHR
 #include <vulkan/vulkan.h>
 
 namespace vsr {
@@ -47,6 +46,11 @@ InteropTexture::~InteropTexture() { release(); }
 
 bool InteropTexture::init(VkDevice_T* dev, VkPhysicalDevice_T* pd,
                            uint32_t w, uint32_t h, uint32_t format) {
+    if (valid()) {
+        fprintf(stderr, "InteropTexture: already initialized, call release() first\n");
+        return false;
+    }
+
     VkDevice device = (VkDevice)dev;
     VkPhysicalDevice physDev = (VkPhysicalDevice)pd;
     VkResult res;
@@ -141,7 +145,8 @@ bool InteropTexture::init(VkDevice_T* dev, VkPhysicalDevice_T* pd,
     PFN_vkGetMemoryFdKHR vkGetMemoryFdKHR =
         (PFN_vkGetMemoryFdKHR)vkGetDeviceProcAddr(device, "vkGetMemoryFdKHR");
     if (!vkGetMemoryFdKHR) {
-        fprintf(stderr, "InteropTexture: vkGetMemoryFdKHR not found\n");
+        fprintf(stderr, "InteropTexture: vkGetMemoryFdKHR not found — "
+                "is VK_KHR_external_memory_fd enabled on the device?\n");
         release();
         return false;
     }
@@ -221,29 +226,30 @@ bool InteropTexture::init(VkDevice_T* dev, VkPhysicalDevice_T* pd,
 void InteropTexture::release() {
     VkDevice device = (VkDevice)device_;
 
-    // Vulkan resources (require VkDevice)
-    if (device) {
+    if (device)
         vkDeviceWaitIdle(device);
 
+    // 1. Destroy CUDA external memory first — the CUDA handle references
+    //    the Vulkan allocation; freeing Vulkan memory first is UB.
+    if (extMem_) {
+        cuDestroyExternalMemory((CUexternalMemory)extMem_);
+        extMem_ = nullptr;
+    }
+
+    // 2. Vulkan resources (reverse order of creation)
+    if (device) {
         if (imageView_) {
             vkDestroyImageView(device, (VkImageView)imageView_, nullptr);
             imageView_ = nullptr;
-        }
-        if (memory_) {
-            vkFreeMemory(device, (VkDeviceMemory)memory_, nullptr);
-            memory_ = nullptr;
         }
         if (image_) {
             vkDestroyImage(device, (VkImage)image_, nullptr);
             image_ = nullptr;
         }
-    }
-
-    // CUDA external memory — destroys the imported handle and unmaps
-    // any buffers mapped from it (cudaPtr_ is invalidated automatically).
-    if (extMem_) {
-        cuDestroyExternalMemory((CUexternalMemory)extMem_);
-        extMem_ = nullptr;
+        if (memory_) {
+            vkFreeMemory(device, (VkDeviceMemory)memory_, nullptr);
+            memory_ = nullptr;
+        }
     }
 
     cudaPtr_ = 0;
