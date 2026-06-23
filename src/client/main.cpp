@@ -15,7 +15,7 @@ int main(int argc, char* argv[]) {
     // Parse flags
     bool use_vsr = true;
     vsr::Quality quality = vsr::Quality::HIGH;
-    int file_arg = 1;
+    int file_arg = argc;  // default: no file
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--no-vsr") == 0) {
             use_vsr = false;
@@ -29,7 +29,7 @@ int main(int argc, char* argv[]) {
             else if (strcmp(q, "HIGH") == 0)   quality = vsr::Quality::HIGH;
             else if (strcmp(q, "ULTRA") == 0)  quality = vsr::Quality::ULTRA;
             else fprintf(stderr, "VSR: unknown quality '%s' — using HIGH\n", q);
-        } else {
+        } else if (argv[i][0] != '-') {
             file_arg = i;
         }
     }
