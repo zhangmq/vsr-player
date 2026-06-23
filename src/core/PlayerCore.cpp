@@ -405,6 +405,9 @@ void PlayerCore::cmd_resize(int phys_w, int phys_h) {
             cuda_ctx_->pop();
             return;
         }
+        // Wire shutdown signal so blocking Vulkan waits in render_frame()
+        // can be interrupted when the main thread calls shutdown().
+        renderer_->set_shutdown_flag(&shutting_down_);
     }
 
     // ── Adaptive scale ──
