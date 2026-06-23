@@ -46,6 +46,8 @@ private:
     std::thread worker_thread_;
     std::atomic<bool> running_{false};
     std::atomic<bool> thread_done_{false};  // worker sets on exit
+    std::atomic<bool> shutting_down_{false};  // set by shutdown(), checked
+        // by process_one_frame() to skip render_frame() and exit quickly
     CommandQueue<PlayerCommand> cmd_queue_;
     EventCallback event_cb_;
 

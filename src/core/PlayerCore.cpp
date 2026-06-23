@@ -68,6 +68,10 @@ bool PlayerCore::initialize(void* native_window, void* native_display,
 
 void PlayerCore::shutdown() {
     if (!running_) return;
+    // Signal the worker to leave render_frame() as soon as possible.
+    // This avoids the main thread timing out while the worker is blocked
+    // in Vulkan presentation calls (vkAcquireNextImageKHR / vkQueuePresentKHR).
+    shutting_down_ = true;
     send_command({PlayerCommand::QUIT});
 
     // Wait for worker to finish, with timeout to prevent hang on exit
@@ -580,8 +584,10 @@ bool PlayerCore::process_one_frame() {
                       &vsr_out_pitch);
     }
 
-    // 7. D2D copy → InteropTexture + Vulkan render
-    if (renderer_ && renderer_->is_ready()) {
+    // 7. D2D copy → InteropTexture + Vulkan render.
+    // If shutting down, skip all rendering — the worker should exit its
+    // main loop as quickly as possible to process QUIT and tear down.
+    if (renderer_ && renderer_->is_ready() && !shutting_down_) {
         if (vsr_out_ptr) {
             // ── VSR path: RGBA → rgbaInterop ──
             auto& rgbaTex = renderer_->rgbaInterop();
