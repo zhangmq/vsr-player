@@ -12,6 +12,9 @@ third_party/*
 *.swp
 *.swo
 .clangd/
+# Debug screenshots
+screenshots/
+
 # Compiled test binaries
 tests/test_decoder
 tests/*.o

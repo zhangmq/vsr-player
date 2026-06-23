@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -213,6 +215,16 @@ void MainWindow::apply_scale(int scale) {
                 .arg(audio_ && audio_->is_active() ? "[AUDIO]" : ""));
         }
     }
+}
+
+// ── Key press ──────────────────────────────────────────────────────────
+
+void MainWindow::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_S && !event->isAutoRepeat()) {
+        screenshot_requested_ = true;
+        status_label_->setText("Screenshot queued...");
+    }
+    QMainWindow::keyPressEvent(event);
 }
 
 // ── Open file ─────────────────────────────────────────────────────────
@@ -442,6 +454,10 @@ void MainWindow::on_timer_tick() {
         }
     }
 
+    // VSR output pointer (captured here so screenshot code can read it back)
+    void* vsr_out_ptr = nullptr;
+    int vsr_out_w = 0, vsr_out_h = 0, vsr_out_pitch = 0;
+
     if (vsr_) {
         // ── VSR path: NV12 → float32 RGB → VSR → RGBA InteropTexture ──
         // For SW decode: H2D copy NV12 planes to temp GPU buffers first.
@@ -465,8 +481,6 @@ void MainWindow::on_timer_tick() {
 
         if (!is_hw) { cuMemFree(tmp_y); cuMemFree(tmp_uv); }
 
-        void* vsr_out_ptr = nullptr;
-        int vsr_out_w = 0, vsr_out_h = 0, vsr_out_pitch = 0;
         bool vsr_ok = vsr_->process(rgb_gpu_, &vsr_out_ptr, &vsr_out_w, &vsr_out_h,
                                      &vsr_out_pitch);
 
@@ -536,6 +550,42 @@ void MainWindow::on_timer_tick() {
     // pipeline recreation on resize)
     vulkan_widget_->render_frame(vsr_ ? Path::VSR : Path::NOVSR);
 
+    // ── Screenshot (S key, debug) ──
+    if (screenshot_requested_) {
+        screenshot_requested_ = false;
+
+        // Ensure NV12→RGB output exists on GPU.
+        // VSR path: rgb_gpu_ already filled by normal pipeline above.
+        // NO-VSR path: run NV12→RGB kernel temporarily for the screenshot.
+        if (!vsr_) {
+            CUdeviceptr tmp_y = 0, tmp_uv = 0;
+            uint8_t* gpu_y = nullptr;
+            uint8_t* gpu_uv = nullptr;
+            if (!is_hw) {
+                size_t y_sz  = (size_t)y_pitch * video_height_;
+                size_t uv_sz = (size_t)uv_pitch * (video_height_ / 2);
+                cuMemAlloc(&tmp_y, y_sz);
+                cuMemAlloc(&tmp_uv, uv_sz);
+                cuMemcpyHtoDAsync(tmp_y,  y_plane,  y_sz,  (CUstream)cuda_stream_);
+                cuMemcpyHtoDAsync(tmp_uv, uv_plane, uv_sz, (CUstream)cuda_stream_);
+                cuStreamSynchronize((CUstream)cuda_stream_);
+                gpu_y  = (uint8_t*)tmp_y;
+                gpu_uv = (uint8_t*)tmp_uv;
+            } else {
+                gpu_y  = y_plane;
+                gpu_uv = uv_plane;
+            }
+            nv12_to_rgb_->convert(gpu_y, y_pitch, gpu_uv, uv_pitch,
+                                   video_width_, video_height_,
+                                   rgb_gpu_, cuda_stream_);
+            cuStreamSynchronize((CUstream)cuda_stream_);
+            if (!is_hw) { cuMemFree(tmp_y); cuMemFree(tmp_uv); }
+        }
+
+        // Save original (pre-VSR) and upscaled (post-VSR) pair
+        save_screenshots(vsr_out_ptr, vsr_out_w, vsr_out_h, vsr_out_pitch);
+    }
+
     cuda_ctx_->pop();
     decoder_->release_frame(hw_frame);
 
@@ -553,6 +603,89 @@ void MainWindow::on_timer_tick() {
                 std::chrono::milliseconds(static_cast<int>(std::min(delay * 1000.0, 50.0))));
         }
     }
+}
+
+// ── Screenshot ─────────────────────────────────────────────────────────
+
+static void save_ppm(const std::string& path, const uint8_t* rgb,
+                     int w, int h) {
+    FILE* f = fopen(path.c_str(), "wb");
+    if (!f) { fprintf(stderr, "Screenshot: fopen %s failed\n", path.c_str()); return; }
+    fprintf(f, "P6\n%d %d\n255\n", w, h);
+    fwrite(rgb, 1, (size_t)w * h * 3, f);
+    fclose(f);
+    printf("Screenshot: saved %s (%dx%d)\n", path.c_str(), w, h);
+}
+
+void MainWindow::save_screenshots(void* vsr_out_ptr, int vsr_out_w,
+                                  int vsr_out_h, int vsr_out_pitch) {
+    // Ensure output directory exists
+    mkdir(screenshot_dir_.c_str(), 0755);
+
+    char path[256];
+    int n = screenshot_counter_++;
+
+    int npixels = video_width_ * video_height_;
+    size_t plane_bytes = (size_t)npixels * sizeof(float);
+
+    // ── Original frame: rgb_gpu_ (float32 CHW) → uint8 RGB PPM ──
+    {
+        std::vector<float> rgb_cpu(npixels * 3);
+        cuMemcpyDtoH(rgb_cpu.data(), (CUdeviceptr)rgb_gpu_, plane_bytes * 3);
+
+        std::vector<uint8_t> ppm(npixels * 3);
+        float* rp = rgb_cpu.data();
+        float* gp = rgb_cpu.data() + npixels;
+        float* bp = rgb_cpu.data() + npixels * 2;
+        for (int i = 0; i < npixels; i++) {
+            ppm[i * 3 + 0] = (uint8_t)std::clamp((int)(rp[i] * 255.0f), 0, 255);
+            ppm[i * 3 + 1] = (uint8_t)std::clamp((int)(gp[i] * 255.0f), 0, 255);
+            ppm[i * 3 + 2] = (uint8_t)std::clamp((int)(bp[i] * 255.0f), 0, 255);
+        }
+
+        snprintf(path, sizeof(path), "%s/%05d_orig.ppm",
+                 screenshot_dir_.c_str(), n);
+        save_ppm(path, ppm.data(), video_width_, video_height_);
+    }
+
+    // ── Upscaled frame: VSR output (uint8 RGBA) → uint8 RGB PPM ──
+    if (vsr_out_ptr && vsr_out_w > 0 && vsr_out_h > 0) {
+        int out_pitch = vsr_out_pitch > 0 ? vsr_out_pitch : vsr_out_w * 4;
+        size_t row_bytes = (size_t)vsr_out_w * 4;
+
+        std::vector<uint8_t> rgba_cpu((size_t)out_pitch * vsr_out_h);
+        CUDA_MEMCPY2D copy = {};
+        copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+        copy.srcDevice     = (CUdeviceptr)vsr_out_ptr;
+        copy.srcPitch      = (size_t)out_pitch;
+        copy.dstMemoryType = CU_MEMORYTYPE_HOST;
+        copy.dstHost       = rgba_cpu.data();
+        copy.dstPitch      = row_bytes;
+        copy.WidthInBytes  = row_bytes;
+        copy.Height        = (size_t)vsr_out_h;
+        cuMemcpy2D(&copy);
+
+        std::vector<uint8_t> ppm((size_t)vsr_out_w * vsr_out_h * 3);
+        for (int row = 0; row < vsr_out_h; row++) {
+            uint8_t* src = rgba_cpu.data() + (size_t)row * row_bytes;
+            uint8_t* dst = ppm.data() + (size_t)row * vsr_out_w * 3;
+            for (int col = 0; col < vsr_out_w; col++) {
+                dst[col * 3 + 0] = src[col * 4 + 0];
+                dst[col * 3 + 1] = src[col * 4 + 1];
+                dst[col * 3 + 2] = src[col * 4 + 2];
+            }
+        }
+
+        snprintf(path, sizeof(path), "%s/%05d_vsr.ppm",
+                 screenshot_dir_.c_str(), n);
+        save_ppm(path, ppm.data(), vsr_out_w, vsr_out_h);
+    }
+
+    status_label_->setText(
+        QString("Screenshot %1 saved (%2×%3)")
+            .arg(n)
+            .arg(video_width_)
+            .arg(video_height_));
 }
 
 }  // namespace vsr

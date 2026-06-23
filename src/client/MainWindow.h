@@ -1,7 +1,9 @@
 #pragma once
 
+#include <QKeyEvent>
 #include <QMainWindow>
 #include <QTimer>
+#include <string>
 #include <vector>
 
 #include "api/Player.h"
@@ -37,6 +39,7 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 
 private slots:
     void on_timer_tick();
@@ -89,6 +92,13 @@ private:
     int current_scale_ = 1;
     Quality quality_ = Quality::HIGH;
     bool pipelines_initialized_ = false;
+
+    // Screenshot
+    bool screenshot_requested_ = false;
+    int screenshot_counter_ = 0;
+    std::string screenshot_dir_ = "./screenshots";
+    void save_screenshots(void* vsr_out_ptr, int vsr_out_w, int vsr_out_h,
+                          int vsr_out_pitch);
 };
 
 }  // namespace vsr
