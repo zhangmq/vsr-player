@@ -33,6 +33,7 @@ public:
     ~MainWindow() override;
 
     void open_file(const QString& path);
+    void set_no_hwaccel(bool v) { no_hwaccel_ = v; }
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -70,6 +71,7 @@ private:
     bool playing_ = false;
     bool pipeline_ready_ = false;
     bool use_vsr_ = true;
+    bool no_hwaccel_ = false;
 
     // Video info
     int video_width_ = 0;

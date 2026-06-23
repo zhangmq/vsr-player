@@ -30,10 +30,20 @@ Decoder::~Decoder() { close(); }
 
 // ── Open ────────────────────────────────────────────────────────────
 
-bool Decoder::open(void* codecpar_ptr) {
+bool Decoder::open(void* codecpar_ptr, bool force_sw) {
     AVCodecParameters* codecpar = static_cast<AVCodecParameters*>(codecpar_ptr);
     width_  = codecpar->width;
     height_ = codecpar->height;
+
+    if (force_sw) {
+        fprintf(stderr, "Decoder: --no-hwaccel — forcing software decode\n");
+        if (try_open_software(codecpar)) {
+            fprintf(stderr, "Decoder: open ok — %dx%d, software\n",
+                    width_, height_);
+            return true;
+        }
+        return false;
+    }
 
     // Create CUDA device context (shared across all codecs)
     int ret = av_hwdevice_ctx_create(&hw_device_ctx_, AV_HWDEVICE_TYPE_CUDA,

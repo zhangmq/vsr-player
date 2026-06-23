@@ -24,8 +24,9 @@ public:
 
     /// Open decoder from codec parameters.
     /// @param codecpar  AVCodecParameters* from the demuxer stream
+    /// @param force_sw  If true, skip NVDEC and use software decode directly.
     /// Uses hwaccel when available, falls back to software decode.
-    bool open(void* codecpar);
+    bool open(void* codecpar, bool force_sw = false);
 
     /// Feed a compressed packet. Returns true if frames are available.
     bool send_packet(const uint8_t* data, int size, int64_t pts);

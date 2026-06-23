@@ -238,9 +238,9 @@ void MainWindow::open_file(const QString& path) {
         return;
     }
 
-    // ── Decoder (NVDEC hwaccel) ──
+    // ── Decoder (NVDEC hwaccel or software) ──
     decoder_ = new Decoder();
-    if (!decoder_->open(demuxer_->video_codecpar())) {
+    if (!decoder_->open(demuxer_->video_codecpar(), no_hwaccel_)) {
         status_label_->setText("Failed to open decoder");
         return;
     }
@@ -382,8 +382,11 @@ void MainWindow::on_timer_tick() {
     AVFrame* hw_frame = decoder_->receive_frame();
     if (!hw_frame) return;
 
-    // Only process CUDA frames through GPU path
-    if (hw_frame->format != AV_PIX_FMT_CUDA) {
+    // HW decode: NV12 CUDA pointers. SW decode: NV12 CPU pointers.
+    bool is_hw = (hw_frame->format == AV_PIX_FMT_CUDA);
+    if (!is_hw && hw_frame->format != AV_PIX_FMT_NV12 &&
+        hw_frame->format != AV_PIX_FMT_YUV420P) {
+        // Unsupported pixel format (shouldn't happen)
         decoder_->release_frame(hw_frame);
         return;
     }
@@ -400,7 +403,7 @@ void MainWindow::on_timer_tick() {
         pipelines_initialized_ = true;
     }
 
-    // NV12 planes from decoder
+    // NV12 planes from decoder (HW: GPU pointers, SW: CPU pointers)
     uint8_t* y_plane  = hw_frame->data[0];
     uint8_t* uv_plane = hw_frame->data[1];
     int y_pitch  = hw_frame->linesize[0];
@@ -408,9 +411,26 @@ void MainWindow::on_timer_tick() {
 
     if (vsr_) {
         // ── VSR path: NV12 → float32 RGB → VSR → RGBA InteropTexture ──
-        nv12_to_rgb_->convert(y_plane, y_pitch, uv_plane, uv_pitch,
+        // For SW decode: H2D copy NV12 planes to temp GPU buffers first.
+        CUdeviceptr tmp_y = 0, tmp_uv = 0;
+        if (!is_hw) {
+            size_t y_sz  = (size_t)y_pitch * video_height_;
+            size_t uv_sz = (size_t)uv_pitch * (video_height_ / 2);
+            cuMemAlloc(&tmp_y, y_sz);
+            cuMemAlloc(&tmp_uv, uv_sz);
+            cuMemcpyHtoDAsync(tmp_y,  y_plane,  y_sz,  (CUstream)cuda_stream_);
+            cuMemcpyHtoDAsync(tmp_uv, uv_plane, uv_sz, (CUstream)cuda_stream_);
+            cuStreamSynchronize((CUstream)cuda_stream_);
+        }
+
+        uint8_t* gpu_y  = is_hw ? y_plane  : (uint8_t*)tmp_y;
+        uint8_t* gpu_uv = is_hw ? uv_plane : (uint8_t*)tmp_uv;
+
+        nv12_to_rgb_->convert(gpu_y, y_pitch, gpu_uv, uv_pitch,
                                video_width_, video_height_,
                                rgb_gpu_, cuda_stream_);
+
+        if (!is_hw) { cuMemFree(tmp_y); cuMemFree(tmp_uv); }
 
         void* vsr_out_ptr = nullptr;
         int vsr_out_w = 0, vsr_out_h = 0, vsr_out_pitch = 0;
@@ -421,7 +441,7 @@ void MainWindow::on_timer_tick() {
             size_t row_bytes = (size_t)vsr_out_w * 4;
             auto& rgbaTex = vulkan_widget_->rgbaInterop();
 
-            // D2D copy VSR output → InteropTexture (GPU→GPU, same device)
+            // D2D copy VSR output → InteropTexture (GPU→GPU)
             CUDA_MEMCPY2D copy = {};
             copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
             copy.srcDevice     = (CUdeviceptr)vsr_out_ptr;
@@ -438,32 +458,40 @@ void MainWindow::on_timer_tick() {
             vsr_h_ = vsr_out_h;
         }
     } else {
-        // ── NO-VSR path: NV12 planes → InteropTextures ──
+        // ── NO-VSR path: NV12 planes → InteropTextures (D2D or H2D) ──
         auto& yTex  = vulkan_widget_->yInterop();
         auto& uvTex = vulkan_widget_->uvInterop();
 
-        // D2D copy Y plane → R8 InteropTexture
         CUDA_MEMCPY2D copyY = {};
-        copyY.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-        copyY.srcDevice     = (CUdeviceptr)y_plane;
         copyY.srcPitch      = (size_t)y_pitch;
         copyY.dstMemoryType = CU_MEMORYTYPE_DEVICE;
         copyY.dstDevice     = yTex.cudaPtr();
         copyY.dstPitch      = yTex.cudaPitch();
         copyY.WidthInBytes  = (size_t)video_width_;
         copyY.Height        = (size_t)video_height_;
+        if (is_hw) {
+            copyY.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+            copyY.srcDevice     = (CUdeviceptr)y_plane;
+        } else {
+            copyY.srcMemoryType = CU_MEMORYTYPE_HOST;
+            copyY.srcHost       = y_plane;
+        }
         cuMemcpy2DAsync(&copyY, (CUstream)cuda_stream_);
 
-        // D2D copy UV plane → R8G8 InteropTexture
         CUDA_MEMCPY2D copyUV = {};
-        copyUV.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-        copyUV.srcDevice     = (CUdeviceptr)uv_plane;
         copyUV.srcPitch      = (size_t)uv_pitch;
         copyUV.dstMemoryType = CU_MEMORYTYPE_DEVICE;
         copyUV.dstDevice     = uvTex.cudaPtr();
         copyUV.dstPitch      = uvTex.cudaPitch();
         copyUV.WidthInBytes  = (size_t)video_width_;
         copyUV.Height        = (size_t)(video_height_ / 2);
+        if (is_hw) {
+            copyUV.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+            copyUV.srcDevice     = (CUdeviceptr)uv_plane;
+        } else {
+            copyUV.srcMemoryType = CU_MEMORYTYPE_HOST;
+            copyUV.srcHost       = uv_plane;
+        }
         cuMemcpy2DAsync(&copyUV, (CUstream)cuda_stream_);
         cuStreamSynchronize((CUstream)cuda_stream_);
 
