@@ -28,9 +28,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     vulkan_widget_ = new VulkanWidget(central);
 
-    // Connect native window ready → deferred player init
-    connect(vulkan_widget_, &VulkanWidget::nativeWindowReady,
-            this, &MainWindow::on_native_window_ready);
+    // Do NOT connect nativeWindowReady in the constructor.
+    // The signal fires synchronously during show() — before the
+    // QTimer::singleShot callback has delivered CLI arg values.
+    // Instead, init_player() connects the signal only as a fallback
+    // when the native window is not yet ready at the time of the call.
 
     // Overlay control bar — semi-transparent, bottom-aligned
     overlay_ = new QWidget(central);
@@ -89,10 +91,27 @@ void MainWindow::init_player(bool use_vsr, Quality quality) {
     deferred_use_vsr_ = use_vsr;
     deferred_quality_ = quality;
 
-    // If native window already exists (e.g. init_player called after
-    // showEvent already fired), initialize immediately.
-    if (vulkan_widget_->isNativeReady())
+    if (player_initialized_) {
+        // Player already initialized.  Apply quality change if needed.
+        if (player_)
+            player_->send_command({PlayerCommand::SET_QUALITY,
+                                   quality == Quality::LOW    ? "low" :
+                                   quality == Quality::MEDIUM ? "medium" :
+                                   quality == Quality::ULTRA  ? "ultra" : "high"});
+        return;
+    }
+
+    if (vulkan_widget_->isNativeReady()) {
+        // Native window already available (normal path) — initialize now.
         on_native_window_ready();
+    } else {
+        // Native window not ready yet (unlikely — show() creates it
+        // synchronously on both X11 and Wayland).  Connect signal as a
+        // one-shot fallback for platforms where surface creation is async.
+        connect(vulkan_widget_, &VulkanWidget::nativeWindowReady,
+                this, &MainWindow::on_native_window_ready,
+                Qt::SingleShotConnection);
+    }
 }
 
 void MainWindow::on_native_window_ready() {

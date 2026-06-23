@@ -1,19 +1,19 @@
 /// VSR Player — Qt client entry point.
 
+#include <cstdio>
 #include <cstring>
 
 #include <QApplication>
-#include <QTimer>
 
 #include "MainWindow.h"
 #include "api/Player.h"
 
 int main(int argc, char* argv[]) {
-    // Parse flags BEFORE QApplication — Qt modifies argc/argv in-place,
-    // potentially reordering entries.  Store results in local variables.
+    // Parse flags.  Qt may modify argc/argv during QApplication construction,
+    // so we parse first and store results as local values.
     bool use_vsr = true;
     vsr::Quality quality = vsr::Quality::HIGH;
-    QString file_path;  // captured as value BEFORE Qt touches argv
+    QString file_path;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--no-vsr") == 0) {
@@ -32,32 +32,33 @@ int main(int argc, char* argv[]) {
                     argv[0]);
             return 0;
         } else if (argv[i][0] != '-') {
-            file_path = QString::fromLocal8Bit(argv[i]);  // copy now, before Qt
+            file_path = QString::fromLocal8Bit(argv[i]);
         }
     }
 
-    // Qt may now safely modify argc/argv
     QApplication app(argc, argv);
     app.setApplicationName("VSR Player");
     app.setApplicationVersion("0.1.0");
 
     fprintf(stderr, "VSR: %s quality=%s\n",
             use_vsr ? "enabled" : "disabled",
-            quality == vsr::Quality::LOW ? "LOW" :
+            quality == vsr::Quality::LOW    ? "LOW" :
             quality == vsr::Quality::MEDIUM ? "MEDIUM" :
-            quality == vsr::Quality::HIGH ? "HIGH" : "ULTRA");
+            quality == vsr::Quality::HIGH   ? "HIGH" : "ULTRA");
 
-    // Create window
+    // Create window and show it.  show() synchronously creates the
+    // native Wayland surface on both X11 and Wayland platforms, so
+    // the surface is valid by the time show() returns.
     vsr::MainWindow window;
     window.show();
 
-    // Defer player init + file load to after the native Wayland surface
-    // exists (first event-loop iteration, showEvent already processed).
-    QTimer::singleShot(0, [&window, use_vsr, quality, file_path] {
-        window.init_player(use_vsr, quality);
-        if (!file_path.isEmpty())
-            window.open_file(file_path);
-    });
+    // Initialize the Core engine with CLI-supplied (or default) settings.
+    // This must happen after show() — the native surface is needed for
+    // Vulkan init — but BEFORE app.exec() so the player is ready when the
+    // event loop starts.
+    window.init_player(use_vsr, quality);
+    if (!file_path.isEmpty())
+        window.open_file(file_path);
 
     return app.exec();
 }
