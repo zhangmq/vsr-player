@@ -67,15 +67,16 @@ bool PlayerCore::initialize(void* native_window, void* native_display,
 }
 
 void PlayerCore::shutdown() {
+    fprintf(stderr, "[PlayerCore::shutdown] running=%d\n", running_.load());
     if (running_) {
+        fprintf(stderr, "[PlayerCore::shutdown] sending QUIT\n");
         send_command({PlayerCommand::QUIT});
     }
-    // Always join — even if the worker already exited (closeEvent path).
-    // A joinable std::thread that is destroyed without join/terminate
-    // calls std::terminate().
+    fprintf(stderr, "[PlayerCore::shutdown] joining worker thread...\n");
     if (worker_thread_.joinable())
         worker_thread_.join();
     running_ = false;
+    fprintf(stderr, "[PlayerCore::shutdown] done\n");
 }
 
 void PlayerCore::emit_event(PlayerEvent e) {
@@ -100,9 +101,12 @@ void PlayerCore::run_loop() {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
     }
+    fprintf(stderr, "[run_loop] exited loop, tearing down pipeline\n");
     teardown_pipeline();
 
+    fprintf(stderr, "[run_loop] emitting STATE_CHANGED(STOPPED)\n");
     emit_event({PlayerEvent::STATE_CHANGED, PlaybackState::STOPPED});
+    fprintf(stderr, "[run_loop] worker thread exiting\n");
 }
 
 // ── Command dispatch ─────────────────────────────────────────────────
@@ -149,6 +153,7 @@ bool PlayerCore::process_command_nonblock() {
         capture_pending_ = true;
         break;
     case PlayerCommand::QUIT:
+        fprintf(stderr, "[run_loop] received QUIT, setting running_=false\n");
         running_ = false;
         break;
     default:

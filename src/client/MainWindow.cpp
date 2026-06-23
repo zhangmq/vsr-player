@@ -82,10 +82,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
-    // If closeEvent already shut down the player, running_ is false and
-    // shutdown() is a no-op (just joins the already-terminated thread).
+    fprintf(stderr, "[~MainWindow] destructor\n");
     if (player_)
         player_->shutdown();
+    fprintf(stderr, "[~MainWindow] done\n");
 }
 
 // ── Player init (deferred until native window ready) ─────────────────
@@ -255,14 +255,14 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
 // ── Graceful shutdown ─────────────────────────────────────────────────
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    // Send QUIT to the worker thread and join it.  All Vulkan blocking
-    // calls use ≤ 100 ms finite timeouts, so the worker exits its render
-    // loop and tears down GPU resources within one frame interval.
-    // The Wayland surface stays valid throughout because Qt does not
-    // destroy the native window until after closeEvent accepts.
-    if (player_initialized_)
+    fprintf(stderr, "[closeEvent] player_initialized=%d\n", player_initialized_);
+    if (player_initialized_) {
+        fprintf(stderr, "[closeEvent] calling player_->shutdown()...\n");
         player_->shutdown();
+        fprintf(stderr, "[closeEvent] shutdown returned\n");
+    }
     event->accept();
+    fprintf(stderr, "[closeEvent] accepted, window will close\n");
 }
 
 // ── Screenshot ───────────────────────────────────────────────────────
