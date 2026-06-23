@@ -41,7 +41,9 @@ VERT_SPV := $(BUILD_DIR)/shaders/video.vert.spv
 FRAG_SPV := $(BUILD_DIR)/shaders/video.frag.spv
 VERT_H   := $(BUILD_DIR)/shaders/video_vert_spv.h
 FRAG_H   := $(BUILD_DIR)/shaders/video_frag_spv.h
-SHADERS  := $(VERT_H) $(FRAG_H)
+NV12_FRAG_SPV := $(BUILD_DIR)/shaders/nv12.frag.spv
+NV12_FRAG_H   := $(BUILD_DIR)/shaders/nv12_frag_spv.h
+SHADERS  := $(VERT_H) $(FRAG_H) $(NV12_FRAG_H)
 
 # ---- MOC generated sources ----
 MOC_SRC := $(BUILD_DIR)/moc_MainWindow.cpp $(BUILD_DIR)/moc_VulkanWidget.cpp
@@ -95,6 +97,14 @@ $(VERT_H): $(VERT_SPV) | $(BUILD_DIR)/shaders
 $(FRAG_H): $(FRAG_SPV) | $(BUILD_DIR)/shaders
 	@echo "  HDR   video_frag_spv.h"
 	@xxd -i $< | sed 's/build_shaders_video_frag_spv/video_frag_spv/g' > $@
+
+$(NV12_FRAG_SPV): $(CLIENTDIR)/shaders/nv12.frag | $(BUILD_DIR)/shaders
+	@echo "  GLSL  nv12.frag"
+	@$(GLSLC) -fshader-stage=frag $< -o $@
+
+$(NV12_FRAG_H): $(NV12_FRAG_SPV) | $(BUILD_DIR)/shaders
+	@echo "  HDR   nv12_frag_spv.h"
+	@xxd -i $< | sed 's/build_shaders_nv12_frag_spv/nv12_frag_spv/g' > $@
 
 $(BUILD_DIR)/shaders:
 	@mkdir -p $@
