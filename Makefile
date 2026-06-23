@@ -58,7 +58,8 @@ CORE_OBJS := $(BUILD_DIR)/src/core/Demuxer.o \
              $(BUILD_DIR)/src/core/utils/VulkanRenderer.o \
              $(BUILD_DIR)/src/core/utils/CUDAContext.o \
              $(BUILD_DIR)/src/core/utils/NV12ToRGB.o \
-             $(BUILD_DIR)/src/core/utils/InteropTexture.o
+             $(BUILD_DIR)/src/core/utils/InteropTexture.o \
+             $(BUILD_DIR)/src/core/utils/VideoPipeline.o
 
 CLIENT_OBJS := $(BUILD_DIR)/src/client/main.o \
                $(BUILD_DIR)/src/client/MainWindow.o \

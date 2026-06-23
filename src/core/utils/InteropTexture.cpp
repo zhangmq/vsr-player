@@ -247,4 +247,29 @@ void InteropTexture::release() {
     device_ = nullptr;
 }
 
+// ── Layout transition ─────────────────────────────────────────────
+
+void InteropTexture::transitionLayout(void* dev, void* cb,
+                                       uint32_t oldLayout, uint32_t newLayout) {
+    (void)dev;
+
+    VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.oldLayout = (VkImageLayout)oldLayout;
+    barrier.newLayout = (VkImageLayout)newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = (VkImage)image_;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkPipelineStageFlags dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+    vkCmdPipelineBarrier((VkCommandBuffer)cb, srcStage, dstStage,
+                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
 }  // namespace vsr

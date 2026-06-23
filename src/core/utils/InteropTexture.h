@@ -54,6 +54,11 @@ public:
     VkImage_T* vulkanImage() const { return image_; }
     bool valid() const { return image_ != nullptr; }
 
+    /// Record a pipeline barrier to transition this image's layout.
+    /// cb must be in recording state. Caller submits + waits.
+    void transitionLayout(void* device, void* commandBuffer,
+                          uint32_t oldLayout, uint32_t newLayout);
+
 private:
     VkDevice_T*       device_ = nullptr;
     VkImage_T*        image_ = nullptr;
