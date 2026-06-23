@@ -73,9 +73,6 @@ private:
     Quality deferred_quality_ = Quality::HIGH;
     QString deferred_file_;   // file to open after init
 
-    // Graceful shutdown via closeEvent → QUIT → STATE_CHANGED(STOPPED) → close()
-    bool shutdown_pending_ = false;
-
     // Screenshot
     int screenshot_counter_ = 0;
     std::string screenshot_dir_ = "./screenshots";

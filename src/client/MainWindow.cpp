@@ -82,9 +82,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
-    // If closeEvent already handled shutdown, player_ is already torn down.
-    // Otherwise (e.g. programmatic exit), shut down now.
-    if (player_ && !shutdown_pending_)
+    // If closeEvent already shut down the player, running_ is false and
+    // shutdown() is a no-op (just joins the already-terminated thread).
+    if (player_)
         player_->shutdown();
 }
 
@@ -183,14 +183,6 @@ void MainWindow::on_player_event(const PlayerEvent& e) {
     case PlayerEvent::STATE_CHANGED: {
         bool playing = (e.state == PlaybackState::PLAYING);
         play_btn_->setText(playing ? "⏸ Pause" : "▶ Play");
-
-        // If we're in a deferred close (closeEvent sent QUIT), the
-        // STOPPED event means the worker has torn down all Vulkan
-        // resources.  It's now safe to destroy the window.
-        if (e.state == PlaybackState::STOPPED && shutdown_pending_) {
-            shutdown_pending_ = false;
-            close();  // This time closeEvent accepts immediately
-        }
         break;
     }
     case PlayerEvent::FRAME_INFO: {
@@ -263,19 +255,14 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
 // ── Graceful shutdown ─────────────────────────────────────────────────
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    if (player_initialized_ && !shutdown_pending_) {
-        // Intercept the first close request.  Send QUIT to the worker
-        // thread and defer the actual window close until the worker has
-        // torn down all Vulkan resources and emitted STATE_CHANGED(STOPPED).
-        shutdown_pending_ = true;
-        event->ignore();
-        hide();  // Hide immediately so the user sees a responsive close
-        player_->send_command({PlayerCommand::QUIT});
-        status_label_->setText("Shutting down...");
-    } else {
-        // Worker has finished (or was never started) — safe to close.
-        event->accept();
-    }
+    // Send QUIT to the worker thread and join it.  All Vulkan blocking
+    // calls use ≤ 100 ms finite timeouts, so the worker exits its render
+    // loop and tears down GPU resources within one frame interval.
+    // The Wayland surface stays valid throughout because Qt does not
+    // destroy the native window until after closeEvent accepts.
+    if (player_initialized_)
+        player_->shutdown();
+    event->accept();
 }
 
 // ── Screenshot ───────────────────────────────────────────────────────
