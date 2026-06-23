@@ -17,14 +17,14 @@ QT6_GUI_VER := $(shell pkg-config --modversion Qt6Gui 2>/dev/null)
 QPA_INC := /usr/include/qt6/QtGui/$(QT6_GUI_VER)/
 CXXFLAGS := -std=c++20 -Wall -Wextra -fPIC -O2 -DNDEBUG \
             -Wno-missing-field-initializers \
-            $(shell pkg-config --cflags $(PKGS)) \
+            $(shell pkg-config --cflags $(PKGS) libpng) \
             -I$(QPA_INC) \
             -I$(CUDA_INC) \
             -Isrc/core -Isrc/core/api -Isrc/client -Isrc/core/utils -I$(BUILD_DIR)/shaders \
             -Ithird_party/nvvfx/include
 LDFLAGS  := $(shell pkg-config --libs $(PKGS)) \
             -L$(CUDA_LIB) -lnvrtc -lnvrtc-builtins \
-            -lcuda -ldl \
+            -lcuda -ldl -lpng16 \
             -Wl,--disable-new-dtags \
             -Wl,-rpath,/home/zmq/projects/vsr-player/third_party/cuda/lib \
             -Lthird_party/nvvfx/lib -lNVCVImage \

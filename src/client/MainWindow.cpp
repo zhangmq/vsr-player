@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <png.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -607,13 +608,29 @@ void MainWindow::on_timer_tick() {
 
 // ── Screenshot ─────────────────────────────────────────────────────────
 
-static void save_ppm(const std::string& path, const uint8_t* rgb,
+static void save_png(const std::string& path, const uint8_t* rgb,
                      int w, int h) {
-    FILE* f = fopen(path.c_str(), "wb");
-    if (!f) { fprintf(stderr, "Screenshot: fopen %s failed\n", path.c_str()); return; }
-    fprintf(f, "P6\n%d %d\n255\n", w, h);
-    fwrite(rgb, 1, (size_t)w * h * 3, f);
-    fclose(f);
+    FILE* fp = fopen(path.c_str(), "wb");
+    if (!fp) { fprintf(stderr, "Screenshot: fopen %s failed\n", path.c_str()); return; }
+
+    png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING,
+                                               nullptr, nullptr, nullptr);
+    if (!png) { fclose(fp); return; }
+    png_infop info = png_create_info_struct(png);
+    if (!info) { png_destroy_write_struct(&png, nullptr); fclose(fp); return; }
+
+    png_init_io(png, fp);
+    png_set_IHDR(png, info, w, h, 8, PNG_COLOR_TYPE_RGB,
+                 PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
+                 PNG_FILTER_TYPE_DEFAULT);
+    png_write_info(png, info);
+
+    for (int y = 0; y < h; y++)
+        png_write_row(png, rgb + (size_t)y * w * 3);
+
+    png_write_end(png, nullptr);
+    png_destroy_write_struct(&png, &info);
+    fclose(fp);
     printf("Screenshot: saved %s (%dx%d)\n", path.c_str(), w, h);
 }
 
@@ -643,9 +660,9 @@ void MainWindow::save_screenshots(void* vsr_out_ptr, int vsr_out_w,
             ppm[i * 3 + 2] = (uint8_t)std::clamp((int)(bp[i] * 255.0f), 0, 255);
         }
 
-        snprintf(path, sizeof(path), "%s/%05d_orig.ppm",
+        snprintf(path, sizeof(path), "%s/%05d_orig.png",
                  screenshot_dir_.c_str(), n);
-        save_ppm(path, ppm.data(), video_width_, video_height_);
+        save_png(path, ppm.data(), video_width_, video_height_);
     }
 
     // ── Upscaled frame: VSR output (uint8 RGBA) → uint8 RGB PPM ──
@@ -676,9 +693,9 @@ void MainWindow::save_screenshots(void* vsr_out_ptr, int vsr_out_w,
             }
         }
 
-        snprintf(path, sizeof(path), "%s/%05d_vsr.ppm",
+        snprintf(path, sizeof(path), "%s/%05d_vsr.png",
                  screenshot_dir_.c_str(), n);
-        save_ppm(path, ppm.data(), vsr_out_w, vsr_out_h);
+        save_png(path, ppm.data(), vsr_out_w, vsr_out_h);
     }
 
     status_label_->setText(
