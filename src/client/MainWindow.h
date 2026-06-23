@@ -78,19 +78,15 @@ private:
 
     // GPU buffers (device memory)
     float* rgb_gpu_ = nullptr;    // NV12ToRGB output: (3,H,W) float32
-    uint8_t* rgba_gpu_ = nullptr; // VSR output: (H',W',4) uint8
     void* cuda_stream_ = nullptr;
 
 
     int vsr_w_ = 0, vsr_h_ = 0;   // current VSR output dimensions
 
-    // Host buffer for VSR output (before Vulkan upload)
-    // TODO: replace with CUDA-Vulkan interop
-    std::vector<uint8_t> rgba_host_;
-
     // Adaptive scale
     int current_scale_ = 1;
     Quality quality_ = Quality::HIGH;
+    bool pipelines_initialized_ = false;
 };
 
 }  // namespace vsr

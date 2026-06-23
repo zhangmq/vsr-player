@@ -41,9 +41,11 @@ MainWindow::MainWindow(bool use_vsr, Quality quality, QWidget* parent) : QMainWi
 }
 
 MainWindow::~MainWindow() {
+    // Release Vulkan renderer (including InteropTextures) before CUDA context
+    if (vulkan_widget_) vulkan_widget_->releaseRenderer();
+
     if (audio_) audio_->stop();
     if (decoder_) decoder_->close();
-    if (rgba_gpu_) cuMemFree((CUdeviceptr)rgba_gpu_);
     if (rgb_gpu_) cuMemFree((CUdeviceptr)rgb_gpu_);
     if (cuda_stream_) cuStreamDestroy((CUstream)cuda_stream_);
     delete nv12_to_rgb_;
@@ -179,13 +181,14 @@ void MainWindow::apply_scale(int scale) {
         vsr_->reconfigure(out_w, out_h, quality_);
     }
 
-    // Reallocate RGBA output buffer
-    if (rgba_gpu_) { cuMemFree((CUdeviceptr)rgba_gpu_); rgba_gpu_ = nullptr; }
     vsr_w_ = out_w;
     vsr_h_ = out_h;
-    size_t rgba_bytes = (size_t)vsr_w_ * vsr_h_ * 4;
-    cuMemAlloc((CUdeviceptr*)&rgba_gpu_, rgba_bytes);
-    rgba_host_.resize(rgba_bytes);
+
+    // Reinitialize Vulkan pipelines with new VSR output dimensions
+    // (CUDA context is current — pushed from open_file() and stays valid)
+    if (vulkan_widget_) {
+        vulkan_widget_->init_pipelines(video_width_, video_height_, current_scale_);
+    }
 
     // Update status bar
     {
@@ -225,8 +228,8 @@ void MainWindow::open_file(const QString& path) {
     if (demuxer_) { delete demuxer_; demuxer_ = nullptr; }
     if (cuda_ctx_) { delete cuda_ctx_; cuda_ctx_ = nullptr; }
     if (rgb_gpu_)  { cuMemFree((CUdeviceptr)rgb_gpu_);  rgb_gpu_  = nullptr; }
-    if (rgba_gpu_) { cuMemFree((CUdeviceptr)rgba_gpu_); rgba_gpu_ = nullptr; }
     if (cuda_stream_) { cuStreamDestroy((CUstream)cuda_stream_); cuda_stream_ = nullptr; }
+    pipelines_initialized_ = false;
 
     // ── Demuxer ──
     demuxer_ = new Demuxer();
@@ -283,9 +286,6 @@ void MainWindow::open_file(const QString& path) {
     }
     vsr_w_ = video_width_ * current_scale_;
     vsr_h_ = video_height_ * current_scale_;
-    size_t rgba_bytes = (size_t)vsr_w_ * vsr_h_ * 4;
-    cuMemAlloc((CUdeviceptr*)&rgba_gpu_, rgba_bytes);
-    rgba_host_.resize(rgba_bytes);
 
     // ── VSR processor (skip with --no-vsr) ──
     if (use_vsr_) {
@@ -297,14 +297,12 @@ void MainWindow::open_file(const QString& path) {
             vsr_ = nullptr;
             vsr_w_ = video_width_;
             vsr_h_ = video_height_;
-            rgba_host_.resize(video_width_ * video_height_ * 3);
         }
     } else {
-        fprintf(stderr, "VSR: [NO-VSR] %dx%d → %dx%d (bilinear display only)\n",
+        fprintf(stderr, "VSR: [NO-VSR] %dx%d → %dx%d (interop NV12 display)\n",
                 video_width_, video_height_, video_width_, video_height_);
         vsr_w_ = video_width_;
         vsr_h_ = video_height_;
-        rgba_host_.resize(video_width_ * video_height_ * 3);
     }
 
     // ── Audio ──
@@ -392,18 +390,28 @@ void MainWindow::on_timer_tick() {
 
     cuda_ctx_->push();
 
-    // NV12 GPU → float32 RGB GPU (both paths)
+    // Init Vulkan pipelines on first frame (now we know video dimensions)
+    if (!pipelines_initialized_) {
+        fprintf(stderr, "MainWindow: initializing Vulkan pipelines "
+                "(%dx%d, scale=%d)\n",
+                video_width_, video_height_, current_scale_);
+        vulkan_widget_->init_pipelines(video_width_, video_height_,
+                                        current_scale_);
+        pipelines_initialized_ = true;
+    }
+
+    // NV12 planes from decoder
     uint8_t* y_plane  = hw_frame->data[0];
     uint8_t* uv_plane = hw_frame->data[1];
     int y_pitch  = hw_frame->linesize[0];
     int uv_pitch = hw_frame->linesize[1];
 
-    nv12_to_rgb_->convert(y_plane, y_pitch, uv_plane, uv_pitch,
-                           video_width_, video_height_,
-                           rgb_gpu_, cuda_stream_);
-
     if (vsr_) {
-        // VSR: float32 RGB GPU → RGBA uint8 GPU
+        // ── VSR path: NV12 → float32 RGB → VSR → RGBA InteropTexture ──
+        nv12_to_rgb_->convert(y_plane, y_pitch, uv_plane, uv_pitch,
+                               video_width_, video_height_,
+                               rgb_gpu_, cuda_stream_);
+
         void* vsr_out_ptr = nullptr;
         int vsr_out_w = 0, vsr_out_h = 0, vsr_out_pitch = 0;
         bool vsr_ok = vsr_->process(rgb_gpu_, &vsr_out_ptr, &vsr_out_w, &vsr_out_h,
@@ -411,43 +419,61 @@ void MainWindow::on_timer_tick() {
 
         if (vsr_ok && vsr_out_ptr) {
             size_t row_bytes = (size_t)vsr_out_w * 4;
-            size_t rgba_bytes = row_bytes * vsr_out_h;
-            if (rgba_bytes > rgba_host_.size()) rgba_host_.resize(rgba_bytes);
+            auto& rgbaTex = vulkan_widget_->rgbaInterop();
 
-            // Use pitched 2D copy — VSR GPU output has row alignment padding
-            CUDA_MEMCPY2D copy_desc = {};
-            copy_desc.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-            copy_desc.srcDevice     = (CUdeviceptr)vsr_out_ptr;
-            copy_desc.srcPitch      = (size_t)vsr_out_pitch;
-            copy_desc.dstMemoryType = CU_MEMORYTYPE_HOST;
-            copy_desc.dstHost       = rgba_host_.data();
-            copy_desc.dstPitch      = row_bytes;
-            copy_desc.WidthInBytes  = row_bytes;
-            copy_desc.Height        = (size_t)vsr_out_h;
-            cuMemcpy2DAsync(&copy_desc, (CUstream)cuda_stream_);
+            // D2D copy VSR output → InteropTexture (GPU→GPU, same device)
+            CUDA_MEMCPY2D copy = {};
+            copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+            copy.srcDevice     = (CUdeviceptr)vsr_out_ptr;
+            copy.srcPitch      = (size_t)vsr_out_pitch;
+            copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+            copy.dstDevice     = rgbaTex.cudaPtr();
+            copy.dstPitch      = rgbaTex.cudaPitch();
+            copy.WidthInBytes  = row_bytes;
+            copy.Height        = (size_t)vsr_out_h;
+            cuMemcpy2DAsync(&copy, (CUstream)cuda_stream_);
             cuStreamSynchronize((CUstream)cuda_stream_);
+
             vsr_w_ = vsr_out_w;
             vsr_h_ = vsr_out_h;
         }
     } else {
-        // No VSR — copy float32 RGB GPU → host, convert to RGB24
-        size_t f32_bytes = NV12ToRGB::output_size(video_width_, video_height_);
-        std::vector<float> tmp(f32_bytes / sizeof(float));
-        cuMemcpyDtoHAsync(tmp.data(), (CUdeviceptr)rgb_gpu_, f32_bytes,
-                           (CUstream)cuda_stream_);
+        // ── NO-VSR path: NV12 planes → InteropTextures ──
+        auto& yTex  = vulkan_widget_->yInterop();
+        auto& uvTex = vulkan_widget_->uvInterop();
+
+        // D2D copy Y plane → R8 InteropTexture
+        CUDA_MEMCPY2D copyY = {};
+        copyY.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+        copyY.srcDevice     = (CUdeviceptr)y_plane;
+        copyY.srcPitch      = (size_t)y_pitch;
+        copyY.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+        copyY.dstDevice     = yTex.cudaPtr();
+        copyY.dstPitch      = yTex.cudaPitch();
+        copyY.WidthInBytes  = (size_t)video_width_;
+        copyY.Height        = (size_t)video_height_;
+        cuMemcpy2DAsync(&copyY, (CUstream)cuda_stream_);
+
+        // D2D copy UV plane → R8G8 InteropTexture
+        CUDA_MEMCPY2D copyUV = {};
+        copyUV.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+        copyUV.srcDevice     = (CUdeviceptr)uv_plane;
+        copyUV.srcPitch      = (size_t)uv_pitch;
+        copyUV.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+        copyUV.dstDevice     = uvTex.cudaPtr();
+        copyUV.dstPitch      = uvTex.cudaPitch();
+        copyUV.WidthInBytes  = (size_t)video_width_;
+        copyUV.Height        = (size_t)(video_height_ / 2);
+        cuMemcpy2DAsync(&copyUV, (CUstream)cuda_stream_);
         cuStreamSynchronize((CUstream)cuda_stream_);
 
-        size_t rgb24_bytes = (size_t)video_width_ * video_height_ * 3;
-        if (rgb24_bytes > rgba_host_.size()) rgba_host_.resize(rgb24_bytes);
-        size_t wh = (size_t)video_width_ * video_height_;
-        for (size_t i = 0; i < wh; i++) {
-            rgba_host_[i * 3 + 0] = (uint8_t)(tmp[i] * 255.0f);
-            rgba_host_[i * 3 + 1] = (uint8_t)(tmp[i + wh] * 255.0f);
-            rgba_host_[i * 3 + 2] = (uint8_t)(tmp[i + 2 * wh] * 255.0f);
-        }
         vsr_w_ = video_width_;
         vsr_h_ = video_height_;
     }
+
+    // Render via Vulkan (CUDA context still current for potential
+    // pipeline recreation on resize)
+    vulkan_widget_->render_frame(vsr_ ? Path::VSR : Path::NOVSR);
 
     cuda_ctx_->pop();
     decoder_->release_frame(hw_frame);
@@ -466,10 +492,6 @@ void MainWindow::on_timer_tick() {
                 std::chrono::milliseconds(static_cast<int>(std::min(delay * 1000.0, 50.0))));
         }
     }
-
-    // Render via Vulkan
-    vulkan_widget_->present_frame(rgba_host_.data(), vsr_w_, vsr_h_,
-                                   vsr_ != nullptr);
 }
 
 }  // namespace vsr

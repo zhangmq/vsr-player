@@ -1,62 +1,62 @@
 #pragma once
 
 #include <cstdint>
-#include <vector>
-
 #include "VulkanContext.h"
 #include "SwapchainManager.h"
+#include "VideoPipeline.h"
 
 namespace vsr {
 
-/// Minimal Vulkan renderer for video frames — Wayland only.
-/// Delegates instance/device/surface management to VulkanContext
-/// and swapchain/render-pass/framebuffer management to SwapchainManager.
+enum class Path { VSR, NOVSR };
+
 class VulkanRenderer {
 public:
     VulkanRenderer();
     ~VulkanRenderer();
 
-    /// Initialize Vulkan and create Wayland surface.
-    /// @param native_window  wl_surface* from Qt's winId()
-    /// @param native_display wl_display* from Qt's platform native interface
     bool init(void* native_window, void* native_display);
 
-    /// Render one frame. Video is letterboxed to maintain aspect ratio
-    /// within the swapchain (which matches the window/surface size).
-    /// @param is_rgba  If true, data is RGBA (4 bytes/pixel), else RGB24 (3 bytes/pixel).
-    bool render_frame(const uint8_t* data, int video_w, int video_h,
-                      bool is_rgba = false);
+    /// Initialize pipelines after video dimensions are known.
+    /// Creates both RGBA (VSR) and NV12 (NO-VSR) pipelines.
+    /// @param videoW, videoH  Native (pre-scale) video frame dimensions.
+    /// @param scale  VSR scale factor (1 for 1:1, 2 for 2x, etc.)
+    bool init_pipelines(int videoW, int videoH, int scale,
+                        const uint32_t* rgbaFragSpv, size_t rgbaFragSpvLen,
+                        const uint32_t* nv12FragSpv, size_t nv12FragSpvLen,
+                        const uint32_t* vertSpv, size_t vertSpvLen);
 
-    /// Recreate swapchain at the given surface (window) size.
-    bool resize(int surface_w, int surface_h);
+    /// Render. InteropTextures must have been filled via CUDA D2D/H2D
+    /// before calling this.
+    bool render_frame(Path path);
 
+    bool resize(int w, int h);
     void release();
-    bool is_ready() const { return ctx_.ready(); }
+    bool is_ready() const { return ctx_.ready() && pipelines_ready_; }
+
+    // Accessor for MainWindow D2D/H2D copies
+    InteropTexture& rgbaInterop() { return rgbaPipeline_.interopTexture(0); }
+    InteropTexture& yInterop()    { return nv12Pipeline_.interopTexture(0); }
+    InteropTexture& uvInterop()   { return nv12Pipeline_.interopTexture(1); }
+
+    int swapchainWidth()  const { return swapchain_.width(); }
+    int swapchainHeight() const { return swapchain_.height(); }
 
 private:
-    bool create_swapchain_and_pipeline(int w, int h);
-    bool update_texture(const uint8_t* data, int w, int h, int bpp);
-
-    // Owned sub-resource managers
     VulkanContext ctx_;
     SwapchainManager swapchain_;
+    VideoPipeline rgbaPipeline_;
+    VideoPipeline nv12Pipeline_;
+    bool pipelines_ready_ = false;
+    int video_w_ = 0, video_h_ = 0;
+    int vsr_scale_ = 1;
 
-    // Pipeline / descriptor
-    void* pipeline_ = nullptr;
-    void* pipeline_layout_ = nullptr;
-    void* descriptor_set_layout_ = nullptr;
-    void* descriptor_pool_ = nullptr;
-    void* descriptor_set_ = nullptr;
-
-    // Texture (uploaded CPU-side data)
-    void* texture_ = nullptr;
-    void* texture_memory_ = nullptr;
-    void* tex_view_ = nullptr;
-    int tex_width_ = 0, tex_height_ = 0;
-    size_t tex_row_pitch_ = 0;  // from vkGetImageSubresourceLayout
-
-    // Cached swapchain dimensions (for letterbox calculation)
-    int swapchain_width_ = 0, swapchain_height_ = 0;
+    // Saved SPIR-V pointers for pipeline recreation on resize
+    const uint32_t* saved_vert_spv_ = nullptr;
+    const uint32_t* saved_rgba_frag_spv_ = nullptr;
+    const uint32_t* saved_nv12_frag_spv_ = nullptr;
+    size_t saved_vert_len_ = 0;
+    size_t saved_rgba_frag_len_ = 0;
+    size_t saved_nv12_frag_len_ = 0;
 };
 
 }  // namespace vsr

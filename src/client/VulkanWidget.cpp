@@ -6,6 +6,11 @@
 #include <cstdio>
 #include <cstdlib>
 
+// Generated SPIR-V headers (by Makefile: glslc + xxd)
+#include "video_vert_spv.h"
+#include "video_frag_spv.h"
+#include "nv12_frag_spv.h"
+
 namespace vsr {
 
 VulkanWidget::VulkanWidget(QWidget* parent) : QWidget(parent) {
@@ -35,6 +40,7 @@ bool VulkanWidget::init_vulkan() {
 
     if (renderer_.init(window, display)) {
         fprintf(stderr, "VulkanWidget: Vulkan initialized\n");
+        vulkan_ready_ = true;
         return true;
     }
 
@@ -45,17 +51,33 @@ bool VulkanWidget::init_vulkan() {
     return false;
 }
 
-bool VulkanWidget::present_frame(const uint8_t* data, int video_w, int video_h, bool is_rgba) {
+bool VulkanWidget::init_pipelines(int videoW, int videoH, int scale) {
+    if (!vulkan_ready_) {
+        if (!init_vulkan()) return false;
+    }
+
+    return renderer_.init_pipelines(
+        videoW, videoH, scale,
+        reinterpret_cast<const uint32_t*>(video_frag_spv), video_frag_spv_len,
+        reinterpret_cast<const uint32_t*>(nv12_frag_spv), nv12_frag_spv_len,
+        reinterpret_cast<const uint32_t*>(video_vert_spv), video_vert_spv_len);
+}
+
+bool VulkanWidget::render_frame(Path path) {
     if (!vulkan_ready_) return false;
     if (!renderer_.is_ready()) {
         if (!init_vulkan()) return false;
     }
     // Keep swapchain sized to the widget (window), not the video.
-    // render_frame will letterbox the video within the swapchain.
     int ww = width(), wh = height();
     if (ww > 0 && wh > 0)
         renderer_.resize(ww, wh);
-    return renderer_.render_frame(data, video_w, video_h, is_rgba);
+    return renderer_.render_frame(path);
+}
+
+void VulkanWidget::releaseRenderer() {
+    renderer_.release();
+    vulkan_ready_ = false;
 }
 
 void VulkanWidget::showEvent(QShowEvent* event) {

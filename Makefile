@@ -125,12 +125,11 @@ $(BUILD_DIR):
 
 # ── Compilation ──────────────────────────────────────────────────────
 
-# Header dependency — VulkanRenderer includes generated shader headers
-$(BUILD_DIR)/src/core/utils/VulkanRenderer.o: $(SHADERS)
+# Header dependency — VulkanWidget passes SPIR-V to init_pipelines
+$(BUILD_DIR)/src/client/VulkanWidget.o: $(SHADERS)
 
 # MOC dependencies
 $(BUILD_DIR)/src/client/MainWindow.o: $(BUILD_DIR)/moc_MainWindow.cpp
-$(BUILD_DIR)/src/client/VulkanWidget.o: $(BUILD_DIR)/moc_VulkanWidget.cpp
 
 # Generic compilation rule
 $(BUILD_DIR)/%.o: %.cpp

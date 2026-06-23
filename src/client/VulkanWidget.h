@@ -3,6 +3,7 @@
 #include <QWidget>
 
 #include "utils/VulkanRenderer.h"
+#include "utils/InteropTexture.h"
 
 namespace vsr {
 
@@ -15,8 +16,25 @@ public:
     ~VulkanWidget() override;
 
     bool init_vulkan();
-    bool present_frame(const uint8_t* data, int video_w, int video_h,
-                       bool is_rgba = false);
+
+    /// Initialize pipelines after video dimensions are known.
+    /// @param videoW, videoH  Native (pre-scale) video frame dimensions.
+    /// @param scale  VSR scale factor (1 for 1:1, 2 for 2x, etc.)
+    bool init_pipelines(int videoW, int videoH, int scale);
+
+    /// Render a frame using the specified path.
+    /// The caller must fill the relevant InteropTextures via CUDA D2D
+    /// copies before calling this.
+    bool render_frame(Path path);
+
+    /// Explicitly release Vulkan resources (including InteropTextures)
+    /// before the CUDA context is destroyed.
+    void releaseRenderer();
+
+    // InteropTexture accessors for CUDA D2D copies
+    InteropTexture& rgbaInterop() { return renderer_.rgbaInterop(); }
+    InteropTexture& yInterop()    { return renderer_.yInterop(); }
+    InteropTexture& uvInterop()   { return renderer_.uvInterop(); }
 
     QPaintEngine* paintEngine() const override { return nullptr; }
 
