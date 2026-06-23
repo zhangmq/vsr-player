@@ -125,25 +125,16 @@ bool VulkanRenderer::render_frame(Path path) {
 
     VkFence fence = (VkFence)ctx_.fence();
 
-    // Wait for a fence with finite timeout (100 ms) — returns false
-    // if the shutdown flag is set, so the caller can exit quickly.
-    auto wait_fence = [&](VkFence f) -> bool {
-        while (true) {
-            VkResult res = vkWaitForFences(dev, 1, &f, VK_TRUE,
-                                           100'000'000);  // 100 ms
-            if (res == VK_SUCCESS) return true;
-            if (res != VK_TIMEOUT) return false;  // device lost, etc.
-            if (shutting_down_ && shutting_down_->load()) return false;
-        }
-    };
-
     // Proactively recreate swapchain if desired size changed.
     // Must wait for the fence first so old swapchain images are idle.
     if (last_widget_w_ > 0 && last_widget_h_ > 0 &&
         swapchain_.swapchain() &&
         (swapchain_.width() != last_widget_w_ ||
          swapchain_.height() != last_widget_h_)) {
-        if (!wait_fence(fence)) return false;  // shutting down, bail out
+        // 100 ms finite timeout — never blocks the worker thread
+        // indefinitely, so QUIT commands are always processed within
+        // at most one frame interval.
+        vkWaitForFences(dev, 1, &fence, VK_TRUE, 100'000'000);
         swapchain_.create(ctx_.physicalDevice(), ctx_.device(),
                           ctx_.surface(), ctx_.queueFamily(),
                           last_widget_w_, last_widget_h_);
@@ -162,7 +153,7 @@ bool VulkanRenderer::render_frame(Path path) {
     }
 
     // Now committed to rendering — wait for previous frame and reset
-    if (!wait_fence(fence)) return false;  // shutting down, bail out
+    vkWaitForFences(dev, 1, &fence, VK_TRUE, 100'000'000);
     vkResetFences(dev, 1, &fence);
 
     VkCommandBuffer cb = (VkCommandBuffer)ctx_.commandBuffer();

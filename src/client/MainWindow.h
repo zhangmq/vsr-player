@@ -44,6 +44,7 @@ public:
 protected:
     void resizeEvent(QResizeEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
     /// Called when VulkanWidget emits nativeWindowReady().
@@ -71,6 +72,9 @@ private:
     bool   deferred_use_vsr_ = true;
     Quality deferred_quality_ = Quality::HIGH;
     QString deferred_file_;   // file to open after init
+
+    // Graceful shutdown via closeEvent → QUIT → STATE_CHANGED(STOPPED) → close()
+    bool shutdown_pending_ = false;
 
     // Screenshot
     int screenshot_counter_ = 0;

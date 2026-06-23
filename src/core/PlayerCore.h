@@ -45,11 +45,6 @@ private:
 
     std::thread worker_thread_;
     std::atomic<bool> running_{false};
-    std::atomic<bool> thread_done_{false};  // worker sets on exit
-    // Shared ownership with VulkanRenderer — ensures the flag stays
-    // alive even if the worker is detached during shutdown.
-    std::shared_ptr<std::atomic<bool>> shutting_down_{
-        std::make_shared<std::atomic<bool>>(false)};
     CommandQueue<PlayerCommand> cmd_queue_;
     EventCallback event_cb_;
 

@@ -67,29 +67,14 @@ bool PlayerCore::initialize(void* native_window, void* native_display,
 }
 
 void PlayerCore::shutdown() {
-    if (!running_) return;
-    // Signal the worker to leave render_frame() as soon as possible.
-    // This avoids the main thread timing out while the worker is blocked
-    // in Vulkan presentation calls (vkAcquireNextImageKHR / vkQueuePresentKHR).
-    *shutting_down_ = true;
-    send_command({PlayerCommand::QUIT});
-
-    // Wait for worker to finish, with timeout to prevent hang on exit
-    auto deadline = std::chrono::steady_clock::now() +
-                    std::chrono::seconds(3);
-    while (!thread_done_.load() &&
-           std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (running_) {
+        send_command({PlayerCommand::QUIT});
     }
-
-    if (thread_done_.load()) {
-        if (worker_thread_.joinable())
-            worker_thread_.join();
-    } else {
-        fprintf(stderr, "PlayerCore: worker thread did not exit "
-                "within 3s — detaching\n");
-        worker_thread_.detach();
-    }
+    // Always join — even if the worker already exited (closeEvent path).
+    // A joinable std::thread that is destroyed without join/terminate
+    // calls std::terminate().
+    if (worker_thread_.joinable())
+        worker_thread_.join();
     running_ = false;
 }
 
@@ -117,7 +102,6 @@ void PlayerCore::run_loop() {
     }
     teardown_pipeline();
 
-    thread_done_ = true;
     emit_event({PlayerEvent::STATE_CHANGED, PlaybackState::STOPPED});
 }
 
@@ -405,9 +389,6 @@ void PlayerCore::cmd_resize(int phys_w, int phys_h) {
             cuda_ctx_->pop();
             return;
         }
-        // Wire shutdown signal so blocking Vulkan waits in render_frame()
-        // can be interrupted when the main thread calls shutdown().
-        renderer_->set_shutdown_flag(shutting_down_);
     }
 
     // ── Adaptive scale ──
@@ -587,10 +568,8 @@ bool PlayerCore::process_one_frame() {
                       &vsr_out_pitch);
     }
 
-    // 7. D2D copy → InteropTexture + Vulkan render.
-    // If shutting down, skip all rendering — the worker should exit its
-    // main loop as quickly as possible to process QUIT and tear down.
-    if (renderer_ && renderer_->is_ready() && !shutting_down_->load()) {
+    // 7. D2D copy → InteropTexture + Vulkan render
+    if (renderer_ && renderer_->is_ready()) {
         if (vsr_out_ptr) {
             // ── VSR path: RGBA → rgbaInterop ──
             auto& rgbaTex = renderer_->rgbaInterop();
