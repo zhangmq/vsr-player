@@ -49,7 +49,8 @@ SHADERS  := $(VERT_H) $(FRAG_H) $(NV12_FRAG_H)
 MOC_SRC := $(BUILD_DIR)/moc_MainWindow.cpp $(BUILD_DIR)/moc_VulkanWidget.cpp
 
 # ---- Object lists ----
-CORE_OBJS := $(BUILD_DIR)/src/core/Demuxer.o \
+CORE_OBJS := $(BUILD_DIR)/src/core/PlayerCore.o \
+             $(BUILD_DIR)/src/core/Demuxer.o \
              $(BUILD_DIR)/src/core/Decoder.o \
              $(BUILD_DIR)/src/core/VSRProcessor.o \
              $(BUILD_DIR)/src/core/AudioOutput.o \
@@ -125,8 +126,8 @@ $(BUILD_DIR):
 
 # ── Compilation ──────────────────────────────────────────────────────
 
-# Header dependency — VulkanWidget passes SPIR-V to init_pipelines
-$(BUILD_DIR)/src/client/VulkanWidget.o: $(SHADERS)
+# SPIR-V header dependency — PlayerCore includes generated shaders
+$(BUILD_DIR)/src/core/PlayerCore.o: $(SHADERS)
 
 # MOC dependencies
 $(BUILD_DIR)/src/client/MainWindow.o: $(BUILD_DIR)/moc_MainWindow.cpp

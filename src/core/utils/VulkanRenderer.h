@@ -43,6 +43,16 @@ public:
     int swapchainWidth()  const { return swapchain_.width(); }
     int swapchainHeight() const { return swapchain_.height(); }
 
+    /// Store SPIR-V shader data for later pipeline (re)creation.
+    /// Called once by the engine after initialization.
+    void set_shader_data(const uint32_t* rgbaFragSpv, size_t rgbaFragSpvLen,
+                         const uint32_t* nv12FragSpv, size_t nv12FragSpvLen,
+                         const uint32_t* vertSpv, size_t vertSpvLen);
+
+    /// Init or recreate pipelines using previously stored SPIR-V data.
+    bool init_pipelines_with_saved_spv(int videoW, int videoH, int scale,
+                                        int widgetW, int widgetH);
+
 private:
     VulkanContext ctx_;
     SwapchainManager swapchain_;

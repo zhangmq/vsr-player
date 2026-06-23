@@ -261,4 +261,31 @@ void VulkanRenderer::release() {
     printf("VulkanRenderer: released\n");
 }
 
+// ── Shader storage + deferred pipeline init ──────────────────────────
+
+void VulkanRenderer::set_shader_data(
+        const uint32_t* rgbaFragSpv, size_t rgbaFragSpvLen,
+        const uint32_t* nv12FragSpv, size_t nv12FragSpvLen,
+        const uint32_t* vertSpv, size_t vertSpvLen) {
+    saved_vert_spv_ = vertSpv;
+    saved_rgba_frag_spv_ = rgbaFragSpv;
+    saved_nv12_frag_spv_ = nv12FragSpv;
+    saved_vert_len_ = vertSpvLen;
+    saved_rgba_frag_len_ = rgbaFragSpvLen;
+    saved_nv12_frag_len_ = nv12FragSpvLen;
+}
+
+bool VulkanRenderer::init_pipelines_with_saved_spv(
+        int videoW, int videoH, int scale, int widgetW, int widgetH) {
+    if (!saved_vert_spv_ || !saved_rgba_frag_spv_ || !saved_nv12_frag_spv_) {
+        fprintf(stderr, "VulkanRenderer: SPIR-V not set — "
+                "call set_shader_data() first\n");
+        return false;
+    }
+    return init_pipelines(videoW, videoH, scale, widgetW, widgetH,
+                          saved_rgba_frag_spv_, saved_rgba_frag_len_,
+                          saved_nv12_frag_spv_, saved_nv12_frag_len_,
+                          saved_vert_spv_, saved_vert_len_);
+}
+
 }  // namespace vsr

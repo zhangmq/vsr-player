@@ -16,6 +16,11 @@ extern "C" {
 
 #include <cuda.h>
 
+// Generated SPIR-V shaders (from Makefile: glslc + xxd)
+#include "video_vert_spv.h"
+#include "video_frag_spv.h"
+#include "nv12_frag_spv.h"
+
 #include "AudioOutput.h"
 #include "Decoder.h"
 #include "Demuxer.h"
@@ -392,10 +397,15 @@ void PlayerCore::cmd_resize(int phys_w, int phys_h) {
     // ── Init/recreate swapchain + pipelines ──
     renderer_->resize(phys_w, phys_h);
     if (!renderer_->is_ready() || !renderer_->swapchainWidth()) {
-        // TODO(Task 8): call renderer_->init_pipelines_with_saved_spv(...)
-        // after SPIR-V storage is wired up in VulkanRenderer.
-        fprintf(stderr, "PlayerCore: pipelines not initialized "
-                "(SPIR-V plumbing pending)\n");
+        renderer_->set_shader_data(
+            reinterpret_cast<const uint32_t*>(video_frag_spv),
+            video_frag_spv_len,
+            reinterpret_cast<const uint32_t*>(nv12_frag_spv),
+            nv12_frag_spv_len,
+            reinterpret_cast<const uint32_t*>(video_vert_spv),
+            video_vert_spv_len);
+        renderer_->init_pipelines_with_saved_spv(
+            video_w_, video_h_, current_scale_, phys_w, phys_h);
     }
 
     cuda_ctx_->pop();
