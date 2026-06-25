@@ -454,7 +454,8 @@ Item {
             Text { anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
                 text: "播放列表"; color: "#e0e0e0"; font.pixelSize: 15; font.bold: true }
             Text { anchors { right: closeBtn.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
-                text: playlist ? playlist.count + " files" : ""; color: "#b0b0b0"; font.pixelSize: 12 }
+                text: playlist ? (playlist.currentIndex + 1) + "/" + playlist.count : ""
+                color: "#b0b0b0"; font.pixelSize: 12 }
 
             Item { id: closeBtn; width: 34; height: 34
                 anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
