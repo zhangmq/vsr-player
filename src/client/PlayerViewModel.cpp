@@ -188,70 +188,30 @@ static QString fmtTime(int64_t ms) {
 
 void PlayerViewModel::updateOsdInfo(const PlayerEvent& e) {
     QStringList lines;
-
-    // Source
     lines.append(QString("Source    %1×%2 %3 %4fps")
         .arg(e.in_width).arg(e.in_height)
-        .arg(e.codec_name.empty() ? "?" : e.codec_name.c_str())
+        .arg(e.codec_name.c_str())
         .arg(e.fps, 0, 'f', 2));
-
-    // Output
     lines.append(QString("Output    %1×%2 (%3×)")
         .arg(e.out_width).arg(e.out_height).arg(e.scale));
-
-    // VSR
-    {
-        QString vsr = "VSR       ";
-        if (e.vsr_active) {
-            static const char* qnames[] = {"?", "Low", "Medium", "High", "Ultra"};
-            int q = e.quality;
-            vsr += QString("%1 quality").arg((q >= 1 && q <= 4) ? qnames[q] : "?");
-            if (e.denoise >= 8)
-                vsr += QString(" / Denoise %1").arg((e.denoise >= 8 && e.denoise <= 11)
-                    ? qnames[e.denoise - 7] : "?");
-            else
-                vsr += " / Denoise off";
-        } else {
-            vsr += "off";
-        }
-        lines.append(vsr);
-    }
-
-    // Decoder
+    lines.append(QString("VSR       %1 quality %2")
+        .arg(e.quality).arg(e.denoise));
     lines.append(QString("Decoder   %1 (%2)")
         .arg(e.hw_decoding ? "NVDEC" : "Software")
-        .arg(e.pix_fmt_name.empty() ? "?" : e.pix_fmt_name.c_str()));
-
-    // Speed
+        .arg(e.pix_fmt_name.c_str()));
     lines.append(QString("Speed     %1×").arg(e.speed, 0, 'f', 2));
-
-    // PTS / Duration
     lines.append(QString("PTS       %1 / %2")
         .arg(fmtTime(e.time_ms)).arg(fmtTime(e.duration_ms)));
-
-    // Render output
-    lines.append(QString("Render    %1×%2 RGBA → %3×%4 window  %5fps")
-        .arg(e.out_width).arg(e.out_height)
-        .arg(e.phys_w).arg(e.phys_h)
+    lines.append(QString("Render    %1×%2 → %3×%4  %5fps")
+        .arg(e.out_width).arg(e.out_height).arg(e.phys_w).arg(e.phys_h)
         .arg(e.render_fps, 0, 'f', 1));
-
-    // Decode stats
-    lines.append(QString("Frames    decoded %1  dropped %2")
+    lines.append(QString("Frames    dec %1 drop %2")
         .arg(e.decoded_frames).arg(e.dropped_frames));
-
-    // GPU
-    if (!e.gpu_name.empty()) {
-        lines.append(QString("GPU       %1  %2/%3 MB")
-            .arg(e.gpu_name.c_str())
-            .arg(e.vram_used_mb).arg(e.vram_total_mb));
-    }
-
-    // Audio
-    if (e.has_audio) {
-        lines.append(QString("Audio     %1Hz %2ch (PortAudio)")
-            .arg(e.audio_sr).arg(e.audio_ch));
-    }
-
+    if (!e.gpu_name.empty())
+        lines.append(QString("GPU       %1").arg(e.gpu_name.c_str()));
+    if (e.has_audio)
+        lines.append(QString("Audio     %1Hz %2ch").arg(e.audio_sr).arg(e.audio_ch));
+    lines.append(QString("Frame     #%1").arg(e.frame_idx));
     osdText_ = lines.join('\n');
     emit osdTextChanged();
 }
