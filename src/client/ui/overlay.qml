@@ -125,7 +125,7 @@ Item {
     Slider {
         id: progressSlider
         anchors { left: parent.left; right: parent.right; bottom: bottomBar.top }
-        height: psHover.hovered || pressed ? 6 : 4
+        height: psHover.hovered || pressed ? 8 : 6
         opacity: viewModel.overlaysVisible ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
         from: 0; to: viewModel.duration
