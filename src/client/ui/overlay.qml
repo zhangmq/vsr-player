@@ -445,6 +445,7 @@ Item {
         edge: Qt.RightEdge
         width: 320; height: parent.height; z: 10
         dragMargin: 0
+        padding: 0
         background: Rectangle { color: "#d9000000" }
 
         // Header
@@ -485,7 +486,7 @@ Item {
                      : (index === playlist.currentIndex ? "#11ffffff" : "transparent")
 
                 Row {
-                    anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
+                    anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
                     spacing: 8
 
                     Text {
