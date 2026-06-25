@@ -192,7 +192,7 @@ static const char* qualityName(int v) {
     case 2:  return "Medium";
     case 3:  return "High";
     case 4:  return "Ultra";
-    default: return "?";
+    default: return "off";
     }
 }
 
@@ -209,10 +209,13 @@ static const char* denoiseName(int v) {
 void PlayerViewModel::updateOsdInfo(const PlayerEvent& e) {
     QStringList lines;
 
-    lines.append(QString("Source    %1×%2 %3 %4fps")
-        .arg(e.in_width).arg(e.in_height)
-        .arg(e.codec_name.empty() ? "?" : e.codec_name.c_str())
-        .arg(e.fps, 0, 'f', 2));
+    {
+        QString codec = e.codec_name.empty() ? "" : e.codec_name.c_str();
+        lines.append(QString("Source    %1×%2 %3 %4fps")
+            .arg(e.in_width).arg(e.in_height)
+            .arg(codec)
+            .arg(e.fps, 0, 'f', 2));
+    }
 
     lines.append(QString("Output    %1×%2 (%3×)")
         .arg(e.out_width).arg(e.out_height).arg(e.scale));
@@ -228,9 +231,12 @@ void PlayerViewModel::updateOsdInfo(const PlayerEvent& e) {
         lines.append(vsr);
     }
 
-    lines.append(QString("Decoder   %1 (%2)")
-        .arg(e.hw_decoding ? "NVDEC" : "Software")
-        .arg(e.pix_fmt_name.empty() ? "?" : e.pix_fmt_name.c_str()));
+    {
+        QString pix = e.pix_fmt_name.empty() ? "" : e.pix_fmt_name.c_str();
+        lines.append(QString("Decoder   %1 %2")
+            .arg(e.hw_decoding ? "NVDEC" : "Software")
+            .arg(pix));
+    }
 
     lines.append(QString("Speed     %1×").arg(e.speed, 0, 'f', 2));
 
