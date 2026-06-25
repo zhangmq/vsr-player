@@ -123,7 +123,7 @@ Item {
     // ══════════════════════════════════════════════════════════════════
 
     Rectangle {
-        anchors { left: parent.left; top: parent.top; leftMargin: 16; topMargin: 16 }
+        anchors { left: parent.left; top: parent.top; leftMargin: 16; topMargin: 64 }
         color: "#99000000"; radius: 6
         opacity: viewModel.osdVisible ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 150 } }
