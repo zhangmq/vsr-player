@@ -232,8 +232,12 @@ void PlayerViewModel::updateOsdInfo(const PlayerEvent& e) {
     // Render output
     lines.append(QString("Render    %1×%2 RGBA → %3×%4 window  %5fps")
         .arg(e.out_width).arg(e.out_height)
-        .arg(0).arg(0)  // last_phys not in event, placeholder
+        .arg(e.phys_w).arg(e.phys_h)
         .arg(e.render_fps, 0, 'f', 1));
+
+    // Decode stats
+    lines.append(QString("Frames    decoded %1  dropped %2")
+        .arg(e.decoded_frames).arg(e.dropped_frames));
 
     // GPU
     if (!e.gpu_name.empty()) {
@@ -247,9 +251,6 @@ void PlayerViewModel::updateOsdInfo(const PlayerEvent& e) {
         lines.append(QString("Audio     %1Hz %2ch (PortAudio)")
             .arg(e.audio_sr).arg(e.audio_ch));
     }
-
-    // Frame index
-    lines.append(QString("Frame     #%1").arg(e.frame_idx));
 
     osdText_ = lines.join('\n');
     emit osdTextChanged();

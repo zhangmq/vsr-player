@@ -1148,6 +1148,8 @@ bool PlayerCore::process_one_frame() {
         return true;
     }
 
+    decoded_frames_++;
+
     // 3. Format check
     bool is_hw = (hw_frame->format == AV_PIX_FMT_CUDA);
     if (!is_hw && hw_frame->format != AV_PIX_FMT_NV12 &&
@@ -1213,6 +1215,7 @@ bool PlayerCore::process_one_frame() {
 
         if (delay < -0.050) {
             // Video behind audio > 50ms → drop frame (skip VSR+D2D)
+            dropped_frames_++;
             decoder_->release_frame(hw_frame);
             cuda_ctx_->pop();
             return true;
@@ -1434,6 +1437,10 @@ bool PlayerCore::process_one_frame() {
         fi.vsr_active = (vsr_ && vsr_->is_ready());
         fi.has_audio = (audio_ && audio_->is_active());
         fi.speed = playback_speed_;
+        fi.phys_w = last_phys_w_;
+        fi.phys_h = last_phys_h_;
+        fi.decoded_frames = decoded_frames_;
+        fi.dropped_frames = dropped_frames_;
 
         // Render FPS: frames_since_last / elapsed
         auto now = std::chrono::steady_clock::now();

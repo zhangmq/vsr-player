@@ -133,6 +133,10 @@ struct PlayerEvent {
     double speed = 1.0;
     double render_fps = 0.0;
     int64_t frame_idx = 0;
+    int64_t decoded_frames = 0;
+    int64_t dropped_frames = 0;
+    int phys_w = 0;
+    int phys_h = 0;
     std::string gpu_name;
     int vram_used_mb = 0;
     int vram_total_mb = 0;

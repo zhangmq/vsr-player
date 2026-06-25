@@ -138,6 +138,8 @@ private:
 
     // ── OSD / frame info ──
     int64_t frame_count_ = 0;
+    int64_t decoded_frames_ = 0;
+    int64_t dropped_frames_ = 0;
     std::chrono::steady_clock::time_point last_info_time_;
     int64_t info_start_frame_ = 0;
     std::string gpu_name_;  // cached on first emit
