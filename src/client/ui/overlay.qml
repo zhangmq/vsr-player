@@ -487,19 +487,11 @@ Item {
 
                 Row {
                     anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
-                    spacing: 6
 
                     Text {
-                        text: index + 1 + "."
-                        width: 20; horizontalAlignment: Text.AlignRight
-                        color: index === playlist.currentIndex ? "#e0e0e0" : "#b0b0b0"
-                        font.pixelSize: 13
-                        renderType: Text.NativeRendering
-                    }
-                    Text {
                         text: playlist && index < playlist.displayNames.length
-                              ? playlist.displayNames[index] : ""
-                        width: 270
+                              ? (index + 1) + ". " + playlist.displayNames[index] : ""
+                        width: 296
                         color: index === playlist.currentIndex ? "#ffffff" : "#b0b0b0"
                         font.pixelSize: 13
                         renderType: Text.NativeRendering
