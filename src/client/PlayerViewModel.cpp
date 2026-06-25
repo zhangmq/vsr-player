@@ -138,7 +138,7 @@ void PlayerViewModel::loadFile(const QString& path) {
 }
 
 void PlayerViewModel::screenshot() {
-    // Capture not yet wired — handled internally by PlayerCore
+    if (player_) player_->send_command(CmdCapture{});
 }
 
 // ── Event handlers (called from main.cpp via QueuedConnection) ────────

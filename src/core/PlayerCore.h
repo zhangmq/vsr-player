@@ -151,6 +151,7 @@ private:
     void cmd_set_mute(bool mute);
     void cmd_set_hwaccel(bool enabled);
     void cmd_set_speed(double speed);
+    void cmd_capture();
 
     // ── Dispatch ──
     void dispatch(const PlayerCommand& cmd);

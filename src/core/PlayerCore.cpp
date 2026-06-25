@@ -146,6 +146,7 @@ bool PlayerCore::is_light(const PlayerCommand& cmd) const {
         if constexpr (std::is_same_v<T, CmdSetMute>)    return true;
         if constexpr (std::is_same_v<T, CmdSetHwaccel>) return true;
         if constexpr (std::is_same_v<T, CmdSetSpeed>)   return true;
+        if constexpr (std::is_same_v<T, CmdCapture>) return true;
         if constexpr (std::is_same_v<T, CmdSetDenoiseQuality>) return true;
         return false;
     }, cmd);
@@ -229,6 +230,7 @@ void PlayerCore::dispatch(const PlayerCommand& cmd) {
             else if constexpr (std::is_same_v<T, CmdSetMute>)   cmd_set_mute(arg.muted);
             else if constexpr (std::is_same_v<T, CmdSetHwaccel>) cmd_set_hwaccel(arg.enabled);
             else if constexpr (std::is_same_v<T, CmdSetSpeed>)   cmd_set_speed(arg.speed);
+            else if constexpr (std::is_same_v<T, CmdCapture>) cmd_capture();
             else if constexpr (std::is_same_v<T, CmdSetDenoiseQuality>) cmd_set_denoise_quality(arg.level);
         }, cmd);
         return;
@@ -682,6 +684,11 @@ void PlayerCore::cmd_set_speed(double speed) {
     playback_speed_ = speed;
     if (audio_) audio_->set_speed(speed);
     CLOG("cmd_set_speed: %.2fx", speed);
+}
+
+void PlayerCore::cmd_capture() {
+    capture_pending_ = true;
+    CLOG("cmd_capture: queued");
 }
 
 // ── QUIT ──────────────────────────────────────────────────────────

@@ -74,12 +74,14 @@ struct CmdSetMute    { bool muted; };
 struct CmdSetHwaccel { bool enabled; };       // toggle NVDEC (applies on next LOAD_FILE)
 struct CmdSetDenoiseQuality { int level; };   // -1=off, 8-11=low-ultra
 struct CmdSetSpeed    { double speed; };         // playback speed multiplier (0.5, 0.75, 1.0, 2.0)
+struct CmdCapture     {};  // request screenshot on next frame
 
 using PlayerCommand = std::variant<
     CmdPlay, CmdPause, CmdStop, CmdQuit,
     CmdLoadFile, CmdSeek, CmdResize,
     CmdSetQuality, CmdSetScale, CmdSetVolume, CmdSetMute,
-    CmdSetHwaccel, CmdSetSpeed, CmdSetDenoiseQuality>;
+    CmdSetHwaccel, CmdSetSpeed, CmdSetDenoiseQuality,
+    CmdCapture>;
 
 // ── PlayerEvent (unchanged fields, cleaned up) ─────────────────────
 
