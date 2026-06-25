@@ -248,12 +248,12 @@ Item {
             IconButton { id: qualBtn; codepoint: ""; size: 22; tooltip: "画质"
                 highlighted: qualityPopup.visible
                 onClicked: qualityPopup.visible ? qualityPopup.close() : qualityPopup.open() }
-            IconButton { id: spdBtn; label: "倍速"; size: 22; tooltip: "播放速度"
-                highlighted: speedPopup.visible
-                onClicked: speedPopup.visible ? speedPopup.close() : speedPopup.open() }
             IconButton { label: viewModel.hwDecoding ? "硬解" : "软解"; size: 22
                 tooltip: viewModel.hwDecoding ? "点击切换软解" : "点击切换硬解"
                 onClicked: viewModel.toggleHwaccel() }
+            IconButton { id: spdBtn; label: "倍速"; size: 22; tooltip: "播放速度"
+                highlighted: speedPopup.visible
+                onClicked: speedPopup.visible ? speedPopup.close() : speedPopup.open() }
             IconButton { codepoint: viewModel.fullscreen ? "" : ""; size: 22
                 tooltip: viewModel.fullscreen ? "退出全屏" : "全屏"
                 onClicked: viewModel.toggleFullscreen() }
