@@ -116,7 +116,6 @@ src/
 │       ├── VulkanContext.h/cpp   ← Vulkan instance/device RAII
 │       └── NV12ToRGB.h/cpp       ← CUDA kernel NV12→RGB
 │
-├── CMakeLists.txt
 └── tests/
     ├── test_decoder.cpp           ← hwaccel decoder validation
     └── test_pipeline.cpp          ← full decode pipeline test
@@ -133,12 +132,10 @@ src/
 glslc -fshader-stage=vert src/client/shaders/video.vert -o build/video.vert.spv
 glslc -fshader-stage=frag src/client/shaders/video.frag -o build/video.frag.spv
 
-# Full build
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
+# Full build — Makefile at project root, outputs to build/
 make -j$(nproc)
 
-# Quick test builds (no CMake needed)
+# Quick test builds (standalone, no Makefile needed)
 mkdir -p build/tests
 g++ -std=c++20 -O2 -Wall -o build/tests/test_decoder \
     tests/test_decoder.cpp \

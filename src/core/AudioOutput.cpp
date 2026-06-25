@@ -11,6 +11,8 @@ extern "C" {
 #include <libavutil/opt.h>
 }
 
+#include <soundtouch/SoundTouch.h>
+
 namespace vsr {
 
 // ── Constructor / Destructor ──────────────────────────────────────────
@@ -156,6 +158,12 @@ int AudioOutput::pa_callback(const void*, void* output,
         memset(out + read * self->channels_, 0,
                (frame_count - read) * self->channels_ * sizeof(float));
     }
+    // Apply volume in callback — zero latency
+    double vol = self->volume_.load(std::memory_order_acquire);
+    if (vol < 0.999 || vol > 1.001) {
+        int total = static_cast<int>(frame_count) * self->channels_;
+        for (int i = 0; i < total; i++) out[i] *= static_cast<float>(vol);
+    }
     return paContinue;
 }
 
@@ -211,7 +219,9 @@ bool AudioOutput::start() {
         return false;
     }
 
-    start_time_ = Pa_GetStreamTime((PaStream*)pa_stream_);
+    clock_base_ = 0.0;
+    stream_start_ = Pa_GetStreamTime((PaStream*)pa_stream_);
+    clock_speed_.store(1.0, std::memory_order_release);
     paused_.store(false);
     fprintf(stderr, "Audio: playback started\n");
     return true;
@@ -226,6 +236,8 @@ void AudioOutput::stop_internal() {
     if (decode_thread_.joinable()) {
         decode_thread_.join();
     }
+    stretcher_.reset();
+    stretch_speed_ = 1.0;
     if (pa_stream_) {
         Pa_StopStream((PaStream*)pa_stream_);
         Pa_CloseStream((PaStream*)pa_stream_);
@@ -247,47 +259,48 @@ void AudioOutput::pause() {
 void AudioOutput::resume() {
     if (!pa_stream_ || !paused_.load()) return;
     Pa_StartStream((PaStream*)pa_stream_);
-    start_time_ = Pa_GetStreamTime((PaStream*)pa_stream_) - frozen_clock_;
+    clock_base_ = frozen_clock_;
+    stream_start_ = Pa_GetStreamTime((PaStream*)pa_stream_);
     paused_.store(false);
 }
 
 // ── Seek ──────────────────────────────────────────────────────────────
 
 void AudioOutput::seek(double target_sec) {
-    bool was_paused = paused_.load();
-    stop_internal();
+    // Lightweight: set flag for decode thread, clear ring, reset clock.
+    // PortAudio stream stays alive — no Pa_Terminate/Pa_Initialize.
+    seek_target_ = target_sec;
+    seek_requested_.store(true, std::memory_order_release);
     clear_ring();
-    running_.store(true);
-    paused_.store(false);
-    frozen_clock_ = 0.0;
 
-    decode_thread_ = std::thread(&AudioOutput::decode_loop, this, target_sec);
-
-    // Pre-buffer with timeout
-    for (int waited = 0;
-         ring_filled_.load() < sample_rate_ / 4 && waited < 300;
-         waited++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::lock_guard<std::mutex> lock(clock_mutex_);
+    if (pa_stream_) {
+        clock_base_ = target_sec;
+        stream_start_ = Pa_GetStreamTime((PaStream*)pa_stream_);
     }
+    frozen_clock_ = target_sec;
+}
 
-    PaError err = Pa_Initialize();
-    if (err != paNoError) return;
+// ── Speed ──────────────────────────────────────────────────────────────
 
-    PaStreamParameters params;
-    params.device = Pa_GetDefaultOutputDevice();
-    params.channelCount = channels_;
-    params.sampleFormat = paFloat32;
-    params.suggestedLatency = 0.02;
-    params.hostApiSpecificStreamInfo = nullptr;
-
-    err = Pa_OpenStream((PaStream**)&pa_stream_, &params, nullptr,
-                         sample_rate_, 1024, paNoFlag, pa_callback, this);
-    if (err == paNoError) {
-        Pa_StartStream((PaStream*)pa_stream_);
-        start_time_ = Pa_GetStreamTime((PaStream*)pa_stream_) - target_sec;
+void AudioOutput::set_speed(double speed) {
+    // Save current clock value before changing speed, then reset the
+    // clock segment so the clock stays continuous at the new rate.
+    double saved_clock = clock_sec();
+    playback_speed_.store(speed, std::memory_order_release);
+    if (pa_stream_) {
+        std::lock_guard<std::mutex> lock(clock_mutex_);
+        clock_base_ = saved_clock;
+        stream_start_ = Pa_GetStreamTime((PaStream*)pa_stream_);
     }
+    clock_speed_.store(speed, std::memory_order_release);
+    fprintf(stderr, "[audio] set_speed: %.2fx clock=%.3f\n", speed, saved_clock);
+}
 
-    if (was_paused) pause();
+void AudioOutput::set_volume(double vol) {
+    if (vol < 0.0) vol = 0.0;
+    if (vol > 1.0) vol = 1.0;
+    volume_.store(vol, std::memory_order_release);
 }
 
 // ── Master clock ──────────────────────────────────────────────────────
@@ -295,60 +308,87 @@ void AudioOutput::seek(double target_sec) {
 double AudioOutput::clock_sec() const {
     if (!pa_stream_ || !has_audio_) return 0.0;
     if (paused_.load()) return frozen_clock_;
-    return Pa_GetStreamTime((PaStream*)pa_stream_) - start_time_;
+    double real_elapsed = Pa_GetStreamTime((PaStream*)pa_stream_) - stream_start_;
+    return clock_base_ + real_elapsed * clock_speed_.load(std::memory_order_acquire);
 }
 
 // ── Decode loop (background thread) ───────────────────────────────────
 
 void AudioOutput::decode_loop(double seek_target) {
     AVFormatContext* fmt = nullptr;
-    if (avformat_open_input(&fmt, file_path_.c_str(), nullptr, nullptr) < 0)
-        return;
-    if (avformat_find_stream_info(fmt, nullptr) < 0) {
-        avformat_close_input(&fmt);
-        return;
-    }
-
+    AVCodecContext* ctx = nullptr;
     int audio_idx = -1;
-    for (unsigned i = 0; i < fmt->nb_streams; i++) {
-        if (fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-            audio_idx = i;
-            break;
+
+    // Opens the file, finds audio stream, creates decoder.
+    // Returns ctx (nullptr on failure). Reused across seeks.
+    auto open_codec = [&](double initial_seek) -> AVCodecContext* {
+        if (avformat_open_input(&fmt, file_path_.c_str(), nullptr, nullptr) < 0)
+            return nullptr;
+        if (avformat_find_stream_info(fmt, nullptr) < 0) {
+            avformat_close_input(&fmt);
+            fmt = nullptr;
+            return nullptr;
         }
-    }
-    if (audio_idx < 0) {
-        avformat_close_input(&fmt);
-        return;
-    }
+        for (unsigned i = 0; i < fmt->nb_streams; i++) {
+            if (fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+                audio_idx = i;
+                break;
+            }
+        }
+        if (audio_idx < 0) {
+            avformat_close_input(&fmt);
+            fmt = nullptr;
+            return nullptr;
+        }
+        AVCodecParameters* par = fmt->streams[audio_idx]->codecpar;
+        const AVCodec* codec = avcodec_find_decoder(par->codec_id);
+        if (!codec) {
+            avformat_close_input(&fmt);
+            fmt = nullptr;
+            return nullptr;
+        }
+        AVCodecContext* c = avcodec_alloc_context3(codec);
+        avcodec_parameters_to_context(c, par);
+        if (avcodec_open2(c, codec, nullptr) < 0) {
+            avcodec_free_context(&c);
+            avformat_close_input(&fmt);
+            fmt = nullptr;
+            return nullptr;
+        }
+        if (initial_seek > 0.0) {
+            AVRational tb = fmt->streams[audio_idx]->time_base;
+            int64_t ts = av_rescale_q(
+                static_cast<int64_t>(initial_seek * AV_TIME_BASE),
+                AV_TIME_BASE_Q, tb);
+            av_seek_frame(fmt, audio_idx, ts, AVSEEK_FLAG_BACKWARD);
+            avcodec_flush_buffers(c);
+        }
+        return c;
+    };
 
-    AVCodecParameters* par = fmt->streams[audio_idx]->codecpar;
-    const AVCodec* codec = avcodec_find_decoder(par->codec_id);
-    if (!codec) {
-        avformat_close_input(&fmt);
-        return;
-    }
-
-    AVCodecContext* ctx = avcodec_alloc_context3(codec);
-    avcodec_parameters_to_context(ctx, par);
-    if (avcodec_open2(ctx, codec, nullptr) < 0) {
-        avcodec_free_context(&ctx);
-        avformat_close_input(&fmt);
-        return;
-    }
-
-    // Seek if requested
-    if (seek_target > 0.0) {
-        AVRational tb = fmt->streams[audio_idx]->time_base;
-        int64_t target_ts = av_rescale_q(static_cast<int64_t>(seek_target * AV_TIME_BASE),
-                                         AV_TIME_BASE_Q, tb);
-        av_seek_frame(fmt, audio_idx, target_ts, AVSEEK_FLAG_BACKWARD);
-        avcodec_flush_buffers(ctx);
-    }
+    ctx = open_codec(seek_target);
+    if (!ctx) return;
 
     AVPacket* pkt = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
 
     while (running_.load()) {
+        // ── Lightweight seek: demuxer seek + codec flush, no stream restart ──
+        if (seek_requested_.load(std::memory_order_acquire)) {
+            double target = seek_target_;
+            if (fmt && audio_idx >= 0) {
+                AVRational tb = fmt->streams[audio_idx]->time_base;
+                int64_t ts = av_rescale_q(
+                    static_cast<int64_t>(target * AV_TIME_BASE),
+                    AV_TIME_BASE_Q, tb);
+                av_seek_frame(fmt, audio_idx, ts, AVSEEK_FLAG_BACKWARD);
+            }
+            if (ctx) avcodec_flush_buffers(ctx);
+            // Clear ring again in case main thread wrote between clears
+            clear_ring();
+            seek_requested_.store(false, std::memory_order_release);
+        }
+
         int ret = av_read_frame(fmt, pkt);
         if (ret < 0) break;  // EOF or error
 
@@ -366,12 +406,10 @@ void AudioOutput::decode_loop(double seek_target) {
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
             if (ret < 0) break;
 
-            // Convert to float32 interleaved
             int samples = frame->nb_samples;
             std::vector<float> pcm(samples * channels_, 0.0f);
 
             if (frame->format == AV_SAMPLE_FMT_FLTP) {
-                // Planar float → interleaved float
                 for (int ch = 0; ch < channels_ && ch < frame->ch_layout.nb_channels; ch++) {
                     const float* src = reinterpret_cast<float*>(frame->data[ch]);
                     for (int s = 0; s < samples; s++)
@@ -397,15 +435,61 @@ void AudioOutput::decode_loop(double seek_target) {
                 }
             }
 
-            // Write to ring buffer, throttle if full
-            int written = write_ring(pcm.data(), samples);
-            while (written < samples && running_.load()) {
-                // Ring buffer nearly full — wait
-                if (ring_filled_.load() > ring_capacity_ * 8 / 10) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            // Pitch-preserving time-stretch via SoundTouch WSOLA.
+            // setTempo() changes speed while keeping pitch; clear() flushes
+            // internal buffers on speed change with no object recreation.
+            double spd = playback_speed_.load(std::memory_order_acquire);
+
+            // Lazy-init stretcher (only if not at 1.0x)
+            bool use_stretcher = (std::abs(spd - 1.0) > 0.005);
+            if (use_stretcher && !stretcher_) {
+                stretcher_ = std::make_unique<soundtouch::SoundTouch>();
+                stretcher_->setChannels(channels_);
+                stretcher_->setSampleRate(sample_rate_);
+                stretch_speed_ = 1.0;  // force apply below
+            }
+
+            // Apply speed change — setTempo (new speed) or setTempo(1.0)
+            // for clean pass-through. Never destroy stretcher; that would
+            // lose internal buffered samples → ring underrun → clock offset
+            // → persistent video lag that only a seek can fix.
+            double target_tempo = use_stretcher ? spd : 1.0;
+            if (stretcher_ && std::abs(target_tempo - stretch_speed_) > 0.001) {
+                stretcher_->clear();
+                stretcher_->setTempo(target_tempo);
+                stretch_speed_ = target_tempo;
+            }
+
+            if (stretcher_) {
+                stretcher_->putSamples(pcm.data(), samples);
+
+                int total_written = 0;
+                while (stretcher_->numSamples() > 0 && running_.load()) {
+                    std::vector<float> out(4096 * channels_, 0.0f);
+                    int n = std::min(4096, (int)stretcher_->numSamples());
+                    n = (int)stretcher_->receiveSamples(out.data(), n);
+                    if (n <= 0) break;
+
+                    int written = write_ring(out.data(), n);
+                    total_written += written;
+                    int remaining = n;
+                    while (written < remaining && running_.load()) {
+                        if (ring_filled_.load() > ring_capacity_ * 8 / 10)
+                            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                        written += write_ring(out.data() + written * channels_,
+                                              remaining - written);
+                    }
                 }
-                written += write_ring(pcm.data() + written * channels_,
-                                      samples - written);
+                (void)total_written;
+            } else {
+                int written = write_ring(pcm.data(), samples);
+                int total = samples;
+                while (written < total && running_.load()) {
+                    if (ring_filled_.load() > ring_capacity_ * 8 / 10)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                    written += write_ring(pcm.data() + written * channels_,
+                                          total - written);
+                }
             }
         }
     }
@@ -413,7 +497,7 @@ void AudioOutput::decode_loop(double seek_target) {
     av_frame_free(&frame);
     av_packet_free(&pkt);
     avcodec_free_context(&ctx);
-    avformat_close_input(&fmt);
+    if (fmt) avformat_close_input(&fmt);
 }
 
 }  // namespace vsr

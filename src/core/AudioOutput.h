@@ -1,13 +1,17 @@
 #pragma once
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <portaudio.h>
+
+namespace soundtouch { class SoundTouch; }
 
 namespace vsr {
 
@@ -55,6 +59,15 @@ public:
     /// Master clock in seconds. Drives A/V sync.
     double clock_sec() const;
 
+    /// Set volume (0.0 = silence, 1.0 = full). Applied in PortAudio callback
+    /// with zero latency — takes effect on the next callback (~10ms).
+    void set_volume(double vol);
+
+    /// Set playback speed. Resamples PCM in decode thread — clock
+    /// naturally advances at the speed-adjusted rate (0.5x = half,
+    /// 2x = double). Speed change takes effect within one decode frame.
+    void set_speed(double speed);
+
     /// Whether the audio stream is active (has audio track).
     bool is_active() const { return has_audio_; }
 
@@ -96,12 +109,31 @@ private:
     int sample_rate_ = 48000;
     int channels_ = 2;
 
-    // Clock state
+    // Clock state — returns CONTENT time, not real time.
+    // clock = clock_base_ + (Pa_GetStreamTime - stream_start_) * clock_speed_
+    // On speed change, clock_base_ and stream_start_ are reset so the clock
+    // never jumps — preserving continuity while the rate changes.
     mutable std::mutex clock_mutex_;
-    double start_time_ = 0.0;    // Pa_GetStreamTime() at last start/resume
-    double frozen_clock_ = 0.0;  // clock value when paused
+    double clock_base_ = 0.0;     // content-time at segment start
+    double stream_start_ = 0.0;   // Pa_GetStreamTime when segment started
+    std::atomic<double> clock_speed_{1.0};  // effective rate: real→content
+    double frozen_clock_ = 0.0;   // clock value when paused
 
-    // File path (for decode thread to reopen)
+    // Seek state (lightweight — no Pa_Terminate/Pa_Initialize)
+    std::atomic<bool> seek_requested_{false};
+    double seek_target_ = 0.0;
+
+    // Playback speed (read by decode thread for PCM resampling)
+    std::atomic<double> playback_speed_{1.0};
+
+    // Volume: applied in PortAudio callback. 1.0 = full, 0.0 = silence.
+    std::atomic<double> volume_{1.0};
+
+    // Pitch-preserving time-stretch (SoundTouch WSOLA)
+    std::unique_ptr<soundtouch::SoundTouch> stretcher_;
+    double stretch_speed_ = 1.0;  // last tempo set on stretcher
+
+    // File path (decode thread reopens per seek)
     std::string file_path_;
 };
 

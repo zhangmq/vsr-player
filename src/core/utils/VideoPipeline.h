@@ -7,6 +7,8 @@
 
 namespace vsr {
 
+class IVulkanContext;  // forward — defined in api/Player.h
+
 struct TextureBinding {
     uint32_t binding;     // descriptor binding number (0, 1, ...)
     uint32_t format;      // VkFormat (e.g. VK_FORMAT_R8G8B8A8_UNORM = 37)
@@ -39,16 +41,16 @@ public:
     VideoPipeline();
     ~VideoPipeline();
 
-    /// Initialize pipeline and interop textures.
-    /// @param dev           VkDevice
-    /// @param pd            VkPhysicalDevice (for InteropTexture)
-    /// @param renderPass    VkRenderPass (shared with SwapchainManager)
-    /// @param queue         VkQueue (for layout transition)
-    /// @param commandPool   VkCommandPool (for layout transition)
-    /// @param cfg           Pipeline configuration (textures, shaders)
-    bool init(void* device, void* physicalDevice, void* renderPass,
-              void* queue, void* commandPool,
-              const PipelineConfig& cfg);
+    /// Create pipeline infrastructure: shader modules, layout, sampler,
+    /// descriptor pool, graphics pipeline. No InteropTextures yet —
+    /// those are set up by reconfigure_textures() when video dimensions
+    /// are known. Called once by the client after obtaining the render pass.
+    bool init_pipeline(IVulkanContext& vk, void* renderPass,
+                       const PipelineConfig& cfg);
+
+    /// Record layout transitions for all interop textures (UNDEFINED → SHADER_READ_ONLY).
+    /// Called from render thread's record_to_cb before the first bind after reconfigure.
+    void ensureTransitioned(void* device, void* commandBuffer);
 
     /// Bind descriptor set and pipeline on the command buffer, draw fullscreen triangle.
     /// Viewport and scissor must already be set by the caller (VulkanRenderer handles
@@ -63,8 +65,19 @@ public:
     /// InteropTextures are destroyed here (while device is alive), not in the destructor.
     void release(void* device);
 
+    /// Create or replace InteropTextures at new sizes, update descriptor writes.
+    /// On first call: allocates descriptor set from the pool created by init_pipeline.
+    /// On subsequent calls: updates the existing descriptor set.
+    /// Pipeline, shaders, sampler, and layout are untouched.
+    bool reconfigure_textures(IVulkanContext& vk,
+              const std::vector<TextureBinding>& new_textures);
+
     bool ready() const { return pipeline_ != nullptr; }
+    bool has_textures() const { return !interopTextures_.empty(); }
     void* pipelineLayout() const { return pipeline_layout_; }
+
+    /// Destroy textures that were retired in a previous cycle.
+    void destroy_retired();
 
 private:
     void* descriptor_set_layout_ = nullptr;
@@ -77,6 +90,7 @@ private:
     void* sampler_ = nullptr;
 
     std::vector<InteropTexture> interopTextures_;
+    std::vector<InteropTexture> retired_textures_;
 };
 
 }  // namespace vsr

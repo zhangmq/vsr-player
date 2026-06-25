@@ -1,61 +1,55 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
-#include "VulkanContext.h"
-#include "SwapchainManager.h"
 #include "VideoPipeline.h"
+#include "../api/Player.h"  // Path enum, IVulkanContext
 
 namespace vsr {
 
-enum class Path { VSR, NOVSR };
-
+/// Two-stage renderer: init_pipelines (once) + reconfigure_textures (per-file/scale).
+///
+/// Texture mutation happens on the worker thread, protected by a Render Gate
+/// (lock-free worker↔render handshake). The gate ensures the render thread
+/// isn't recording commands referencing old textures before they're destroyed.
 class VulkanRenderer {
 public:
     VulkanRenderer();
     ~VulkanRenderer();
 
-    bool init(void* native_window, void* native_display);
+    bool init_pipelines(
+        IVulkanContext& vk,
+        const uint32_t* rgbaFragSpv, size_t rgbaFragSpvLen,
+        const uint32_t* nv12FragSpv, size_t nv12FragSpvLen,
+        const uint32_t* vertSpv, size_t vertSpvLen);
 
-    /// Initialize pipelines after video dimensions are known.
-    /// Creates both RGBA (VSR) and NV12 (NO-VSR) pipelines.
-    /// @param videoW, videoH  Native (pre-scale) video frame dimensions.
-    /// @param scale  VSR scale factor (1 for 1:1, 2 for 2x, etc.)
-    /// @param widgetW, widgetH  Widget pixel dimensions for initial swapchain size.
-    bool init_pipelines(int videoW, int videoH, int scale,
-                        int widgetW, int widgetH,
-                        const uint32_t* rgbaFragSpv, size_t rgbaFragSpvLen,
-                        const uint32_t* nv12FragSpv, size_t nv12FragSpvLen,
-                        const uint32_t* vertSpv, size_t vertSpvLen);
-
-    /// Render. InteropTextures must have been filled via CUDA D2D/H2D
-    /// before calling this.
-    bool render_frame(Path path);
+    /// Record video draw into external command buffer (render thread).
+    void record_to_cb(void* cb, int extentW, int extentH, Path path);
 
     bool resize(int w, int h);
-    void release();
-    bool is_ready() const { return ctx_.ready() && pipelines_ready_; }
 
-    // Accessor for MainWindow D2D/H2D copies
+    void release(IVulkanContext& vk);
+
+    void set_running_flag(const std::atomic<bool>* flag) { running_flag_ = flag; }
+
+    /// Scale change: rebuild RGBA texture (worker thread).
+    bool reconfigure_scale(int videoW, int videoH, int newScale,
+                           IVulkanContext& vk);
+
+    /// Video switch: rebuild ALL textures (worker thread).
+    bool reconfigure_all_textures(int videoW, int videoH, int scale,
+                                  IVulkanContext& vk);
+
+    bool is_ready() const { return pipelines_ready_; }
+    int mutation_gate() const { return mutation_gate_.load(); }
+    int render_in_frame() const { return render_in_frame_.load(); }
+    int frames_since_mutation() const { return frames_since_mutation_.load(); }
+
     InteropTexture& rgbaInterop() { return rgbaPipeline_.interopTexture(0); }
     InteropTexture& yInterop()    { return nv12Pipeline_.interopTexture(0); }
     InteropTexture& uvInterop()   { return nv12Pipeline_.interopTexture(1); }
 
-    int swapchainWidth()  const { return swapchain_.width(); }
-    int swapchainHeight() const { return swapchain_.height(); }
-
-    /// Store SPIR-V shader data for later pipeline (re)creation.
-    /// Called once by the engine after initialization.
-    void set_shader_data(const uint32_t* rgbaFragSpv, size_t rgbaFragSpvLen,
-                         const uint32_t* nv12FragSpv, size_t nv12FragSpvLen,
-                         const uint32_t* vertSpv, size_t vertSpvLen);
-
-    /// Init or recreate pipelines using previously stored SPIR-V data.
-    bool init_pipelines_with_saved_spv(int videoW, int videoH, int scale,
-                                        int widgetW, int widgetH);
-
 private:
-    VulkanContext ctx_;
-    SwapchainManager swapchain_;
     VideoPipeline rgbaPipeline_;
     VideoPipeline nv12Pipeline_;
     bool pipelines_ready_ = false;
@@ -63,13 +57,19 @@ private:
     int vsr_scale_ = 1;
     int last_widget_w_ = 0, last_widget_h_ = 0;
 
-    // Saved SPIR-V pointers for pipeline recreation on resize
-    const uint32_t* saved_vert_spv_ = nullptr;
-    const uint32_t* saved_rgba_frag_spv_ = nullptr;
-    const uint32_t* saved_nv12_frag_spv_ = nullptr;
-    size_t saved_vert_len_ = 0;
-    size_t saved_rgba_frag_len_ = 0;
-    size_t saved_nv12_frag_len_ = 0;
+    void* cached_device_ = nullptr;
+    bool textures_need_transition_ = false;
+
+    // ── Render Gate — lock-free worker↔render handshake ──
+    // mutation_gate_: 0=normal, 1=worker wants to mutate
+    // render_in_frame_: >0 when render thread is inside record_to_cb
+    std::atomic<int> mutation_gate_{0};
+    std::atomic<int> render_in_frame_{0};
+    std::atomic<int> frames_since_mutation_{0};
+    const std::atomic<bool>* running_flag_ = nullptr;
+
+    void begin_mutation(IVulkanContext& vk);
+    void end_mutation();
 };
 
 }  // namespace vsr

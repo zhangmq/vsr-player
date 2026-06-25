@@ -6,7 +6,7 @@ COREDIR := src/core
 CLIENTDIR := src/client
 
 CXX := g++
-PKGS := Qt6Widgets vulkan libavcodec libavformat libavutil libswscale wayland-client portaudio-2.0
+PKGS := Qt6Quick vulkan libavcodec libavformat libavutil libswscale wayland-client portaudio-2.0
 
 # CUDA include / lib paths (bundled in third_party/)
 CUDA_DIR := third_party/cuda
@@ -16,13 +16,15 @@ CUDA_LIB  := $(CUDA_DIR)/lib
 QT6_GUI_VER := $(shell pkg-config --modversion Qt6Gui 2>/dev/null)
 QPA_INC := /usr/include/qt6/QtGui/$(QT6_GUI_VER)/
 CXXFLAGS := -std=c++20 -Wall -Wextra -fPIC -O2 -DNDEBUG \
+            -I/usr/include/soundtouch \
             -Wno-missing-field-initializers \
             $(shell pkg-config --cflags $(PKGS) libpng) \
             -I$(QPA_INC) \
             -I$(CUDA_INC) \
-            -Isrc/core -Isrc/core/api -Isrc/client -Isrc/core/utils -I$(BUILD_DIR)/shaders \
+            -Isrc/core -Isrc/core/api -Isrc/client -Isrc/core/utils -I$(BUILD_DIR) -I$(BUILD_DIR)/shaders \
             -Ithird_party/nvvfx/include
 LDFLAGS  := $(shell pkg-config --libs $(PKGS)) \
+            -lSoundTouch \
             -L$(CUDA_LIB) -lnvrtc -lnvrtc-builtins \
             -lcuda -ldl -lpng16 \
             -Wl,--disable-new-dtags \
@@ -45,16 +47,12 @@ NV12_FRAG_SPV := $(BUILD_DIR)/shaders/nv12.frag.spv
 NV12_FRAG_H   := $(BUILD_DIR)/shaders/nv12_frag_spv.h
 SHADERS  := $(VERT_H) $(FRAG_H) $(NV12_FRAG_H)
 
-# ---- MOC generated sources ----
-MOC_SRC := $(BUILD_DIR)/moc_MainWindow.cpp $(BUILD_DIR)/moc_VulkanWidget.cpp
-
 # ---- Object lists ----
 CORE_OBJS := $(BUILD_DIR)/src/core/PlayerCore.o \
              $(BUILD_DIR)/src/core/Demuxer.o \
              $(BUILD_DIR)/src/core/Decoder.o \
              $(BUILD_DIR)/src/core/VSRProcessor.o \
              $(BUILD_DIR)/src/core/AudioOutput.o \
-             $(BUILD_DIR)/src/core/utils/VulkanContext.o \
              $(BUILD_DIR)/src/core/utils/SwapchainManager.o \
              $(BUILD_DIR)/src/core/utils/VulkanRenderer.o \
              $(BUILD_DIR)/src/core/utils/CUDAContext.o \
@@ -63,12 +61,12 @@ CORE_OBJS := $(BUILD_DIR)/src/core/PlayerCore.o \
              $(BUILD_DIR)/src/core/utils/VideoPipeline.o
 
 CLIENT_OBJS := $(BUILD_DIR)/src/client/main.o \
-               $(BUILD_DIR)/src/client/MainWindow.o \
-               $(BUILD_DIR)/src/client/VulkanWidget.o
+               $(BUILD_DIR)/src/client/PlaylistEngine.o \
+               $(BUILD_DIR)/src/client/QtVulkanContext.o \
+               $(BUILD_DIR)/src/client/PlayerViewModel.o \
+               $(BUILD_DIR)/src/client/KeyFilter.o
 
-MOC_OBJS := $(MOC_SRC:.cpp=.o)
-
-OBJS := $(CORE_OBJS) $(CLIENT_OBJS) $(MOC_OBJS)
+OBJS := $(CORE_OBJS) $(CLIENT_OBJS)
 
 # ── Targets ──────────────────────────────────────────────────────────
 
@@ -113,13 +111,17 @@ $(BUILD_DIR)/shaders:
 
 # ── MOC generation ───────────────────────────────────────────────────
 
-$(BUILD_DIR)/moc_MainWindow.cpp: $(CLIENTDIR)/MainWindow.h | $(BUILD_DIR)
-	@echo "  MOC   MainWindow"
-	@$(MOC) $< -o $@
+$(BUILD_DIR)/moc_PlayerViewModel.cpp: $(CLIENTDIR)/PlayerViewModel.h | $(BUILD_DIR)
+	@echo "  MOC   PlayerViewModel"
+	@$(MOC) -I/usr/include/qt6 -I/usr/include/qt6/QtCore -Isrc/core -Isrc/core/api -Isrc/client $< -o $@
 
-$(BUILD_DIR)/moc_VulkanWidget.cpp: $(CLIENTDIR)/VulkanWidget.h | $(BUILD_DIR)
-	@echo "  MOC   VulkanWidget"
-	@$(MOC) $< -o $@
+$(BUILD_DIR)/moc_KeyFilter.cpp: $(CLIENTDIR)/KeyFilter.h | $(BUILD_DIR)
+	@echo "  MOC   KeyFilter"
+	@$(MOC) -I/usr/include/qt6 -I/usr/include/qt6/QtCore -Isrc/core -Isrc/core/api -Isrc/client $< -o $@
+
+$(BUILD_DIR)/moc_PlaylistEngine.cpp: $(CLIENTDIR)/PlaylistEngine.h | $(BUILD_DIR)
+	@echo "  MOC   PlaylistEngine"
+	@$(MOC) -I/usr/include/qt6 -I/usr/include/qt6/QtCore -Isrc/core -Isrc/core/api -Isrc/client $< -o $@
 
 $(BUILD_DIR):
 	@mkdir -p $@
@@ -130,7 +132,9 @@ $(BUILD_DIR):
 $(BUILD_DIR)/src/core/PlayerCore.o: $(SHADERS)
 
 # MOC dependencies
-$(BUILD_DIR)/src/client/MainWindow.o: $(BUILD_DIR)/moc_MainWindow.cpp
+$(BUILD_DIR)/src/client/PlayerViewModel.o: $(BUILD_DIR)/moc_PlayerViewModel.cpp
+$(BUILD_DIR)/src/client/KeyFilter.o: $(BUILD_DIR)/moc_KeyFilter.cpp
+$(BUILD_DIR)/src/client/PlaylistEngine.o: $(BUILD_DIR)/moc_PlaylistEngine.cpp
 
 # Generic compilation rule
 $(BUILD_DIR)/%.o: %.cpp
@@ -147,11 +151,6 @@ $(BUILD_DIR)/src/client/%.o: $(CLIENTDIR)/%.cpp
 	@mkdir -p $(dir $@)
 	@echo "  CXX   $<"
 	@$(CXX) $(CXXFLAGS) -c -o $@ $<
-$(BUILD_DIR)/moc_%.o: $(BUILD_DIR)/moc_%.cpp
-	@mkdir -p $(dir $@)
-	@echo "  CXX   $(notdir $<)"
-	@$(CXX) $(CXXFLAGS) -c -o $@ $<
-
 # ── Tests ────────────────────────────────────────────────────────────
 
 test_interop: $(BUILD_DIR)/tests/test_interop

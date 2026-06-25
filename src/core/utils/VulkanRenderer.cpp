@@ -1,301 +1,274 @@
-/// VulkanRenderer — thin coordinator that delegates to VulkanContext,
-/// SwapchainManager, and two VideoPipeline instances (RGBA + NV12).
+/// VulkanRenderer — thin coordinator for two VideoPipeline instances.
+///
+/// Texture mutation happens on the worker thread, protected by a Render Gate
+/// (lock-free worker↔render handshake). The gate ensures the render thread
+/// isn't recording commands referencing old textures before they're destroyed.
 
 #include "VulkanRenderer.h"
+#include "../api/Player.h"
 
 #include <cstdio>
 #include <cstring>
+#include <thread>
 #include <vector>
+
+// ── Logging helpers ────────────────────────────────────────────────
+
+static int rctr = 0;
+#define RLOG(fmt, ...) \
+    fprintf(stderr, "[render] #%d " fmt "\n", ++rctr, ##__VA_ARGS__)
+
+#define RSNAP(label, gate, ready, in_frame, frames_since)  \
+    RLOG("snap:%s gate=%d ready=%d in_frame=%d frames_since=%d", \
+         label, (int)(gate), (int)(ready), (int)(in_frame), (int)(frames_since))
 
 #define VK_USE_PLATFORM_WAYLAND_KHR
 #include <vulkan/vulkan.h>
-#include <wayland-client.h>
 
 namespace vsr {
 
-// ── Lifecycle ───────────────────────────────────────────────────────
-
 VulkanRenderer::VulkanRenderer() = default;
-VulkanRenderer::~VulkanRenderer() { release(); }
+VulkanRenderer::~VulkanRenderer() {}
 
-// ── Init ────────────────────────────────────────────────────────────
+// ── Pipeline init (once, from Player::initialize) ──────────────────
 
-bool VulkanRenderer::init(void* native_window, void* native_display) {
-    if (!ctx_.init(native_window, native_display))
-        return false;
-    printf("VulkanRenderer: initialized\n");
-    return true;
-}
+bool VulkanRenderer::init_pipelines(
+        IVulkanContext& vk,
+        const uint32_t* rgbaFragSpv, size_t rgbaFragSpvLen,
+        const uint32_t* nv12FragSpv, size_t nv12FragSpvLen,
+        const uint32_t* vertSpv, size_t vertSpvLen) {
 
-// ── Init pipelines ──────────────────────────────────────────────────
+    VkDevice dev = (VkDevice)vk.vkDevice();
+    VkRenderPass renderPass = (VkRenderPass)vk.vkRenderPass();
+    if (!dev || !renderPass) return false;
 
-bool VulkanRenderer::init_pipelines(int videoW, int videoH, int scale,
-                                     int widgetW, int widgetH,
-                                     const uint32_t* rgbaFragSpv,
-                                     size_t rgbaFragSpvLen,
-                                     const uint32_t* nv12FragSpv,
-                                     size_t nv12FragSpvLen,
-                                     const uint32_t* vertSpv,
-                                     size_t vertSpvLen) {
-    VkDevice dev = (VkDevice)ctx_.device();
-    VkPhysicalDevice pd = (VkPhysicalDevice)ctx_.physicalDevice();
-    if (!dev) return false;
+    cached_device_ = dev;
+    pipelines_ready_ = false;
 
-    // Save SPIR-V + params for pipeline recreation on resize
-    saved_vert_spv_ = vertSpv;
-    saved_rgba_frag_spv_ = rgbaFragSpv;
-    saved_nv12_frag_spv_ = nv12FragSpv;
-    saved_vert_len_ = vertSpvLen;
-    saved_rgba_frag_len_ = rgbaFragSpvLen;
-    saved_nv12_frag_len_ = nv12FragSpvLen;
-
-    video_w_ = videoW;
-    video_h_ = videoH;
-    vsr_scale_ = scale;
-
-    int vsrW = videoW * scale;
-    int vsrH = videoH * scale;
-
-    // Create swapchain if it doesn't exist yet, using widget pixel dimensions
-    if (!swapchain_.swapchain()) {
-        int sw_w = widgetW > 0 ? widgetW : 1280;
-        int sw_h = widgetH > 0 ? widgetH : 720;
-        if (!swapchain_.create(pd, dev, ctx_.surface(), ctx_.queueFamily(),
-                                sw_w, sw_h)) {
-            fprintf(stderr, "VulkanRenderer: swapchain create failed\n");
+    {
+        PipelineConfig cfg;
+        cfg.textures = {{0, VK_FORMAT_R8G8B8A8_UNORM, 0, 0}};
+        cfg.vertSpv = vertSpv; cfg.vertSpvLen = vertSpvLen;
+        cfg.fragSpv = rgbaFragSpv; cfg.fragSpvLen = rgbaFragSpvLen;
+        if (!rgbaPipeline_.init_pipeline(vk, renderPass, cfg)) {
+            fprintf(stderr, "VulkanRenderer: rgbaPipeline init_pipeline failed\n");
             return false;
         }
     }
 
-    // Release old pipelines (if any) before recreating
-    rgbaPipeline_.release(dev);
-    nv12Pipeline_.release(dev);
-
-    VkRenderPass renderPass = (VkRenderPass)swapchain_.renderPass();
-    VkQueue queue = (VkQueue)ctx_.queue();
-    VkCommandPool cmdPool = (VkCommandPool)ctx_.commandPool();
-
-    // ── RGBA pipeline (VSR path) ──
     {
         PipelineConfig cfg;
         cfg.textures = {
-            {0, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)vsrW, (uint32_t)vsrH}};
-        cfg.vertSpv = vertSpv;
-        cfg.vertSpvLen = vertSpvLen;
-        cfg.fragSpv = rgbaFragSpv;
-        cfg.fragSpvLen = rgbaFragSpvLen;
-
-        if (!rgbaPipeline_.init(dev, pd, renderPass, queue, cmdPool, cfg)) {
-            fprintf(stderr, "VulkanRenderer: rgbaPipeline init failed\n");
+            {0, VK_FORMAT_R8_UNORM, 0, 0},
+            {1, VK_FORMAT_R8G8_UNORM, 0, 0}};
+        cfg.vertSpv = vertSpv; cfg.vertSpvLen = vertSpvLen;
+        cfg.fragSpv = nv12FragSpv; cfg.fragSpvLen = nv12FragSpvLen;
+        if (!nv12Pipeline_.init_pipeline(vk, renderPass, cfg)) {
+            fprintf(stderr, "VulkanRenderer: nv12Pipeline init_pipeline failed\n");
             return false;
         }
     }
 
-    // ── NV12 pipeline (NO-VSR path) ──
-    {
-        PipelineConfig cfg;
-        cfg.textures = {
-            {0, VK_FORMAT_R8_UNORM, (uint32_t)videoW, (uint32_t)videoH},
-            {1, VK_FORMAT_R8G8_UNORM, (uint32_t)(videoW / 2),
-             (uint32_t)(videoH / 2)},
-        };
-        cfg.vertSpv = vertSpv;
-        cfg.vertSpvLen = vertSpvLen;
-        cfg.fragSpv = nv12FragSpv;
-        cfg.fragSpvLen = nv12FragSpvLen;
-
-        if (!nv12Pipeline_.init(dev, pd, renderPass, queue, cmdPool, cfg)) {
-            fprintf(stderr, "VulkanRenderer: nv12Pipeline init failed\n");
-            return false;
-        }
-    }
-
-    pipelines_ready_ = true;
-    printf("VulkanRenderer: pipelines initialized (video %dx%d scale %d)\n",
-           videoW, videoH, scale);
+    printf("VulkanRenderer: pipelines initialized (no textures yet)\n");
     return true;
 }
 
-// ── Render frame ──────────────────────────────────────────────────────
+// ── Record to external command buffer (render thread) ──────────────
 
-bool VulkanRenderer::render_frame(Path path) {
-    VkDevice dev = (VkDevice)ctx_.device();
-    VkQueue queue = (VkQueue)ctx_.queue();
-    if (!dev || !ctx_.surface()) return false;
+void VulkanRenderer::record_to_cb(void* cb, int extentW, int extentH,
+                                   Path path) {
+    VkCommandBuffer cmdBuf = (VkCommandBuffer)cb;
+    if (!cmdBuf) { RLOG("no-cmdBuf"); return; }
 
-    VkFence fence = (VkFence)ctx_.fence();
-
-    // Proactively recreate swapchain if desired size changed.
-    // Must wait for the fence first so old swapchain images are idle.
-    if (last_widget_w_ > 0 && last_widget_h_ > 0 &&
-        swapchain_.swapchain() &&
-        (swapchain_.width() != last_widget_w_ ||
-         swapchain_.height() != last_widget_h_)) {
-        // 100 ms finite timeout — never blocks the worker thread
-        // indefinitely, so QUIT commands are always processed within
-        // at most one frame interval.
-        vkWaitForFences(dev, 1, &fence, VK_TRUE, 100'000'000);
-        swapchain_.create(ctx_.physicalDevice(), ctx_.device(),
-                          ctx_.surface(), ctx_.queueFamily(),
-                          last_widget_w_, last_widget_h_);
+    if (mutation_gate_.load(std::memory_order_acquire) != 0) {
+        static int gate_skip = 0;
+        if (++gate_skip % 180 == 1)
+            RLOG("gate-skip gate=%d ready=%d", mutation_gate_.load(), pipelines_ready_);
+        return;
+    }
+    if (!pipelines_ready_) {
+        static int ready_skip = 0;
+        if (++ready_skip % 180 == 1)
+            RLOG("ready-skip");
+        return;
     }
 
-    // Acquire swapchain image.
-    uint32_t idx = swapchain_.acquire(dev, ctx_.imageAvailableSemaphore());
-    if (idx == ~0u) {
-        if (last_widget_w_ > 0 && last_widget_h_ > 0) {
-            swapchain_.create(ctx_.physicalDevice(), ctx_.device(),
-                              ctx_.surface(), ctx_.queueFamily(),
-                              last_widget_w_, last_widget_h_);
-            idx = swapchain_.acquire(dev, ctx_.imageAvailableSemaphore());
-        }
-        if (idx == ~0u) return false;  // fence stays signaled, next call OK
+    // Enter critical section.
+    render_in_frame_.fetch_add(1, std::memory_order_acquire);
+
+    // Double-check: worker might have started mutation between the
+    // initial loads and the fetch_add above.
+    if (mutation_gate_.load(std::memory_order_acquire) != 0 ||
+        !pipelines_ready_) {
+        render_in_frame_.fetch_sub(1, std::memory_order_release);
+        return;
     }
 
-    // Now committed to rendering — wait for previous frame and reset
-    vkWaitForFences(dev, 1, &fence, VK_TRUE, 100'000'000);
-    vkResetFences(dev, 1, &fence);
+    // Layout transitions (first frame after reconfig).
+    if (textures_need_transition_ && cached_device_) {
+        rgbaPipeline_.ensureTransitioned(cached_device_, cmdBuf);
+        nv12Pipeline_.ensureTransitioned(cached_device_, cmdBuf);
+        textures_need_transition_ = false;
+    }
 
-    VkCommandBuffer cb = (VkCommandBuffer)ctx_.commandBuffer();
-    vkResetCommandBuffer(cb, 0);
-
-    VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    vkBeginCommandBuffer(cb, &bi);
-
-    // Begin render pass
-    VkClearValue cv = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
-    VkRenderPassBeginInfo rpbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    rpbi.renderPass = (VkRenderPass)swapchain_.renderPass();
-    rpbi.framebuffer = (VkFramebuffer)swapchain_.framebuffer(idx);
-    rpbi.renderArea = {{0, 0},
-                       {(uint32_t)swapchain_.width(),
-                        (uint32_t)swapchain_.height()}};
-    rpbi.clearValueCount = 1;
-    rpbi.pClearValues = &cv;
-    vkCmdBeginRenderPass(cb, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
-
-    // Letterboxing calculation
     int srcW = video_w_, srcH = video_h_;
-    if (path == Path::VSR) {
-        srcW = video_w_ * vsr_scale_;
-        srcH = video_h_ * vsr_scale_;
-    }
-    int sw = swapchain_.width(), sh = swapchain_.height();
-    float scaleW = (float)sw / srcW;
-    float scaleH = (float)sh / srcH;
-    float scale = (scaleW < scaleH) ? scaleW : scaleH;
-    int vpW = (int)(srcW * scale);
-    int vpH = (int)(srcH * scale);
-    int vpX = (sw - vpW) / 2;
-    int vpY = (sh - vpH) / 2;
+    if (path == Path::VSR) { srcW *= vsr_scale_; srcH *= vsr_scale_; }
+    float scaleW = (float)extentW / srcW, scaleH = (float)extentH / srcH;
+    float sc = (scaleW < scaleH) ? scaleW : scaleH;
+    int vpW = (int)(srcW * sc), vpH = (int)(srcH * sc);
+    int vpX = (extentW - vpW) / 2, vpY = (extentH - vpH) / 2;
 
-    // Set viewport + scissor
-    VkViewport vp = {(float)vpX, (float)vpY, (float)vpW, (float)vpH,
-                     0.0f, 1.0f};
-    vkCmdSetViewport(cb, 0, 1, &vp);
-    VkRect2D scissor = {{(int32_t)vpX, (int32_t)vpY},
-                        {(uint32_t)vpW, (uint32_t)vpH}};
-    vkCmdSetScissor(cb, 0, 1, &scissor);
+    VkViewport vp = {(float)vpX, (float)vpY, (float)vpW, (float)vpH, 0.0f, 1.0f};
+    vkCmdSetViewport(cmdBuf, 0, 1, &vp);
+    VkRect2D scissor = {{(int32_t)vpX, (int32_t)vpY}, {(uint32_t)vpW, (uint32_t)vpH}};
+    vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
 
-    // Bind correct pipeline and draw
-    if (path == Path::VSR) {
-        rgbaPipeline_.bind(cb);
-    } else {
-        nv12Pipeline_.bind(cb);
-    }
+    if (path == Path::VSR)
+        rgbaPipeline_.bind(cmdBuf);
+    else
+        nv12Pipeline_.bind(cmdBuf);
 
-    vkCmdEndRenderPass(cb);
-    vkEndCommandBuffer(cb);
+    frames_since_mutation_.fetch_add(1, std::memory_order_release);
 
-    // Submit
-    VkPipelineStageFlags ws = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    VkSemaphore imgSem = (VkSemaphore)ctx_.imageAvailableSemaphore();
-    VkSemaphore doneSem = (VkSemaphore)ctx_.renderFinishedSemaphore();
+    static int rok = 0;
+    if (++rok % 180 == 1)
+        RLOG("draw-OK #%d %s src=%dx%d scaled=%dx%d dst=%dx%d",
+             rok, path == Path::VSR ? "VSR" : "NV12",
+             video_w_, video_h_,
+             video_w_ * vsr_scale_, video_h_ * vsr_scale_,
+             extentW, extentH);
 
-    VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    si.waitSemaphoreCount = 1;
-    si.pWaitSemaphores = &imgSem;
-    si.pWaitDstStageMask = &ws;
-    si.commandBufferCount = 1;
-    si.pCommandBuffers = &cb;
-    si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores = &doneSem;
-    vkQueueSubmit(queue, 1, &si, fence);
-
-    // Present
-    VkSwapchainKHR sc = (VkSwapchainKHR)swapchain_.swapchain();
-    VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-    pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores = &doneSem;
-    pi.swapchainCount = 1;
-    pi.pSwapchains = &sc;
-    pi.pImageIndices = &idx;
-    vkQueuePresentKHR(queue, &pi);
-
-    return true;
+    render_in_frame_.fetch_sub(1, std::memory_order_release);
 }
 
-// ── Resize ──────────────────────────────────────────────────────────
+// ── Resize ─────────────────────────────────────────────────────────
 
 bool VulkanRenderer::resize(int w, int h) {
-    // Only store the desired size. Actual swapchain recreation is
-    // handled by render_frame() via VK_ERROR_OUT_OF_DATE_KHR recovery —
-    // that path properly waits for the compositor to release images
-    // before destroying the old swapchain.
     last_widget_w_ = w;
     last_widget_h_ = h;
     return true;
 }
 
-// ── Release ─────────────────────────────────────────────────────────
+// ── Release (main thread, after worker stopped) ────────────────────
 
-void VulkanRenderer::release() {
-    VkDevice dev = (VkDevice)ctx_.device();
+void VulkanRenderer::release(IVulkanContext& vk) {
+    VkDevice dev = (VkDevice)vk.vkDevice();
     if (!dev) return;
-    vkDeviceWaitIdle(dev);
 
-    // 1. Destroy pipelines (while device alive)
+    pipelines_ready_ = false;
+    vk.waitIdle();
+
     rgbaPipeline_.release(dev);
     nv12Pipeline_.release(dev);
 
-    // 2. Destroy swapchain
-    swapchain_.release(dev);
-
-    // 3. Destroy context (device, instance, etc.)
-    ctx_.release();
-
-    pipelines_ready_ = false;
     video_w_ = video_h_ = 0;
     vsr_scale_ = 1;
 
     printf("VulkanRenderer: released\n");
 }
 
-// ── Shader storage + deferred pipeline init ──────────────────────────
+// ── Render Gate ────────────────────────────────────────────────────
 
-void VulkanRenderer::set_shader_data(
-        const uint32_t* rgbaFragSpv, size_t rgbaFragSpvLen,
-        const uint32_t* nv12FragSpv, size_t nv12FragSpvLen,
-        const uint32_t* vertSpv, size_t vertSpvLen) {
-    saved_vert_spv_ = vertSpv;
-    saved_rgba_frag_spv_ = rgbaFragSpv;
-    saved_nv12_frag_spv_ = nv12FragSpv;
-    saved_vert_len_ = vertSpvLen;
-    saved_rgba_frag_len_ = rgbaFragSpvLen;
-    saved_nv12_frag_len_ = nv12FragSpvLen;
+void VulkanRenderer::begin_mutation(IVulkanContext& vk) {
+    RSNAP("bm-enter", mutation_gate_.load(), pipelines_ready_,
+          render_in_frame_.load(), frames_since_mutation_.load());
+
+    if (frames_since_mutation_.load(std::memory_order_acquire) >= 2) {
+        RLOG("destroy-retired frames=%d", frames_since_mutation_.load());
+        rgbaPipeline_.destroy_retired();
+        nv12Pipeline_.destroy_retired();
+    }
+
+    mutation_gate_.store(1, std::memory_order_release);
+    pipelines_ready_ = false;
+
+    while (render_in_frame_.load(std::memory_order_acquire) > 0) {
+        if (running_flag_ && !running_flag_->load(std::memory_order_acquire))
+            return;
+        std::this_thread::yield();
+    }
+    RLOG("spin-done, waitIdle...");
+    vk.waitIdle();
+    RLOG("waitIdle-done");
 }
 
-bool VulkanRenderer::init_pipelines_with_saved_spv(
-        int videoW, int videoH, int scale, int widgetW, int widgetH) {
-    if (!saved_vert_spv_ || !saved_rgba_frag_spv_ || !saved_nv12_frag_spv_) {
-        fprintf(stderr, "VulkanRenderer: SPIR-V not set — "
-                "call set_shader_data() first\n");
+void VulkanRenderer::end_mutation() {
+    RSNAP("bm-exit", mutation_gate_.load(), pipelines_ready_,
+          render_in_frame_.load(), frames_since_mutation_.load());
+    pipelines_ready_ = true;
+    mutation_gate_.store(0, std::memory_order_release);
+    frames_since_mutation_.store(0, std::memory_order_release);
+}
+
+// ── Reconfigure scale (RGBA texture only) ─────────────────────────
+
+bool VulkanRenderer::reconfigure_scale(
+        int videoW, int videoH, int newScale, IVulkanContext& vk) {
+    if (!rgbaPipeline_.ready()) return false;
+
+    begin_mutation(vk);
+
+    video_w_ = videoW; video_h_ = videoH; vsr_scale_ = newScale;
+
+    int vsrW = videoW * newScale;
+    int vsrH = videoH * newScale;
+
+    std::vector<TextureBinding> newRgba = {
+        {0, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)vsrW, (uint32_t)vsrH}};
+    if (!rgbaPipeline_.reconfigure_textures(vk, newRgba)) {
+        fprintf(stderr, "VulkanRenderer: reconfigure_scale failed\n");
+        end_mutation();
         return false;
     }
-    return init_pipelines(videoW, videoH, scale, widgetW, widgetH,
-                          saved_rgba_frag_spv_, saved_rgba_frag_len_,
-                          saved_nv12_frag_spv_, saved_nv12_frag_len_,
-                          saved_vert_spv_, saved_vert_len_);
+
+    textures_need_transition_ = true;
+    end_mutation();
+
+    fprintf(stderr, "VulkanRenderer: scale reconfigured to %d (RGBA %dx%d)\n",
+            newScale, vsrW, vsrH);
+    return true;
+}
+
+// ── Reconfigure all textures (video switch) ───────────────────────
+
+bool VulkanRenderer::reconfigure_all_textures(
+        int videoW, int videoH, int scale, IVulkanContext& vk) {
+    if (!cached_device_) return false;
+
+    begin_mutation(vk);
+
+    video_w_ = videoW; video_h_ = videoH; vsr_scale_ = scale;
+
+    int vsrW = videoW * scale;
+    int vsrH = videoH * scale;
+
+    {
+        std::vector<TextureBinding> newRgba = {
+            {0, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)vsrW, (uint32_t)vsrH}};
+        if (!rgbaPipeline_.reconfigure_textures(vk, newRgba)) {
+            fprintf(stderr, "VulkanRenderer: rgba reconfigure failed\n");
+            end_mutation();
+            return false;
+        }
+    }
+
+    {
+        std::vector<TextureBinding> newNv12 = {
+            {0, VK_FORMAT_R8_UNORM, (uint32_t)videoW, (uint32_t)videoH},
+            {1, VK_FORMAT_R8G8_UNORM, (uint32_t)(videoW/2), (uint32_t)(videoH/2)}};
+        if (!nv12Pipeline_.reconfigure_textures(vk, newNv12)) {
+            fprintf(stderr, "VulkanRenderer: nv12 reconfigure failed\n");
+            end_mutation();
+            return false;
+        }
+    }
+
+    textures_need_transition_ = true;
+    end_mutation();
+
+    fprintf(stderr, "VulkanRenderer: all textures reconfigured "
+            "(video %dx%d scale %d)\n", videoW, videoH, scale);
+    return true;
 }
 
 }  // namespace vsr

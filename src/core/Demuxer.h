@@ -19,6 +19,10 @@ public:
     /// Open a media file. Returns false on failure.
     bool open(const std::string& path);
 
+    /// Seek to target position in milliseconds.
+    /// Returns false if seek fails or no video stream.
+    bool seek(int64_t target_ms);
+
     /// Close current file and release resources.
     void close();
 

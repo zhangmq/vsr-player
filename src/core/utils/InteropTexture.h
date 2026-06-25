@@ -32,6 +32,12 @@ public:
     InteropTexture();
     ~InteropTexture();
 
+    // Move-only — Vulkan/CUDA handles cannot be copied
+    InteropTexture(InteropTexture&& other) noexcept;
+    InteropTexture& operator=(InteropTexture&& other) noexcept;
+    InteropTexture(const InteropTexture&) = delete;
+    InteropTexture& operator=(const InteropTexture&) = delete;
+
     /// Create the shared texture.
     /// A CUDA context must be current on the calling thread.
     /// @param dev     VkDevice (must have VK_KHR_external_memory_fd enabled)

@@ -4,92 +4,85 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace vsr {
 
-/// Track metadata for track selection (audio, subtitle, video).
+// ── Track metadata (unchanged) ─────────────────────────────────────
+
 struct TrackInfo {
     enum Type { AUDIO, SUBTITLE, VIDEO };
     Type type = AUDIO;
-    int index = -1;                    // ffmpeg stream index
-    bool external = false;             // external subtitle file
-    bool active = false;               // currently selected
-
-    // Audio fields
-    std::string audio_codec;           // "aac", "opus", "flac" ...
+    int index = -1;
+    bool external = false;
+    bool active = false;
+    std::string audio_codec;
     int channels = 0;
     int sample_rate = 0;
-
-    // Subtitle fields
-    std::string subtitle_codec;        // "ass", "srt", "subrip" ...
-
-    // Common
-    std::string language;              // "chi", "jpn", "eng" ...
-    std::string title;                 // stream title or filename
+    std::string subtitle_codec;
+    std::string language;
+    std::string title;
 };
 
-/// Quality level for VSR processing (maps to NvVFX QualityLevel).
-enum class Quality {
-    LOW,
-    MEDIUM,
-    HIGH,
-    ULTRA,
+// ── Quality (unchanged) ────────────────────────────────────────────
+
+enum class Quality { LOW, MEDIUM, HIGH, ULTRA };
+
+// ── Rendering path ─────────────────────────────────────────────────
+
+enum class Path { VSR, NOVSR };
+
+// ── Playback state (unchanged) ─────────────────────────────────────
+
+enum class PlaybackState { STOPPED, PLAYING, PAUSED };
+
+// ── IVulkanContext — client-provided Vulkan handles ─────────────────
+
+class IVulkanContext {
+public:
+    virtual ~IVulkanContext() = default;
+
+    // ── Resource handles — core uses as factory, never modifies ──
+    virtual void* vkInstance()       const = 0;
+    virtual void* vkPhysicalDevice() const = 0;
+    virtual void* vkDevice()         const = 0;
+    virtual void* vkQueue()          const = 0;
+    virtual int   vkQueueFamily()    const = 0;
+    virtual void* vkCommandPool()    const = 0;
+    virtual void* vkRenderPass()     const = 0;
+
+    // ── Synchronization — affects client's shared queue/device ──
+    virtual void waitIdle() const = 0;
+    virtual void submitAndWait(void* commandBuffer) const = 0;
 };
 
-/// Playback state.
-enum class PlaybackState {
-    STOPPED,
-    PLAYING,
-    PAUSED,
-};
+// ── Typed commands — zero field overloading ────────────────────────
 
-/// Command sent from client to player core.
-struct PlayerCommand {
-    enum Type {
-        // Media source
-        LOAD_FILE,
-        OPEN_STREAM,
+struct CmdPlay  {};
+struct CmdPause {};
+struct CmdStop  {};
+struct CmdQuit  {};
 
-        // Playback control
-        PLAY,
-        PAUSE,
-        STOP,
-        SEEK,
+struct CmdLoadFile   { std::string path; };
+struct CmdSeek       { int64_t position_ms; };
+struct CmdResize     { int phys_w; int phys_h; };
+struct CmdSetQuality { int level; };  // VFX quality value (1-4 upscale, 8-11 denoise)
+struct CmdSetScale   { int scale; };          // 0=auto, 1-4=locked
+struct CmdSetVolume  { double value; };       // 0.0 - 1.0
+struct CmdSetMute    { bool muted; };
+struct CmdSetHwaccel { bool enabled; };       // toggle NVDEC (applies on next LOAD_FILE)
+struct CmdSetDenoiseQuality { int level; };   // -1=off, 8-11=low-ultra
+struct CmdSetSpeed    { double speed; };         // playback speed multiplier (0.5, 0.75, 1.0, 2.0)
 
-        // Window
-        RESIZE,
+using PlayerCommand = std::variant<
+    CmdPlay, CmdPause, CmdStop, CmdQuit,
+    CmdLoadFile, CmdSeek, CmdResize,
+    CmdSetQuality, CmdSetScale, CmdSetVolume, CmdSetMute,
+    CmdSetHwaccel, CmdSetSpeed, CmdSetDenoiseQuality>;
 
-        // Track management
-        GET_TRACKS,
-        SET_AUDIO_TRACK,
-        SET_SUBTITLE_TRACK,
-        ADD_SUBTITLE,
-        REMOVE_SUBTITLE,
+// ── PlayerEvent (unchanged fields, cleaned up) ─────────────────────
 
-        // Runtime parameters
-        SET_QUALITY,
-        SET_SCALE,
-        SET_VOLUME,
-        SET_MUTE,
-        SET_PLAYBACK_SPEED,
-        SET_LOOP,
-
-        // Debug
-        CAPTURE_FRAME,
-
-        // Lifecycle
-        QUIT,
-    };
-    Type type = QUIT;
-    std::string arg;
-    int64_t seek_ms = 0;
-    double volume = 1.0;
-    double speed = 1.0;
-    std::vector<std::pair<std::string, std::string>> options;
-};
-
-/// Event emitted from player core to client.
 struct PlayerEvent {
     enum Type {
         STATE_CHANGED,
@@ -100,78 +93,64 @@ struct PlayerEvent {
         ERROR,
         END_OF_FILE,
         FRAME_CAPTURED,
+        OPERATION_PENDING,
     };
     Type type = STATE_CHANGED;
 
-    // STATE_CHANGED
     PlaybackState state = PlaybackState::STOPPED;
-
-    // POSITION_CHANGED
     int64_t time_ms = 0;
     int64_t duration_ms = 0;
 
-    // VIDEO_INFO / FRAME_INFO
     int in_width = 0, in_height = 0;
     int out_width = 0, out_height = 0;
     double fps = 0.0;
     int scale = 1;
-    Quality quality = Quality::HIGH;
+    int quality = 3;
     bool hw_decoding = false;
     bool vsr_active = false;
     bool has_audio = false;
     bool seekable = true;
 
-    // TRACKS_INFO
     std::vector<TrackInfo> tracks;
-
-    // ERROR
     std::string error_msg;
 
-    // FRAME_CAPTURED
     const uint8_t* capture_orig_data = nullptr;
     const uint8_t* capture_vsr_data = nullptr;
     int capture_orig_w = 0, capture_orig_h = 0;
     int capture_vsr_w = 0, capture_vsr_h = 0;
+
+    // OPERATION_PENDING fields (full target state)
+    std::string pending_file;
+    int pending_scale = -1;
+    int pending_quality = -1;
+    int pending_phys_w = 0;
+    int pending_phys_h = 0;
 };
 
-/// Callback type for player events.
 using EventCallback = std::function<void(const PlayerEvent&)>;
 
-/// Public API for the VSR player core.
-///
-/// All commands are enqueued via send_command() and processed
-/// asynchronously on the worker thread. Events are dispatched
-/// via the callback from the worker thread — the client must
-/// marshal UI updates to its own thread.
+// ── Player interface ───────────────────────────────────────────────
+
 class Player {
 public:
     virtual ~Player() = default;
 
-    /// Set the callback for player-to-client events.
-    virtual void set_event_callback(EventCallback cb) = 0;
+    /// Initialize the player. IVulkanContext must outlive the Player.
+    /// SPIR-V pointers are borrowed (embedded in the binary, live forever).
+    virtual bool initialize(
+        IVulkanContext* vk,
+        const uint32_t* rgbaFragSpv, size_t rgbaFragSpvLen,
+        const uint32_t* nv12FragSpv, size_t nv12FragSpvLen,
+        const uint32_t* vertSpv, size_t vertSpvLen,
+        int quality = 3,
+        bool no_hwaccel = false) = 0;
 
-    /// Enqueue a command. Thread-safe, returns immediately.
     virtual void send_command(PlayerCommand cmd) = 0;
-
-    /// Initialize the engine with a Wayland surface for Vulkan present.
-    /// Creates VkInstance/Device/Surface on the calling thread, then hands
-    /// off to the worker thread for all rendering operations.
-    /// @param native_window   wl_surface from the Qt widget
-    /// @param native_display  wl_display from the Qt platform
-    /// @param use_vsr         Enable VSR AI super-resolution
-    /// @param quality         Initial VSR quality level
-    /// @param no_hwaccel      If true, disable NVDEC — force software decode
-    virtual bool initialize(void* native_window, void* native_display,
-                            bool use_vsr = true,
-                            Quality quality = Quality::HIGH,
-                            bool no_hwaccel = false) = 0;
-
-    /// Shut down: stops playback, joins worker thread, releases all GPU
-    /// resources.
+    virtual void record_frame(void* cb, int w, int h) = 0;
+    virtual void set_event_callback(EventCallback cb) = 0;
     virtual void shutdown() = 0;
 };
 
-/// Factory function — creates a Player implementation.
 std::unique_ptr<Player> CreatePlayer();
 
 }  // namespace vsr

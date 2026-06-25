@@ -21,7 +21,7 @@ public:
     ~VSRProcessor();
 
     /// Initialize with input/output dimensions and quality level.
-    bool init(int in_w, int in_h, int out_w, int out_h, Quality quality);
+    bool init(int in_w, int in_h, int out_w, int out_h, int quality);
 
     /// Process one frame. Input must be a CUDA float32 RGB planar pointer.
     /// Returns the output RGBA CUDA device pointer.
@@ -30,7 +30,7 @@ public:
                  int* out_w, int* out_h, int* out_pitch = nullptr);
 
     /// Reconfigure for new dimensions or quality.
-    bool reconfigure(int out_w, int out_h, Quality quality);
+    bool reconfigure(int out_w, int out_h, int quality);
 
     /// Whether the VSR processor is initialized and ready.
     bool is_ready() const { return vsr_handle_ != nullptr; }
@@ -51,7 +51,7 @@ private:
     bool input_allocated_ = false;
     int in_w_ = 0, in_h_ = 0;
     int out_w_ = 0, out_h_ = 0;
-    Quality quality_ = Quality::HIGH;
+    int quality_ = 3;
 };
 
 }  // namespace vsr

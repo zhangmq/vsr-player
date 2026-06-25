@@ -1,25 +1,23 @@
+/// PlayerCore — full playback engine with clean resource lifecycle.
+/// Receives commands via variant PlayerCommand, emits events via callback.
+
 #include "PlayerCore.h"
 
-#include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <thread>
+#include <chrono>
+#include <cmath>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
 #include <libavutil/frame.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/imgutils.h>
 }
 
 #include <cuda.h>
-
-// Generated SPIR-V shaders (from Makefile: glslc + xxd)
-#include "video_vert_spv.h"
-#include "video_frag_spv.h"
-#include "nv12_frag_spv.h"
 
 #include "AudioOutput.h"
 #include "Decoder.h"
@@ -32,53 +30,101 @@ extern "C" {
 
 namespace vsr {
 
-// ── Factory ──────────────────────────────────────────────────────────
+// ── Logging helpers ────────────────────────────────────────────────
+
+static int ctr = 0;
+static uint32_t str_hash(const std::string& s) {
+    uint32_t h = 5381;
+    for (char c : s) h = ((h << 5) + h) + (unsigned char)c;
+    return h;
+}
+static bool log_hash_names() {
+    static int v = -1;
+    if (v < 0) v = (getenv("VSR_LOG_HASH") != nullptr) ? 1 : 0;
+    return v == 1;
+}
+static std::string log_f(const std::string& path) {
+    if (!log_hash_names()) return "'" + path + "'";
+    char buf[16]; snprintf(buf, sizeof(buf), "%08x", str_hash(path)); return buf;
+}
+
+#define CLOG(fmt, ...) \
+    fprintf(stderr, "[core] #%d " fmt "\n", ++ctr, ##__VA_ARGS__)
+
+#define SNAP(label, demux, st, bus, file, sc, qual, pw, ph, fr, mg, pr, ri, fs)  \
+    CLOG("snap:%s demux=%p state=%d busy=%d file=%s scale=%d qual=%d "        \
+         "phys=%dx%d frame_rdy=%d gate=%d ready=%d in_frame=%d frames_since=%d", \
+         label, (void*)(demux), (int)(st), (int)(bus), log_f(file).c_str(),   \
+         (int)(sc), (int)(qual), (int)(pw), (int)(ph), (int)(fr),             \
+         (int)(mg), (int)(pr), (int)(ri), (int)(fs))
+
+// ── Factory ───────────────────────────────────────────────────────
 
 std::unique_ptr<Player> CreatePlayer() {
     return std::make_unique<PlayerCore>();
 }
 
-// ── Lifecycle ────────────────────────────────────────────────────────
+// ── Lifecycle ─────────────────────────────────────────────────────
 
 PlayerCore::PlayerCore() = default;
 
 PlayerCore::~PlayerCore() {
-    shutdown();
+    running_ = false;
+    if (worker_thread_.joinable())
+        worker_thread_.join();
+    teardown_pipeline();
 }
 
-void PlayerCore::set_event_callback(EventCallback cb) {
-    event_cb_ = std::move(cb);
-}
+// ── Public API ────────────────────────────────────────────────────
 
-void PlayerCore::send_command(PlayerCommand cmd) {
-    cmd_queue_.push(std::move(cmd));
-}
-
-bool PlayerCore::initialize(void* native_window, void* native_display,
-                             bool use_vsr, Quality quality,
-                             bool no_hwaccel) {
-    native_window_ = native_window;
-    native_display_ = native_display;
-    use_vsr_ = use_vsr;
+bool PlayerCore::initialize(IVulkanContext* vk,
+                             const uint32_t* rgbaFragSpv, size_t rgbaFragSpvLen,
+                             const uint32_t* nv12FragSpv, size_t nv12FragSpvLen,
+                             const uint32_t* vertSpv, size_t vertSpvLen,
+                             int quality, bool no_hwaccel) {
+    if (!vk) return false;
+    vk_ = vk;
     quality_ = quality;
     no_hwaccel_ = no_hwaccel;
+
+    // Core creates and owns VulkanRenderer. Client only provides
+    // IVulkanContext and SPIR-V data through the Player API.
+    renderer_ = std::make_unique<VulkanRenderer>();
+    renderer_->set_running_flag(&running_);
+    if (!renderer_->init_pipelines(*vk_,
+            rgbaFragSpv, rgbaFragSpvLen,
+            nv12FragSpv, nv12FragSpvLen,
+            vertSpv, vertSpvLen)) {
+        fprintf(stderr, "PlayerCore: renderer init_pipelines failed\n");
+        renderer_.reset();
+        return false;
+    }
+    printf("PlayerCore: initialized (pipelines ready, no textures yet)\n");
 
     running_ = true;
     worker_thread_ = std::thread(&PlayerCore::run_loop, this);
     return true;
 }
 
+void PlayerCore::send_command(PlayerCommand cmd) {
+    cmd_queue_.push(std::move(cmd));
+}
+
+void PlayerCore::record_frame(void* cb, int w, int h) {
+    if (!frame_ready_.load() || !renderer_) return;
+    renderer_->record_to_cb(cb, w, h, current_path_);
+}
+
+void PlayerCore::set_event_callback(EventCallback cb) {
+    event_cb_ = std::move(cb);
+}
+
 void PlayerCore::shutdown() {
-    fprintf(stderr, "[PlayerCore::shutdown] running=%d\n", running_.load());
-    if (running_) {
-        fprintf(stderr, "[PlayerCore::shutdown] sending QUIT\n");
-        send_command({PlayerCommand::QUIT});
-    }
-    fprintf(stderr, "[PlayerCore::shutdown] joining worker thread...\n");
+    // Signal stop BEFORE joining — the worker may be blocked in a
+    // deferred reconfig spin-wait that checks running_flag_.
+    running_ = false;
     if (worker_thread_.joinable())
         worker_thread_.join();
-    running_ = false;
-    fprintf(stderr, "[PlayerCore::shutdown] done\n");
 }
 
 void PlayerCore::emit_event(PlayerEvent e) {
@@ -86,202 +132,885 @@ void PlayerCore::emit_event(PlayerEvent e) {
         event_cb_(e);
 }
 
-// ── Main loop ────────────────────────────────────────────────────────
+// ── is_light ───────────────────────────────────────────────────────
+
+bool PlayerCore::is_light(const PlayerCommand& cmd) const {
+    return std::visit([](auto&& arg) -> bool {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, CmdPlay>)       return true;
+        if constexpr (std::is_same_v<T, CmdPause>)      return true;
+        if constexpr (std::is_same_v<T, CmdStop>)       return true;
+        if constexpr (std::is_same_v<T, CmdQuit>)       return true;
+        if constexpr (std::is_same_v<T, CmdSeek>)       return true;
+        if constexpr (std::is_same_v<T, CmdSetVolume>)  return true;
+        if constexpr (std::is_same_v<T, CmdSetMute>)    return true;
+        if constexpr (std::is_same_v<T, CmdSetHwaccel>) return true;
+        if constexpr (std::is_same_v<T, CmdSetSpeed>)   return true;
+        if constexpr (std::is_same_v<T, CmdSetDenoiseQuality>) return true;
+        return false;
+    }, cmd);
+}
+
+// ── has_pending_work ──────────────────────────────────────────────
+
+bool PlayerCore::has_pending_work() const {
+    if (!target_state_.file.empty() && target_state_.file != current_file_) return true;
+    if (target_state_.phys_w > 0
+        && (target_state_.phys_w != last_phys_w_ || target_state_.phys_h != last_phys_h_))
+        return true;
+    if (target_state_.scale != user_scale_) return true;
+    return false;
+}
+
+// ── Main loop ─────────────────────────────────────────────────────
 
 void PlayerCore::run_loop() {
     while (running_) {
-        // Process all pending commands
-        while (process_command_nonblock()) {}
+        // Drain ALL commands into dispatch
+        PlayerCommand cmd;
+        while (cmd_queue_.try_pop(cmd)) {
+            dispatch(cmd);
+        }
+
+        // RESIZE debounce: merge ripe stored dimensions
+        auto now = std::chrono::steady_clock::now();
+        if (stored_resize_w_ > 0 &&
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - last_resize_cmd_).count() >= 800) {
+            target_state_.merge(CmdResize{stored_resize_w_, stored_resize_h_});
+            stored_resize_w_ = stored_resize_h_ = 0;
+        }
+
+        // Execute if idle and work pending
+        if (!busy_ && has_pending_work()) {
+            apply();
+        }
 
         if (state_ == PlaybackState::PLAYING && demuxer_) {
+            static int frame_dbg = 0;
+            if (frame_dbg++ % 180 == 0)  // ~once per 3s at 60fps
+                CLOG("frame: #%d demux=%p state=%d ready=%d",
+                     frame_dbg, (void*)demuxer_.get(), (int)state_,
+                     frame_ready_.load());
             if (!process_one_frame()) {
-                // EOF
-                cmd_stop();
+                CLOG("frame: EOF state=%d", (int)state_);
+                state_ = PlaybackState::STOPPED;
+                if (audio_) audio_->stop();
                 emit_event({PlayerEvent::END_OF_FILE});
             }
         } else {
+            static int idle_ct = 0;
+            if (++idle_ct % 600 == 1)  // ~once per 3s
+                CLOG("idle: state=%d demux=%p busy=%d target_active=%d",
+                     (int)state_, (void*)demuxer_.get(), busy_,
+                     has_pending_work());
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
     }
-    fprintf(stderr, "[run_loop] exited loop, tearing down pipeline\n");
+
+    fprintf(stderr, "[run_loop] exiting, tearing down pipeline\n");
     teardown_pipeline();
-
-    fprintf(stderr, "[run_loop] emitting STATE_CHANGED(STOPPED)\n");
     emit_event({PlayerEvent::STATE_CHANGED, PlaybackState::STOPPED});
-    fprintf(stderr, "[run_loop] worker thread exiting\n");
+    fprintf(stderr, "[run_loop] worker thread done\n");
 }
 
-// ── Command dispatch ─────────────────────────────────────────────────
+// ── Dispatch ──────────────────────────────────────────────────────
 
-bool PlayerCore::process_command_nonblock() {
-    PlayerCommand cmd;
-    if (!cmd_queue_.try_pop(cmd)) return false;
-
-    switch (cmd.type) {
-    case PlayerCommand::LOAD_FILE:
-        cmd_load_file(cmd.arg);
-        break;
-    case PlayerCommand::PLAY:
-        cmd_play();
-        break;
-    case PlayerCommand::PAUSE:
-        cmd_pause();
-        break;
-    case PlayerCommand::STOP:
-        cmd_stop();
-        break;
-    case PlayerCommand::SEEK:
-        cmd_seek(cmd.seek_ms);
-        break;
-    case PlayerCommand::RESIZE:
-        cmd_resize((int)cmd.seek_ms, (int)cmd.volume);
-        break;
-    case PlayerCommand::SET_QUALITY:
-        cmd_set_quality(cmd.arg == "low"    ? Quality::LOW :
-                        cmd.arg == "medium" ? Quality::MEDIUM :
-                        cmd.arg == "ultra"  ? Quality::ULTRA :
-                                              Quality::HIGH);
-        break;
-    case PlayerCommand::SET_SCALE:
-        cmd_set_scale((int)cmd.seek_ms);
-        break;
-    case PlayerCommand::SET_VOLUME:
-        cmd_set_volume(cmd.volume);
-        break;
-    case PlayerCommand::SET_MUTE:
-        cmd_set_mute(cmd.seek_ms != 0);
-        break;
-    case PlayerCommand::CAPTURE_FRAME:
-        capture_pending_ = true;
-        break;
-    case PlayerCommand::QUIT:
-        fprintf(stderr, "[run_loop] received QUIT, setting running_=false\n");
-        running_ = false;
-        break;
-    default:
-        break;  // unimplemented commands are no-ops for now
+void PlayerCore::dispatch(const PlayerCommand& cmd) {
+    if (is_light(cmd)) {
+        std::visit([this](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, CmdPlay>)      cmd_play();
+            else if constexpr (std::is_same_v<T, CmdPause>)    cmd_pause();
+            else if constexpr (std::is_same_v<T, CmdStop>)     cmd_stop();
+            else if constexpr (std::is_same_v<T, CmdQuit>)     cmd_quit();
+            else if constexpr (std::is_same_v<T, CmdSeek>)     cmd_seek(arg.position_ms);
+            else if constexpr (std::is_same_v<T, CmdSetVolume>) cmd_set_volume(arg.value);
+            else if constexpr (std::is_same_v<T, CmdSetMute>)   cmd_set_mute(arg.muted);
+            else if constexpr (std::is_same_v<T, CmdSetHwaccel>) cmd_set_hwaccel(arg.enabled);
+            else if constexpr (std::is_same_v<T, CmdSetSpeed>)   cmd_set_speed(arg.speed);
+            else if constexpr (std::is_same_v<T, CmdSetDenoiseQuality>) cmd_set_denoise_quality(arg.level);
+        }, cmd);
+        return;
     }
-    return true;
+
+    // RESIZE: pre-filter debounce — store dimensions, wait 800ms
+    if (std::holds_alternative<CmdResize>(cmd)) {
+        auto& r = std::get<CmdResize>(cmd);
+        stored_resize_w_ = r.phys_w;
+        stored_resize_h_ = r.phys_h;
+        last_resize_cmd_ = std::chrono::steady_clock::now();
+        last_phys_w_ = r.phys_w;
+        last_phys_h_ = r.phys_h;
+        return;
+    }
+
+    // Heavy: merge into target state
+    target_state_.merge(cmd);
+    // do NOT call apply() here — run_loop handles it after full drain
 }
 
-// ── LOAD_FILE ────────────────────────────────────────────────────────
+// ── apply ─────────────────────────────────────────────────────────
+
+void PlayerCore::apply() {
+    SNAP("apply-enter", demuxer_.get(), state_, busy_, target_state_.file,
+         target_state_.scale, (int)quality_, target_state_.phys_w, target_state_.phys_h,
+         frame_ready_.load(), renderer_->mutation_gate(), renderer_->is_ready(),
+         renderer_->render_in_frame(), renderer_->frames_since_mutation());
+    busy_ = true;
+    do {
+        TargetState snapshot = target_state_;
+        CLOG("apply: exec hash=%08x scale=%d phys=%dx%d",
+             str_hash(snapshot.file), snapshot.scale,
+             snapshot.phys_w, snapshot.phys_h);
+        if (!execute(snapshot)) break;
+
+        // Drain commands that arrived during execution.
+        PlayerCommand cmd;
+        while (cmd_queue_.try_pop(cmd)) {
+            dispatch(cmd);
+        }
+
+        // Give Qt+GPU time to submit in-flight frames before next round.
+        if (has_pending_work()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    } while (has_pending_work());
+    SNAP("apply-exit", demuxer_.get(), state_, 0, target_state_.file,
+         target_state_.scale, (int)quality_, last_phys_w_, last_phys_h_,
+         frame_ready_.load(), renderer_->mutation_gate(), renderer_->is_ready(),
+         renderer_->render_in_frame(), renderer_->frames_since_mutation());
+    busy_ = false;
+}
+
+// ── execute ────────────────────────────────────────────────────────
+
+bool PlayerCore::execute(const TargetState& snapshot) {
+    bool file_changed = !snapshot.file.empty() && snapshot.file != current_file_;
+
+    if (file_changed) {
+        // ═══ Path A: Full load ═══
+
+        auto new_demuxer = std::make_unique<Demuxer>();
+        if (!new_demuxer->open(snapshot.file)) {
+            PlayerEvent err;
+            err.type = PlayerEvent::ERROR;
+            err.error_msg = "Failed to open: " + snapshot.file;
+            emit_event(err);
+            return false;
+        }
+
+        int new_vw = new_demuxer->video_width();
+        int new_vh = new_demuxer->video_height();
+        if (new_vw <= 0 || new_vh <= 0) {
+            PlayerEvent err;
+            err.type = PlayerEvent::ERROR;
+            err.error_msg = "No video stream in: " + snapshot.file;
+            emit_event(err);
+            return false;
+        }
+
+        auto new_decoder = std::make_unique<Decoder>();
+        if (!new_decoder->open(new_demuxer->video_codecpar(), no_hwaccel_)) {
+            PlayerEvent err;
+            err.type = PlayerEvent::ERROR;
+            err.error_msg = "Decoder open failed: " + snapshot.file;
+            emit_event(err);
+            return false;
+        }
+
+        // CUDA context (first load only)
+        if (!cuda_ctx_) {
+            cuda_ctx_ = std::make_unique<CUDAContext>();
+            if (!cuda_ctx_->capture_current()) {
+                if (!cuda_ctx_->init(0)) {
+                    PlayerEvent err;
+                    err.type = PlayerEvent::ERROR;
+                    err.error_msg = "CUDA init failed";
+                    emit_event(err);
+                    return false;
+                }
+            }
+        }
+        cuda_ctx_->push();
+
+        if (!cuda_stream_) {
+            cuStreamCreate((CUstream*)&cuda_stream_, CU_STREAM_NON_BLOCKING);
+        }
+
+        if (!nv12_to_rgb_) {
+            nv12_to_rgb_ = std::make_unique<NV12ToRGB>();
+            if (!nv12_to_rgb_->compile()) {
+                cuda_ctx_->pop();
+                PlayerEvent err;
+                err.type = PlayerEvent::ERROR;
+                err.error_msg = "NV12ToRGB compile failed";
+                emit_event(err);
+                return false;
+            }
+        }
+
+        // Sync scale preference from snapshot, then compute effective scale.
+        // quality_ persists across file loads (set by light command).
+        user_scale_ = snapshot.scale;
+
+        int scale = current_scale_;
+        if (user_scale_ == 0) {
+            int pw = snapshot.phys_w > 0 ? snapshot.phys_w : last_phys_w_;
+            int ph = snapshot.phys_h > 0 ? snapshot.phys_h : last_phys_h_;
+            if (pw > 0 && ph > 0)
+                scale = compute_adaptive_scale(pw, ph, new_vw, new_vh);
+        } else if (user_scale_ == -1) {
+            scale = 1;
+        } else {
+            scale = user_scale_;
+        }
+        int quality = quality_;
+
+        // GPU buffer
+        if (rgb_gpu_) {
+            cuMemFree((CUdeviceptr)rgb_gpu_);
+            rgb_gpu_ = nullptr;
+        }
+        size_t rgb_bytes = NV12ToRGB::output_size(new_vw, new_vh);
+        cuMemAlloc((CUdeviceptr*)&rgb_gpu_, rgb_bytes);
+
+        // VSR init
+        {
+            bool vsr_active = !(user_scale_ == -1 && denoise_quality_ == -1);
+            if (vsr_ && vsr_active) {
+                CLOG("executeA: vsr reset for new file");
+                vsr_.reset();
+            }
+            if (vsr_active && !vsr_) {
+                vsr_ = std::make_unique<VSRProcessor>();
+                vsr_->set_stream(cuda_stream_);
+                int vsr_ow = new_vw * scale;
+                int vsr_oh = new_vh * scale;
+                CLOG("executeA: vsr init %dx%d->%dx%d scale=%d", new_vw, new_vh, vsr_ow, vsr_oh, scale);
+                int vsr_quality = (scale > 1) ? (int)quality_ : denoise_quality_;
+                if (!vsr_->init(new_vw, new_vh, vsr_ow, vsr_oh, vsr_quality)) {
+                    fprintf(stderr, "PlayerCore: VSR init failed\n");
+                    vsr_.reset();
+                }
+            }
+        }
+
+        // Sync CUDA before texture mutation
+        CLOG("executeA: cuStreamSync");
+        cuStreamSynchronize((CUstream)cuda_stream_);
+
+        // Textures
+        CLOG("executeA: reconfigure_all_textures %dx%d scale=%d", new_vw, new_vh, scale);
+        renderer_->reconfigure_all_textures(new_vw, new_vh, scale, *vk_);
+        CLOG("executeA: textures done");
+
+        // Audio
+        auto new_audio = std::make_unique<AudioOutput>();
+        if (!new_audio->open(snapshot.file.c_str())) {
+            new_audio.reset();
+        }
+
+        // Commit
+        CLOG("executeA: commit — swap demux/decoder/audio");
+        audio_.reset();
+        if (new_audio) audio_ = std::move(new_audio);
+        audio_started_ = false;
+        decoder_.reset();
+        decoder_ = std::move(new_decoder);
+        demuxer_.reset();
+        demuxer_ = std::move(new_demuxer);
+        CLOG("executeA: commit done demux=%p", (void*)demuxer_.get());
+
+        current_file_ = snapshot.file;
+        video_w_ = new_vw; video_h_ = new_vh;
+        video_fps_ = demuxer_->video_fps();
+        video_time_base_ = demuxer_->video_time_base();
+        duration_ms_ = demuxer_->duration_ms();
+        seekable_ = duration_ms_ > 0;
+        last_pts_sec_ = -1.0;
+        current_pts_sec_ = 0.0;
+        pts_fallback_counter_ = 0;
+        last_position_emit_ms_ = 0;
+        last_render_time_ = std::chrono::steady_clock::now();
+        current_scale_ = scale;
+        vsr_w_ = new_vw * scale; vsr_h_ = new_vh * scale;
+
+        if (snapshot.phys_w > 0) {
+            last_phys_w_ = snapshot.phys_w;
+            last_phys_h_ = snapshot.phys_h;
+        }
+        if (last_phys_w_ > 0) {
+            renderer_->resize(last_phys_w_, last_phys_h_);
+        }
+
+        cuda_ctx_->pop();
+
+        PlayerEvent info;
+        info.type = PlayerEvent::VIDEO_INFO;
+        info.in_width = video_w_;
+        info.in_height = video_h_;
+        info.out_width = vsr_w_;
+        info.out_height = vsr_h_;
+        info.fps = video_fps_;
+        info.scale = current_scale_;
+        info.quality = quality_;
+        info.duration_ms = duration_ms_;
+        info.hw_decoding = decoder_ ? decoder_->is_hardware() : false;
+        info.vsr_active = (vsr_ && vsr_->is_ready());
+        info.has_audio = (audio_ && audio_->is_active());
+        info.seekable = seekable_;
+        SNAP("execute-OK", demuxer_.get(), state_, busy_, snapshot.file,
+             current_scale_, (int)quality_, last_phys_w_, last_phys_h_,
+             frame_ready_.load(), renderer_->mutation_gate(), renderer_->is_ready(),
+             renderer_->render_in_frame(), renderer_->frames_since_mutation());
+        emit_event(info);
+        return true;
+
+    } else {
+        // ═══ Path B: Reconfigure only (file unchanged) ═══
+
+        if (!cuda_ctx_ || !renderer_) return false;
+        cuda_ctx_->push();
+
+        // Compute effective scale from target user preference.
+        user_scale_ = snapshot.scale;
+
+        int scale = current_scale_;
+        if (user_scale_ == 0) {
+            int pw = snapshot.phys_w > 0 ? snapshot.phys_w : last_phys_w_;
+            int ph = snapshot.phys_h > 0 ? snapshot.phys_h : last_phys_h_;
+            if (pw > 0 && ph > 0 && video_w_ > 0 && video_h_ > 0)
+                scale = compute_adaptive_scale(pw, ph, video_w_, video_h_);
+        } else if (user_scale_ == -1) {
+            scale = 1;
+        } else {
+            scale = user_scale_;
+        }
+
+        if (scale == current_scale_) {
+            if (snapshot.phys_w > 0) {
+                last_phys_w_ = snapshot.phys_w;
+                last_phys_h_ = snapshot.phys_h;
+                renderer_->resize(last_phys_w_, last_phys_h_);
+            }
+            cuda_ctx_->pop();
+            return true;
+        }
+
+        vsr_w_ = video_w_ * scale;
+        vsr_h_ = video_h_ * scale;
+        current_scale_ = scale;
+
+        CLOG("executeB: reconfigure_vsr %dx%d scale=%d", video_w_, video_h_, scale);
+        reconfigure_vsr();
+
+        CLOG("executeB: cuStreamSync");
+        cuStreamSynchronize((CUstream)cuda_stream_);
+        CLOG("executeB: reconfigure_scale %dx%d scale=%d", video_w_, video_h_, scale);
+        renderer_->reconfigure_scale(video_w_, video_h_, scale, *vk_);
+        CLOG("executeB: scale done");
+
+        if (snapshot.phys_w > 0) {
+            last_phys_w_ = snapshot.phys_w;
+            last_phys_h_ = snapshot.phys_h;
+        }
+        renderer_->resize(last_phys_w_, last_phys_h_);
+
+        cuda_ctx_->pop();
+
+        PlayerEvent fi;
+        fi.type = PlayerEvent::FRAME_INFO;
+        fi.scale = current_scale_;
+        fi.quality = quality_;
+        emit_event(fi);
+        return true;
+    }
+}
+
+// ── PLAY ──────────────────────────────────────────────────────────
+
+void PlayerCore::cmd_play() {
+    CLOG("cmd_play: demux=%p state=%d", (void*)demuxer_.get(), (int)state_);
+    if (!demuxer_) { CLOG("cmd_play: SKIP no demuxer"); return; }
+    state_ = PlaybackState::PLAYING;
+    last_render_time_ = std::chrono::steady_clock::now();
+    if (audio_) {
+        if (!audio_started_) {
+            audio_->start();
+            audio_started_ = true;
+        } else {
+            audio_->resume();
+        }
+    }
+    emit_event({PlayerEvent::STATE_CHANGED, state_});
+}
+
+// ── PAUSE ─────────────────────────────────────────────────────────
+
+void PlayerCore::cmd_pause() {
+    state_ = PlaybackState::PAUSED;
+    if (audio_) audio_->pause();
+    emit_event({PlayerEvent::STATE_CHANGED, state_});
+}
+
+// ── STOP (playback only — no resource destruction) ────────────────
+
+void PlayerCore::cmd_stop() {
+    state_ = PlaybackState::STOPPED;
+    if (audio_) {
+        audio_->stop();          // joins decode thread, closes PaStream
+        audio_started_ = false;  // force full restart on next play
+    }
+    // Reset all PTS/sync state.
+    last_pts_sec_ = -1.0;
+    current_pts_sec_ = 0.0;
+    pts_fallback_counter_ = 0;
+    last_render_time_ = std::chrono::steady_clock::now();
+    // Hide stale video frame — render thread will show clear background
+    frame_ready_.store(false);
+    // Seek to beginning
+    cmd_seek(0);
+    emit_event({PlayerEvent::STATE_CHANGED, state_});
+    // Reset progress bar to 0
+    PlayerEvent pe;
+    pe.type = PlayerEvent::POSITION_CHANGED;
+    pe.time_ms = 0;
+    pe.duration_ms = duration_ms_;
+    emit_event(pe);
+}
+
+// ── SEEK ──────────────────────────────────────────────────────────
+
+void PlayerCore::cmd_seek(int64_t ms) {
+    if (!demuxer_ || !seekable_) return;
+    // Core-level validation: clamp to valid range
+    if (ms < 0) ms = 0;
+    if (duration_ms_ > 0 && ms > duration_ms_) ms = duration_ms_;
+    CLOG("cmd_seek: %ldms (duration=%ldms)", ms, duration_ms_);
+
+    // Flush decoder BEFORE seeking demuxer — clear old packets first
+    if (decoder_) decoder_->flush();
+
+    if (!demuxer_->seek(ms)) {
+        CLOG("cmd_seek: demuxer seek failed for %ldms", ms);
+        // Continue anyway — seek may still have moved to nearest keyframe
+    }
+
+    if (audio_) audio_->seek(ms / 1000.0);
+
+    last_pts_sec_ = ms / 1000.0;
+    current_pts_sec_ = ms / 1000.0;
+    pts_fallback_counter_ = video_fps_ > 0
+        ? (int64_t)(ms / 1000.0 * video_fps_) : 0;
+    last_render_time_ = std::chrono::steady_clock::now();
+}
+
+// ── SET_QUALITY (VSR only) ────────────────────────────────────────
+
+void PlayerCore::cmd_set_quality(int q) {
+    quality_ = q;
+    if (vsr_ && vsr_->is_ready())
+        vsr_->reconfigure(vsr_w_, vsr_h_, q);
+}
+
+// ── SET_DENOISE_QUALITY ─────────────────────────────────────────
+
+void PlayerCore::cmd_set_denoise_quality(int d) {
+    denoise_quality_ = d;
+    // denoise_quality doesn't affect has_pending_work (not in TargetState),
+    // and only takes effect when effective scale is 1.
+    int effective = (user_scale_ == 0) ? current_scale_ : (user_scale_ == -1 ? 1 : user_scale_);
+    if (effective == 1)
+        reconfigure_vsr();
+}
+
+// ── SET_VOLUME / SET_MUTE (placeholders) ──────────────────────────
+
+void PlayerCore::cmd_set_volume(double vol) {
+    if (vol < 0.0) vol = 0.0;
+    if (vol > 1.0) vol = 1.0;
+    if (audio_) audio_->set_volume(vol);
+}
+void PlayerCore::cmd_set_mute(bool) { /* mute now handled by setVolume(0.0) */ }
+
+// ── SET_HWACCEL (toggle NVDEC) ────────────────────────────────────
+
+void PlayerCore::cmd_set_hwaccel(bool enabled) {
+    // Flag only — applies on next LOAD_FILE.
+    no_hwaccel_ = !enabled;
+}
+
+// ── SET_SPEED ──────────────────────────────────────────────────────
+
+void PlayerCore::cmd_set_speed(double speed) {
+    if (speed < 0.1) speed = 0.1;
+    if (speed > 4.0) speed = 4.0;
+    playback_speed_ = speed;
+    if (audio_) audio_->set_speed(speed);
+    CLOG("cmd_set_speed: %.2fx", speed);
+}
+
+// ── QUIT ──────────────────────────────────────────────────────────
+
+void PlayerCore::cmd_quit() {
+    fprintf(stderr, "[run_loop] received QUIT\n");
+    running_ = false;
+}
+
+// ── Adaptive scale algorithm ──────────────────────────────────────
+
+int PlayerCore::compute_adaptive_scale(int phys_w, int phys_h,
+                                       int video_w, int video_h) const {
+    bool vsr_active = !(user_scale_ == -1 && denoise_quality_ == -1);
+    if (!vsr_active || video_w <= 0 || video_h <= 0) return 1;
+
+    // Constrained dimension determines required scale
+    // vw/vh >= ww/wh → width-constrained → ceil(ww/vw)
+    // vw/vh <  ww/wh → height-constrained → ceil(wh/vh)
+    int s;
+    if ((double)video_w / video_h >= (double)phys_w / phys_h) {
+        s = (phys_w + video_w - 1) / video_w;
+    } else {
+        s = (phys_h + video_h - 1) / video_h;
+    }
+    if (s < 1) s = 1;
+    if (s > 4) s = 4;
+    return s;
+}
+
+// ── LOAD_FILE ─────────────────────────────────────────────────────
 
 void PlayerCore::cmd_load_file(const std::string& path) {
-    teardown_pipeline();
-
-    if (!build_pipeline(path)) {
+    // Phase 1: validate new file can be opened (no mutation yet)
+    auto new_demuxer = std::make_unique<Demuxer>();
+    if (!new_demuxer->open(path)) {
         PlayerEvent err;
         err.type = PlayerEvent::ERROR;
-        err.error_msg = "Failed to open file: " + path;
+        err.error_msg = "Failed to open: " + path;
         emit_event(err);
         return;
     }
+
+    int new_vw = new_demuxer->video_width();
+    int new_vh = new_demuxer->video_height();
+    if (new_vw <= 0 || new_vh <= 0) {
+        PlayerEvent err;
+        err.type = PlayerEvent::ERROR;
+        err.error_msg = "No video stream in: " + path;
+        emit_event(err);
+        return;
+    }
+
+    auto new_decoder = std::make_unique<Decoder>();
+    if (!new_decoder->open(new_demuxer->video_codecpar(), no_hwaccel_)) {
+        PlayerEvent err;
+        err.type = PlayerEvent::ERROR;
+        err.error_msg = "Decoder open failed: " + path;
+        emit_event(err);
+        return;
+    }
+
+    // Phase 2: set up GPU resources
+    // CUDA context (first load only)
+    if (!cuda_ctx_) {
+        cuda_ctx_ = std::make_unique<CUDAContext>();
+        if (!cuda_ctx_->capture_current()) {
+            if (!cuda_ctx_->init(0)) {
+                PlayerEvent err;
+                err.type = PlayerEvent::ERROR;
+                err.error_msg = "CUDA init failed";
+                emit_event(err);
+                return;
+            }
+        }
+    }
+    cuda_ctx_->push();
+
+    // CUDA stream (first load only)
+    if (!cuda_stream_) {
+        cuStreamCreate((CUstream*)&cuda_stream_, CU_STREAM_NON_BLOCKING);
+    }
+
+    // NV12→RGB kernel (first load only)
+    if (!nv12_to_rgb_) {
+        nv12_to_rgb_ = std::make_unique<NV12ToRGB>();
+        if (!nv12_to_rgb_->compile()) {
+            cuda_ctx_->pop();
+            PlayerEvent err;
+            err.type = PlayerEvent::ERROR;
+            err.error_msg = "NV12ToRGB compile failed";
+            emit_event(err);
+            return;
+        }
+    }
+
+    // rgb_gpu_ buffer (per-file — destroy old, alloc new)
+    if (rgb_gpu_) {
+        cuMemFree((CUdeviceptr)rgb_gpu_);
+        rgb_gpu_ = nullptr;
+    }
+    size_t rgb_bytes = NV12ToRGB::output_size(new_vw, new_vh);
+    cuMemAlloc((CUdeviceptr*)&rgb_gpu_, rgb_bytes);
+
+    // VSR: init or reconfigure
+    int scale = current_scale_;
+    if (user_scale_ == 0) {
+        // Auto mode: compute adaptive scale from last known window size
+        int pw = last_phys_w_ > 0 ? last_phys_w_ : pending_phys_w_;
+        int ph = last_phys_h_ > 0 ? last_phys_h_ : pending_phys_h_;
+        if (pw > 0 && ph > 0)
+            scale = compute_adaptive_scale(pw, ph, new_vw, new_vh);
+    } else {
+        scale = user_scale_;
+    }
+
+    bool vsr_active = !(user_scale_ == -1 && denoise_quality_ == -1);
+    if (vsr_ && vsr_active) {
+        // Input dimensions changed → full re-init
+        vsr_.reset();
+    }
+    if (vsr_active && !vsr_) {
+        vsr_ = std::make_unique<VSRProcessor>();
+        vsr_->set_stream(cuda_stream_);
+        int vsr_ow = new_vw * scale;
+        int vsr_oh = new_vh * scale;
+        if (!vsr_->init(new_vw, new_vh, vsr_ow, vsr_oh, quality_)) {
+            fprintf(stderr, "PlayerCore: VSR init failed\n");
+            vsr_.reset();
+        }
+    }
+
+    // Phase 3: Renderer texture configuration
+    // Pipelines are created by the client during init. Core only
+    // configures textures here — dimensions depend on the video file.
+    renderer_->reconfigure_all_textures(new_vw, new_vh, scale, *vk_);
+
+
+    // Audio
+    auto new_audio = std::make_unique<AudioOutput>();
+    if (!new_audio->open(path.c_str())) {
+        new_audio.reset();  // audio is optional
+    }
+
+    // Phase 4: Commit — destroy old, swap new
+    audio_.reset();
+    if (new_audio) audio_ = std::move(new_audio);
+    audio_started_ = false;
+    decoder_.reset();
+    decoder_ = std::move(new_decoder);
+    demuxer_.reset();
+    demuxer_ = std::move(new_demuxer);
+
+    video_w_ = new_vw; video_h_ = new_vh;
+    video_fps_ = demuxer_->video_fps();
+    video_time_base_ = demuxer_->video_time_base();
+    duration_ms_ = demuxer_->duration_ms();
+    seekable_ = duration_ms_ > 0;
+    last_pts_sec_ = -1.0;
+    current_pts_sec_ = 0.0;
+    pts_fallback_counter_ = 0;
+    last_position_emit_ms_ = 0;
+    last_render_time_ = std::chrono::steady_clock::now();
+    current_scale_ = scale;
+    vsr_w_ = new_vw * scale; vsr_h_ = new_vh * scale;
+
+    // Apply pending resize or last resize
+    if (pending_phys_w_ > 0 && pending_phys_h_ > 0) {
+        int pw = pending_phys_w_, ph = pending_phys_h_;
+        pending_phys_w_ = pending_phys_h_ = 0;
+        last_phys_w_ = pw; last_phys_h_ = ph;
+    }
+    if (last_phys_w_ > 0 && last_phys_h_ > 0) {
+        renderer_->resize(last_phys_w_, last_phys_h_);
+    }
+
+    cuda_ctx_->pop();
 
     // Emit video info
     PlayerEvent info;
     info.type = PlayerEvent::VIDEO_INFO;
     info.in_width = video_w_;
     info.in_height = video_h_;
+    info.out_width = vsr_w_;
+    info.out_height = vsr_h_;
     info.fps = video_fps_;
+    info.scale = current_scale_;
+    info.quality = quality_;
     info.duration_ms = duration_ms_;
     info.hw_decoding = decoder_ ? decoder_->is_hardware() : false;
+    info.vsr_active = (vsr_ && vsr_->is_ready());
     info.has_audio = (audio_ && audio_->is_active());
     info.seekable = seekable_;
     emit_event(info);
-
-    // Apply pending resize if any (client may have resized before load finished)
-    if (pending_phys_w_ > 0 && pending_phys_h_ > 0) {
-        int pw = pending_phys_w_, ph = pending_phys_h_;
-        pending_phys_w_ = pending_phys_h_ = 0;
-        cmd_resize(pw, ph);
-    }
 }
 
-bool PlayerCore::build_pipeline(const std::string& path) {
-    // ── Demuxer ──
-    demuxer_ = std::make_unique<Demuxer>();
-    if (!demuxer_->open(path)) {
-        fprintf(stderr, "PlayerCore: demuxer open failed\n");
-        return false;
+// ── RESIZE ────────────────────────────────────────────────────────
+
+void PlayerCore::cmd_resize(int phys_w, int phys_h) {
+    if (phys_w <= 0 || phys_h <= 0) return;
+
+    last_phys_w_ = phys_w;
+    last_phys_h_ = phys_h;
+
+    if (!demuxer_) {
+        pending_phys_w_ = phys_w;
+        pending_phys_h_ = phys_h;
+        return;
     }
 
-    video_w_ = demuxer_->video_width();
-    video_h_ = demuxer_->video_height();
-    video_fps_ = demuxer_->video_fps();
-    duration_ms_ = demuxer_->duration_ms();
-    seekable_ = duration_ms_ > 0;
-
-    // ── Decoder ──
-    decoder_ = std::make_unique<Decoder>();
-    if (!decoder_->open(demuxer_->video_codecpar(), no_hwaccel_)) {
-        fprintf(stderr, "PlayerCore: decoder open failed\n");
-        return false;
-    }
-
-    // ── CUDA context ──
-    cuda_ctx_ = std::make_unique<CUDAContext>();
-    if (!cuda_ctx_->capture_current()) {
-        if (!cuda_ctx_->init(0)) {
-            fprintf(stderr, "PlayerCore: CUDA init failed\n");
-            return false;
-        }
-    }
+    if (!cuda_ctx_) return;
     cuda_ctx_->push();
 
-    // ── CUDA stream ──
-    cuStreamCreate((CUstream*)&cuda_stream_, CU_STREAM_NON_BLOCKING);
-
-    // ── NV12→RGB kernel ──
-    nv12_to_rgb_ = std::make_unique<NV12ToRGB>();
-    if (!nv12_to_rgb_->compile()) {
-        fprintf(stderr, "PlayerCore: NV12ToRGB compile failed\n");
+    if (!renderer_) {
+        // First load — renderer not created yet. LOAD_FILE will handle.
         cuda_ctx_->pop();
-        return false;
+        return;
     }
 
-    // ── GPU output buffer (float32 CHW RGB) ──
-    size_t rgb_bytes = NV12ToRGB::output_size(video_w_, video_h_);
-    cuMemAlloc((CUdeviceptr*)&rgb_gpu_, rgb_bytes);
-
-    // ── Audio (file-based: AudioOutput opens its own FFmpeg instance) ──
-    {
-        int audio_idx = demuxer_->audio_stream_index();
-        if (audio_idx >= 0) {
-            audio_ = std::make_unique<AudioOutput>();
-            if (!audio_->open(path.c_str())) {
-                fprintf(stderr, "PlayerCore: audio open failed\n");
-                audio_.reset();
-            }
-        }
+    // Locked mode: viewport only
+    if (user_scale_ > 0) {
+        renderer_->resize(phys_w, phys_h);
+        cuda_ctx_->pop();
+        return;
     }
 
-    // ── VSR (initial scale 1x; will be updated by RESIZE after pipelines init) ──
-    current_scale_ = 1;
-    vsr_w_ = video_w_;
-    vsr_h_ = video_h_;
+    // Auto mode: compute adaptive scale
+    int new_scale = compute_adaptive_scale(phys_w, phys_h, video_w_, video_h_);
+    if (new_scale != current_scale_) {
+        fprintf(stderr, "[core] resize: scale %d→%d (%dx%d)\n",
+                current_scale_, new_scale, phys_w, phys_h);
+        current_scale_ = new_scale;
+        vsr_w_ = video_w_ * new_scale;
+        vsr_h_ = video_h_ * new_scale;
+        reconfigure_vsr();
+        renderer_->reconfigure_scale(video_w_, video_h_, new_scale, *vk_);
+    }
 
-    if (use_vsr_) {
-        vsr_ = std::make_unique<VSRProcessor>();
-        vsr_->set_stream(cuda_stream_);
-        if (!vsr_->init(video_w_, video_h_, vsr_w_, vsr_h_, quality_)) {
-            fprintf(stderr, "PlayerCore: VSR init failed — NO-VSR mode\n");
-            vsr_.reset();
-        }
+    renderer_->resize(phys_w, phys_h);
+    cuda_ctx_->pop();
+}
+
+// ── SET_SCALE (lock/unlock) ───────────────────────────────────────
+
+void PlayerCore::cmd_set_scale(int s) {
+    if (s < -1 || s > 4 || s == 1) return;
+    if (s == user_scale_) return;  // no-op
+    if (!cuda_ctx_ || !renderer_ || !vsr_) return;
+
+    cuda_ctx_->push();
+
+    user_scale_ = s;
+    int new_scale;
+    if (s > 0) {
+        new_scale = s;  // locked
+    } else {
+        // Unlock → compute adaptive from last window size
+        new_scale = compute_adaptive_scale(last_phys_w_, last_phys_h_,
+                                           video_w_, video_h_);
+    }
+
+    if (new_scale != current_scale_) {
+        fprintf(stderr, "[core] set_scale: %d (user=%d)\n", new_scale, s);
+        current_scale_ = new_scale;
+        vsr_w_ = video_w_ * new_scale;
+        vsr_h_ = video_h_ * new_scale;
+        reconfigure_vsr();
+        renderer_->reconfigure_scale(video_w_, video_h_, new_scale, *vk_);
     }
 
     cuda_ctx_->pop();
-    return true;
+
+    PlayerEvent info;
+    info.type = PlayerEvent::FRAME_INFO;
+    info.scale = current_scale_;
+    emit_event(info);
 }
+
+// ── VSR reconfigure ───────────────────────────────────────────────
+
+void PlayerCore::reconfigure_vsr() {
+    bool vsr_active = !(user_scale_ == -1 && denoise_quality_ == -1);
+    if (!vsr_active) {
+        vsr_.reset();
+        vsr_w_ = video_w_;
+        vsr_h_ = video_h_;
+        return;
+    }
+
+    int effective = (user_scale_ == 0) ? current_scale_ : (user_scale_ == -1 ? 1 : user_scale_);
+    if (effective > 1) {
+        // Upscale mode
+        vsr_w_ = video_w_ * effective;
+        vsr_h_ = video_h_ * effective;
+        if (vsr_ && vsr_->is_ready()) {
+            vsr_->reconfigure(vsr_w_, vsr_h_, quality_);
+        } else {
+            vsr_ = std::make_unique<VSRProcessor>();
+            vsr_->set_stream(cuda_stream_);
+            if (!vsr_->init(video_w_, video_h_, vsr_w_, vsr_h_, quality_)) {
+                fprintf(stderr, "PlayerCore: VSR init (upscale) failed\n");
+                vsr_.reset();
+            }
+        }
+    } else if (effective == 1 && denoise_quality_ != -1) {
+        // Denoise mode
+        vsr_w_ = video_w_;
+        vsr_h_ = video_h_;
+        if (vsr_ && vsr_->is_ready()) {
+            vsr_->reconfigure(vsr_w_, vsr_h_, denoise_quality_);
+        } else {
+            vsr_ = std::make_unique<VSRProcessor>();
+            vsr_->set_stream(cuda_stream_);
+            if (!vsr_->init(video_w_, video_h_, vsr_w_, vsr_h_, denoise_quality_)) {
+                fprintf(stderr, "PlayerCore: VSR init (denoise) failed\n");
+                vsr_.reset();
+            }
+        }
+    } else {
+        // VSR off — effective scale=1 and denoise off
+        vsr_.reset();
+        vsr_w_ = video_w_;
+        vsr_h_ = video_h_;
+    }
+}
+
+// ── Tear down file-specific resources ─────────────────────────────
+
+void PlayerCore::teardown_file_resources() {
+    if (audio_) {
+        audio_->stop();
+        audio_.reset();
+    }
+    decoder_.reset();
+    demuxer_.reset();
+    if (rgb_gpu_) {
+        cuda_ctx_->push();
+        cuMemFree((CUdeviceptr)rgb_gpu_);
+        rgb_gpu_ = nullptr;
+        cuda_ctx_->pop();
+    }
+    current_file_.clear();
+    video_w_ = video_h_ = 0;
+    video_fps_ = 0.0;
+    video_time_base_ = 0.0;
+    last_pts_sec_ = -1.0;
+    current_pts_sec_ = 0.0;
+    pts_fallback_counter_ = 0;
+    audio_started_ = false;
+}
+
+// ── Full teardown (QUIT only) ─────────────────────────────────────
 
 void PlayerCore::teardown_pipeline() {
     if (cuda_ctx_)
         cuda_ctx_->push();
-
-    // Release Vulkan resources first (InteropTextures need device alive)
+    // Destroy Vulkan resources before releasing CUDA context
     if (renderer_) {
-        renderer_->release();
+        renderer_->release(*vk_);
         renderer_.reset();
     }
+
 
     if (audio_) {
         audio_->stop();
@@ -308,159 +1037,19 @@ void PlayerCore::teardown_pipeline() {
         cuda_ctx_.reset();
     }
 
+    current_file_.clear();
     video_w_ = video_h_ = 0;
     video_fps_ = 0.0;
-    frame_count_ = 0;
+    video_time_base_ = 0.0;
+    last_pts_sec_ = -1.0;
+    current_pts_sec_ = 0.0;
+    pts_fallback_counter_ = 0;
     audio_started_ = false;
+    current_scale_ = 1;
+    user_scale_ = 0;
 }
 
-// ── Simple command handlers ──────────────────────────────────────────
-
-void PlayerCore::cmd_play() {
-    if (!demuxer_) return;
-    state_ = PlaybackState::PLAYING;
-    if (audio_) {
-        if (!audio_started_) {
-            audio_->start();
-            audio_started_ = true;
-        } else {
-            audio_->resume();
-        }
-    }
-    emit_event({PlayerEvent::STATE_CHANGED, state_});
-}
-
-void PlayerCore::cmd_pause() {
-    state_ = PlaybackState::PAUSED;
-    if (audio_) audio_->pause();
-    emit_event({PlayerEvent::STATE_CHANGED, state_});
-}
-
-void PlayerCore::cmd_stop() {
-    state_ = PlaybackState::STOPPED;
-    teardown_pipeline();
-    emit_event({PlayerEvent::STATE_CHANGED, state_});
-}
-
-void PlayerCore::cmd_seek(int64_t ms) {
-    if (!demuxer_ || !seekable_) return;
-    if (decoder_) decoder_->flush();
-    if (audio_) audio_->seek(ms / 1000.0);
-    frame_count_ = (int64_t)((ms / 1000.0) * video_fps_);
-}
-
-void PlayerCore::cmd_set_quality(Quality q) {
-    quality_ = q;
-    if (vsr_ && vsr_->is_ready())
-        vsr_->reconfigure(vsr_w_, vsr_h_, q);
-}
-
-void PlayerCore::cmd_set_scale(int s) {
-    if (s < 1 || s > 4 || s == current_scale_) return;
-    current_scale_ = s;
-    vsr_w_ = video_w_ * s;
-    vsr_h_ = video_h_ * s;
-    reconfigure_vsr();
-}
-
-void PlayerCore::cmd_set_volume(double vol) {
-    // Placeholder — AudioOutput volume not yet implemented
-    (void)vol;
-}
-
-void PlayerCore::cmd_set_mute(bool mute) {
-    // Placeholder — AudioOutput mute not yet implemented
-    (void)mute;
-}
-
-// ── RESIZE ───────────────────────────────────────────────────────────
-
-void PlayerCore::cmd_resize(int phys_w, int phys_h) {
-    if (phys_w <= 0 || phys_h <= 0) return;
-
-    // Defer if pipeline not ready yet
-    if (!demuxer_) {
-        pending_phys_w_ = phys_w;
-        pending_phys_h_ = phys_h;
-        return;
-    }
-
-    if (!cuda_ctx_) return;
-    cuda_ctx_->push();
-
-    // ── Init VulkanRenderer on first resize ──
-    if (!renderer_) {
-        renderer_ = std::make_unique<VulkanRenderer>();
-        if (!renderer_->init(native_window_, native_display_)) {
-            fprintf(stderr, "PlayerCore: VulkanRenderer init failed\n");
-            cuda_ctx_->pop();
-            return;
-        }
-    }
-
-    // ── Adaptive scale ──
-    int new_scale = 1;
-    if (use_vsr_ && video_w_ > 0 && video_h_ > 0) {
-        int sw = (phys_w + video_w_ - 1) / video_w_;
-        int sh = (phys_h + video_h_ - 1) / video_h_;
-        new_scale = std::clamp(std::min(sw, sh), 1, 4);
-    }
-    bool scale_changed = (new_scale != current_scale_);
-
-    // Store desired size. Actual swapchain resize is handled by
-    // VulkanRenderer::render_frame() via VK_ERROR_OUT_OF_DATE_KHR
-    // recovery — that path properly coordinates with the compositor.
-    renderer_->resize(phys_w, phys_h);
-
-    // First time: create swapchain + pipelines
-    if (!renderer_->is_ready() || !renderer_->swapchainWidth()) {
-        current_scale_ = new_scale;
-        vsr_w_ = video_w_ * current_scale_;
-        vsr_h_ = video_h_ * current_scale_;
-        reconfigure_vsr();
-        renderer_->set_shader_data(
-            reinterpret_cast<const uint32_t*>(video_frag_spv),
-            video_frag_spv_len,
-            reinterpret_cast<const uint32_t*>(nv12_frag_spv),
-            nv12_frag_spv_len,
-            reinterpret_cast<const uint32_t*>(video_vert_spv),
-            video_vert_spv_len);
-        renderer_->init_pipelines_with_saved_spv(
-            video_w_, video_h_, current_scale_, phys_w, phys_h);
-    } else if (scale_changed) {
-        // Scale changed — recreate InteropTextures (swapchain untouched)
-        current_scale_ = new_scale;
-        vsr_w_ = video_w_ * current_scale_;
-        vsr_h_ = video_h_ * current_scale_;
-        reconfigure_vsr();
-        renderer_->init_pipelines_with_saved_spv(
-            video_w_, video_h_, current_scale_, phys_w, phys_h);
-    }
-
-    cuda_ctx_->pop();
-}
-
-// ── VSR reconfigure ──────────────────────────────────────────────────
-
-void PlayerCore::reconfigure_vsr() {
-    if (!use_vsr_) {
-        vsr_w_ = video_w_;
-        vsr_h_ = video_h_;
-        return;
-    }
-    if (vsr_ && vsr_->is_ready()) {
-        vsr_->reconfigure(vsr_w_, vsr_h_, quality_);
-    } else if (!vsr_ && use_vsr_) {
-        vsr_ = std::make_unique<VSRProcessor>();
-        vsr_->set_stream(cuda_stream_);
-        if (!vsr_->init(video_w_, video_h_, vsr_w_, vsr_h_, quality_)) {
-            fprintf(stderr, "PlayerCore: VSR init failed\n");
-            vsr_.reset();
-        }
-    }
-}
-
-// ── Frame processing ─────────────────────────────────────────────────
+// ── Frame processing ──────────────────────────────────────────────
 
 bool PlayerCore::process_one_frame() {
     if (!cuda_ctx_ || !demuxer_ || !decoder_) return false;
@@ -473,10 +1062,8 @@ bool PlayerCore::process_one_frame() {
         return false;  // EOF
     }
 
-    // Audio packets: decode inline and feed to audio sink
+    // Audio packets: skip (AudioOutput handles audio in its own thread)
     if (pkt->stream_index == demuxer_->audio_stream_index() && audio_) {
-        // Skip for now — AudioOutput handles audio in its own thread
-        // with its own FFmpeg instance. PCM path will come later.
         av_packet_free(&pkt);
         cuda_ctx_->pop();
         return true;
@@ -534,17 +1121,62 @@ bool PlayerCore::process_one_frame() {
         }
         uv_plane = uv_interleaved.data();
         uv_pitch = nv12_uv_pitch;
-
-        static bool yuv420p_logged = false;
-        if (!yuv420p_logged) {
-            yuv420p_logged = true;
-            fprintf(stderr, "PlayerCore: YUV420P→NV12 interleave "
-                    "(%dx%d, u_pitch=%d v_pitch=%d nv12_pitch=%d)\n",
-                    uv_w, uv_h, u_pitch, v_pitch, nv12_uv_pitch);
-        }
     }
 
-    // 5. NV12→RGB GPU kernel
+    // 5. A/V sync check BEFORE expensive GPU work (VSR + D2D).
+    // Uses real decoder PTS (mpv/VLC model), with speed scaling and
+    // fallback to frame counter when PTS is invalid (e.g. NVDEC frames).
+    static int64_t pts_dbg = 0;
+    double frame_pts_sec;
+    if (hw_frame->pts != AV_NOPTS_VALUE) {
+        frame_pts_sec = (double)hw_frame->pts * demuxer_->video_time_base();
+        if (++pts_dbg % 180 == 0)
+            CLOG("pts-OK #%ld frame_pts=%.3f", pts_dbg, frame_pts_sec);
+    } else {
+        frame_pts_sec = (double)pts_fallback_counter_ / video_fps_;
+        pts_fallback_counter_++;
+        if (pts_fallback_counter_ % 180 == 0)
+            CLOG("pts-FALLBACK #%ld est=%.3f", pts_fallback_counter_, frame_pts_sec);
+    }
+    current_pts_sec_ = frame_pts_sec;
+
+    if (audio_ && audio_->is_active()) {
+        // Clock returns content-time (not wall-clock). At 0.5x speed,
+        // the clock advances at 0.5 content-seconds per real-second.
+        // Video PTS is also content-time, so both timelines stay aligned
+        // at all speeds — no clock_bias_ needed.
+        double clock = audio_->clock_sec();
+        double delay = frame_pts_sec - clock;
+
+        if (delay < -0.050) {
+            // Video behind audio > 50ms → drop frame (skip VSR+D2D)
+            decoder_->release_frame(hw_frame);
+            cuda_ctx_->pop();
+            return true;
+        }
+        if (delay > 0.002) {
+            // Video ahead of audio → sleep before GPU work.
+            // At speed<1.0, the real-time needed to close the gap is
+            // larger — cap accommodates 50ms real sleep regardless.
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(static_cast<int>(
+                    std::min(delay * 1000.0 / playback_speed_, 50.0))));
+        }
+    } else {
+        // No audio: pace by PTS delta between consecutive frames
+        if (last_pts_sec_ >= 0.0) {
+            double pts_diff = (frame_pts_sec - last_pts_sec_) / playback_speed_;
+            auto target = last_render_time_
+                + std::chrono::duration<double>(pts_diff);
+            auto now = std::chrono::steady_clock::now();
+            if (now < target)
+                std::this_thread::sleep_for(target - now);
+        }
+        last_pts_sec_ = frame_pts_sec;
+        last_render_time_ = std::chrono::steady_clock::now();
+    }
+
+    // 6. NV12→RGB GPU kernel
     {
         CUdeviceptr tmp_y = 0, tmp_uv = 0;
         if (!is_hw) {
@@ -567,7 +1199,7 @@ bool PlayerCore::process_one_frame() {
         if (!is_hw) { cuMemFree(tmp_y); cuMemFree(tmp_uv); }
     }
 
-    // 6. VSR processing
+    // 7. VSR processing
     void* vsr_out_ptr = nullptr;
     int vsr_out_w = 0, vsr_out_h = 0, vsr_out_pitch = 0;
     if (vsr_ && vsr_->is_ready()) {
@@ -575,10 +1207,9 @@ bool PlayerCore::process_one_frame() {
                       &vsr_out_pitch);
     }
 
-    // 7. D2D copy → InteropTexture + Vulkan render
+    // 8. D2D copy → InteropTexture
     if (renderer_ && renderer_->is_ready()) {
         if (vsr_out_ptr) {
-            // ── VSR path: RGBA → rgbaInterop ──
             auto& rgbaTex = renderer_->rgbaInterop();
             size_t row_bytes = (size_t)vsr_out_w * 4;
             CUDA_MEMCPY2D copy = {};
@@ -595,7 +1226,6 @@ bool PlayerCore::process_one_frame() {
             vsr_w_ = vsr_out_w;
             vsr_h_ = vsr_out_h;
         } else {
-            // ── NO-VSR path: NV12 → yInterop + uvInterop ──
             auto& yTex  = renderer_->yInterop();
             auto& uvTex = renderer_->uvInterop();
 
@@ -635,10 +1265,11 @@ bool PlayerCore::process_one_frame() {
             vsr_h_ = video_h_;
         }
 
-        renderer_->render_frame(vsr_out_ptr ? Path::VSR : Path::NOVSR);
+        current_path_ = vsr_out_ptr ? Path::VSR : Path::NOVSR;
+        frame_ready_.store(true);
     }
 
-    // 8. Screenshot capture
+    // 9. Screenshot capture
     if (capture_pending_) {
         capture_pending_ = false;
 
@@ -707,28 +1338,22 @@ bool PlayerCore::process_one_frame() {
         emit_event(ce);
     }
 
-    // 9. A/V sync (audio master clock)
+    // 9. Audio-path PTS tracking (video-only path tracks in step 5)
     if (audio_ && audio_->is_active()) {
-        frame_count_++;
-        double pts_sec = frame_count_ / video_fps_;
-        double clock = audio_->clock_sec();
-        double delay = pts_sec - clock;
-        if (delay > 0.002) {
-            std::this_thread::sleep_for(
-                std::chrono::milliseconds(static_cast<int>(
-                    std::min(delay * 1000.0, 50.0))));
-        }
-    } else {
-        frame_count_++;
+        last_pts_sec_ = frame_pts_sec;
+        last_render_time_ = std::chrono::steady_clock::now();
     }
 
-    // 10. Periodic position update
-    int64_t now_ms = (int64_t)(frame_count_ / video_fps_ * 1000.0);
-    if (now_ms - last_position_emit_ms_ >= 200) {
-        last_position_emit_ms_ = now_ms;
+    // 10. Periodic position update (real PTS, not frame_count_/fps estimate)
+    int64_t pos_ms = (int64_t)(frame_pts_sec * 1000.0);
+    int64_t diff_ms = pos_ms > last_position_emit_ms_
+                      ? pos_ms - last_position_emit_ms_
+                      : last_position_emit_ms_ - pos_ms;
+    if (diff_ms >= 200) {
+        last_position_emit_ms_ = pos_ms;
         PlayerEvent pe;
         pe.type = PlayerEvent::POSITION_CHANGED;
-        pe.time_ms = now_ms;
+        pe.time_ms = pos_ms;
         pe.duration_ms = duration_ms_;
         emit_event(pe);
     }

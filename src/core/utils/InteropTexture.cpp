@@ -13,8 +13,6 @@
 
 #include "InteropTexture.h"
 
-#include "VulkanContext.h"
-
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
@@ -23,11 +21,68 @@
 
 namespace vsr {
 
+// ── Helper ──────────────────────────────────────────────────────────
+
+static uint32_t find_memory_type(void* physical_device, uint32_t type_bits,
+                                 uint32_t memory_property_flags) {
+    VkPhysicalDevice pd = (VkPhysicalDevice)physical_device;
+    VkPhysicalDeviceMemoryProperties mem_props;
+    vkGetPhysicalDeviceMemoryProperties(pd, &mem_props);
+    for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++)
+        if ((type_bits & (1 << i)) &&
+            (mem_props.memoryTypes[i].propertyFlags & memory_property_flags) ==
+                memory_property_flags)
+            return i;
+    return ~0u;
+}
+
 // ── Lifecycle ──────────────────────────────────────────────────────
 
 InteropTexture::InteropTexture() = default;
 
 InteropTexture::~InteropTexture() { release(); }
+
+InteropTexture::InteropTexture(InteropTexture&& other) noexcept
+    : device_(other.device_), image_(other.image_), memory_(other.memory_),
+      imageView_(other.imageView_), cudaPtr_(other.cudaPtr_),
+      cudaPitch_(other.cudaPitch_), w_(other.w_), h_(other.h_),
+      format_(other.format_), extMem_(other.extMem_) {
+    other.device_ = nullptr;
+    other.image_ = nullptr;
+    other.memory_ = nullptr;
+    other.imageView_ = nullptr;
+    other.cudaPtr_ = 0;
+    other.cudaPitch_ = 0;
+    other.w_ = other.h_ = 0;
+    other.format_ = 0;
+    other.extMem_ = nullptr;
+}
+
+InteropTexture& InteropTexture::operator=(InteropTexture&& other) noexcept {
+    if (this != &other) {
+        release();
+        device_ = other.device_;
+        image_ = other.image_;
+        memory_ = other.memory_;
+        imageView_ = other.imageView_;
+        cudaPtr_ = other.cudaPtr_;
+        cudaPitch_ = other.cudaPitch_;
+        w_ = other.w_;
+        h_ = other.h_;
+        format_ = other.format_;
+        extMem_ = other.extMem_;
+        other.device_ = nullptr;
+        other.image_ = nullptr;
+        other.memory_ = nullptr;
+        other.imageView_ = nullptr;
+        other.cudaPtr_ = 0;
+        other.cudaPitch_ = 0;
+        other.w_ = other.h_ = 0;
+        other.format_ = 0;
+        other.extMem_ = nullptr;
+    }
+    return *this;
+}
 
 // ── Init ───────────────────────────────────────────────────────────
 
@@ -62,7 +117,7 @@ bool InteropTexture::init(VkDevice_T* dev, VkPhysicalDevice_T* pd,
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
     ici.tiling = VK_IMAGE_TILING_LINEAR;
     ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    ici.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     VkImage img;
     res = vkCreateImage(device, &ici, nullptr, &img);
@@ -212,9 +267,6 @@ bool InteropTexture::init(VkDevice_T* dev, VkPhysicalDevice_T* pd,
 
 void InteropTexture::release() {
     VkDevice device = (VkDevice)device_;
-
-    if (device)
-        vkDeviceWaitIdle(device);
 
     // 1. Destroy CUDA external memory first — the CUDA handle references
     //    the Vulkan allocation; freeing Vulkan memory first is UB.

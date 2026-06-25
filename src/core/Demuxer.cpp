@@ -75,6 +75,18 @@ bool Demuxer::open(const std::string& path) {
     return true;
 }
 
+bool Demuxer::seek(int64_t target_ms) {
+    if (!fmt_ctx_ || video_idx_ < 0) return false;
+    int64_t ts = av_rescale_q(target_ms * 1000, AV_TIME_BASE_Q,
+                               fmt_ctx_->streams[video_idx_]->time_base);
+    int ret = av_seek_frame(fmt_ctx_, video_idx_, ts, AVSEEK_FLAG_BACKWARD);
+    if (ret < 0) {
+        // Try seeking on the default stream
+        ret = av_seek_frame(fmt_ctx_, -1, ts, AVSEEK_FLAG_BACKWARD);
+    }
+    return ret >= 0;
+}
+
 void Demuxer::close() {
     if (fmt_ctx_) {
         avformat_close_input(&fmt_ctx_);

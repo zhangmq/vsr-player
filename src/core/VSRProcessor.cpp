@@ -12,24 +12,6 @@
 
 namespace vsr {
 
-static unsigned int quality_to_vfx(Quality q, bool denoise) {
-    if (denoise) {
-        switch (q) {
-            case Quality::LOW:    return 8;
-            case Quality::MEDIUM: return 9;
-            case Quality::HIGH:   return 10;
-            case Quality::ULTRA:  return 11;
-        }
-    }
-    switch (q) {
-        case Quality::LOW:    return 1;
-        case Quality::MEDIUM: return 2;
-        case Quality::HIGH:   return 3;
-        case Quality::ULTRA:  return 4;
-    }
-    return 3;
-}
-
 // ── Function pointer table ────────────────────────────────────────────
 
 static void* g_vfx_lib = nullptr;
@@ -118,7 +100,7 @@ VSRProcessor::~VSRProcessor() { release(); }
 
 // ── Init ──────────────────────────────────────────────────────────────
 
-bool VSRProcessor::init(int in_w, int in_h, int out_w, int out_h, Quality quality) {
+bool VSRProcessor::init(int in_w, int in_h, int out_w, int out_h, int quality) {
     if (!load_nvvfx_libraries()) return false;
 
     in_w_ = in_w; in_h_ = in_h;
@@ -137,14 +119,13 @@ bool VSRProcessor::init(int in_w, int in_h, int out_w, int out_h, Quality qualit
 
     // Mode: same-resolution = denoise, upscaled = super-resolution
     bool denoise = (in_w_ == out_w_ && in_h_ == out_h_);
-    unsigned int qv = quality_to_vfx(quality_, denoise);
     // Python nvvfx uses "QualityLevel" (not "Strength") to select the
     // AI model.  Default is BICUBIC=0 — no AI enhancement at all.
     // Reference: nvvfx/effects/video_super_res.py `_PARAM_QUALITY`
-    pfn_NvVFX_SetU32(vsr_handle_, "QualityLevel", qv);
-    fprintf(stderr, "VSR: [%s] %dx%d→%dx%d quality=%u %s\n",
+    pfn_NvVFX_SetU32(vsr_handle_, "QualityLevel", (unsigned int)quality_);
+    fprintf(stderr, "VSR: [%s] %dx%d→%dx%d quality=%d %s\n",
             denoise ? "DENOISE" : "UPSCALE",
-            in_w_, in_h_, out_w_, out_h_, qv,
+            in_w_, in_h_, out_w_, out_h_, quality_,
             denoise ? "(1:1 denoising)" : "(AI super-resolution)");
 
     // ── Output image: per sample code, VSR accepts RGBA U8 interleaved ──
@@ -333,10 +314,10 @@ bool VSRProcessor::process(void* input_cuda_ptr, void** output_cuda_ptr,
 
 // ── Reconfigure ───────────────────────────────────────────────────────
 
-bool VSRProcessor::reconfigure(int out_w, int out_h, Quality quality) {
+bool VSRProcessor::reconfigure(int out_w, int out_h, int quality) {
     fprintf(stderr, "VSR: reconfigure — in=%dx%d out=%dx%d quality=%d\n",
-            in_w_, in_h_, out_w, out_h, (int)quality);
-    // Save dimensions before release() zeros them
+            in_w_, in_h_, out_w, out_h, quality);
+
     int saved_in_w = in_w_, saved_in_h = in_h_;
     release();
     bool ok = init(saved_in_w, saved_in_h, out_w, out_h, quality);
