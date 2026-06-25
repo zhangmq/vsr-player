@@ -506,7 +506,7 @@ Item {
             anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: 48
                       bottom: parent.bottom }
             model: playlist ? playlist.files : []
-            cacheBuffer: height * 2
+            cacheBuffer: 800
             clip: true
 
             delegate: Rectangle {
