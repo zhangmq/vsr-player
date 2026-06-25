@@ -311,13 +311,14 @@ bool PlayerCore::execute(const TargetState& snapshot) {
         }
 
         auto new_decoder = std::make_unique<Decoder>();
-        if (!new_decoder->open(new_demuxer->video_codecpar(), no_hwaccel_)) {
+        if (!new_decoder->open(new_demuxer->video_codecpar())) {
             PlayerEvent err;
             err.type = PlayerEvent::ERROR;
             err.error_msg = "Decoder open failed: " + snapshot.file;
             emit_event(err);
             return false;
         }
+        new_decoder->switch_to_hw(!no_hwaccel_);
 
         // CUDA context (first load only)
         if (!cuda_ctx_) {
@@ -365,8 +366,6 @@ bool PlayerCore::execute(const TargetState& snapshot) {
         } else {
             scale = user_scale_;
         }
-        int quality = quality_;
-
         // GPU buffer
         if (rgb_gpu_) {
             cuMemFree((CUdeviceptr)rgb_gpu_);
@@ -637,8 +636,32 @@ void PlayerCore::cmd_set_mute(bool) { /* mute now handled by setVolume(0.0) */ }
 // ── SET_HWACCEL (toggle NVDEC) ────────────────────────────────────
 
 void PlayerCore::cmd_set_hwaccel(bool enabled) {
-    // Flag only — applies on next LOAD_FILE.
+    if (no_hwaccel_ == !enabled) return;  // no change
     no_hwaccel_ = !enabled;
+
+    if (!decoder_ || !demuxer_) {
+        CLOG("hwaccel: preference changed to %s (applies on next load)",
+             enabled ? "HW" : "SW");
+        return;
+    }
+
+    // Live switch: save position, flush both contexts, seek, switch.
+    double saved_pts = current_pts_sec_;
+    CLOG("hwaccel: live switch to %s at pts=%.3f", enabled ? "HW" : "SW", saved_pts);
+
+    decoder_->flush();
+    decoder_->switch_to_hw(enabled);
+
+    // Seek demuxer to current position so new decoder gets the right stream.
+    int64_t ms = (int64_t)(saved_pts * 1000.0);
+    demuxer_->seek(ms);
+    if (audio_) audio_->seek(saved_pts);
+
+    last_pts_sec_ = saved_pts;
+    current_pts_sec_ = saved_pts;
+    pts_fallback_counter_ = video_fps_ > 0
+        ? (int64_t)(saved_pts * video_fps_) : 0;
+    last_render_time_ = std::chrono::steady_clock::now();
 }
 
 // ── SET_SPEED ──────────────────────────────────────────────────────
@@ -703,13 +726,14 @@ void PlayerCore::cmd_load_file(const std::string& path) {
     }
 
     auto new_decoder = std::make_unique<Decoder>();
-    if (!new_decoder->open(new_demuxer->video_codecpar(), no_hwaccel_)) {
+    if (!new_decoder->open(new_demuxer->video_codecpar())) {
         PlayerEvent err;
         err.type = PlayerEvent::ERROR;
         err.error_msg = "Decoder open failed: " + path;
         emit_event(err);
         return;
     }
+    new_decoder->switch_to_hw(!no_hwaccel_);
 
     // Phase 2: set up GPU resources
     // CUDA context (first load only)
