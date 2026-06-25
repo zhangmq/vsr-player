@@ -479,6 +479,7 @@ Item {
             clip: true
 
             delegate: Rectangle {
+                id: plDelegate
                 width: ListView.view.width; height: 42; clip: true
                 color: plHover.hovered ? "#22ffffff"
                      : (index === playlist.currentIndex ? "#11ffffff" : "transparent")
@@ -511,19 +512,9 @@ Item {
 
                 HoverHandler { id: plHover }
 
-                ToolTip {
-                    visible: plHover.hovered
-                    text: modelData
-                    delay: 600
-                    font.pixelSize: 11
-                    background: Rectangle {
-                        color: "#d9111111"; radius: 4
-                        border { width: 1; color: "#22ffffff" }
-                    }
-                    contentItem: Text {
-                        text: modelData; color: "#e0e0e0"; font.pixelSize: 11
-                    }
-                }
+                ToolTip.visible: plHover.hovered
+                ToolTip.text: modelData
+                ToolTip.delay: 600
             }
         }
     }
