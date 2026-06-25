@@ -546,6 +546,7 @@ void PlayerCore::cmd_play() {
     if (audio_) {
         if (!audio_started_) {
             audio_->start();
+            audio_->set_speed(playback_speed_);
             audio_started_ = true;
         } else {
             audio_->resume();
