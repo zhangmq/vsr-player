@@ -423,6 +423,7 @@ bool PlayerCore::execute(const TargetState& snapshot) {
         audio_.reset();
         if (new_audio) audio_ = std::move(new_audio);
         audio_started_ = false;
+        if (audio_) audio_->set_speed(playback_speed_);
         decoder_.reset();
         decoder_ = std::move(new_decoder);
         demuxer_.reset();
@@ -836,6 +837,7 @@ void PlayerCore::cmd_load_file(const std::string& path) {
     audio_.reset();
     if (new_audio) audio_ = std::move(new_audio);
     audio_started_ = false;
+    if (audio_) audio_->set_speed(playback_speed_);
     decoder_.reset();
     decoder_ = std::move(new_decoder);
     demuxer_.reset();
