@@ -42,7 +42,7 @@ No change needed — Qt Quick ListView with fixed-height delegates already recyc
 |------|--------|
 | `src/client/PlaylistEngine.h` | Add `displayNames` property |
 | `src/client/PlaylistEngine.cpp` | Populate `displayNames` in `scanFolder`, clear in `scanDir` |
-| `src/client/ui/overlay.qml` | Simplify delegate, session-state flag for first-open no-animation |
+| `src/client/ui/overlay.qml` | Simplify delegate, remove ElideRight, add ToolTip, increase cacheBuffer |
 
 ## QML Delegate — After
 
@@ -104,35 +104,9 @@ ListView {
 }
 ```
 
-## Deferred Animation on First Open
-
-For the Drawer slide-in on first open: use a session-level QML property (`firstPlaylistOpen: true`). On first toggle, close the drawer immediately with `enter: null` Transition override, then restore the transition for subsequent toggles.
-
-```qml
-property bool firstPlaylistOpen: true
-
-function togglePlaylist() {
-    if (firstPlaylistOpen) {
-        // Suppress enter animation on first open
-        playlistPanel.enter = null
-        playlistPanel.open()
-        firstPlaylistOpen = false
-        // Restore enter on next event loop tick so subsequent opens animate
-        Qt.callLater(function() {
-            playlistPanel.enter = playlistEnter
-        })
-    } else {
-        playlistPanel.visible ? playlistPanel.close() : playlistPanel.open()
-    }
-}
-
-Transition { id: playlistEnter; ... }
-```
-
 ## Verification
 
-1. Load a folder with 500+ video files, open playlist — no visible lag during slide-in
+1. Load a folder with 500+ video files, open playlist — no visible lag
 2. Scroll rapidly through the list — smooth 60fps, no jank
 3. Hover over truncated filename — ToolTip shows full path after 600ms
-4. Subsequent open/close — slide animation works normally
-5. Click item — loads file, currentIndex highlight updates
+4. Click item — loads file, currentIndex highlight updates
