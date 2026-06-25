@@ -445,7 +445,7 @@ Item {
         edge: Qt.RightEdge
         width: 320; height: parent.height; z: 10
         dragMargin: 0
-        padding: 0
+        topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
         background: Rectangle { color: "#d9000000" }
 
         // Header
@@ -486,12 +486,12 @@ Item {
                      : (index === playlist.currentIndex ? "#11ffffff" : "transparent")
 
                 Row {
-                    anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
-                    spacing: 8
+                    anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
+                    spacing: 6
 
                     Text {
                         text: index + 1 + "."
-                        width: 28; horizontalAlignment: Text.AlignRight
+                        width: 20; horizontalAlignment: Text.AlignRight
                         color: index === playlist.currentIndex ? "#e0e0e0" : "#b0b0b0"
                         font.pixelSize: 13
                         renderType: Text.NativeRendering
@@ -499,7 +499,7 @@ Item {
                     Text {
                         text: playlist && index < playlist.displayNames.length
                               ? playlist.displayNames[index] : ""
-                        width: 250
+                        width: 270
                         color: index === playlist.currentIndex ? "#ffffff" : "#b0b0b0"
                         font.pixelSize: 13
                         renderType: Text.NativeRendering
