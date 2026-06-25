@@ -127,6 +127,19 @@ struct PlayerEvent {
     int pending_quality = -1;
     int pending_phys_w = 0;
     int pending_phys_h = 0;
+
+    // FRAME_INFO fields (emitted every ~30 frames for OSD)
+    int denoise = -1;
+    double speed = 1.0;
+    double render_fps = 0.0;
+    int64_t frame_idx = 0;
+    std::string gpu_name;
+    int vram_used_mb = 0;
+    int vram_total_mb = 0;
+    int audio_sr = 0;
+    int audio_ch = 0;
+    std::string codec_name;
+    std::string pix_fmt_name;
 };
 
 using EventCallback = std::function<void(const PlayerEvent&)>;

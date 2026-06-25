@@ -212,4 +212,14 @@ void Decoder::close() {
 bool Decoder::is_hardware() const { return active_hw_ && hw_ctx_ != nullptr; }
 bool Decoder::has_hardware() const { return hw_ctx_ != nullptr; }
 
+int Decoder::active_codec_id() const {
+    AVCodecContext* ctx = active_hw_ ? hw_ctx_ : sw_ctx_;
+    return ctx ? ctx->codec_id : 0;
+}
+
+const char* Decoder::pix_fmt_name() const {
+    if (active_hw_) return "cuda";
+    return sw_ctx_ ? av_get_pix_fmt_name(sw_ctx_->pix_fmt) : nullptr;
+}
+
 }  // namespace vsr

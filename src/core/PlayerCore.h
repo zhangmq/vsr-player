@@ -136,6 +136,12 @@ private:
     std::vector<uint8_t> capture_orig_buf_;
     std::vector<uint8_t> capture_vsr_buf_;
 
+    // ── OSD / frame info ──
+    int64_t frame_count_ = 0;
+    std::chrono::steady_clock::time_point last_info_time_;
+    int64_t info_start_frame_ = 0;
+    std::string gpu_name_;  // cached on first emit
+
     // ── Command handlers (one per variant alternative) ──
     void cmd_play();
     void cmd_pause();

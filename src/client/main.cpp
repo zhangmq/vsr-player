@@ -279,6 +279,9 @@ int main(int argc, char* argv[]) {
                     case vsr::PlayerEvent::POSITION_CHANGED:
                         viewModel.updateTime(e.time_ms, e.duration_ms);
                         break;
+                    case vsr::PlayerEvent::FRAME_INFO:
+                        viewModel.updateOsdInfo(e);
+                        break;
                     case vsr::PlayerEvent::ERROR:
                         fprintf(stderr, "Player error: %s\n", e.error_msg.c_str());
                         break;

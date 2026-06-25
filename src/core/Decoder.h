@@ -49,6 +49,12 @@ public:
     /// HW context is open and available (even if not active).
     bool has_hardware() const;
 
+    /// Active codec ID (AVCodecID) for codec name lookup.
+    int active_codec_id() const;
+
+    /// Active pixel format name (e.g. "cuda", "yuv420p").
+    const char* pix_fmt_name() const;
+
 private:
     bool try_open_hwaccel(void* codecpar);
     bool try_open_software(void* codecpar);

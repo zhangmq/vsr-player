@@ -37,6 +37,8 @@ bool KeyFilter::eventFilter(QObject*, QEvent* e) {
         return true;
     case Qt::Key_S:
         ctrl->screenshot(); return true;
+    case Qt::Key_Tab:
+        ctrl->toggleOsd(); return true;
     case Qt::Key_N: {
         QString f = playlist->next();
         if (!f.isEmpty()) ctrl->loadFile(f);

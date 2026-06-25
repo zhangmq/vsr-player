@@ -173,6 +173,88 @@ void PlayerViewModel::updateScale(int s) {
     if (scale_ != s) { scale_ = s; emit scaleChanged(); }
 }
 
+void PlayerViewModel::toggleOsd() {
+    osdVisible_ = !osdVisible_;
+    emit osdVisibleChanged();
+}
+
+static QString fmtTime(int64_t ms) {
+    int64_t s = ms / 1000;
+    return QString("%1:%2:%3")
+        .arg(s / 3600,       2, 10, QChar('0'))
+        .arg((s % 3600) / 60, 2, 10, QChar('0'))
+        .arg(s % 60,         2, 10, QChar('0'));
+}
+
+void PlayerViewModel::updateOsdInfo(const PlayerEvent& e) {
+    QStringList lines;
+
+    // Source
+    lines.append(QString("Source    %1×%2 %3 %4fps")
+        .arg(e.in_width).arg(e.in_height)
+        .arg(e.codec_name.empty() ? "?" : e.codec_name.c_str())
+        .arg(e.fps, 0, 'f', 2));
+
+    // Output
+    lines.append(QString("Output    %1×%2 (%3×)")
+        .arg(e.out_width).arg(e.out_height).arg(e.scale));
+
+    // VSR
+    {
+        QString vsr = "VSR       ";
+        if (e.vsr_active) {
+            static const char* qnames[] = {"?", "Low", "Medium", "High", "Ultra"};
+            int q = e.quality;
+            vsr += QString("%1 quality").arg((q >= 1 && q <= 4) ? qnames[q] : "?");
+            if (e.denoise >= 8)
+                vsr += QString(" / Denoise %1").arg((e.denoise >= 8 && e.denoise <= 11)
+                    ? qnames[e.denoise - 7] : "?");
+            else
+                vsr += " / Denoise off";
+        } else {
+            vsr += "off";
+        }
+        lines.append(vsr);
+    }
+
+    // Decoder
+    lines.append(QString("Decoder   %1 (%2)")
+        .arg(e.hw_decoding ? "NVDEC" : "Software")
+        .arg(e.pix_fmt_name.empty() ? "?" : e.pix_fmt_name.c_str()));
+
+    // Speed
+    lines.append(QString("Speed     %1×").arg(e.speed, 0, 'f', 2));
+
+    // PTS / Duration
+    lines.append(QString("PTS       %1 / %2")
+        .arg(fmtTime(e.time_ms)).arg(fmtTime(e.duration_ms)));
+
+    // Render output
+    lines.append(QString("Render    %1×%2 RGBA → %3×%4 window  %5fps")
+        .arg(e.out_width).arg(e.out_height)
+        .arg(0).arg(0)  // last_phys not in event, placeholder
+        .arg(e.render_fps, 0, 'f', 1));
+
+    // GPU
+    if (!e.gpu_name.empty()) {
+        lines.append(QString("GPU       %1  %2/%3 MB")
+            .arg(e.gpu_name.c_str())
+            .arg(e.vram_used_mb).arg(e.vram_total_mb));
+    }
+
+    // Audio
+    if (e.has_audio) {
+        lines.append(QString("Audio     %1Hz %2ch (PortAudio)")
+            .arg(e.audio_sr).arg(e.audio_ch));
+    }
+
+    // Frame index
+    lines.append(QString("Frame     #%1").arg(e.frame_idx));
+
+    osdText_ = lines.join('\n');
+    emit osdTextChanged();
+}
+
 }  // namespace vsr
 
 #include "moc_PlayerViewModel.cpp"

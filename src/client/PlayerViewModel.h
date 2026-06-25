@@ -38,6 +38,9 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(QString videoInfo READ videoInfo NOTIFY videoInfoChanged)
     // Window
     Q_PROPERTY(bool fullscreen READ fullscreen WRITE setFullscreen NOTIFY fullscreenChanged)
+    // OSD
+    Q_PROPERTY(QString osdText READ osdText NOTIFY osdTextChanged)
+    Q_PROPERTY(bool osdVisible READ osdVisible NOTIFY osdVisibleChanged)
 
 public:
     bool playing() const        { return playing_; }
@@ -54,6 +57,8 @@ public:
     bool hwDecoding() const     { return hwDecoding_; }
     QString videoInfo() const   { return videoInfo_; }
     bool fullscreen() const     { return fullscreen_; }
+    QString osdText() const     { return osdText_; }
+    bool osdVisible() const     { return osdVisible_; }
 
     void setOverlaysVisible(bool v);
     void setFullscreen(bool fs);
@@ -76,6 +81,7 @@ public slots:
     void setScale(int s);
     void setDenoiseQuality(int d);
     void toggleFullscreen();
+    void toggleOsd();
 
     // Called from event callback (via QueuedConnection)
     void updateState(bool playing);
@@ -85,6 +91,7 @@ public slots:
     void updateHwDecoding(bool hw);
     void updateQuality(int q);
     void updateScale(int s);
+    void updateOsdInfo(const struct PlayerEvent& e);
 signals:
     void playingChanged();
     void currentTimeChanged();
@@ -100,6 +107,8 @@ signals:
     void denoiseQualityChanged();
     void overlaysVisibleChanged();
     void fullscreenChanged();
+    void osdTextChanged();
+    void osdVisibleChanged();
 
 private:
     Player* player_ = nullptr;
@@ -116,6 +125,8 @@ private:
     int scale_ = 0;
     bool overlaysVisible_ = true;
     bool fullscreen_ = false;
+    QString osdText_;
+    bool osdVisible_ = false;
 };
 
 }  // namespace vsr

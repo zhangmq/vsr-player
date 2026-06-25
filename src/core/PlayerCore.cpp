@@ -1417,8 +1417,9 @@ bool PlayerCore::process_one_frame() {
         emit_event(pe);
     }
 
-    // 11. Frame info event
-    {
+    // 11. Frame info event (throttled to every 30 frames ~0.5s at 60fps)
+    frame_count_++;
+    if (frame_count_ % 30 == 0) {
         PlayerEvent fi;
         fi.type = PlayerEvent::FRAME_INFO;
         fi.in_width = video_w_;
@@ -1428,9 +1429,58 @@ bool PlayerCore::process_one_frame() {
         fi.fps = video_fps_;
         fi.scale = current_scale_;
         fi.quality = quality_;
+        fi.denoise = denoise_quality_;
         fi.hw_decoding = decoder_->is_hardware();
         fi.vsr_active = (vsr_ && vsr_->is_ready());
         fi.has_audio = (audio_ && audio_->is_active());
+        fi.speed = playback_speed_;
+
+        // Render FPS: frames_since_last / elapsed
+        auto now = std::chrono::steady_clock::now();
+        if (info_start_frame_ > 0) {
+            double elapsed = std::chrono::duration<double>(
+                now - last_info_time_).count();
+            fi.render_fps = elapsed > 0 ? (frame_count_ - info_start_frame_) / elapsed : 0;
+        }
+        last_info_time_ = now;
+        info_start_frame_ = frame_count_;
+
+        fi.frame_idx = frame_count_;
+
+        // GPU name (cached)
+        if (gpu_name_.empty()) {
+            char gname[128];
+            if (cuDeviceGetName(gname, sizeof(gname), 0) == CUDA_SUCCESS)
+                gpu_name_ = gname;
+        }
+        fi.gpu_name = gpu_name_;
+
+        // VRAM usage
+        {
+            size_t free_bytes = 0, total_bytes = 0;
+            if (cuMemGetInfo(&free_bytes, &total_bytes) == CUDA_SUCCESS) {
+                fi.vram_used_mb = (int)((total_bytes - free_bytes) / (1024 * 1024));
+                fi.vram_total_mb = (int)(total_bytes / (1024 * 1024));
+            }
+        }
+
+        // Audio info
+        if (audio_ && audio_->is_active()) {
+            fi.audio_sr = audio_->sample_rate();
+            fi.audio_ch = audio_->channels();
+        }
+
+        // Codec & pixel format
+        {
+            int codec_id = decoder_->active_codec_id();
+            if (codec_id) {
+                const char* cn = avcodec_get_name((AVCodecID)codec_id);
+                if (cn) fi.codec_name = cn;
+            }
+            const char* pfn = decoder_->pix_fmt_name();
+            if (pfn) fi.pix_fmt_name = pfn;
+        }
+
         emit_event(fi);
     }
 
