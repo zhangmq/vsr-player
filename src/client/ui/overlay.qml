@@ -61,7 +61,7 @@ Item {
         id: hideTimer; interval: 3000
         onTriggered: {
             var popupOpen = volumePopup.visible || qualityPopup.visible || speedPopup.visible
-            if (!popupOpen && !barHover.hovered)
+            if (!popupOpen && !barHover.hovered && !progressHotZone.containsMouse)
                 viewModel.overlaysVisible = false
         }
     }
@@ -121,6 +121,15 @@ Item {
     // ══════════════════════════════════════════════════════════════════
     // Progress Slider
     // ══════════════════════════════════════════════════════════════════
+
+    // Invisible hot zone above bottom bar — prevents auto-hide when
+    // mouse is near the progress slider (visual height ~6px is too narrow).
+    MouseArea {
+        id: progressHotZone
+        anchors { left: parent.left; right: parent.right; bottom: bottomBar.top }
+        height: 20
+        hoverEnabled: true
+    }
 
     Slider {
         id: progressSlider
