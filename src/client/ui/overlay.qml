@@ -520,11 +520,6 @@ Item {
                         color: "#d9111111"; radius: 4
                         border { width: 1; color: "#22ffffff" }
                     }
-                    contentItem: Text {
-                        text: parent.text
-                        color: "#e0e0e0"
-                        font.pixelSize: 11
-                    }
                 }
             }
         }
