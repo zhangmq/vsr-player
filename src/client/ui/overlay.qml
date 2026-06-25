@@ -470,20 +470,60 @@ Item {
             }
         }
 
-        ListView { anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: 48
-                             bottom: parent.bottom }
-            model: playlist ? playlist.files : []; clip: true
-            delegate: Rectangle { width: 320; height: 42
+        ListView {
+            id: playlistView
+            anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: 48
+                      bottom: parent.bottom }
+            model: playlist ? playlist.files : []
+            cacheBuffer: height * 2
+            clip: true
+
+            delegate: Rectangle {
+                width: ListView.view.width; height: 42; clip: true
                 color: plHover.hovered ? "#22ffffff"
                      : (index === playlist.currentIndex ? "#11ffffff" : "transparent")
-                Row { anchors.left: parent.left; anchors.leftMargin: 16; anchors.verticalCenter: parent.verticalCenter; spacing: 8
-                    Text { text: (index+1) + "."; width: 28; horizontalAlignment: Text.AlignRight
-                        color: index === playlist.currentIndex ? "#e0e0e0" : "#b0b0b0"; font.pixelSize: 13 }
-                    Text { text: modelData.split('/').pop(); width: 250; elide: Text.ElideRight
-                        color: index === playlist.currentIndex ? "#ffffff" : "#b0b0b0"; font.pixelSize: 13 } }
-                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                    onClicked: { playlist.setCurrentFile(modelData); viewModel.loadFile(modelData) } }
+
+                Row {
+                    anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
+                    spacing: 8
+
+                    Text {
+                        text: index + 1 + "."
+                        width: 28; horizontalAlignment: Text.AlignRight
+                        color: index === playlist.currentIndex ? "#e0e0e0" : "#b0b0b0"
+                        font.pixelSize: 13
+                        renderType: Text.NativeRendering
+                    }
+                    Text {
+                        text: playlist && index < playlist.displayNames.length
+                              ? playlist.displayNames[index] : ""
+                        width: 250
+                        color: index === playlist.currentIndex ? "#ffffff" : "#b0b0b0"
+                        font.pixelSize: 13
+                        renderType: Text.NativeRendering
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                    onClicked: { playlist.setCurrentFile(modelData); viewModel.loadFile(modelData) }
+                }
+
                 HoverHandler { id: plHover }
+
+                ToolTip {
+                    visible: plHover.hovered
+                    text: modelData
+                    delay: 600
+                    font.pixelSize: 11
+                    background: Rectangle {
+                        color: "#d9111111"; radius: 4
+                        border { width: 1; color: "#22ffffff" }
+                    }
+                    contentItem: Text {
+                        text: modelData; color: "#e0e0e0"; font.pixelSize: 11
+                    }
+                }
             }
         }
     }
