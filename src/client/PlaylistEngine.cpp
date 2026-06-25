@@ -15,6 +15,7 @@ PlaylistEngine::PlaylistEngine(QObject* parent) : QObject(parent) {}
 
 int PlaylistEngine::scanFolder(const QString& path, int depth) {
     files_.clear();
+    displayNames_.clear();
     currentIndex_ = -1;
     rootPath_ = path;
 
@@ -24,6 +25,7 @@ int PlaylistEngine::scanFolder(const QString& path, int depth) {
         std::sort(files_.begin(), files_.end());
     } else if (fi.isFile()) {
         files_.append(fi.absoluteFilePath());
+        displayNames_.append(fi.fileName());
     }
     if (!files_.isEmpty()) currentIndex_ = 0;
 
@@ -49,6 +51,7 @@ void PlaylistEngine::scanDir(const QString& path, int remainingDepth) {
             QString ext = info.suffix().toLower();
             if (kExtensions.contains(ext)) {
                 files_.append(info.absoluteFilePath());
+            displayNames_.append(info.fileName());
             }
         }
     }

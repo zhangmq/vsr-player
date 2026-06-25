@@ -8,6 +8,7 @@
 class PlaylistEngine : public QObject {
     Q_OBJECT
     Q_PROPERTY(QStringList files READ files NOTIFY filesChanged)
+    Q_PROPERTY(QStringList displayNames READ displayNames NOTIFY filesChanged)
     Q_PROPERTY(int currentIndex READ currentIndex NOTIFY currentIndexChanged)
     Q_PROPERTY(QString currentFile READ currentFile NOTIFY currentFileChanged)
     Q_PROPERTY(int count READ count NOTIFY filesChanged)
@@ -27,6 +28,7 @@ public:
 
     /// Accessors for QML.
     QStringList files() const { return files_; }
+    QStringList displayNames() const { return displayNames_; }
     int currentIndex() const { return currentIndex_; }
     QString currentFile() const;
     int count() const { return files_.size(); }
@@ -40,6 +42,7 @@ private:
     void scanDir(const QString& path, int remainingDepth);
 
     QStringList files_;
+    QStringList displayNames_;
     int currentIndex_ = -1;
     QString rootPath_;
 };
