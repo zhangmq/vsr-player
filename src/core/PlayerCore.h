@@ -92,6 +92,8 @@ private:
     // ── GPU resources ──
     float* rgb_gpu_ = nullptr;
     void*  cuda_stream_ = nullptr;
+    void*  sw_staging_y_ = nullptr;   // pre-allocated GPU buffers for SW decode H2D
+    void*  sw_staging_uv_ = nullptr;
 
     // ── Video info ──
     int video_w_ = 0, video_h_ = 0;

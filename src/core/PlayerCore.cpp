@@ -374,6 +374,14 @@ bool PlayerCore::execute(const TargetState& snapshot) {
         size_t rgb_bytes = NV12ToRGB::output_size(new_vw, new_vh);
         cuMemAlloc((CUdeviceptr*)&rgb_gpu_, rgb_bytes);
 
+        // Pre-allocate SW decode staging buffers (lazily freed, reused)
+        if (sw_staging_y_) { cuMemFree((CUdeviceptr)sw_staging_y_); sw_staging_y_ = nullptr; }
+        if (sw_staging_uv_) { cuMemFree((CUdeviceptr)sw_staging_uv_); sw_staging_uv_ = nullptr; }
+        int y_pitch  = ((new_vw + 511) & ~511);
+        int uv_pitch = y_pitch;
+        cuMemAlloc((CUdeviceptr*)&sw_staging_y_, (size_t)y_pitch * new_vh);
+        cuMemAlloc((CUdeviceptr*)&sw_staging_uv_, (size_t)uv_pitch * (new_vh / 2));
+
         // VSR init
         {
             bool vsr_active = !(user_scale_ == -1 && denoise_quality_ == -1);
@@ -777,6 +785,13 @@ void PlayerCore::cmd_load_file(const std::string& path) {
     size_t rgb_bytes = NV12ToRGB::output_size(new_vw, new_vh);
     cuMemAlloc((CUdeviceptr*)&rgb_gpu_, rgb_bytes);
 
+    if (sw_staging_y_) { cuMemFree((CUdeviceptr)sw_staging_y_); sw_staging_y_ = nullptr; }
+    if (sw_staging_uv_) { cuMemFree((CUdeviceptr)sw_staging_uv_); sw_staging_uv_ = nullptr; }
+    int y_pitch  = ((new_vw + 511) & ~511);
+    int uv_pitch = y_pitch;
+    cuMemAlloc((CUdeviceptr*)&sw_staging_y_, (size_t)y_pitch * new_vh);
+    cuMemAlloc((CUdeviceptr*)&sw_staging_uv_, (size_t)uv_pitch * (new_vh / 2));
+
     // VSR: init or reconfigure
     int scale = current_scale_;
     if (user_scale_ == 0) {
@@ -1014,6 +1029,18 @@ void PlayerCore::teardown_file_resources() {
         rgb_gpu_ = nullptr;
         cuda_ctx_->pop();
     }
+    if (sw_staging_y_) {
+        cuda_ctx_->push();
+        cuMemFree((CUdeviceptr)sw_staging_y_);
+        sw_staging_y_ = nullptr;
+        cuda_ctx_->pop();
+    }
+    if (sw_staging_uv_) {
+        cuda_ctx_->push();
+        cuMemFree((CUdeviceptr)sw_staging_uv_);
+        sw_staging_uv_ = nullptr;
+        cuda_ctx_->pop();
+    }
     current_file_.clear();
     video_w_ = video_h_ = 0;
     video_fps_ = 0.0;
@@ -1048,6 +1075,8 @@ void PlayerCore::teardown_pipeline() {
         cuMemFree((CUdeviceptr)rgb_gpu_);
         rgb_gpu_ = nullptr;
     }
+    if (sw_staging_y_) { cuMemFree((CUdeviceptr)sw_staging_y_); sw_staging_y_ = nullptr; }
+    if (sw_staging_uv_) { cuMemFree((CUdeviceptr)sw_staging_uv_); sw_staging_uv_ = nullptr; }
     if (cuda_stream_) {
         cuStreamDestroy((CUstream)cuda_stream_);
         cuda_stream_ = nullptr;
@@ -1202,25 +1231,21 @@ bool PlayerCore::process_one_frame() {
 
     // 6. NV12→RGB GPU kernel
     {
-        CUdeviceptr tmp_y = 0, tmp_uv = 0;
+        uint8_t* gpu_y  = y_plane;
+        uint8_t* gpu_uv = uv_plane;
         if (!is_hw) {
             size_t y_sz  = (size_t)y_pitch * video_h_;
             size_t uv_sz = (size_t)uv_pitch * (video_h_ / 2);
-            cuMemAlloc(&tmp_y, y_sz);
-            cuMemAlloc(&tmp_uv, uv_sz);
-            cuMemcpyHtoDAsync(tmp_y,  y_plane,  y_sz,  (CUstream)cuda_stream_);
-            cuMemcpyHtoDAsync(tmp_uv, uv_plane, uv_sz, (CUstream)cuda_stream_);
+            cuMemcpyHtoDAsync((CUdeviceptr)sw_staging_y_, y_plane, y_sz, (CUstream)cuda_stream_);
+            cuMemcpyHtoDAsync((CUdeviceptr)sw_staging_uv_, uv_plane, uv_sz, (CUstream)cuda_stream_);
             cuStreamSynchronize((CUstream)cuda_stream_);
+            gpu_y  = (uint8_t*)sw_staging_y_;
+            gpu_uv = (uint8_t*)sw_staging_uv_;
         }
-
-        uint8_t* gpu_y  = is_hw ? y_plane  : (uint8_t*)tmp_y;
-        uint8_t* gpu_uv = is_hw ? uv_plane : (uint8_t*)tmp_uv;
 
         nv12_to_rgb_->convert(gpu_y, y_pitch, gpu_uv, uv_pitch,
                                video_w_, video_h_,
                                rgb_gpu_, cuda_stream_);
-
-        if (!is_hw) { cuMemFree(tmp_y); cuMemFree(tmp_uv); }
     }
 
     // 7. VSR processing
