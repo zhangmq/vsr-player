@@ -101,42 +101,32 @@ echo "  ✅ Font"
 echo ""
 echo "Installing NVIDIA VFX runtime..."
 
-PIP_CMD=""
-for cmd in pip3 pip; do
-    if command -v "$cmd" &>/dev/null; then
-        PIP_CMD="$cmd"
+PYTHON=""
+for py in python3 python; do
+    if command -v "$py" &>/dev/null && "$py" -m pip --version &>/dev/null; then
+        PYTHON="$py"
         break
     fi
 done
 
-if [ -z "$PIP_CMD" ]; then
-    echo -e "  ${RED}❌ pip not found. Install Python and pip first.${NC}"
+if [ -z "$PYTHON" ]; then
+    echo -e "  ${RED}❌ python3 with pip not found. Install Python and pip first.${NC}"
     exit 1
 fi
 
-echo "  → $PIP_CMD install nvidia-vfx"
-$PIP_CMD install nvidia-vfx 2>&1 | tail -1
+echo "  → $PYTHON -m pip install nvidia-vfx"
+$PYTHON -m pip install nvidia-vfx 2>&1 | tail -1
 
-# Find the installed package's libs directory
-VFX_LIB_DIR=$(python3 -c "
-import importlib.util, os
-try:
-    spec = importlib.util.find_spec('nvidia_vfx')
-    if spec and spec.origin:
-        pkg_dir = os.path.dirname(spec.origin)
-        lib_dir = os.path.join(pkg_dir, 'libs')
-        if os.path.isdir(lib_dir):
-            print(lib_dir)
-except Exception:
-    pass
-" 2>/dev/null)
+# Find the installed package's libs directory via pip show
+VFX_LOCATION=$($PYTHON -m pip show nvidia-vfx 2>/dev/null | grep "^Location:" | awk '{print $2}')
 
-if [ -n "$VFX_LIB_DIR" ] && [ -d "$VFX_LIB_DIR" ]; then
+if [ -n "$VFX_LOCATION" ] && [ -d "$VFX_LOCATION/nvidia_vfx/libs" ]; then
+    VFX_LIB_DIR="$VFX_LOCATION/nvidia_vfx/libs"
     cp "$VFX_LIB_DIR"/*.so* "$INSTALL_DIR/lib/"
-    echo -e "  ${GREEN}✅ VFX runtime copied from pip package${NC}"
+    echo -e "  ${GREEN}✅ VFX runtime copied from $VFX_LIB_DIR${NC}"
 else
     echo -e "  ${RED}❌ Could not find nvidia-vfx libs/ directory${NC}"
-    echo "  Try: pip install nvidia-vfx"
+    echo "  Try: $PYTHON -m pip install nvidia-vfx"
     exit 1
 fi
 
@@ -162,22 +152,20 @@ done
 
 # Also check pip-installed CUDA packages (nvidia-cuda-runtime-cu13, etc.)
 if [ "$NVRTC_FOUND" -eq 0 ]; then
-    CUDA_PIP_LIB=$(python3 -c "
-import importlib.util, os, glob
+    CUDA_PIP_LIB=$($PYTHON -c "
+import importlib.util, os
 for pkg in ['nvidia.cu13.nvrtc', 'nvidia_nvrtc_cu13']:
     try:
         spec = importlib.util.find_spec(pkg)
-        if spec:
+        if spec and spec.origin:
             pkg_dir = os.path.dirname(spec.origin)
             for pat in ['lib/libnvrtc.so.13', 'libnvrtc.so.13']:
                 path = os.path.join(pkg_dir, pat)
                 if os.path.exists(path):
                     print(os.path.dirname(path))
                     raise StopIteration
-    except (ImportError, ModuleNotFoundError):
-        continue
-    except StopIteration:
-        break
+    except (ImportError, ModuleNotFoundError, StopIteration):
+        pass
 " 2>/dev/null)
 
     if [ -n "$CUDA_PIP_LIB" ]; then
