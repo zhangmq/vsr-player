@@ -222,9 +222,10 @@ void PlayerViewModel::updateOsdInfo(const PlayerEvent& e) {
 
     {
         QString vsr = "VSR       ";
-        if (e.vsr_active) {
+        if (e.vsr_active && e.scale > 1) {
             vsr += QString("%1 quality").arg(qualityName(e.quality));
-            vsr += QString(" / Denoise %1").arg(denoiseName(e.denoise));
+        } else if (e.vsr_active && e.scale == 1 && e.denoise != -1) {
+            vsr += QString("Denoise %1").arg(denoiseName(e.denoise));
         } else {
             vsr += "off";
         }

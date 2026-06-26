@@ -43,6 +43,18 @@ This project calls the Video Effects SDK C API directly from a standalone player
 | glslc | (shader compiler, included in Vulkan SDK) |
 | C++ Compiler | GCC 13+ or Clang 18+ (C++20) |
 
+## Third-Party SDKs
+
+This project depends on two NVIDIA SDKs. See [third_party/README_en.md](third_party/README_en.md) for details.
+
+| SDK | Component | License | Obtain via |
+|-----|-----------|---------|------------|
+| CUDA Toolkit | Headers + NVRTC | NVIDIA Proprietary | `sudo pacman -S cuda` (or bundled in release) |
+| NvVFX | Headers | MIT | Bundled in repo |
+| NvVFX | Runtime (~1.1 GB) | NVIDIA Proprietary | `pip install nvidia-vfx` |
+
+> The NvVFX runtime is **not** included in release packages — NVIDIA's license does not permit redistribution. `install.sh` handles this automatically.
+
 ## Quick Start
 
 ### Install from Release (recommended)

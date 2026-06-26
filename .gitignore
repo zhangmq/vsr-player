@@ -6,7 +6,10 @@ build/
 cmake-build-*/
 third_party/*
 !third_party/.gitkeep
-!third_party/README.md
+!third_party/README_en.md
+!third_party/README_zh.md
+!third_party/nvvfx/include/
+!third_party/cuda/include/
 !third_party/fonts/
 *.swp
 *.swo

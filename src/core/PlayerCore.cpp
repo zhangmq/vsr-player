@@ -147,6 +147,7 @@ bool PlayerCore::is_light(const PlayerCommand& cmd) const {
         if constexpr (std::is_same_v<T, CmdSetHwaccel>) return true;
         if constexpr (std::is_same_v<T, CmdSetSpeed>)   return true;
         if constexpr (std::is_same_v<T, CmdCapture>) return true;
+        if constexpr (std::is_same_v<T, CmdSetQuality>) return true;
         if constexpr (std::is_same_v<T, CmdSetDenoiseQuality>) return true;
         return false;
     }, cmd);
@@ -231,6 +232,7 @@ void PlayerCore::dispatch(const PlayerCommand& cmd) {
             else if constexpr (std::is_same_v<T, CmdSetHwaccel>) cmd_set_hwaccel(arg.enabled);
             else if constexpr (std::is_same_v<T, CmdSetSpeed>)   cmd_set_speed(arg.speed);
             else if constexpr (std::is_same_v<T, CmdCapture>) cmd_capture();
+            else if constexpr (std::is_same_v<T, CmdSetQuality>) cmd_set_quality(arg.level);
             else if constexpr (std::is_same_v<T, CmdSetDenoiseQuality>) cmd_set_denoise_quality(arg.level);
         }, cmd);
         return;
@@ -973,6 +975,9 @@ void PlayerCore::cmd_set_scale(int s) {
     PlayerEvent info;
     info.type = PlayerEvent::FRAME_INFO;
     info.scale = current_scale_;
+    info.quality = quality_;
+    info.denoise = denoise_quality_;
+    info.vsr_active = (vsr_ && vsr_->is_ready());
     emit_event(info);
 }
 
