@@ -8,7 +8,7 @@
 // Common video extensions for filtering.
 static const QSet<QString> kExtensions = {
     "mp4", "mkv", "webm", "avi", "mov", "ts", "m2ts", "flv", "wmv",
-    "mpg", "mpeg", "m4v", "ogv", "divx", "webp"
+    "mpg", "mpeg", "m4v", "ogv", "divx", "webp", "rm", "rmvb", "dat"
 };
 
 PlaylistEngine::PlaylistEngine(QObject* parent) : QObject(parent) {}
