@@ -162,7 +162,11 @@ for cuda_dir in \
     "$HOME/cuda_pkg/opt/cuda/targets/x86_64-linux/lib"; do
     if [ -f "$cuda_dir/libnvrtc.so.13" ]; then
         cp "$cuda_dir/libnvrtc.so.13" "$INSTALL_DIR/lib/"
-        cp "$cuda_dir/libnvrtc-builtins.so.13.0" "$INSTALL_DIR/lib/"
+        # builtins may be .13.0, .13.3, etc — copy whichever exists
+        builtins=$(ls "$cuda_dir/libnvrtc-builtins.so."* 2>/dev/null | grep -v '\-static\|\.a$' | head -1)
+        if [ -n "$builtins" ]; then
+            cp "$builtins" "$INSTALL_DIR/lib/"
+        fi
         echo -e "  ${GREEN}✅ NVRTC from $cuda_dir${NC}"
         NVRTC_FOUND=1
         break
@@ -202,9 +206,10 @@ echo ""
 echo "Creating library symlinks..."
 cd "$INSTALL_DIR/lib"
 
-# NVRTC
+# NVRTC (builtins version varies: .13.0, .13.3, etc.)
 ln -sf libnvrtc.so.13 libnvrtc.so 2>/dev/null || true
-ln -sf libnvrtc-builtins.so.13.0 libnvrtc-builtins.so 2>/dev/null || true
+builtins_target=$(ls libnvrtc-builtins.so.* 2>/dev/null | grep -v '\.a$\|alt' | head -1)
+[ -n "$builtins_target" ] && ln -sf "$(basename "$builtins_target")" libnvrtc-builtins.so 2>/dev/null || true
 
 # VFX chain — map lib.<name>.so.<ver> → lib<name>.so
 for lib in libnvidia-ngx-vsr libnppc libnppial libnppicc libnppidei \
