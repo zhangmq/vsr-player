@@ -1,6 +1,4 @@
 input/
-__pycache__/
-*.pyc
 .venv/
 *.egg-info/
 dist/
@@ -14,6 +12,11 @@ third_party/*
 .clangd/
 # Brainstorming visual companion
 .superpowers/
+
+# Python cache (legacy)
+__pycache__/
+*.pyc
+.ruff_cache/
 
 # Debug screenshots
 screenshots/
