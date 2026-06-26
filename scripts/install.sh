@@ -158,7 +158,8 @@ for cuda_dir in \
     /opt/cuda/lib64 \
     /opt/cuda/targets/x86_64-linux/lib \
     /usr/local/cuda/lib64 \
-    /usr/local/cuda/targets/x86_64-linux/lib; do
+    /usr/local/cuda/targets/x86_64-linux/lib \
+    "$HOME/cuda_pkg/opt/cuda/targets/x86_64-linux/lib"; do
     if [ -f "$cuda_dir/libnvrtc.so.13" ]; then
         cp "$cuda_dir/libnvrtc.so.13" "$INSTALL_DIR/lib/"
         cp "$cuda_dir/libnvrtc-builtins.so.13.0" "$INSTALL_DIR/lib/"
@@ -168,22 +169,16 @@ for cuda_dir in \
     fi
 done
 
-# Also check pip-installed CUDA packages (nvidia-cuda-runtime-cu13, etc.)
+# Check pip-installed CUDA packages (nvidia-cu13, etc.)
 if [ "$NVRTC_FOUND" -eq 0 ]; then
     CUDA_PIP_LIB=$($PYTHON -c "
-import importlib.util, os
-for pkg in ['nvidia.cu13.nvrtc', 'nvidia_nvrtc_cu13']:
-    try:
-        spec = importlib.util.find_spec(pkg)
-        if spec and spec.origin:
-            pkg_dir = os.path.dirname(spec.origin)
-            for pat in ['lib/libnvrtc.so.13', 'libnvrtc.so.13']:
-                path = os.path.join(pkg_dir, pat)
-                if os.path.exists(path):
-                    print(os.path.dirname(path))
-                    raise StopIteration
-    except (ImportError, ModuleNotFoundError, StopIteration):
-        pass
+import os, site
+# Search all site-packages dirs for nvidia/cu*/lib/
+for sp in site.getsitepackages() + [site.getusersitepackages()]:
+    for root, dirs, files in os.walk(sp):
+        if os.path.basename(root) == 'lib' and 'nvidia' in root and 'libnvrtc.so.13' in files:
+            print(root)
+            raise StopIteration
 " 2>/dev/null)
 
     if [ -n "$CUDA_PIP_LIB" ]; then
@@ -196,8 +191,8 @@ fi
 
 if [ "$NVRTC_FOUND" -eq 0 ]; then
     echo -e "  ${RED}❌ libnvrtc.so.13 not found${NC}"
-    echo "  Install CUDA Toolkit: sudo pacman -S cuda"
-    echo "  Or: pip install nvidia-cuda-runtime-cu13 nvidia-nvrtc-cu13"
+    echo "  Install with: sudo pacman -S cuda"
+    echo "  Or: $PYTHON -m pip install nvidia-cuda-runtime-cu13"
     exit 1
 fi
 
