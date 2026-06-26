@@ -1,8 +1,14 @@
 # VSR Player
 
-Linux 桌面实时 AI 超分辨率视频播放器。使用 NVIDIA Video Effects SDK (NvVFX) 神经超分和降噪，全 GPU 管线，零 PCIe 拷贝。
+Linux 桌面实时 AI 超分辨率视频播放器。使用 NVIDIA Video Effects SDK 在视频播放过程中进行神经超分和降噪——全 GPU 管线，零 PCIe 拷贝。
 
-> 可能是首个直接使用 NvVFX SDK（而非驱动级 RTX VSR）的开源 Linux 播放器。Linux VFX SDK 目前在 NGC 上仍为 Early Access。
+## 背景
+
+NVIDIA RTX Video Super Resolution（RTX VSR）在 Windows 上已经可用了一段时间，通过驱动集成，浏览器和主流播放器都能直接调用。但在 Linux 上，这个驱动级接口并未开放，mpv、VLC 等播放器目前都无法使用 RTX VSR。
+
+NVIDIA Video Effects SDK 提供了相同的底层 AI 模型，也有 Linux 版本，但它并不是一个拿来就能用的依赖——目前还是 Early Access 状态，附带约 1 GB 的推理运行时，也没有现成的播放器集成路径。
+
+这个项目直接调用了 Video Effects SDK 的 C API，将其接入一个独立的播放器中。这不是一条特别合理的路线——这类处理逻辑理应放在驱动或合成器层面——只是在驱动级 VSR 尚未支持 Linux 的情况下的一个变通方案。
 
 ## 特性
 
@@ -33,28 +39,42 @@ Linux 桌面实时 AI 超分辨率视频播放器。使用 NVIDIA Video Effects 
 
 ## 快速开始
 
+### 从 Release 安装（推荐）
+
+从 [GitHub Releases](https://github.com/zhangmq/vsr-player/releases) 下载最新的 `vsr-player-<ver>-linux-x86_64.tar.gz`。
+
+```bash
+tar xzf vsr-player-*.tar.gz
+cd vsr-player-*
+./install.sh
+```
+
+添加到 PATH 后运行：
+
+```bash
+export PATH="$PATH:$HOME/vsr-player/bin"
+vsr-player /path/to/video.mp4
+```
+
+安装脚本会自动检测系统依赖、安装 NVIDIA VFX 运行时（`pip install nvidia-vfx`）并部署到 `~/vsr-player/`。无需 root。
+
+### 从源码构建
+
 ```bash
 # 1. 克隆
-git clone <repo-url>
+git clone https://github.com/zhangmq/vsr-player.git
 cd vsr-player
 
 # 2. 准备第三方依赖（详见 docs/BUILD.md）
-#    - CUDA 头文件来自 /opt/cuda
-#    - NvVFX 头文件来自 GitHub
-#    - NvVFX .so 文件来自 NGC 或 pip 包
+#    - CUDA 头文件/库放在 third_party/cuda/ 或设置 CUDA_HOME
+#    - NvVFX 头文件放在 third_party/nvvfx/include/（MIT，来自 GitHub）
+#    - NvVFX .so 放在 third_party/nvvfx/lib/（pip install nvidia-vfx）
 
-# 3. 编译着色器（一次性）
-glslc -fshader-stage=vert src/client/shaders/video.vert -o build/video.vert.spv
-glslc -fshader-stage=frag src/client/shaders/video.frag -o build/video.frag.spv
-glslc -fshader-stage=frag src/client/shaders/nv12.frag -o build/nv12.frag.spv
-
-# 4. 构建
+# 3. 构建（着色器编译已包含）
 make -j$(nproc)
 
-# 5. 运行
+# 4. 运行
 ./build/vsr-player /path/to/video.mp4
-# 或打开文件夹
-./build/vsr-player /path/to/videos/
 ```
 
 ## 命令行参数

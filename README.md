@@ -1,8 +1,14 @@
 # VSR Player
 
-Real-time AI super-resolution video player for Linux. Applies NVIDIA Video Effects SDK (NvVFX) neural upscaling and denoising to video playback — all on GPU, zero PCIe copies.
+Real-time AI super-resolution video player for Linux. Uses the NVIDIA Video Effects SDK to apply neural upscaling and denoising during video playback — all on GPU, zero PCIe copies.
 
-> Likely the first open-source Linux player using the NvVFX SDK directly (not driver-level RTX VSR). The Linux VFX SDK is still Early Access on NGC.
+## Background
+
+NVIDIA RTX Video Super Resolution (RTX VSR) has been available on Windows for some time, integrated through the driver and supported by browsers and media players. On Linux, however, this driver-level interface is not exposed, and mainstream players (mpv, VLC, etc.) currently have no way to use RTX VSR.
+
+The NVIDIA Video Effects SDK provides access to the same underlying AI models and does offer a Linux version, but it is not a straightforward dependency — it ships as an Early Access SDK with a substantial inference runtime (~1 GB), and there is no established integration path into existing players.
+
+This project calls the Video Effects SDK C API directly from a standalone player. This is not an ideal approach — processing of this kind belongs at the driver or compositor level — and exists only as a workaround until the driver-level VSR interface becomes available on Linux.
 
 ## Features
 
@@ -33,28 +39,42 @@ Real-time AI super-resolution video player for Linux. Applies NVIDIA Video Effec
 
 ## Quick Start
 
+### Install from Release (recommended)
+
+Download the latest `vsr-player-<ver>-linux-x86_64.tar.gz` from [GitHub Releases](https://github.com/zhangmq/vsr-player/releases).
+
+```bash
+tar xzf vsr-player-*.tar.gz
+cd vsr-player-*
+./install.sh
+```
+
+Add to PATH and run:
+
+```bash
+export PATH="$PATH:$HOME/vsr-player/bin"
+vsr-player /path/to/video.mp4
+```
+
+The installer handles system dependency checks, NVIDIA VFX runtime (`pip install nvidia-vfx`), and deployment to `~/vsr-player/`. No root required.
+
+### Build from Source
+
 ```bash
 # 1. Clone
-git clone <repo-url>
+git clone https://github.com/zhangmq/vsr-player.git
 cd vsr-player
 
-# 2. Setup third-party dependencies (see docs/BUILD.md for details)
-#    - CUDA headers from /opt/cuda
-#    - NvVFX headers from GitHub
-#    - NvVFX .so files from NGC or pip package
+# 2. Setup third-party dependencies (see docs/BUILD.md)
+#    - CUDA headers/libs at third_party/cuda/ or set CUDA_HOME
+#    - NvVFX headers at third_party/nvvfx/include/ (MIT, from GitHub)
+#    - NvVFX .so at third_party/nvvfx/lib/ (pip install nvidia-vfx)
 
-# 3. Compile shaders (one-time)
-glslc -fshader-stage=vert src/client/shaders/video.vert -o build/video.vert.spv
-glslc -fshader-stage=frag src/client/shaders/video.frag -o build/video.frag.spv
-glslc -fshader-stage=frag src/client/shaders/nv12.frag -o build/nv12.frag.spv
-
-# 4. Build
+# 3. Build (shader compilation included)
 make -j$(nproc)
 
-# 5. Run
+# 4. Run
 ./build/vsr-player /path/to/video.mp4
-# or open a folder
-./build/vsr-player /path/to/videos/
 ```
 
 ## CLI Options

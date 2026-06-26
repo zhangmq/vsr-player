@@ -36,31 +36,21 @@ sudo apt install -y \
 
 ## Third-Party Dependencies
 
-The project bundles two sets of third-party files in `third_party/` (not tracked by git):
-
 ### CUDA Toolkit (headers + NVRTC)
 
 Required for: CUDA driver API, runtime kernel compilation (NV12→RGB).
 
-**From system CUDA installation (recommended):**
+The Makefile uses `CUDA_HOME` environment variable (defaults to `third_party/cuda` if not set). Install CUDA Toolkit and point to it:
 
 ```bash
 # Arch Linux
 sudo pacman -S cuda
 
-# Copy required files
-cp /opt/cuda/include/cuda.h              third_party/cuda/include/
-cp /opt/cuda/include/nvrtc.h             third_party/cuda/include/
-cp /opt/cuda/lib64/libnvrtc.so.13        third_party/cuda/lib/
-cp /opt/cuda/lib64/libnvrtc-builtins.so.13.0 third_party/cuda/lib/
-
-# Create unversioned symlinks
-cd third_party/cuda/lib
-ln -sf libnvrtc.so.13            libnvrtc.so
-ln -sf libnvrtc-builtins.so.13.0 libnvrtc-builtins.so
+# Point Makefile to your CUDA installation
+export CUDA_HOME=/opt/cuda
 ```
 
-> After copying, you can uninstall CUDA Toolkit (`sudo pacman -R cuda`) — the project only needs these 4 files.
+> If CUDA is installed at a non-standard path, set `CUDA_HOME` accordingly. The Makefile expects `$CUDA_HOME/include/` and `$CUDA_HOME/lib/`.
 
 ### NvVFX SDK Headers (MIT License)
 
@@ -75,24 +65,40 @@ cp nvidia-maxine-vfx/nvvfx/include/nvVideoEffects.h  third_party/nvvfx/include/
 
 ### NvVFX SDK Runtime Libraries (NVIDIA Proprietary)
 
-Required for: AI upscale/denoise inference.
-
-**Option A — From NGC (Early Access, enterprise account required):**
-
-Download from [NVIDIA NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/maxine/collections/maxine_linux_vfx_sdk_collection_ea) and copy all `.so*` files to `third_party/nvvfx/lib/`.
-
-**Option B — From pip package (if you have access):**
-
-The pip package includes pre-built `.so` files. Copy from the package's `libs/` directory.
-
-**Create unversioned symlinks:**
+Required for: AI upscale/denoise inference. Install via pip:
 
 ```bash
+pip install nvidia-vfx
+
+# Copy .so files to third_party/
+python3 -c "
+import importlib.util, os, shutil
+spec = importlib.util.find_spec('nvidia_vfx')
+pkg_dir = os.path.dirname(spec.origin)
+lib_dir = os.path.join(pkg_dir, 'libs')
+for f in os.listdir(lib_dir):
+    shutil.copy2(os.path.join(lib_dir, f), 'third_party/nvvfx/lib/')
+"
+
+# Create unversioned symlinks
 cd third_party/nvvfx/lib
 for lib in libnvidia-ngx-vsr libnppc libnppial libnppicc libnppidei \
            libnppif libnppig libnppim libnppist libnppitc \
            libnvinfer libnvinfer_plugin libnvonnxparser libcudnn; do
     ln -sf $(ls ${lib}.so.* | head -1) ${lib}.so
+done
+```
+
+> The pip package `nvidia-vfx` bundles all required .so files (TensorRT, cuDNN, NPP, etc.). No NGC account required.
+
+### Material Icons Font
+
+Bundled in `third_party/fonts/`. Downloaded automatically during build. If missing:
+
+```bash
+curl -L -o third_party/fonts/MaterialIcons-Regular.ttf \
+  https://raw.githubusercontent.com/google/material-design-icons/master/font/MaterialIcons-Regular.ttf
+```
 done
 ```
 
@@ -182,3 +188,21 @@ Ensure third-party dependencies are in place:
 ```bash
 ./scripts/check-deps.sh
 ```
+
+## Installing from Release
+
+Download the latest `vsr-player-<ver>-linux-x86_64.tar.gz` from [GitHub Releases](https://github.com/zhangmq/vsr-player/releases).
+
+```bash
+tar xzf vsr-player-*.tar.gz
+cd vsr-player-*
+./install.sh
+```
+
+The installer will:
+1. Check system dependencies (Qt, FFmpeg, Vulkan, PortAudio, NVIDIA driver)
+2. Install `nvidia-vfx` via pip and deploy `.so` files
+3. Locate CUDA NVRTC from system or pip
+4. Copy binary, QML, shaders, and font to `~/vsr-player/`
+
+No root required. Add `~/vsr-player/bin` to `PATH` and run `vsr-player <video>`.

@@ -10,7 +10,7 @@ Item {
 
     FontLoader {
         id: materialIcons
-        source: "file:///usr/share/fonts/TTF/MaterialIcons-Regular.ttf"
+        source: fontPath
     }
     readonly property string iconFont: materialIcons.name
 
