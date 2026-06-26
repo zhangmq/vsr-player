@@ -33,28 +33,42 @@ Linux 桌面实时 AI 超分辨率视频播放器。使用 NVIDIA Video Effects 
 
 ## 快速开始
 
+### 从 Release 安装（推荐）
+
+从 [GitHub Releases](https://github.com/zhangmq/vsr-player/releases) 下载最新的 `vsr-player-<ver>-linux-x86_64.tar.gz`。
+
+```bash
+tar xzf vsr-player-*.tar.gz
+cd vsr-player-*
+./install.sh
+```
+
+添加到 PATH 后运行：
+
+```bash
+export PATH="$PATH:$HOME/vsr-player/bin"
+vsr-player /path/to/video.mp4
+```
+
+安装脚本会自动检测系统依赖、安装 NVIDIA VFX 运行时（`pip install nvidia-vfx`）并部署到 `~/vsr-player/`。无需 root。
+
+### 从源码构建
+
 ```bash
 # 1. 克隆
-git clone <repo-url>
+git clone https://github.com/zhangmq/vsr-player.git
 cd vsr-player
 
 # 2. 准备第三方依赖（详见 docs/BUILD.md）
-#    - CUDA 头文件来自 /opt/cuda
-#    - NvVFX 头文件来自 GitHub
-#    - NvVFX .so 文件来自 NGC 或 pip 包
+#    - CUDA 头文件/库放在 third_party/cuda/ 或设置 CUDA_HOME
+#    - NvVFX 头文件放在 third_party/nvvfx/include/（MIT，来自 GitHub）
+#    - NvVFX .so 放在 third_party/nvvfx/lib/（pip install nvidia-vfx）
 
-# 3. 编译着色器（一次性）
-glslc -fshader-stage=vert src/client/shaders/video.vert -o build/video.vert.spv
-glslc -fshader-stage=frag src/client/shaders/video.frag -o build/video.frag.spv
-glslc -fshader-stage=frag src/client/shaders/nv12.frag -o build/nv12.frag.spv
-
-# 4. 构建
+# 3. 构建（着色器编译已包含）
 make -j$(nproc)
 
-# 5. 运行
+# 4. 运行
 ./build/vsr-player /path/to/video.mp4
-# 或打开文件夹
-./build/vsr-player /path/to/videos/
 ```
 
 ## 命令行参数

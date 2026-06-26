@@ -33,28 +33,42 @@ Real-time AI super-resolution video player for Linux. Applies NVIDIA Video Effec
 
 ## Quick Start
 
+### Install from Release (recommended)
+
+Download the latest `vsr-player-<ver>-linux-x86_64.tar.gz` from [GitHub Releases](https://github.com/zhangmq/vsr-player/releases).
+
+```bash
+tar xzf vsr-player-*.tar.gz
+cd vsr-player-*
+./install.sh
+```
+
+Add to PATH and run:
+
+```bash
+export PATH="$PATH:$HOME/vsr-player/bin"
+vsr-player /path/to/video.mp4
+```
+
+The installer handles system dependency checks, NVIDIA VFX runtime (`pip install nvidia-vfx`), and deployment to `~/vsr-player/`. No root required.
+
+### Build from Source
+
 ```bash
 # 1. Clone
-git clone <repo-url>
+git clone https://github.com/zhangmq/vsr-player.git
 cd vsr-player
 
-# 2. Setup third-party dependencies (see docs/BUILD.md for details)
-#    - CUDA headers from /opt/cuda
-#    - NvVFX headers from GitHub
-#    - NvVFX .so files from NGC or pip package
+# 2. Setup third-party dependencies (see docs/BUILD.md)
+#    - CUDA headers/libs at third_party/cuda/ or set CUDA_HOME
+#    - NvVFX headers at third_party/nvvfx/include/ (MIT, from GitHub)
+#    - NvVFX .so at third_party/nvvfx/lib/ (pip install nvidia-vfx)
 
-# 3. Compile shaders (one-time)
-glslc -fshader-stage=vert src/client/shaders/video.vert -o build/video.vert.spv
-glslc -fshader-stage=frag src/client/shaders/video.frag -o build/video.frag.spv
-glslc -fshader-stage=frag src/client/shaders/nv12.frag -o build/nv12.frag.spv
-
-# 4. Build
+# 3. Build (shader compilation included)
 make -j$(nproc)
 
-# 5. Run
+# 4. Run
 ./build/vsr-player /path/to/video.mp4
-# or open a folder
-./build/vsr-player /path/to/videos/
 ```
 
 ## CLI Options
