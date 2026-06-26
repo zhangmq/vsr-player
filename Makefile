@@ -160,6 +160,28 @@ $(BUILD_DIR)/tests/test_interop: tests/test_interop.cpp src/core/utils/InteropTe
 	@mkdir -p $(BUILD_DIR)/tests
 	$(CXX) -std=c++20 -O0 -g -Wall -Isrc/core -Isrc/core/utils -I$(CUDA_INC) $(shell pkg-config --cflags vulkan) $^ $(shell pkg-config --libs vulkan) -L$(CUDA_LIB) -lcuda -ldl -o $@
 
+# ── Release packaging ──────────────────────────────────────────────
+
+VERSION ?= 0.1.0
+RELEASE_DIR := $(BUILD_DIR)/release/vsr-player-$(VERSION)-linux-x86_64
+RELEASE_TGZ := $(BUILD_DIR)/vsr-player-$(VERSION)-linux-x86_64.tar.gz
+
+release: all
+	@echo "  PKG   $(notdir $(RELEASE_TGZ))"
+	@mkdir -p $(RELEASE_DIR)/bin
+	@mkdir -p $(RELEASE_DIR)/lib/fonts
+	@mkdir -p $(RELEASE_DIR)/share/vsr-player/{qml,shaders}
+	@cp $(BIN) $(RELEASE_DIR)/bin/
+	@cp $(CLIENTDIR)/ui/*.qml $(RELEASE_DIR)/share/vsr-player/qml/
+	@cp -r $(CLIENTDIR)/ui/components $(RELEASE_DIR)/share/vsr-player/qml/
+	@cp $(BUILD_DIR)/*.spv $(RELEASE_DIR)/share/vsr-player/shaders/ 2>/dev/null || true
+	@cp third_party/fonts/MaterialIcons-Regular.ttf $(RELEASE_DIR)/lib/fonts/
+	@cp $(CUDA_LIB)/libnvrtc.so.13 $(RELEASE_DIR)/lib/ 2>/dev/null || true
+	@cp $(CUDA_LIB)/libnvrtc-builtins.so.13.0 $(RELEASE_DIR)/lib/ 2>/dev/null || true
+	@cp scripts/install.sh $(RELEASE_DIR)/
+	@cd $(RELEASE_DIR)/.. && tar czf $(CURDIR)/$(RELEASE_TGZ) $(notdir $(RELEASE_DIR))
+	@echo "  ✅  $(RELEASE_TGZ)"
+
 # ── Clean ────────────────────────────────────────────────────────────
 
 clean:
@@ -172,4 +194,5 @@ debug:
 help:
 	@echo "make         — release build"
 	@echo "make debug   — debug build"
+	@echo "make release — create release tarball"
 	@echo "make clean   — remove build/"
