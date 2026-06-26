@@ -69,32 +69,51 @@ mkdir -p "$INSTALL_DIR"/{bin,lib/fonts,share/vsr-player/{qml,shaders},screenshot
 echo ""
 echo "Copying application files..."
 
-# Binary
-if [ -f "$SRC_DIR/build/vsr-player" ]; then
-    cp "$SRC_DIR/build/vsr-player" "$INSTALL_DIR/bin/"
-    echo "  ✅ vsr-player (from build/)"
-elif [ -f "$SRC_DIR/bin/vsr-player" ]; then
+# Binary — release: bin/  |  dev: build/
+if [ -f "$SRC_DIR/bin/vsr-player" ]; then
     cp "$SRC_DIR/bin/vsr-player" "$INSTALL_DIR/bin/"
-    echo "  ✅ vsr-player (from bin/)"
+    echo "  ✅ vsr-player (release)"
+elif [ -f "$SRC_DIR/build/vsr-player" ]; then
+    cp "$SRC_DIR/build/vsr-player" "$INSTALL_DIR/bin/"
+    echo "  ✅ vsr-player (dev build)"
 else
     echo -e "  ${RED}❌ vsr-player binary not found${NC}"
     exit 1
 fi
 
-# QML components
-cp "$SRC_DIR/src/client/ui/overlay.qml" "$INSTALL_DIR/share/vsr-player/qml/"
-cp "$SRC_DIR/src/client/ui"/*.qml "$INSTALL_DIR/share/vsr-player/qml/" 2>/dev/null || true
-cp -r "$SRC_DIR/src/client/ui/components" "$INSTALL_DIR/share/vsr-player/qml/" 2>/dev/null || true
-echo "  ✅ QML components"
+# QML — release: share/vsr-player/qml/  |  dev: src/client/ui/
+if [ -d "$SRC_DIR/share/vsr-player/qml" ]; then
+    cp -r "$SRC_DIR/share/vsr-player/qml"/* "$INSTALL_DIR/share/vsr-player/qml/"
+    echo "  ✅ QML (release)"
+elif [ -d "$SRC_DIR/src/client/ui" ]; then
+    cp "$SRC_DIR/src/client/ui/overlay.qml" "$INSTALL_DIR/share/vsr-player/qml/"
+    cp "$SRC_DIR/src/client/ui"/*.qml "$INSTALL_DIR/share/vsr-player/qml/" 2>/dev/null || true
+    cp -r "$SRC_DIR/src/client/ui/components" "$INSTALL_DIR/share/vsr-player/qml/" 2>/dev/null || true
+    echo "  ✅ QML (dev)"
+else
+    echo -e "  ${RED}❌ QML components not found${NC}"; exit 1
+fi
 
-# Shaders
-cp "$SRC_DIR/build"/*.vert.spv "$INSTALL_DIR/share/vsr-player/shaders/" 2>/dev/null || true
-cp "$SRC_DIR/build"/*.frag.spv "$INSTALL_DIR/share/vsr-player/shaders/" 2>/dev/null || true
-echo "  ✅ Shaders"
+# Shaders — release: share/vsr-player/shaders/  |  dev: build/
+if [ -d "$SRC_DIR/share/vsr-player/shaders" ]; then
+    cp "$SRC_DIR/share/vsr-player/shaders"/* "$INSTALL_DIR/share/vsr-player/shaders/"
+    echo "  ✅ Shaders (release)"
+else
+    cp "$SRC_DIR/build"/*.vert.spv "$INSTALL_DIR/share/vsr-player/shaders/" 2>/dev/null || true
+    cp "$SRC_DIR/build"/*.frag.spv "$INSTALL_DIR/share/vsr-player/shaders/" 2>/dev/null || true
+    echo "  ✅ Shaders (dev)"
+fi
 
-# Font
-cp "$SRC_DIR/third_party/fonts/MaterialIcons-Regular.ttf" "$INSTALL_DIR/lib/fonts/"
-echo "  ✅ Font"
+# Font — release: lib/fonts/  |  dev: third_party/fonts/
+if [ -f "$SRC_DIR/lib/fonts/MaterialIcons-Regular.ttf" ]; then
+    cp "$SRC_DIR/lib/fonts/MaterialIcons-Regular.ttf" "$INSTALL_DIR/lib/fonts/"
+    echo "  ✅ Font (release)"
+elif [ -f "$SRC_DIR/third_party/fonts/MaterialIcons-Regular.ttf" ]; then
+    cp "$SRC_DIR/third_party/fonts/MaterialIcons-Regular.ttf" "$INSTALL_DIR/lib/fonts/"
+    echo "  ✅ Font (dev)"
+else
+    echo -e "  ${RED}❌ Font not found${NC}"; exit 1
+fi
 
 # ── 4. Install nvidia-vfx runtime ──────────────────────────────────────
 
@@ -102,17 +121,11 @@ echo ""
 echo "Installing NVIDIA VFX runtime..."
 
 PYTHON=""
-# Search: conda/mamba env first, then system
-for py_base in \
-    "$CONDA_PREFIX/bin/python3" \
-    "$MAMBA_ROOT_PREFIX/bin/python3" \
-    "$HOME/miniforge3/bin/python3" \
-    "$HOME/mambaforge/bin/python3" \
-    /usr/bin/python3 \
-    /usr/local/bin/python3; do
-    if [ -x "$py_base" ] && "$py_base" -m pip --version &>/dev/null 2>&1; then
-        PYTHON="$py_base"
-        break
+# Search: conda/mamba env first, then PATH
+for py_base in "${CONDA_PREFIX:+$CONDA_PREFIX/bin/python3}" \
+               "${MAMBA_ROOT_PREFIX:+$MAMBA_ROOT_PREFIX/bin/python3}"; do
+    if [ -n "$py_base" ] && [ -x "$py_base" ] && "$py_base" -m pip --version &>/dev/null 2>&1; then
+        PYTHON="$py_base"; break
     fi
 done
 
@@ -121,8 +134,7 @@ if [ -z "$PYTHON" ]; then
     for py in python3 python; do
         py_path=$(command -v "$py" 2>/dev/null || true)
         if [ -n "$py_path" ] && "$py_path" -m pip --version &>/dev/null 2>&1; then
-            PYTHON="$py_path"
-            break
+            PYTHON="$py_path"; break
         fi
     done
 fi
