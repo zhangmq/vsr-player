@@ -23,6 +23,10 @@ This project calls the Video Effects SDK C API directly from a standalone player
 
 ## Screenshots
 
+![Player UI](docs/images/player-screenshot.jpg)
+
+### VSR Comparison
+
 **Original (720p)**
 
 ![Original 720p frame](example/00003_orig.jpg)
