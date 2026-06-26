@@ -157,37 +157,26 @@ NVRTC_FOUND=0
 for cuda_dir in \
     /opt/cuda/lib64 \
     /opt/cuda/targets/x86_64-linux/lib \
-    /usr/local/cuda/lib64 \
-    /usr/local/cuda/targets/x86_64-linux/lib \
-    "$HOME/cuda_pkg/opt/cuda/targets/x86_64-linux/lib"; do
+    /usr/local/cuda/lib64; do
     if [ -f "$cuda_dir/libnvrtc.so.13" ]; then
         cp "$cuda_dir/libnvrtc.so.13" "$INSTALL_DIR/lib/"
-        # builtins may be .13.0, .13.3, etc — copy whichever exists
-        builtins=$(ls "$cuda_dir/libnvrtc-builtins.so."* 2>/dev/null | grep -v '\-static\|\.a$' | head -1)
-        if [ -n "$builtins" ]; then
-            cp "$builtins" "$INSTALL_DIR/lib/"
-        fi
+        builtins=$(ls "$cuda_dir/libnvrtc-builtins.so."* 2>/dev/null | grep -v '\.a$' | head -1)
+        [ -n "$builtins" ] && cp "$builtins" "$INSTALL_DIR/lib/"
         echo -e "  ${GREEN}✅ NVRTC from $cuda_dir${NC}"
         NVRTC_FOUND=1
         break
     fi
 done
 
-# Check pip-installed CUDA packages (nvidia-cu13, etc.)
+# Check pip-installed CUDA packages (nvidia-cu13)
 if [ "$NVRTC_FOUND" -eq 0 ]; then
-    CUDA_PIP_LIB=$($PYTHON -c "
-import os, site
-# Search all site-packages dirs for nvidia/cu*/lib/
-for sp in site.getsitepackages() + [site.getusersitepackages()]:
-    for root, dirs, files in os.walk(sp):
-        if os.path.basename(root) == 'lib' and 'nvidia' in root and 'libnvrtc.so.13' in files:
-            print(root)
-            raise StopIteration
-" 2>/dev/null)
-
-    if [ -n "$CUDA_PIP_LIB" ]; then
-        cp "$CUDA_PIP_LIB/libnvrtc.so.13" "$INSTALL_DIR/lib/"
-        cp "$CUDA_PIP_LIB/libnvrtc-builtins.so.13.0" "$INSTALL_DIR/lib/"
+    CUDA_PIP=$($PYTHON -m pip show nvidia-cu13 2>/dev/null | grep "^Location:" | awk '{print $2}')
+    if [ -z "$CUDA_PIP" ]; then
+        CUDA_PIP=$($PYTHON -m pip show nvidia-nvrtc-cu13 2>/dev/null | grep "^Location:" | awk '{print $2}')
+    fi
+    if [ -n "$CUDA_PIP" ] && [ -f "$CUDA_PIP/nvidia/cu13/lib/libnvrtc.so.13" ]; then
+        cp "$CUDA_PIP/nvidia/cu13/lib/libnvrtc.so.13" "$INSTALL_DIR/lib/"
+        cp "$CUDA_PIP/nvidia/cu13/lib/libnvrtc-builtins.so.13.0" "$INSTALL_DIR/lib/"
         echo -e "  ${GREEN}✅ NVRTC from pip CUDA package${NC}"
         NVRTC_FOUND=1
     fi
