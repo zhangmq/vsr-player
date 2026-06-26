@@ -103,6 +103,18 @@ int main(int argc, char* argv[]) {
     QGuiApplication app(argc, argv);
     app.setApplicationName("VSR Player");
 
+    // ── Resource paths (installed vs dev tree) ───────────────────────
+
+    QString appDir = QCoreApplication::applicationDirPath();
+    QString installShare = appDir + "/../share/vsr-player";
+    bool installed = QFile::exists(installShare + "/qml");
+
+    QString qmlDir   = installed ? installShare + "/qml"     : appDir + "/../src/client/ui";
+    QString resDir   = installed ? appDir + "/.."            : appDir + "/..";
+    QString fontFile = installed ? appDir + "/../lib/fonts/MaterialIcons-Regular.ttf"
+                                 : "/usr/share/fonts/TTF/MaterialIcons-Regular.ttf";
+    QString screenshotDir = installed ? appDir + "/../screenshots" : "screenshots";
+
     // ── CLI parsing ─────────────────────────────────────────────────
 
     bool no_hwaccel = false;
@@ -185,6 +197,8 @@ int main(int argc, char* argv[]) {
     // ── Controller + PlaylistEngine + KeyFilter ────────────────────
 
     view.rootContext()->setContextProperty("window", &view);  // QQuickView* → QML's 'window'
+    view.rootContext()->setContextProperty("fontPath",
+        QUrl::fromLocalFile(fontFile).toString());
 
     vsr::PlayerViewModel viewModel;
     view.rootContext()->setContextProperty("viewModel", &viewModel);
@@ -287,15 +301,18 @@ int main(int argc, char* argv[]) {
                         break;
                     case vsr::PlayerEvent::FRAME_CAPTURED: {
                         static int shot_n = 0;
-                        mkdir("screenshots", 0755);
-                        char path[256];
+                        QByteArray ssDir = screenshotDir.toLocal8Bit();
+                        mkdir(ssDir.constData(), 0755);
+                        char path[512];
 
-                        snprintf(path, sizeof(path), "screenshots/%05d_orig.png", shot_n);
+                        snprintf(path, sizeof(path), "%s/%05d_orig.png",
+                                 ssDir.constData(), shot_n);
                         vsr::save_png(path, e.capture_orig_data,
                                       e.capture_orig_w, e.capture_orig_h);
 
                         if (e.capture_vsr_data) {
-                            snprintf(path, sizeof(path), "screenshots/%05d_vsr.png", shot_n);
+                            snprintf(path, sizeof(path), "%s/%05d_vsr.png",
+                                     ssDir.constData(), shot_n);
                             vsr::save_png(path, e.capture_vsr_data,
                                           e.capture_vsr_w, e.capture_vsr_h);
                         }
@@ -386,8 +403,7 @@ int main(int argc, char* argv[]) {
 
     // ── Load QML overlay ────────────────────────────────────────────
 
-    view.setSource(QUrl::fromLocalFile(
-        "/home/zmq/projects/vsr-player/src/client/ui/overlay.qml"));
+    view.setSource(QUrl::fromLocalFile(qmlDir + "/overlay.qml"));
 
     // Wire C++ KeyFilter::togglePlaylist → QML root object
     {
