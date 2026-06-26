@@ -148,44 +148,22 @@ else
     exit 1
 fi
 
-# ── 5. Copy CUDA NVRTC libraries ───────────────────────────────────────
+# ── 5. Copy bundled NVRTC libraries ─────────────────────────────────────
 
 echo ""
-echo "Locating CUDA NVRTC libraries..."
+echo "Copying NVRTC libraries..."
 
-NVRTC_FOUND=0
-for cuda_dir in \
-    /opt/cuda/lib64 \
-    /opt/cuda/targets/x86_64-linux/lib \
-    /usr/local/cuda/lib64; do
-    if [ -f "$cuda_dir/libnvrtc.so.13" ]; then
-        cp "$cuda_dir/libnvrtc.so.13" "$INSTALL_DIR/lib/"
-        builtins=$(ls "$cuda_dir/libnvrtc-builtins.so."* 2>/dev/null | grep -v '\.a$' | head -1)
-        [ -n "$builtins" ] && cp "$builtins" "$INSTALL_DIR/lib/"
-        echo -e "  ${GREEN}✅ NVRTC from $cuda_dir${NC}"
-        NVRTC_FOUND=1
-        break
-    fi
-done
-
-# Check pip-installed CUDA packages (nvidia-cu13)
-if [ "$NVRTC_FOUND" -eq 0 ]; then
-    CUDA_PIP=$($PYTHON -m pip show nvidia-cu13 2>/dev/null | grep "^Location:" | awk '{print $2}')
-    if [ -z "$CUDA_PIP" ]; then
-        CUDA_PIP=$($PYTHON -m pip show nvidia-nvrtc-cu13 2>/dev/null | grep "^Location:" | awk '{print $2}')
-    fi
-    if [ -n "$CUDA_PIP" ] && [ -f "$CUDA_PIP/nvidia/cu13/lib/libnvrtc.so.13" ]; then
-        cp "$CUDA_PIP/nvidia/cu13/lib/libnvrtc.so.13" "$INSTALL_DIR/lib/"
-        cp "$CUDA_PIP/nvidia/cu13/lib/libnvrtc-builtins.so.13.0" "$INSTALL_DIR/lib/"
-        echo -e "  ${GREEN}✅ NVRTC from pip CUDA package${NC}"
-        NVRTC_FOUND=1
-    fi
-fi
-
-if [ "$NVRTC_FOUND" -eq 0 ]; then
-    echo -e "  ${RED}❌ libnvrtc.so.13 not found${NC}"
-    echo "  Install with: sudo pacman -S cuda"
-    echo "  Or: $PYTHON -m pip install nvidia-cuda-runtime-cu13"
+if [ -f "$SRC_DIR/lib/libnvrtc.so.13" ]; then
+    cp "$SRC_DIR/lib/libnvrtc.so.13" "$INSTALL_DIR/lib/"
+    cp "$SRC_DIR/lib/libnvrtc-builtins.so.13.0" "$INSTALL_DIR/lib/"
+    echo -e "  ${GREEN}✅ NVRTC (bundled)${NC}"
+elif [ -f "$SRC_DIR/third_party/cuda/lib/libnvrtc.so.13" ]; then
+    # Dev mode fallback
+    cp "$SRC_DIR/third_party/cuda/lib/libnvrtc.so.13" "$INSTALL_DIR/lib/"
+    cp "$SRC_DIR/third_party/cuda/lib/libnvrtc-builtins.so.13.0" "$INSTALL_DIR/lib/"
+    echo -e "  ${GREEN}✅ NVRTC (from third_party/cuda)${NC}"
+else
+    echo -e "  ${RED}❌ libnvrtc.so.13 not bundled in release${NC}"
     exit 1
 fi
 
