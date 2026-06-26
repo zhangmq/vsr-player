@@ -102,12 +102,30 @@ echo ""
 echo "Installing NVIDIA VFX runtime..."
 
 PYTHON=""
-for py in python3 python; do
-    if command -v "$py" &>/dev/null && "$py" -m pip --version &>/dev/null; then
-        PYTHON="$py"
+# Search: conda/mamba env first, then system
+for py_base in \
+    "$CONDA_PREFIX/bin/python3" \
+    "$MAMBA_ROOT_PREFIX/bin/python3" \
+    "$HOME/miniforge3/bin/python3" \
+    "$HOME/mambaforge/bin/python3" \
+    /usr/bin/python3 \
+    /usr/local/bin/python3; do
+    if [ -x "$py_base" ] && "$py_base" -m pip --version &>/dev/null 2>&1; then
+        PYTHON="$py_base"
         break
     fi
 done
+
+# Fallback: walk PATH
+if [ -z "$PYTHON" ]; then
+    for py in python3 python; do
+        py_path=$(command -v "$py" 2>/dev/null || true)
+        if [ -n "$py_path" ] && "$py_path" -m pip --version &>/dev/null 2>&1; then
+            PYTHON="$py_path"
+            break
+        fi
+    done
+fi
 
 if [ -z "$PYTHON" ]; then
     echo -e "  ${RED}❌ python3 with pip not found. Install Python and pip first.${NC}"
@@ -120,8 +138,8 @@ $PYTHON -m pip install nvidia-vfx 2>&1 | tail -1
 # Find the installed package's libs directory via pip show
 VFX_LOCATION=$($PYTHON -m pip show nvidia-vfx 2>/dev/null | grep "^Location:" | awk '{print $2}')
 
-if [ -n "$VFX_LOCATION" ] && [ -d "$VFX_LOCATION/nvidia_vfx/libs" ]; then
-    VFX_LIB_DIR="$VFX_LOCATION/nvidia_vfx/libs"
+if [ -n "$VFX_LOCATION" ] && [ -d "$VFX_LOCATION/nvvfx/libs" ]; then
+    VFX_LIB_DIR="$VFX_LOCATION/nvvfx/libs"
     cp "$VFX_LIB_DIR"/*.so* "$INSTALL_DIR/lib/"
     echo -e "  ${GREEN}✅ VFX runtime copied from $VFX_LIB_DIR${NC}"
 else
