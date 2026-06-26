@@ -8,10 +8,10 @@ CLIENTDIR := src/client
 CXX := g++
 PKGS := Qt6Quick vulkan libavcodec libavformat libavutil libswscale wayland-client portaudio-2.0
 
-# CUDA include / lib paths (bundled in third_party/)
-CUDA_DIR := third_party/cuda
-CUDA_INC  := $(CUDA_DIR)/include
-CUDA_LIB  := $(CUDA_DIR)/lib
+# CUDA include / lib paths
+CUDA_HOME ?= third_party/cuda
+CUDA_INC := $(CUDA_HOME)/include
+CUDA_LIB := $(CUDA_HOME)/lib
 
 QT6_GUI_VER := $(shell pkg-config --modversion Qt6Gui 2>/dev/null)
 QPA_INC := /usr/include/qt6/QtGui/$(QT6_GUI_VER)/
@@ -28,9 +28,8 @@ LDFLAGS  := $(shell pkg-config --libs $(PKGS)) \
             -L$(CUDA_LIB) -lnvrtc -lnvrtc-builtins \
             -lcuda -ldl -lpng16 \
             -Wl,--disable-new-dtags \
-            -Wl,-rpath,/home/zmq/projects/vsr-player/third_party/cuda/lib \
-            -Lthird_party/nvvfx/lib -lNVCVImage \
-            -Wl,-rpath,/home/zmq/projects/vsr-player/third_party/nvvfx/lib
+            -Wl,-rpath,'$$ORIGIN'/../lib:'$$ORIGIN'/../third_party/nvvfx/lib:'$$ORIGIN'/../third_party/cuda/lib \
+            -Lthird_party/nvvfx/lib -lNVCVImage
 
 MOC := /usr/lib/qt6/moc
 GLSLC := glslc
