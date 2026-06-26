@@ -6,7 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Linux desktop video player that applies real-time AI super-resolution to video playback using the NVIDIA Video Effects SDK C API. The player decodes video via NVDEC, upscales/denoises each frame on the GPU via Tensor Cores, and displays the enhanced output through Vulkan — all in real time during playback.
 
-**This is likely the first open-source Linux player using the VFX SDK directly (not driver-level RTX VSR).** The Linux VFX SDK is still Early Access on NGC. Existing players (mpv, VLC, Moonlight) use driver-level VSR paths that are Windows-only or incomplete on Linux.
+**This is likely the first open-source Linux player using the VFX SDK directly (not driver-level RTX VSR).** The Linux VFX SDK is still Early Access on NGC.
+
+## Build / Run
+
+```bash
+# Shader compilation (once)
+glslc -fshader-stage=vert src/client/shaders/video.vert -o build/video.vert.spv
+glslc -fshader-stage=frag src/client/shaders/video.frag -o build/video.frag.spv
+glslc -fshader-stage=frag src/client/shaders/nv12.frag -o build/nv12.frag.spv
+
+# Build
+make -j$(nproc)
+
+# Run
+./build/vsr-player <video_file_or_folder>
+```
 
 ## Full Architecture
 
@@ -14,15 +29,18 @@ A Linux desktop video player that applies real-time AI super-resolution to video
 ┌──────────────────────────────────────────────────────────────────┐
 │  Qt Client (main thread, Qt event loop)                          │
 │                                                                  │
-│  QMainWindow                                                     │
-│  ├── PlaylistPanel (QListView)                                   │
-│  ├── VulkanWidget (VkSurfaceKHR embedded in QWidget layout)      │
-│  ├── ControlBar (play/pause/stop/seek/volume)                    │
-│  └── StatusBar (resolution/fps/quality)                          │
+│  QQuickView                                                     │
+│  ├── TopBar / BottomBar / CenterPlayBtn                          │
+│  ├── VolumePopup / QualityPopup / SpeedPopup                     │
+│  ├── PlaylistPanel (Drawer + ListView)                           │
+│  ├── ProgressSlider / OsdOverlay                                 │
+│  └── Auto-hide logic                                             │
 │                                                                  │
-│  PlayerProxy — command/event bridge                              │
+│  PlayerViewModel — command/event bridge                          │
+│  PlaylistEngine — folder scan, file list model                   │
+│  KeyFilter — keyboard shortcuts                                  │
 │                                                                  │
-│  Dependencies: Qt6::Widgets, libvulkan.so                        │
+│  Dependencies: Qt6::Quick, Qt6::QuickControls, libvulkan         │
 ├──────────────────────────────────────────────────────────────────┤
 │  libvsrplayer (worker threads, static library)                   │
 │                                                                  │
@@ -52,7 +70,54 @@ A Linux desktop video player that applies real-time AI super-resolution to video
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Design reference:** mpv + IINA, VLC + Qt GUI. Single-process, two layers. Qt client and libvsrplayer communicate through a thread-safe command queue — no shared mutable state beyond frame buffers.
+**Design reference:** mpv + IINA. Single-process, two layers. Client and core communicate through a thread-safe command queue — no shared mutable state beyond frame buffers.
+
+## Module Layout
+
+```
+src/
+├── client/                       ← Qt client (links libvsrplayer)
+│   ├── main.cpp                  ← Entry, QQuickView + Vulkan init
+│   ├── PlayerViewModel.h/cpp     ← QML ↔ Core bridge
+│   ├── PlaylistEngine.h/cpp      ← Folder scanner + file list
+│   ├── KeyFilter.h/cpp           ← Keyboard event filter
+│   ├── QtVulkanContext.h/cpp     ← RAII Vulkan instance
+│   ├── shaders/                  ← GLSL → SPIR-V
+│   └── ui/
+│       ├── overlay.qml           ← Main overlay (wiring layer)
+│       ├── TopBar.qml
+│       ├── BottomBar.qml
+│       ├── VolumePopup.qml
+│       ├── QualityPopup.qml
+│       ├── SpeedPopup.qml
+│       ├── PlaylistPanel.qml
+│       ├── ProgressSlider.qml
+│       ├── CenterPlayBtn.qml
+│       ├── OsdOverlay.qml
+│       └── components/
+│           └── IconButton.qml
+│
+├── core/                         ← libvsrplayer static library
+│   ├── api/Player.h              ← Public API (interface, commands, events)
+│   ├── PlayerCore.h/cpp          ← Command queue + state machine
+│   ├── CommandQueue.h            ← Thread-safe queue<T>
+│   ├── ClockManager.h/cpp        ← Audio-master A/V sync
+│   ├── Demuxer.h/cpp             ← FFmpeg avformat wrapper
+│   ├── Decoder.h/cpp             ← NVDEC hwaccel (dual-context HW/SW)
+│   ├── VSRProcessor.h/cpp        ← NvVFX VideoSuperRes wrapper
+│   ├── Renderer.h/cpp            ← Vulkan render pipeline
+│   ├── AudioOutput.h/cpp         ← PortAudio wrapper
+│   ├── FramePool.h/cpp           ← GPU frame buffer manager
+│   └── utils/
+│       ├── CUDAContext.h/cpp     ← CUDA device context RAII
+│       ├── VulkanContext.h/cpp   ← Vulkan instance/device RAII
+│       └── NV12ToRGB.h/cpp       ← CUDA kernel NV12→RGB (NVRTC)
+│
+└── tests/
+    ├── test_decoder.cpp          ← hwaccel decoder validation
+    ├── test_pipeline.cpp         ← Full decode pipeline test
+    └── test_interop.cpp          ← CUDA-Vulkan interop test
+```
 
 ### VSRProcessor — Full Dependency Chain
 
@@ -67,7 +132,7 @@ libnvVFXVideoSuperRes.so (62K)     ← VSR C API, our direct dependency
   │           ├── libnvinfer_plugin.so.10 (53M) ← TensorRT plugins
   │           ├── libnvonnxparser.so.10 (4.3M)  ← ONNX model parser
   │           ├── libcudnn.so.9 (123K)          ← cuDNN
-  │           └── libnpp*.so.12 ×9 (292M)       ← CUDA NPP image processing
+  │           └── libnpp*.so.12 ×9 (292M)       ← CUDA NPP
   └── libcuda.so.1                   ← NVIDIA driver (system, only external dep)
 
 Total bundled: ~1.1GB. Shipped in build/lib/, RPATH $ORIGIN/lib.
@@ -82,107 +147,34 @@ No CUDA Toolkit, TensorRT SDK, or cuDNN system installation needed.
 | Decoder | `libavcodec` + `libavutil/hwcontext` | NVDEC via hwaccel framework, CUDA device/surface management |
 | NV12→RGB (CPU fallback) | `libswscale` | `sws_scale` NV12→RGB24 when CUDA not available |
 
-FFmpeg is the implementation engine for Demuxer and Decoder — not a standalone layer. `av_hwdevice_ctx_create(AV_HWDEVICE_TYPE_CUDA)` creates the CUDA context used throughout the pipeline.
-
-### Module Layout
-
-```
-src/
-├── client/                       ← Qt client (links libvsrplayer)
-│   ├── main.cpp                  ← QApplication entry
-│   ├── MainWindow.h/cpp          ← QMainWindow, layout
-│   ├── PlaylistPanel.h/cpp       ← QListView + model
-│   ├── ControlBar.h/cpp          ← play/pause/seek/volume
-│   ├── StatusBar.h/cpp           ← fps, resolution, quality
-│   ├── SettingsDialog.h/cpp      ← quality/scale settings
-│   ├── VulkanWidget.h/cpp        ← VkSurfaceKHR in QWidget
-│   ├── PlayerProxy.h/cpp         ← command/event bridge
-│   └── shaders/                  ← GLSL → SPIR-V at build time
-│
-├── core/                         ← libvsrplayer static library
-│   ├── api/
-│   │   └── Player.h              ← public API (Player interface)
-│   ├── PlayerCore.h/cpp          ← command queue + state machine
-│   ├── CommandQueue.h            ← thread-safe queue<T>
-│   ├── ClockManager.h/cpp        ← audio-master A/V sync
-│   ├── Demuxer.h/cpp             ← FFmpeg avformat wrapper
-│   ├── Decoder.h/cpp             ← NVDEC hwaccel (av1_nvdec etc.)
-│   ├── VSRProcessor.h/cpp        ← NvVFX VideoSuperRes wrapper
-│   ├── Renderer.h/cpp            ← Vulkan render pipeline
-│   ├── AudioOutput.h/cpp         ← PortAudio wrapper
-│   ├── FramePool.h/cpp           ← GPU frame buffer manager
-│   └── utils/
-│       ├── CUDAContext.h/cpp     ← CUDA device context RAII
-│       ├── VulkanContext.h/cpp   ← Vulkan instance/device RAII
-│       └── NV12ToRGB.h/cpp       ← CUDA kernel NV12→RGB
-│
-└── tests/
-    ├── test_decoder.cpp           ← hwaccel decoder validation
-    └── test_pipeline.cpp          ← full decode pipeline test
-```
-
-## Build / Run
-
-```bash
-# Prerequisites: NVIDIA driver 570+, Vulkan SDK, Qt 6, FFmpeg dev, PortAudio dev
-# NvVFX SDK headers from NGC (EA program) → third_party/nvvfx/include/
-# NvVFX .so files from pip package → build/lib/
-
-# Shader compilation (once)
-glslc -fshader-stage=vert src/client/shaders/video.vert -o build/video.vert.spv
-glslc -fshader-stage=frag src/client/shaders/video.frag -o build/video.frag.spv
-
-# Full build — Makefile at project root, outputs to build/
-make -j$(nproc)
-
-# Quick test builds (standalone, no Makefile needed)
-mkdir -p build/tests
-g++ -std=c++20 -O2 -Wall -o build/tests/test_decoder \
-    tests/test_decoder.cpp \
-    $(pkg-config --cflags --libs libavcodec libavformat libavutil) -lcuda
-g++ -std=c++20 -O2 -Wall -o build/tests/test_pipeline \
-    tests/test_pipeline.cpp src/core/Demuxer.cpp src/core/Decoder.cpp \
-    $(pkg-config --cflags --libs libavcodec libavformat libavutil libswscale) \
-    -lcuda -Isrc/core -Isrc/core/api
-
-# Run tests
-./build/tests/test_decoder input/catlove_720p.webm
-./build/tests/test_pipeline input/catlove_720p.webm [frames_to_save]
-
-# Run player (when implemented)
-./build/vsr-player <video_file>
-```
-
 ## SDK Isolation
 
-All VFX SDK dependencies (~1.1GB) are bundled with the application. No CUDA Toolkit, TensorRT SDK, or cuDNN installation needed on the user's system.
+All VFX SDK dependencies (~1.1GB) are bundled with the application. Runtime dependency: only `libcuda.so.1` (NVIDIA driver).
 
 ```
 build/
 ├── vsr-player
 └── lib/                          ← bundled .so (RPATH: $ORIGIN/lib)
     ├── libnvVFXVideoSuperRes.so
-    ├── libVideoFX.so
-    ├── libVideoFXLocal.so
-    ├── libNVCVImage.so
-    ├── libnvngxruntime.so
-    ├── libnvidia-ngx-vsr.so
-    ├── libnvinfer.so.10
-    ├── libnvinfer_plugin.so.10
-    ├── libnvonnxparser.so.10
+    ├── libVideoFX.so / libVideoFXLocal.so / libNVCVImage.so
+    ├── libnvngxruntime.so / libnvidia-ngx-vsr.so
+    ├── libnvinfer.so.10 / libnvinfer_plugin.so.10 / libnvonnxparser.so.10
     ├── libcudnn.so.9
     └── libnpp*.so.12 (9 files)
 ```
 
-Runtime dependency: only `libcuda.so.1` (NVIDIA driver).
+## Key Findings
 
-## Key Findings from Prototype
+### Codec selection rules
 
-### av1_cuvid duplicate-frame bug — root cause and fix
+| Codec | HW path | SW fallback | Never use |
+|-------|---------|-------------|-----------|
+| AV1 | `av1` + `av1_nvdec` hwaccel | `libdav1d` | `av1_cuvid` |
+| H.264 | `h264` + `h264_nvdec` hwaccel | software | `h264_cuvid` |
+| HEVC | `hevc` + `hevc_nvdec` hwaccel | software | `hevc_cuvid` |
 
-**Root cause:** `av1_cuvid` decoder wrapper has NVDEC surface management bug → periodic duplicates (~9/300 frames). Setting `hw_device_ctx` + `hw_frames_ctx` is NOT sufficient.
+**Golden rule:** Native decoders + get_format hwaccel. Never `_cuvid` variants (surface management bug → periodic duplicates). Verified: 7202 frames, 0 duplicates.
 
-**Fix:** Use native decoder + hwaccel framework:
 ```c
 codec = avcodec_find_decoder_by_name("av1");  // NOT libdav1d, NOT av1_cuvid
 avcodec_parameters_to_context(codec_ctx, codecpar);  // extradata required!
@@ -193,37 +185,15 @@ avcodec_open2(codec_ctx, codec, nullptr);
 // is NULL until then.
 ```
 
-Verified: 7202 frames, 0 duplicates (`tests/test_decoder.cpp`).
+### NVIDIA Vulkan + Wayland
 
-### Codec selection rules
+NVIDIA driver supports `VK_KHR_wayland_surface` **if** `nvidia_drm.modeset=1` (kernel cmdline). Check:
 
-| Codec | HW path | SW fallback | Never use |
-|-------|---------|-------------|-----------|
-| AV1 | `av1` + `av1_nvdec` hwaccel | `libdav1d` | `av1_cuvid` |
-| H.264 | `h264` + `h264_nvdec` hwaccel | software | `h264_cuvid` |
-| HEVC | `hevc` + `hevc_nvdec` hwaccel | software | `hevc_cuvid` |
+```bash
+sudo cat /sys/module/nvidia_drm/parameters/modeset  # must be Y
+```
 
-**Golden rule:** Native decoders + get_format hwaccel. Never `_cuvid` variants.
-
-### NVIDIA Vulkan + Wayland — judgment chain
-
-**Conclusion:** NVIDIA proprietary driver **does** support `VK_KHR_wayland_surface` and native Wayland Vulkan presentation — **if** `nvidia_drm.modeset=1` is set.
-
-**Judgment chain (verified 2026-06-22 on CachyOS + Niri + RTX 5060 Ti):**
-
-1. `vulkaninfo --summary` lists `VK_KHR_wayland_surface : extension revision 6` — the instance extension is present at the loader/ICD level regardless of modesetting.
-
-2. The extension alone is not enough. `vkGetPhysicalDeviceSurfaceSupportKHR` is the actual gate — it returns `VK_TRUE` only when `nvidia_drm.modeset=1` (kernel cmdline). Without modesetting, the extension loads but every queue returns `VK_FALSE`.
-
-3. Check with: `sudo cat /sys/module/nvidia_drm/parameters/modeset` → `Y` means enabled. Also verify `lsmod | grep nvidia_drm` — the module must be loaded (or built-in).
-
-4. Runtime probe (full Wayland surface creation + `vkGetPhysicalDeviceSurfaceSupportKHR`) confirmed on this system: queue 0 returns `VK_TRUE`, native Wayland Vulkan works.
-
-5. If a user's system has `modeset=N` or `nvidia_drm` not loaded: `vkGetPhysicalDeviceSurfaceSupportKHR` returns `VK_FALSE` for all queues. Fallback: `QT_QPA_PLATFORM=xcb` (XWayland) — transparent to the compositor.
-
-**Code approach:** `main.cpp` no longer forces XCB. `VulkanWidget::init_vulkan()` tries native Wayland first; on failure, prints a message explaining the `nvidia_drm.modeset=1` requirement and the XCB workaround.
-
-**Previous misdiagnosis (corrected):** An earlier `vulkaninfo` check was misread as "NVIDIA doesn't support Wayland Vulkan," leading to an unconditional `QT_QPA_PLATFORM=xcb` override. This was wrong. The driver supports it; modesetting is the prerequisite.
+Without modesetting, `vkGetPhysicalDeviceSurfaceSupportKHR` returns `VK_FALSE`. Fallback: `QT_QPA_PLATFORM=xcb` (XWayland).
 
 ### Other findings
 
@@ -231,6 +201,15 @@ Verified: 7202 frames, 0 duplicates (`tests/test_decoder.cpp`).
 - VSR internal CUDA streams require device-level sync, not stream-level.
 - `hwaccel` field on AVCodecContext is NULL after `avcodec_open2` — set after first frame.
 - `avcodec_parameters_to_context()` is REQUIRED for hwaccel init (provides extradata).
+- `Item` has no `font` property in any Qt 6 version — use empty string for system default font.
+- Qt 6.11 signal handlers with parameters must use explicit `function(param) {}` syntax.
+
+## Environment
+
+- **Qt:** 6.11.1 (CachyOS, pacman)
+- **C++:** C++20 (GCC 13+)
+- **Build:** Makefile at project root
+- **QML:** Qt Quick Controls (plain `import QtQuick.Controls` — project convention, not `.Basic`)
 
 ## References
 
