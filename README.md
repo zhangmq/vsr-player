@@ -23,7 +23,13 @@ This project calls the Video Effects SDK C API directly from a standalone player
 
 ## Screenshots
 
-<!-- TODO: add screenshots -->
+**Original (720p)**
+
+![Original 720p frame](example/00003_orig.jpg)
+
+**VSR 4× Upscaled**
+
+![VSR 4x upscaled frame](example/00003_vsr.jpg)
 
 ## Prerequisites
 
