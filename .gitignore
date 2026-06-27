@@ -25,6 +25,9 @@ __pycache__/
 # Debug screenshots
 screenshots/
 
+# Promotional articles
+articles/
+
 # Compiled test binaries
 tests/test_decoder
 tests/*.o
