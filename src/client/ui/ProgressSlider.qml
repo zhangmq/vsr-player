@@ -6,6 +6,10 @@ Item {
     property real duration: 0
     property real currentTime: 0
     property bool overlaysVisible: true
+    /// 供宿主（BottomBar）组成自动隐藏保持条件：进度条 hover/拖动
+    /// 时 UI 不隐藏（拖动中鼠标在滑块上，不触发任何热区）。
+    property alias hovered: psHover.hovered
+    property alias pressed: progressSlider.pressed
     signal seeked(real ms)
 
     implicitHeight: 14

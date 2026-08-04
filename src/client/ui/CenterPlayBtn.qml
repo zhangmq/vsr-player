@@ -17,7 +17,7 @@ Item {
         Text {
             anchors.centerIn: parent
             font.family: iconFont; font.pixelSize: 36
-            text: ""; color: "#ffffff"
+            text: "󰐊"; color: "#ffffff"
             renderType: Text.NativeRendering
         }
         MouseArea {

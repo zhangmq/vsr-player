@@ -7,6 +7,7 @@ Item {
     property bool playing: false
     property bool fullscreen: false
     property bool hwDecoding: false
+    property bool muted: false
     property real currentTime: 0
     property real duration: 0
     property bool overlaysVisible: true
@@ -14,6 +15,7 @@ Item {
     property bool qualityPopupOpen: false
     property bool speedPopupOpen: false
     property bool playlistOpen: false
+    property int loopMode: 0    // 0=No loop, 1=Loop file, 2=Loop playlist
 
     signal playPauseClicked()
     signal prevClicked()
@@ -25,12 +27,45 @@ Item {
     signal speedClicked()
     signal fullscreenClicked()
     signal playlistClicked()
+    signal loopClicked()
+    signal seeked(real ms)
 
-    property alias barHovered: barHover.hovered
+    /// 自动隐藏保持条件：热区/进度条/bottombar 任一 hover 或拖动中。
+    /// 拖动进度条时鼠标在滑块上（不在热区内）——pressed 单独保护。
+    /// 宿主（main.qml）用此状态驱动 overlaysVisible（showUi 绑定）。
+    readonly property bool mouseInRegion: hotZone.containsMouse
+                                          || progress.hovered || progress.pressed
+                                          || barHover.hovered
 
-    implicitHeight: 48
+    // Popup 定位锚点（PopupBase.anchorTarget）
+    property alias volumeBtn: volBtn
+    property alias qualityBtn: qualBtn
+    property alias speedBtn: spdBtn
 
+    // bottombar(48) + 进度条(14) + 热区(40) 一体
+    implicitHeight: 48 + 14 + 40
+
+    // ── 热区（进度条上方——鼠标靠近进度条即显示/保持 UI）─────────
+    MouseArea {
+        id: hotZone
+        anchors { left: parent.left; right: parent.right; bottom: progress.top }
+        height: 40
+        hoverEnabled: true
+    }
+
+    // ── 进度条（贴 bottombar 上沿，拖动中 hovered/pressed 保持 UI）─
+    ProgressSlider {
+        id: progress
+        anchors { left: parent.left; right: parent.right; bottom: bottombar.top }
+        duration: root.duration
+        currentTime: root.currentTime
+        overlaysVisible: root.overlaysVisible
+        onSeeked: function(ms) { root.seeked(ms) }
+    }
+
+    // ── bottombar ────────────────────────────────────────────────
     Rectangle {
+        id: bottombar
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
         height: 48
         gradient: Gradient {
@@ -46,14 +81,14 @@ Item {
             anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 12 }
             spacing: 4
 
-            IconButton { codepoint: ""; size: 22; tooltip: "上一个 (B)"
+            IconButton { codepoint: "󰒮"; size: 22; tooltip: qsTr("Previous (B)")
                 onClicked: root.prevClicked() }
-            IconButton { codepoint: root.playing ? "" : ""; size: 22
-                tooltip: root.playing ? "暂停 (Space)" : "播放 (Space)"
+            IconButton { codepoint: root.playing ? "󰏤" : "󰐊"; size: 22
+                tooltip: root.playing ? qsTr("Pause (Space)") : qsTr("Play (Space)")
                 onClicked: root.playPauseClicked() }
-            IconButton { codepoint: ""; size: 22; tooltip: "下一个 (N)"
+            IconButton { codepoint: "󰒭"; size: 22; tooltip: qsTr("Next (N)")
                 onClicked: root.nextClicked() }
-            IconButton { codepoint: ""; size: 22; tooltip: "停止"
+            IconButton { codepoint: "󰓛"; size: 22; tooltip: qsTr("Stop")
                 onClicked: root.stopClicked() }
 
             Rectangle { width: 1; height: 20; color: "#0fffffff"; anchors.verticalCenter: parent.verticalCenter }
@@ -75,28 +110,36 @@ Item {
             anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 12 }
             spacing: 4
 
-            IconButton { id: volBtn; codepoint: ""; size: 22; tooltip: "音量"
+            IconButton { id: volBtn
+                // 静音状态由图标表达（与 VolumePopup 同字形 󰖁/󰕾）
+                codepoint: root.muted ? "󰖁" : "󰕾"; size: 22; tooltip: qsTr("Volume")
                 highlighted: root.volumePopupOpen
                 onClicked: root.volumeClicked() }
-            IconButton { id: qualBtn; codepoint: ""; size: 22; tooltip: "画质"
+            IconButton { id: qualBtn; codepoint: "󰐵"; size: 22; tooltip: qsTr("Quality")
                 highlighted: root.qualityPopupOpen
                 onClicked: root.qualityClicked() }
-            IconButton { label: root.hwDecoding ? "硬解" : "软解"; size: 22
-                tooltip: root.hwDecoding ? "点击切换软解" : "点击切换硬解"
+            IconButton { label: root.hwDecoding ? qsTr("HW") : qsTr("SW"); size: 22
+                tooltip: root.hwDecoding ? qsTr("Switch to SW decode") : qsTr("Switch to HW decode")
                 onClicked: root.hwaccelClicked() }
-            IconButton { id: spdBtn; label: "倍速"; size: 22; tooltip: "播放速度"
+            IconButton { id: spdBtn; label: qsTr("Speed"); size: 22; tooltip: qsTr("Playback speed")
                 highlighted: root.speedPopupOpen
                 onClicked: root.speedClicked() }
-            IconButton { codepoint: root.fullscreen ? "" : ""; size: 22
-                tooltip: root.fullscreen ? "退出全屏" : "全屏"
+            IconButton { id: loopBtn
+                // 三态三字形：No loop=loop(环形箭头)/单曲=repeat_one/
+                // 列表=repeat（E028/E041/E040）。状态只由图标区分，
+                // 不做背景持续高亮。
+                codepoint: root.loopMode === 0 ? "󰑗" :
+                           root.loopMode === 1 ? "󰑘" : "󰑖"
+                size: 22
+                tooltip: root.loopMode === 1 ? qsTr("Loop file") :
+                          root.loopMode === 2 ? qsTr("Loop playlist") : qsTr("No loop")
+                onClicked: root.loopClicked() }
+            IconButton { codepoint: root.fullscreen ? "󰊔" : "󰊓"; size: 22
+                tooltip: root.fullscreen ? qsTr("Exit fullscreen") : qsTr("Fullscreen")
                 onClicked: root.fullscreenClicked() }
-            IconButton { id: playlistBtn; codepoint: ""; size: 22; tooltip: "播放列表 (P)"
+            IconButton { id: playlistBtn; codepoint: "󰐑"; size: 22; tooltip: qsTr("Playlist (P)")
                 highlighted: root.playlistOpen
                 onClicked: root.playlistClicked() }
         }
     }
-
-    property real volumeBtnCenterX: rightRow.x + volBtn.x + volBtn.width / 2
-    property real qualityBtnCenterX: rightRow.x + qualBtn.x + qualBtn.width / 2
-    property real speedBtnCenterX: rightRow.x + spdBtn.x + spdBtn.width / 2
 }
