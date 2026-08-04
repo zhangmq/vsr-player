@@ -1,0 +1,88 @@
+#pragma once
+#include <QQuickItem>
+#include <vulkan/vulkan.h>
+#include <atomic>
+#include <functional>
+
+class MpvController;
+
+/// Single-threaded video renderer.
+/// mpv work (update→render→reportSwap) happens in updatePaintNode on the main thread.
+/// No locks, no threads — basic render loop only.
+///
+/// Render target (rtImage) is sized to the item's window framebuffer size
+/// (width × dpr). Recreated on size change; the descriptor set handle stays
+/// stable across recreations (contents updated via vkUpdateDescriptorSets).
+class Video : public QQuickItem {
+    Q_OBJECT
+public:
+    explicit Video(QQuickItem *parent = nullptr);
+    ~Video() override;
+
+    void setMpvController(MpvController *mpv);
+    bool initRenderTarget(VkDevice dev, VkPhysicalDevice pd, uint32_t qfi, VkQueue queue);
+    void setCompositeObjects(VkPipeline pipe, VkPipelineLayout layout);
+
+    /// (Re)create render target for the given pixel size. Rebuilds
+    /// image + view, then updates the descriptor set contents in place.
+    /// Idempotent when size unchanged.
+    bool ensureRenderTarget(int w, int h);
+
+    VkImage image() const { return rtImage_; }
+    VkDescriptorSetLayout descriptorSetLayout() const { return compDsLayout_; }
+    int width() const { return w_; }
+    int height() const { return h_; }
+
+    std::atomic<double> lastCb_{0.0};
+    /// Set by the update callback: mpv requests rendering (new frame or
+    /// state change — seek/reconfig produce no new frame but still need
+    /// render to consume pending VO work; see vo_libmpv flip_page).
+    std::atomic<bool> renderRequested_{false};
+
+    /// Benchmark counters (updated on the render/main thread, read by the
+    /// event thread on END_FILE — hence atomic).
+    std::atomic<int> benchFrames_{0};
+    std::atomic<double> benchT0_{0.0};
+
+    /// 渲染新帧回调（uf>0 分支，主线程）——viewModel 段内 rendered 计数。
+    void setFrameRenderedCallback(std::function<void()> cb) { frameRenderedCb_ = std::move(cb); }
+
+public slots:
+    void kickstart();
+    /// mpv update callback（核心线程）invokeMethod(QueuedConnection) 驱动
+    /// 的渲染请求（社区标准模式，见 trin94/qtquick-mpv）。GUI 线程执行：
+    /// 条件检查（need_render）→ update() + postEvent 投递渲染请求。
+    void requestRender();
+
+protected:
+    QSGNode *updatePaintNode(QSGNode *old, UpdatePaintNodeData *) override;
+
+private:
+    MpvController   *mpv_ = nullptr;
+    VkDevice         dev_ = VK_NULL_HANDLE;
+    VkPhysicalDevice pd_ = VK_NULL_HANDLE;
+    VkQueue          queue_ = VK_NULL_HANDLE;
+
+    VkImage          rtImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory   rtMem_ = VK_NULL_HANDLE;
+    VkImageView      rtView_ = VK_NULL_HANDLE;
+    VkSampler        rtSampler_ = VK_NULL_HANDLE;
+    VkCommandPool    cmdPool_ = VK_NULL_HANDLE;
+    int w_ = 0, h_ = 0;      // current render target pixel size
+
+    VkPipeline       pipe_ = VK_NULL_HANDLE;
+    VkPipelineLayout pipeLayout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout compDsLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool      compDsPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet       compDs_ = VK_NULL_HANDLE;
+
+    std::function<void()> frameRenderedCb_;
+
+    // ── RT resize 节流（稳定计数）─────────────────────────────────
+    // resize 拖动时每帧尺寸变化，直接 ensureRenderTarget 会每帧重建
+    // rt + 触发 mpv reconfig（VSR 分辨率重配）→ 卡顿。改为：尺寸连续
+    // RT_STABLE_FRAMES 帧未变才重建。拖动中零重建；停止后 ~3 帧重建。
+    static constexpr int RT_STABLE_FRAMES = 3;
+    int pendingW_ = 0, pendingH_ = 0;
+    int stableCount_ = 0;
+};

@@ -22,7 +22,7 @@ Item {
             color: "#e0e0e0"
             text: {
                 if (root.videoInfo) return root.videoInfo
-                return "VSR Player"
+                return qsTr("VSR Player")
             }
         }
     }

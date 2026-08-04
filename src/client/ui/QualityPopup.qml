@@ -1,45 +1,43 @@
 import QtQuick
 import QtQuick.Controls
+import "components"
 
-Popup {
+PopupBase {
     id: root
     property int scal: 0
-    property int qualit: 3
-    property int denoiseQualit: -1
+    property int quality: 3
+    property int denoiseQuality: -1
     signal scalPicked(int v)
-    signal qualitPicked(int v)
-    signal denoiseQualitPicked(int v)
+    signal qualityPicked(int v)
+    signal denoiseQualityPicked(int v)
 
-    width: 360; padding: 16
-    modal: true; closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    width: 360
 
     readonly property var scaleModel: [
-        {label: "关闭", value: -1},
-        {label: "自动", value: 0},
-        {label: "2×", value: 2},
-        {label: "3×", value: 3},
-        {label: "4×", value: 4}
+        {label: qsTr("Off"), value: -1},
+        {label: qsTr("Auto"), value: 0},
+        {label: qsTr("2×"), value: 2},
+        {label: qsTr("3×"), value: 3},
+        {label: qsTr("4×"), value: 4}
     ]
     readonly property var levelModel: [
-        {label: "Low", value: 1},
-        {label: "Medium", value: 2},
-        {label: "High", value: 3},
-        {label: "Ultra", value: 4}
+        {label: qsTr("Low"), value: 1},
+        {label: qsTr("Medium"), value: 2},
+        {label: qsTr("High"), value: 3},
+        {label: qsTr("Ultra"), value: 4}
     ]
     readonly property var denoiseModel: [
-        {label: "关闭", value: -1},
-        {label: "Low", value: 8},
-        {label: "Medium", value: 9},
-        {label: "High", value: 10},
-        {label: "Ultra", value: 11}
+        {label: qsTr("Off"), value: -1},
+        {label: qsTr("Low"), value: 8},
+        {label: qsTr("Medium"), value: 9},
+        {label: qsTr("High"), value: 10},
+        {label: qsTr("Ultra"), value: 11}
     ]
-
-    background: Rectangle { color: "#d9111111"; radius: 8; border { width: 1; color: "#22ffffff" } }
 
     Column {
         spacing: 12; anchors { left: parent.left; right: parent.right }
 
-        Text { text: "Scale"; color: "#b0b0b0"; font.pixelSize: 13 }
+        Text { text: qsTr("Scale"); color: "#b0b0b0"; font.pixelSize: 13 }
         Row { spacing: 6; anchors { left: parent.left; right: parent.right }
             Repeater {
                 model: root.scaleModel
@@ -60,42 +58,42 @@ Popup {
 
         Rectangle { width: parent.width; height: 1; color: "#0fffffff" }
 
-        Text { text: "超分质量"; color: "#b0b0b0"; font.pixelSize: 13 }
+        Text { text: qsTr("Upscale quality"); color: "#b0b0b0"; font.pixelSize: 13 }
         Row { spacing: 6; anchors { left: parent.left; right: parent.right }
             Repeater {
                 model: root.levelModel
                 delegate: Rectangle {
                     width: 70; height: 32; radius: 4
                     color: qHover.containsMouse ? "#33ffffff"
-                         : (root.qualit === modelData.value ? "#33ffcc00" : "transparent")
+                         : (root.quality === modelData.value ? "#33ffcc00" : "transparent")
                     Text { anchors.centerIn: parent
                         text: modelData.label
-                        color: root.qualit === modelData.value ? "#ffcc00" : "#e0e0e0"
+                        color: root.quality === modelData.value ? "#ffcc00" : "#e0e0e0"
                         font.pixelSize: 13 }
                     MouseArea { id: qHover; anchors.fill: parent; hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: { root.qualitPicked(modelData.value); } }
+                        onClicked: { root.qualityPicked(modelData.value); } }
                 }
             }
         }
 
         Rectangle { width: parent.width; height: 1; color: "#0fffffff" }
 
-        Text { text: "强制降噪（scale=1时生效）"; color: "#b0b0b0"; font.pixelSize: 13 }
+        Text { text: qsTr("Force denoise (active when scale=1)"); color: "#b0b0b0"; font.pixelSize: 13 }
         Row { spacing: 6; anchors { left: parent.left; right: parent.right }
             Repeater {
                 model: root.denoiseModel
                 delegate: Rectangle {
                     width: 56; height: 32; radius: 4
                     color: dHover.containsMouse ? "#33ffffff"
-                         : (root.denoiseQualit === modelData.value ? "#33ffcc00" : "transparent")
+                         : (root.denoiseQuality === modelData.value ? "#33ffcc00" : "transparent")
                     Text { anchors.centerIn: parent
                         text: modelData.label
-                        color: root.denoiseQualit === modelData.value ? "#ffcc00" : "#e0e0e0"
+                        color: root.denoiseQuality === modelData.value ? "#ffcc00" : "#e0e0e0"
                         font.pixelSize: 13 }
                     MouseArea { id: dHover; anchors.fill: parent; hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: { root.denoiseQualitPicked(modelData.value); } }
+                        onClicked: { root.denoiseQualityPicked(modelData.value); } }
                 }
             }
         }

@@ -1,22 +1,31 @@
 import QtQuick
 import QtQuick.Controls
 
+/// 播放列表面板（数据源：mpv `playlist` 属性 → PlaylistModel 增量镜像）。
+/// 点击条目 → viewModel.playlistPlayIndex（mpv playlist-play-index）。
+/// 性能：reuseItems 复用 delegate（滚动零创建销毁）；ToolTip 抽共享
+/// 单例（delegate 不再各自实例化 ToolTip+HoverHandler，每项 7 对象 → 4）。
+/// 显示 basename（model.display），完整路径放 tooltip（model.path）。
 Drawer {
     id: root
     edge: Qt.RightEdge
+    // Drawer 默认 modal:true 会压暗主窗口（mask）——与音量/画质等
+    // popup 一致，无需 mask。点击外部/Esc 关闭（与 PopupBase 同款）。
+    modal: false
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     width: 320; height: parent ? parent.height : 600; z: 10
     dragMargin: 0
     topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
     background: Rectangle { color: "#d9000000" }
 
-    signal fileSelected(string path)
-
     Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top }
         height: 48; color: "#22ffffff"
         Text { anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
-            text: "播放列表"; color: "#e0e0e0"; font.pixelSize: 15; font.bold: true }
+            text: qsTr("Playlist"); color: "#e0e0e0"; font.pixelSize: 15; font.bold: true }
         Text { anchors { right: closeBtn.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
-            text: playlist ? (playlist.currentIndex + 1) + "/" + playlist.count : ""
+            text: viewModel.playlistModel.currentIndex >= 0
+                  ? (viewModel.playlistModel.currentIndex + 1) + "/" + viewModel.playlistModel.count
+                  : ""
             color: "#b0b0b0"; font.pixelSize: 12 }
 
         Item { id: closeBtn; width: 34; height: 34
@@ -25,7 +34,7 @@ Drawer {
                 color: clHover.hovered ? "#33ffffff" : "transparent"
                 Behavior on color { ColorAnimation { duration: 150 } } }
             Text { anchors.centerIn: parent; font.family: iconFont; font.pixelSize: 18
-                text: ""; color: clHover.hovered ? "#ffffff" : "#c8c8c8"
+                text: "󰅖"; color: clHover.hovered ? "#ffffff" : "#c8c8c8"
                 Behavior on color { ColorAnimation { duration: 150 } }
                 renderType: Text.NativeRendering }
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
@@ -38,50 +47,81 @@ Drawer {
         id: playlistView
         anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: 48
                   bottom: parent.bottom }
-        model: playlist ? playlist.files : []
-        cacheBuffer: 800
+        model: viewModel.playlistModel
+        cacheBuffer: 200
         clip: true
+        // 滚动条（attached ScrollBar；policy 默认 AsNeeded——条目数
+        // 不足一屏时自动隐藏）。thumb 几何由 control 自动设置（宽 =
+        // availableWidth × visualSize），但滚动条自身宽度来自
+        // implicitContentWidth（Basic 模板 6+padding 2×2=10）——不给
+        // implicitWidth 则 thumb 为 0 宽，完全不可见。
+        ScrollBar.vertical: ScrollBar {
+            contentItem: Rectangle {
+                implicitWidth: 6
+                radius: 3
+                color: parent.pressed ? "#ffffffff"
+                     : (parent.hovered ? "#b3ffffff" : "#80ffffff")
+            }
+        }
+
+        // 滚轮加速：Qt 默认每 120° 滚 wheelScrollLines(3)×24 = 72px
+        //（约 1.7 行/格，偏慢）。接管 wheel 事件每格滚 4 行（168px），
+        // 即时滚动（无 300ms 缓动动画，消除粘滞感）；触控板平滑滚动
+        //（pixelDelta）不加速保持精确。acceptedButtons: NoButton——
+        // 只处理滚轮，点击/hover/拖拽全部穿透。
+        // contentY 直接赋值不自动钳制（setContentY 只 setValue，fixup
+        // 延迟到下一帧）→ 手动 clamp 到 [0, contentHeight-height]。
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.NoButton
+            onWheel: function(wheel) {
+                var delta = 0
+                if (wheel.pixelDelta.y !== 0)
+                    delta = wheel.pixelDelta.y
+                else if (wheel.angleDelta.y !== 0)
+                    delta = wheel.angleDelta.y / 120.0 * 168
+                if (delta === 0) return
+                var maxY = playlistView.contentHeight - playlistView.height
+                playlistView.contentY = Math.max(0, Math.min(maxY, playlistView.contentY - delta))
+                wheel.accepted = true
+            }
+        }
+        // delegate 实例复用（Qt 5.15+）：滚动只更新绑定不复建对象树。
+        // 旧实现无 reuseItems，每滚一行销毁/创建 2 个 delegate（各 7 对象）。
+        reuseItems: true
 
         delegate: Rectangle {
             id: plDelegate
             width: ListView.view.width; height: 42; clip: true
-            color: plHover.hovered ? "#22ffffff"
-                 : (index === playlist.currentIndex ? "#11ffffff" : "transparent")
+            color: plMouse.containsMouse ? "#22ffffff"
+                 : (index === viewModel.playlistModel.currentIndex ? "#11ffffff" : "transparent")
 
             Row {
                 anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
 
                 Text {
-                    text: playlist && index < playlist.displayNames.length
-                          ? (index + 1) + ". " + playlist.displayNames[index] : ""
+                    text: (index + 1) + ". " + model.display
                     width: 296
-                    color: index === playlist.currentIndex ? "#ffffff" : "#b0b0b0"
+                    color: index === viewModel.playlistModel.currentIndex ? "#ffffff" : "#b0b0b0"
                     font.pixelSize: 13
+                    elide: Text.ElideMiddle
                     renderType: Text.NativeRendering
                 }
             }
 
+            // 点击 + hover 合并一个 MouseArea（去 HoverHandler）：
+            // tooltip 显示完整路径（model.path），列表项只显示文件名。
+            // ToolTip 用附加属性（共享视觉实例，位置由框架跟随鼠标——
+            // 自定义实例需 parent 绑定，无 parent 的 open() 定位异常）。
+            // 附加属性零对象开销，文本按 item 存储。
             MouseArea {
-                anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                onClicked: { playlist.setCurrentFile(modelData); root.fileSelected(modelData) }
-            }
-
-            HoverHandler { id: plHover }
-
-            ToolTip {
-                z: 11
-                visible: plHover.hovered
-                text: modelData
-                delay: 600
-                background: Rectangle {
-                    color: "#d9111111"; radius: 4
-                    border { width: 1; color: "#22ffffff" }
-                }
-                contentItem: Text {
-                    text: modelData
-                    color: "#e0e0e0"
-                    font.pixelSize: 11
-                }
+                id: plMouse
+                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                hoverEnabled: true
+                onClicked: viewModel.playlistPlayIndex(index)
+                ToolTip.text: model.path
+                ToolTip.delay: 600
+                ToolTip.visible: plMouse.containsMouse
             }
         }
     }

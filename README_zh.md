@@ -1,6 +1,8 @@
 # VSR Player
 
-Linux 桌面实时 AI 超分辨率视频播放器。使用 NVIDIA Video Effects SDK 在视频播放过程中进行神经超分和降噪——全 GPU 管线，零 PCIe 拷贝。
+Linux 桌面实时 AI 超分辨率视频播放器。使用 NVIDIA Video Effects SDK 在视频播放过程中进行神经超分和降噪。
+
+基于 **libmpv**——解封装、解码、音视频同步、时序和 VO 渲染全部由 mpv 承担。VSR 作为自定义 mpv 视频滤镜（`vf_vsr`）注入，通过 CUDA + Video Effects SDK 超分后送回 mpv 管线。前端为 Qt 6 + QML 客户端（Vulkan，与 mpv 共享设备）。
 
 ## 背景
 
@@ -8,204 +10,144 @@ NVIDIA RTX Video Super Resolution（RTX VSR）在 Windows 上已经可用了一�
 
 NVIDIA Video Effects SDK 提供了相同的底层 AI 模型，也有 Linux 版本，但它并不是一个拿来就能用的依赖——目前还是 Early Access 状态，附带约 1 GB 的推理运行时，也没有现成的播放器集成路径。
 
-这个项目直接调用了 Video Effects SDK 的 C API，将其接入一个独立的播放器中。这不是一条特别合理的路线——这类处理逻辑理应放在驱动或合成器层面——只是在驱动级 VSR 尚未支持 Linux 的情况下的一个变通方案。
+这个项目直接调用了 Video Effects SDK 的 C API，将其接入一个播放器中。这不是一条特别合理的路线——这类处理逻辑理应放在驱动或合成器层面——只是在驱动级 VSR 尚未支持 Linux 的情况下的一个变通方案。
 
 ## 特性
 
-- **AI 超分辨率** — 通过 Tensor Cores 实时超分 2×/3×/4×
-- **AI 降噪** — 可配置降噪强度（低至超高）
-- **NVDEC 硬解码** — AV1、H.264、HEVC GPU 解码，零拷贝帧
-- **Vulkan 渲染** — CUDA-Vulkan 互操作，帧数据全程不离开 GPU 显存
-- **QML 叠加 UI** — 半透明控件，自动隐藏、播放列表、OSD 信息面板
-- **音视频同步** — 音频主时钟，基于真实 PTS 的同步策略
-- **自适应缩放** — 根据视频分辨率和窗口大小自动选择超分倍率
-- **零系统依赖** — 所有 VFX 库（约 1.1 GB）随应用打包，仅需 `libcuda.so.1`
+- **AI 超分辨率** — Tensor Cores 实时 2×/3×/4× 超分（mpv 视频滤镜 `vf_vsr`）
+- **AI 降噪** — 可配置降噪强度（低至超高），scale=1 时单独生效
+- **NVDEC 硬解码** — AV1、H.264、HEVC GPU 解码（含软解回退）
+- **Vulkan 渲染** — CUDA-Vulkan 共享设备，mpv 渲染进 Qt 场景图
+- **QML 叠加 UI** — 底部悬停区域驱动的自动隐藏控件、虚拟化播放列表、OSD 信息面板
+- **自适应缩放** — 按视口尺寸自动选择超分倍率
+- **播放列表与播放控制** — 目录加载、循环模式、倍速、音视频同步（mpv 承载）
+- **远程控制** — Unix socket JSON IPC；独立 `mpv-vsr` CLI 与包装脚本
 
 ## 截图
 
 ![播放器界面](docs/images/player-screenshot.jpg)
 
-### VSR 效果对比
+### VSR 对比
 
 **原始画面（720p）**
 
-![原始 720p 画面](example/00003_orig.jpg)
+![原始 720p 帧](docs/images/00003_orig.jpg)
 
 **VSR 4× 超分**
 
-![VSR 4倍超分画面](example/00003_vsr.jpg)
-
-## 环境要求
-
-| 组件 | 最低版本 |
-|------|---------|
-| NVIDIA 驱动 | 570+ |
-| Qt 6 | 6.8+ (Quick, QuickControls, Vulkan) |
-| FFmpeg | 6.0+ (libavformat, libavcodec, libavutil, libswscale) |
-| PortAudio | 19+ |
-| Vulkan SDK | 1.3+ (loader + glslc) |
-| glslc | (着色器编译器，Vulkan SDK 包含) |
-| C++ 编译器 | GCC 13+ 或 Clang 18+ (C++20) |
-
-## 第三方 SDK
-
-本项目依赖两个 NVIDIA SDK。详见 [third_party/README_zh.md](third_party/README_zh.md)。
-
-| SDK | 组件 | 协议 | 获取方式 |
-|-----|------|------|----------|
-| CUDA Toolkit | 头文件 + NVRTC | NVIDIA 专有 | `sudo pacman -S cuda`（release 包已内置） |
-| NvVFX | 头文件 | MIT | 随源码分发 |
-| NvVFX | 运行时（约 1.1 GB） | NVIDIA 专有 | `pip install nvidia-vfx` |
-
-> NvVFX 运行时**不包含**在 release 包中——NVIDIA 许可不允许再分发。`install.sh` 会自动处理此步骤。
-
-## 快速开始
-
-### 从 Release 安装（推荐）
-
-从 [GitHub Releases](https://github.com/zhangmq/vsr-player/releases) 下载最新的 `vsr-player-<ver>-linux-x86_64.tar.gz`。
-
-```bash
-tar xzf vsr-player-*.tar.gz
-cd vsr-player-*
-./install.sh
-```
-
-添加到 PATH 后运行：
-
-```bash
-export PATH="$PATH:$HOME/vsr-player/bin"
-vsr-player /path/to/video.mp4
-```
-
-安装脚本会自动检测系统依赖、安装 NVIDIA VFX 运行时（`pip install nvidia-vfx`）并部署到 `~/vsr-player/`。无需 root。
-
-### 从源码构建
-
-```bash
-# 1. 克隆
-git clone https://github.com/zhangmq/vsr-player.git
-cd vsr-player
-
-# 2. 准备第三方依赖（详见 docs/BUILD.md）
-#    - CUDA 头文件/库放在 third_party/cuda/ 或设置 CUDA_HOME
-#    - NvVFX 头文件放在 third_party/nvvfx/include/（MIT，来自 GitHub）
-#    - NvVFX .so 放在 third_party/nvvfx/lib/（pip install nvidia-vfx）
-
-# 3. 构建（着色器编译已包含）
-make -j$(nproc)
-
-# 4. 运行
-./build/vsr-player /path/to/video.mp4
-```
-
-## 命令行参数
-
-| 参数 | 可选值 | 默认值 | 说明 |
-|------|--------|--------|------|
-| `--scale` | `off`, `auto`, `2x`, `3x`, `4x` | `auto` | 超分辨率倍率 |
-| `--quality` | `low`, `medium`, `high`, `ultra` | `high` | 超分质量 |
-| `--denoise` | `off`, `low`, `medium`, `high`, `ultra` | `off` | 降噪质量（scale=1 时生效） |
-| `--depth` | 整数 | `3` | 文件夹扫描深度 |
-| `--no-hwaccel` | — | — | 禁用 NVDEC，使用软解 |
-
-## 键盘快捷键
-
-| 按键 | 功能 |
-|------|------|
-| `Space` | 播放 / 暂停 |
-| `F` | 切换全屏 |
-| `P` | 切换播放列表 |
-| `Tab` | 切换 OSD 信息面板 |
-| `Esc` | 关闭播放列表 / 停止 |
-| `B` | 上一个文件 |
-| `N` | 下一个文件 |
-| `S` | 截图 |
+![VSR 4x 超分帧](docs/images/00003_vsr.jpg)
 
 ## 架构
 
 ```
-Qt Client (主线程)                        libvsrplayer (工作线程)
-┌──────────────────────────┐          ┌─────────────────────────────────┐
-│ QML Overlay              │          │ PlayerCore — 命令队列 +         │
-│ ├─ TopBar                │  命令/   │              播放状态机          │
-│ ├─ BottomBar             │  事件    │ ├─ Demuxer (libavformat)        │
-│ ├─ VolumePopup           │◄────────►│ ├─ Decoder (NVDEC hwaccel)      │
-│ ├─ QualityPopup          │  桥接    │ ├─ VSRProcessor (NvVFX)         │
-│ ├─ SpeedPopup            │          │ ├─ Renderer (Vulkan)            │
-│ ├─ PlaylistPanel         │          │ ├─ AudioOutput (PortAudio)      │
-│ ├─ ProgressSlider        │          │ ├─ ClockManager (A/V 同步)      │
-│ ├─ CenterPlayBtn         │          │ └─ NV12ToRGB (CUDA kernel)      │
-│ └─ OsdOverlay            │          │                                 │
-└──────────────────────────┘          └─────────────────────────────────┘
-
-数据流（全 GPU，零 PCIe 拷贝）：
-  Container → Demux → NVDEC → NV12(GPU) → NV12→RGB(GPU) → VSR → RGBA(GPU)
-                                                              → CUDA-Vulkan 互操作
-                                                              → Vulkan 渲染通道
-                                                              → 屏幕
+demux → decode → [vf_vsr] → VO (libmpv) → Qt 场景图
+                   ↑
+              VFX SDK + CUDA
 ```
 
-## 目录结构
+- mpv 承担：解封装、解码、音视频同步、时序、seek、VO
+- `vf_vsr`（覆盖层 `src/mpv/video/filter/vf_vsr.c`）：接收 `mp_image`，CUDA+VFX SDK 超分，输出超分 `mp_image`
+- 前端：Qt 6 + QML（`src/client/`）——MpvController（libmpv 封装）、PlayerViewModel（UI 状态单一事实源）、Vulkan 共享设备
+- mpv patch 方案：`third_party/mpv`（纯净 0.41）+ `src/mpv` 覆盖层，`scripts/build_mpv.sh` 合并构建
 
-```
-vsr-player/
-├── src/
-│   ├── client/                 # Qt 客户端（链接 libvsrplayer）
-│   │   ├── main.cpp            # 入口、QQuickView + Vulkan 初始化
-│   │   ├── PlayerViewModel.*   # QML ↔ Core 桥接
-│   │   ├── PlaylistEngine.*    # 文件夹扫描 + 文件列表模型
-│   │   ├── KeyFilter.*         # 键盘事件过滤器
-│   │   ├── QtVulkanContext.*   # RAII Vulkan 实例封装
-│   │   ├── shaders/            # GLSL 顶点/片段着色器
-│   │   └── ui/                 # QML 组件
-│   │       ├── overlay.qml     # 主叠加层（接线层）
-│   │       ├── TopBar.qml
-│   │       ├── BottomBar.qml
-│   │       ├── VolumePopup.qml
-│   │       ├── QualityPopup.qml
-│   │       ├── SpeedPopup.qml
-│   │       ├── PlaylistPanel.qml
-│   │       ├── ProgressSlider.qml
-│   │       ├── CenterPlayBtn.qml
-│   │       ├── OsdOverlay.qml
-│   │       └── components/
-│   │           └── IconButton.qml
-│   └── core/                   # libvsrplayer 静态库
-│       ├── api/Player.h        # 公开 API（接口、命令、事件）
-│       ├── PlayerCore.*        # 命令队列 + 状态机
-│       ├── Demuxer.*           # FFmpeg avformat 封装
-│       ├── Decoder.*           # NVDEC hwaccel（av1_nvdec 等）
-│       ├── VSRProcessor.*      # NvVFX VideoSuperRes 封装
-│       ├── Renderer.*          # Vulkan 渲染管线
-│       ├── AudioOutput.*       # PortAudio 封装
-│       ├── ClockManager.*      # 音频主时钟 A/V 同步
-│       ├── FramePool.*         # GPU 帧缓冲区管理
-│       └── utils/
-│           ├── CUDAContext.*   # CUDA 设备上下文 RAII
-│           ├── VulkanContext.* # Vulkan 实例/设备 RAII
-│           └── NV12ToRGB.*     # CUDA kernel NV12→RGB
-├── tests/                      # 独立测试程序
-│   ├── test_decoder.cpp        # 硬解解码器验证
-│   ├── test_pipeline.cpp       # 完整解码管线测试
-│   └── test_interop.cpp        # CUDA-Vulkan 互操作测试
-├── scripts/
-│   └── check-deps.sh           # 第三方依赖检查
-├── third_party/                # 打包依赖（不纳入 git）
-│   ├── cuda/                   # CUDA Toolkit 头文件 + libnvrtc
-│   └── nvvfx/                  # NvVFX SDK 头文件 + .so 链
-├── docs/
-│   ├── ARCHITECTURE.md         # 详细架构文档
-│   └── BUILD.md                # 构建指南
-├── Makefile
-├── README.md
-├── README_zh.md
-└── CLAUDE.md                   # AI 助手上下文
+## 前置要求
+
+| 组件 | 要求 |
+|------|------|
+| GPU | NVIDIA RTX 20 系或更新 |
+| 驱动 | 570+（含 CUDA；Wayland 需 `nvidia_drm.modeset=1`） |
+| Qt | 6.8+（Quick、QuickControls、Vulkan） |
+| 编译器 | GCC 13+（C++20） |
+| 构建 | meson、ninja、CUDA Toolkit（`/opt/cuda`） |
+
+第三方 SDK（NvVFX 头文件/运行时、MDI 图标字体、mpv 源码）**不随仓库分发**——按 [docs/third-party-setup.md](docs/third-party-setup.md) 准备 `third_party/`。
+
+## 构建
+
+```bash
+./scripts/build_mpv.sh          # 合并 src/mpv 覆盖层到 third_party/mpv 并构建 libmpv + vf_vsr
+ninja -C build                  # 构建 Qt 客户端
+./build/src/client/vsr-player <视频或目录>
 ```
 
-## 许可
+## 使用
 
-MIT
+- 打开文件或目录（目录会把全部可播放文件加载进播放列表）
+- 画质控制：底栏 `画质` 弹窗——缩放 off/auto/2×/3×/4×、超分质量、降噪
+- 播放列表：`P` 键；UI 自动隐藏由底部悬停区域驱动（鼠标移出即隐藏）
+- OSD：`Tab` 切换 mpv 渲染的信息浮层（源/输出/渲染/解码器/GPU…）
+
+### 命令行选项
+
+| 选项 | 取值 | 默认 | 说明 |
+|------|------|------|------|
+| `--scale` | `off`、`auto`、`2`、`3`、`4` | `auto` | 超分倍率 |
+| `--quality` | `low`、`medium`、`high`、`ultra` | `high` | 超分质量 |
+| `--denoise` | `off`、`low`、`medium`、`high`、`ultra` | `off` | 降噪强度（scale=1 时生效） |
+| `--no-hwaccel` | — | — | 关闭 NVDEC，使用软解 |
+| `--lang` | 如 `en`、`zh_CN` | 系统 locale | 界面语言 |
+| `--benchmark` | — | — | 无 UI 吞吐测量（`all=no` 日志） |
+| `--no-vsync` | — | — | 关闭 FIFO present |
+| `--no-rpc` | — | — | 关闭 JSON IPC 服务 |
+
+### 快捷键
+
+| 按键 | 动作 |
+|------|------|
+| `Space` | 播放 / 暂停 |
+| `←` / `→` | 快退 / 快进 ±5s（`Shift` + 方向键 = ±10s） |
+| `↑` / `↓` | 音量 ±5% |
+| `S` | 截图 |
+| `Tab` | 切换 OSD |
+| `N` / `B` | 下一首 / 上一首 |
+| `[` / `]` / `\` | 倍速 0.5× / 2× / 1× |
+| `P` | 开关播放列表 |
+| `F` | 切换全屏 |
+| `Esc` | 退出全屏 / 关闭播放列表 |
+
+## 远程控制
+
+Unix socket JSON IPC（`/tmp/vsr-player.sock`）：
+
+```bash
+printf '{"command":["play"]}\n' | socat - UNIX-CONNECT:/tmp/vsr-player.sock
+```
+
+命令：`play`、`pause`、`stop`、`seek`、`loadfile`、`set-vsr`、`get-vsr`、`quit`，及原始 `command` 透传。独立 CLI（`scripts/install_mpv_local.sh`）安装 `mpv-vsr`——带 `--vf=vsr` 支持的 patched mpv。
+
+## 独立版 mpv-vsr CLI
+
+带 `vf_vsr` 滤镜的 patched mpv 也独立构建分发，可作普通 mpv 替代：
+
+```bash
+./scripts/install_mpv_local.sh     # → ~/.local/bin/mpv-vsr + VFX 库在 ~/.local/lib/vsr-player/
+mpv-vsr --vf=vsr:scale=2 video.mkv
+```
+
+滤镜选项：
+
+| 选项 | 取值 | 说明 |
+|------|------|------|
+| `scale` | `off`、`auto`、`2`、`3`、`4`、比例（如 `4/3`） | 超分倍率；`auto` 按视口选择 |
+| `quality` | `low`、`medium`、`high`、`ultra` | VSR 推理质量 |
+| `denoise` | `off`、`low`、`medium`、`high`、`ultra` | 降噪（scale=1 时单独生效） |
+
+示例：`mpv-vsr --vf=vsr:scale=auto,quality=ultra --hwdec=auto video.mkv`
+
+`mpv-vsr-wrapper.py`（浏览器集成，ff2mpv 风格）：导出 Chrome cookie、yt-dlp 提取播放列表（YouTube/Bilibili/Niconico）、拉起 mpv-vsr。
+
+## 开源协议
+
+VSR Player 采用 GNU General Public License v2 或更高版本 (GPLv2+)。
+
+完整协议文本见 [LICENSE](LICENSE)。
+
+项目基于 [mpv](https://github.com/mpv-player/mpv)（GPLv2+）构建：编译带自定义
+`vf_vsr` 滤镜的 patched mpv，前端链接 libmpv——因此分发的二进制是 mpv 的
+衍生作品，整个项目按 GPLv2+ 分发。Qt/QML 前端代码本身为独立开发。
+
+运行时动态加载的 NVIDIA Video Effects SDK 库为 NVIDIA 专有软件，
+不受本项目 GPL 许可证约束。
 
 ---
 

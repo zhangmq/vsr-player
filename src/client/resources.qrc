@@ -1,0 +1,15 @@
+<RCC>
+    <qresource prefix="/">
+        <file>main.qml</file>
+        <file>ui/TopBar.qml</file>
+        <file>ui/BottomBar.qml</file>
+        <file>ui/CenterPlayBtn.qml</file>
+        <file>ui/ProgressSlider.qml</file>
+        <file>ui/VolumePopup.qml</file>
+        <file>ui/QualityPopup.qml</file>
+        <file>ui/SpeedPopup.qml</file>
+        <file>ui/PlaylistPanel.qml</file>
+        <file>ui/components/IconButton.qml</file>
+        <file>ui/components/PopupBase.qml</file>
+    </qresource>
+</RCC>

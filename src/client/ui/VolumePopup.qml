@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import "components"
 
-Popup {
+PopupBase {
     id: root
     property real volume: 0.0
     property bool muted: false
@@ -10,10 +10,7 @@ Popup {
     signal muteToggled()
 
     width: 48; padding: 12
-    modal: true; closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     onOpened: { volSlider.value = root.volume * 100 }
-
-    background: Rectangle { color: "#d9111111"; radius: 8; border { width: 1; color: "#22ffffff" } }
 
     Column {
         spacing: 8; anchors.horizontalCenter: parent.horizontalCenter
@@ -36,8 +33,8 @@ Popup {
 
         IconButton {
             anchors.horizontalCenter: parent.horizontalCenter
-            codepoint: root.muted ? "" : ""; size: 20
-            tooltip: root.muted ? "取消静音" : "静音"
+            codepoint: root.muted ? "󰖁" : "󰕾"; size: 20
+            tooltip: root.muted ? qsTr("Unmute") : qsTr("Mute")
             onClicked: { root.muteToggled(); volSlider.value = root.volume * 100 }
         }
     }

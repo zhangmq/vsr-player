@@ -1,0 +1,23 @@
+#pragma once
+#include <vector>
+#include <string>
+
+/// Parsed command-line options. Pure data — no logic beyond parsing.
+struct Options {
+    bool benchmark = false;
+    bool hwaccel = true;
+    bool vsync = true;          // swapInterval(1) on, swapInterval(0) off
+    bool rpc = true;            // JSON IPC server on
+    std::string rpc_socket = "/tmp/vsr-player.sock";
+    std::string scale;          // "off" | "auto" | "2" | "3" | "4" (empty = unset)
+    std::string denoise;        // "off" | "low" | "medium" | "high" | "ultra"
+    std::string quality;        // "low" | "medium" | "high" | "ultra"
+    std::vector<std::pair<std::string, std::string>> passthrough;  // (key, value) from `--`
+    std::string video_file;
+    std::string lang;           // UI language override (e.g. "zh_CN", "en"); empty = system locale
+    std::string screenshot_dir; // screenshot output dir; empty = mpv default
+
+    /// Parse argc/argv. Returns true on success; on failure prints
+    /// usage to stderr and returns false.
+    static bool parse(int argc, char *argv[], Options *out);
+};
