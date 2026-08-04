@@ -466,6 +466,13 @@ static void free_cuda_buf(void *opaque, uint8_t *data)
 {
     struct vsr_cuda_ref *r = opaque;
     if (r && r->ctx) cuCtxPushCurrent(r->ctx);
+    // 等 stream 0 在途 map 拷贝完成（读 data）再释放：正常播放时帧在
+    // VO 渲染完成后 unref（拷贝已完成，sync 立即返回）；但引擎重建
+    //（auto scale 变化）时 filter 链 flush 会丢弃排队中的帧——若该帧
+    // 的 map 拷贝仍在 GPU 上读 out_buf，cuMemFree 后 GPU 访问已释放
+    // 内存 → 队列挂起 → 后续一切等 GPU 的同步卡死（Xid 109 场景 core
+    // 实测：SDK ReleaseBuffers 卡在等 stream 0 完成）。
+    cuStreamSynchronize(0);
     cuMemFree((CUdeviceptr)data);
     if (r && r->ctx) cuCtxPopCurrent(NULL);
     if (r)

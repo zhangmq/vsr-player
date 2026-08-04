@@ -378,13 +378,28 @@ bool vsr_set_quality(struct vsr_context *c, int quality) {
 }
 
 // ── vsr_destroy ──────────────────────────────────────────────────────────
-// 销毁前等待 stream 在途工作完成：Run 为异步提交，在途推理若仍在 GPU
-// 上执行，Dealloc/DestroyEffect 释放其目标缓冲会导致 CUDA 非法访问
-//（ILLEGAL_ADDRESS，曾致播放器崩溃）。同步后再销毁彻底消除该竞态。
+// 销毁前等待在途工作完成：Run 为异步提交，在途推理若仍在 GPU 上执行，
+// Dealloc/DestroyEffect 释放其目标缓冲会导致 CUDA 非法访问（ILLEGAL_ADDRESS
+// / GPU hang）。
+//
+// 同步范围 = 自己的流（c->stream，VSR 推理所在流，含 SDK 内部流——
+// NvVFX_SetCudaStream 指定的流；推理完成即内部流空闲）。不能做设备级
+// 同步（cuCtxSynchronize）：它会把 VO map 的 stream 0（GUI 渲染线程的
+// 异步拷贝）也卷进来等——渲染循环随 mpv 核心阻塞而停止后，stream 0 的
+// 拷贝永远不完成 → ctx sync 死锁（Xid 109 场景 core 实测：destroy 卡在
+// cuCtxSynchronize，stream 0 NOT_READY）。调用方须已 cuCtxPushCurrent。
 
 void vsr_destroy(struct vsr_context *c) {
     if (c->stream)
         cuStreamSynchronize(c->stream);
+    // 再等 VO map 流（stream 0）完成：SDK DestroyEffect（NGX
+    // ReleaseBuffers）内部等待"全部 CUDA 流空闲"——stream 0 上有 GUI
+    // 渲染的 map 拷贝在途时（map 的等待已由 ext_wait 的 flush 满足，
+    // 拷贝无依赖会完成），不等就进入 DestroyEffect → SDK 等流空闲卡死
+    //（Xid 109 CTX SWITCH TIMEOUT，core 实测卡在 ReleaseBuffers）。
+    // 注意：只能流级同步，不能 cuCtxSynchronize——device 级会把渲染
+    // 循环持续提交的 map 也等进来，GPU 永不静止 → 同样死锁。
+    cuStreamSynchronize(0);
     if (c->handle) {
         pfn_NvVFX_DestroyEffect(c->handle);
         c->handle = NULL;

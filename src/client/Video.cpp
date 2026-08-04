@@ -277,6 +277,11 @@ QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
             pendingW_ = node->w;
             pendingH_ = node->h;
             stableCount_ = 0;
+            // 尺寸变化 → 启动渲染暂停窗口（VSR 引擎重建需 GPU 静止，
+            // 见 Video.h RENDER_HALT_MS 注释）
+            renderHaltUntil_ = now() + RENDER_HALT_MS / 1000.0;
+            VLOG("render halt until %.0fms (resize %dx%d)",
+                 renderHaltUntil_ * 1000.0, node->w, node->h);
         }
     }
 
@@ -299,6 +304,16 @@ QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
                 if (benchT0_.load() == 0.0) benchT0_.store(now());
                 benchFrames_.fetch_add(1);
                 if (frameRenderedCb_) frameRenderedCb_();   // 段内 rendered 计数
+            }
+            // 尺寸变化暂停窗口：跳过 render——VSR 引擎重建（SDK
+            // DestroyEffect）需要全部 CUDA 流空闲，渲染循环每帧 map
+            // 使它永不空闲 → 卡死。窗口内不提交 GPU 工作，stream 0
+            // 排空后重建在 GPU 静止时执行（见 Video.h RENDER_HALT_MS）。
+            // 代价：窗口内 flip_page 等待超时（200ms，DBG 日志），
+            // 播放核心不受影响（VO 帧滞留，窗口结束后消费）。
+            if (now() < renderHaltUntil_) {
+                VLOG("render halted (resize window)");
+                return node;
             }
             double t_rnd0 = now();
             mpv_->render(rtImage_, VK_FORMAT_R8G8B8A8_UNORM, w_, h_);

@@ -84,9 +84,18 @@ private:
     // RT_STABLE_FRAMES 帧未变才重建。拖动中零重建；停止后 ~30 帧重建
     //（0.5s@60fps / 1.25s@24fps）。保守节流：全屏/窗口切换的尺寸连续
     // 变化会重置 stableCount，重建自然延后到切换完成后（modeset 与
-    // render target 重建的 GPU 操作错开，避免切换瞬间 GPU 忙期叠操作；
-    // 注：不能避免 NVIDIA Xid 109 驱动 bug，见 memory nvidia-xid109）。
+    // render target 重建的 GPU 操作错开）。Xid 109 竞态的完整修复链
+    // 见 memory nvidia-xid109（uninit 同步 + hold flush + destroy
+    // 流级同步 + RENDER_HALT_MS 渲染暂停）。
     static constexpr int RT_STABLE_FRAMES = 30;
     int pendingW_ = 0, pendingH_ = 0;
     int stableCount_ = 0;
+    /// 尺寸变化后的渲染暂停窗口（ms）：全屏/窗口切换触发 render target
+    /// 重建 + VSR 引擎重建（auto scale 变化），SDK 的 DestroyEffect 要求
+    /// 全部 CUDA 流空闲——渲染循环每帧 map（stream 0）使它永不空闲 →
+    /// 卡死（Xid 109 场景，core 实测卡在 NvNGXFeatureHelper::ReleaseBuffers）。
+    /// 暂停窗口内跳过 mpv render：stream 0 排空、GPU 静止，重建完成后再
+    /// 恢复渲染。与 RT_STABLE_FRAMES 节流同一思路（重建避开 GPU 忙期）。
+    static constexpr double RENDER_HALT_MS = 2500.0;
+    double renderHaltUntil_ = 0.0;
 };
