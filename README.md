@@ -87,7 +87,7 @@ ninja -C build                  # build the Qt client
 | `--no-hwaccel` | — | — | Disable NVDEC, use software decode |
 | `--lang` | e.g. `en`, `zh_CN` | system locale | UI language |
 | `--benchmark` | — | — | Headless throughput measurement (no UI, `all=no` logging) |
-| `--no-vsync` | — | — | Disable FIFO present |
+| `--vsync` | — | off | FIFO present (non-blocking by default; Wayland has no tearing) |
 | `--no-rpc` | — | — | Disable JSON IPC server |
 
 ### Keyboard Shortcuts

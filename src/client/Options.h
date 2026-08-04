@@ -6,7 +6,10 @@
 struct Options {
     bool benchmark = false;
     bool hwaccel = true;
-    bool vsync = true;          // swapInterval(1) on, swapInterval(0) off
+    // 默认 off（非阻塞提交）：wayland 下 FIFO 排队 + 无 present_sync
+    // 反馈 → 启动播放帧 drop（见 vo_libmpv 无 get_vsync）。显式 --vsync
+    // 开启 FIFO（X11 防撕裂场景）。
+    bool vsync = false;
     bool rpc = true;            // JSON IPC server on
     std::string rpc_socket = "/tmp/vsr-player.sock";
     std::string scale;          // "off" | "auto" | "2" | "3" | "4" (empty = unset)

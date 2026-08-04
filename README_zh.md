@@ -87,7 +87,7 @@ ninja -C build                  # 构建 Qt 客户端
 | `--no-hwaccel` | — | — | 关闭 NVDEC，使用软解 |
 | `--lang` | 如 `en`、`zh_CN` | 系统 locale | 界面语言 |
 | `--benchmark` | — | — | 无 UI 吞吐测量（`all=no` 日志） |
-| `--no-vsync` | — | — | 关闭 FIFO present |
+| `--vsync` | — | off | FIFO present（默认非阻塞；wayland 无撕裂问题） |
 | `--no-rpc` | — | — | 关闭 JSON IPC 服务 |
 
 ### 快捷键
