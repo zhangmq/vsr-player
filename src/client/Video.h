@@ -81,8 +81,12 @@ private:
     // ── RT resize 节流（稳定计数）─────────────────────────────────
     // resize 拖动时每帧尺寸变化，直接 ensureRenderTarget 会每帧重建
     // rt + 触发 mpv reconfig（VSR 分辨率重配）→ 卡顿。改为：尺寸连续
-    // RT_STABLE_FRAMES 帧未变才重建。拖动中零重建；停止后 ~3 帧重建。
-    static constexpr int RT_STABLE_FRAMES = 3;
+    // RT_STABLE_FRAMES 帧未变才重建。拖动中零重建；停止后 ~30 帧重建
+    //（0.5s@60fps / 1.25s@24fps）。保守节流：全屏/窗口切换的尺寸连续
+    // 变化会重置 stableCount，重建自然延后到切换完成后（modeset 与
+    // render target 重建的 GPU 操作错开，避免切换瞬间 GPU 忙期叠操作；
+    // 注：不能避免 NVIDIA Xid 109 驱动 bug，见 memory nvidia-xid109）。
+    static constexpr int RT_STABLE_FRAMES = 30;
     int pendingW_ = 0, pendingH_ = 0;
     int stableCount_ = 0;
 };

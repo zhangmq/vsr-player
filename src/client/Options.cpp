@@ -32,8 +32,10 @@ bool Options::parse(int argc, char *argv[], Options *out) {
             o.vsync = false;  // benchmark 强制关闭 vsync
         } else if (strcmp(argv[i], "--no-hwaccel") == 0) {
             o.hwaccel = false;
+        } else if (strcmp(argv[i], "--vsync") == 0) {
+            o.vsync = true;  // 显式开启 FIFO present（默认 no）
         } else if (strcmp(argv[i], "--no-vsync") == 0) {
-            o.vsync = false;
+            o.vsync = false;  // 兼容 no-op（默认已是 no）
         } else if (strcmp(argv[i], "--no-rpc") == 0) {
             o.rpc = false;
         } else if (strcmp(argv[i], "--rpc-socket") == 0 && i + 1 < argc) {
@@ -73,7 +75,7 @@ bool Options::parse(int argc, char *argv[], Options *out) {
     }
     if (o.video_file.empty()) {
         fprintf(stderr,
-            "Usage: %s [--benchmark] [--no-hwaccel] [--no-vsync] "
+            "Usage: %s [--benchmark] [--no-hwaccel] [--vsync] "
             "[--no-rpc] [--rpc-socket <path>] "
             "[--scale off|auto|2|3|4] [--denoise off|low|medium|high|ultra] "
             "[--quality low|medium|high|ultra] "
