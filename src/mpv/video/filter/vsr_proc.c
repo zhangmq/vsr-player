@@ -2,24 +2,16 @@
 
 #include <cuda.h>
 #include <dlfcn.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
-// ── Types from nvCVImage.h / nvVideoEffects.h (C-compatible) ────────────
 
-typedef struct NvCVImage {
-    unsigned int width, height;
-    int pitch;
-    int pixelFormat, componentType;
-    unsigned char pixelBytes, componentBytes, numComponents;
-    unsigned char planar, gpuMem, colorspace;
-    void *pixels;
-    void *deletePtr;
-    void (*deleteProc)(void*);
-    unsigned long long bufferBytes;
-} NvCVImage;
+// ── Types from nvCVImage.h / nvVideoEffects.h (C-compatible) ────────────
+// struct NvCVImage 定义见 vsr_internal.h（per-context 缓冲需要）
 
 #define NVCV_RGB    4
 #define NVCV_RGBA   6
@@ -54,6 +46,7 @@ typedef int (*PFN_NvCVImage_Transfer)(const NvCVImage*, NvCVImage*, float,
 static void *g_vfx_lib = NULL;
 static void *g_nvcv_lib = NULL;
 
+
 static PFN_NvVFX_CreateEffect    pfn_NvVFX_CreateEffect;
 static PFN_NvVFX_DestroyEffect   pfn_NvVFX_DestroyEffect;
 static PFN_NvVFX_SetU32          pfn_NvVFX_SetU32;
@@ -66,10 +59,9 @@ static PFN_NvCVImage_Alloc       pfn_NvCVImage_Alloc;
 static PFN_NvCVImage_Dealloc     pfn_NvCVImage_Dealloc;
 static PFN_NvCVImage_Transfer    pfn_NvCVImage_Transfer;
 
-// Internal NvCVImage descriptors for alloc/dealloc lifecycle tracking
-static NvCVImage g_in_img;
-static NvCVImage g_out_img;
-static NvCVImage g_tmp_img;
+// 图像缓冲为 per-context（vsr_context.in_img/out_img/tmp_img）——引擎
+// 生命周期内缓冲随尺寸按需重建（vsr_set_output），SDK 引擎的 SetImage
+// 引用各实例自身的 pixels 地址。
 
 // ── Library loading ──────────────────────────────────────────────────────
 
@@ -223,42 +215,42 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
     }
 
     // ── Output image: RGBA U8 chunky GPU ──────────────────────────────────
-    if (!ensure_img(&g_out_img, out_w, out_h, "output")) {
+    if (!ensure_img(&c->out_img, out_w, out_h, "output")) {
         vsr_destroy(c);
         return false;
     }
-    ret = pfn_NvVFX_SetImage(c->handle, NVVFX_OUTPUT_IMAGE, &g_out_img);
+    ret = pfn_NvVFX_SetImage(c->handle, NVVFX_OUTPUT_IMAGE, &c->out_img);
     fprintf(stderr, "VSR: DstImage0 RGBA U8 -> %d\n", ret);
     if (ret != 0) {
         vsr_destroy(c);
         return false;
     }
-    c->out_pixels = g_out_img.pixels;
-    c->out_pitch = (int)g_out_img.pitch;
+    c->out_pixels = c->out_img.pixels;
+    c->out_pitch = (int)c->out_img.pitch;
 
     // ── Input image: RGBA U8 chunky GPU ───────────────────────────────────
-    if (!ensure_img(&g_in_img, in_w, in_h, "input")) {
+    if (!ensure_img(&c->in_img, in_w, in_h, "input")) {
         vsr_destroy(c);
         return false;
     }
-    ret = pfn_NvVFX_SetImage(c->handle, NVVFX_INPUT_IMAGE, &g_in_img);
+    ret = pfn_NvVFX_SetImage(c->handle, NVVFX_INPUT_IMAGE, &c->in_img);
     if (ret != 0) {
         fprintf(stderr, "VSR: SetImage(input RGBA U8) failed (%d)\n", ret);
         vsr_destroy(c);
         return false;
     }
-    c->in_pixels = g_in_img.pixels;
-    c->in_pitch = (int)g_in_img.pitch;
+    c->in_pixels = c->in_img.pixels;
+    c->in_pitch = (int)c->in_img.pitch;
 
     // ── Temp buffer for NvCVImage_Transfer ────────────────────────────────
     {
         int max_dim = (out_w > in_w) ? out_w : in_w;
         int max_h = (out_h > in_h) ? out_h : in_h;
-        if (!ensure_img(&g_tmp_img, max_dim, max_h, "temp"))
-            memset(&g_tmp_img, 0, sizeof(g_tmp_img));   // 非致命
+        if (!ensure_img(&c->tmp_img, max_dim, max_h, "temp"))
+            memset(&c->tmp_img, 0, sizeof(c->tmp_img));   // 非致命
     }
-    c->tmp_pixels = g_tmp_img.pixels;
-    c->tmp_pitch = (int)g_tmp_img.pitch;
+    c->tmp_pixels = c->tmp_img.pixels;
+    c->tmp_pitch = (int)c->tmp_img.pitch;
 
     // ── CUDA stream ───────────────────────────────────────────────────────
     if (stream) {
@@ -340,16 +332,16 @@ bool vsr_process(struct vsr_context *c, CUstream stream,
         return false;
     }
 
-    ret = pfn_NvVFX_GetImage(c->handle, NVVFX_OUTPUT_IMAGE, &g_out_img);
+    ret = pfn_NvVFX_GetImage(c->handle, NVVFX_OUTPUT_IMAGE, &c->out_img);
     if (ret != 0) {
         fprintf(stderr, "VSR: GetImage(output) failed (%d)\n", ret);
         return false;
     }
 
-    *output_ptr = g_out_img.pixels;
-    *out_w = (int)g_out_img.width;
-    *out_h = (int)g_out_img.height;
-    if (out_pitch) *out_pitch = (int)g_out_img.pitch;
+    *output_ptr = c->out_img.pixels;
+    *out_w = (int)c->out_img.width;
+    *out_h = (int)c->out_img.height;
+    if (out_pitch) *out_pitch = (int)c->out_img.pitch;
 
     return true;
 }
@@ -363,6 +355,36 @@ bool vsr_process(struct vsr_context *c, CUstream stream,
 //     差异）——quality 可轻量更新，引擎常驻。
 // 旧实现每次热更新全量重建引擎（~1s Load 延迟 + 销毁竞态 + scale 路径
 // 旧引擎泄漏）；上一版轻量实现（SetImage 换尺寸）输出错乱——均废弃。
+
+// ── 轻量热更新：尺寸变化（引擎常驻）──────────────────────────────────
+// 实验（vfx_outchange_test / vfx_inchange_test）：引擎 Load 后 SetImage
+// 换输出/输入缓冲，输出与直接加载新尺寸的引擎逐字节一致（PSNR 999dB）
+// ——SDK 引擎在 SetImage 时重新适配（含 tile 切分），无需重建。尺寸
+// 变化（输入或输出）均走此路径，绕开重建的 destroy/Load 挂死点
+// （Xid 109）。
+
+bool vsr_set_output(struct vsr_context *c, int out_w, int out_h) {
+    if (!c->handle || !c->ready) return false;
+    if (out_w == c->out_w && out_h == c->out_h)
+        return true;
+    if (!ensure_img(&c->out_img, out_w, out_h, "output")) {
+        fprintf(stderr, "VSR: SetOutput alloc %dx%d failed\n", out_w, out_h);
+        return false;
+    }
+    int ret = pfn_NvVFX_SetImage(c->handle, NVVFX_OUTPUT_IMAGE, &c->out_img);
+    if (ret != 0) {
+        fprintf(stderr, "VSR: SetImage(output %dx%d) failed (%d)\n",
+                out_w, out_h, ret);
+        return false;
+    }
+    c->out_pixels = c->out_img.pixels;
+    c->out_pitch = (int)c->out_img.pitch;
+    c->out_w = out_w;
+    c->out_h = out_h;
+    fprintf(stderr, "VSR: output %dx%d -> %dx%d (engine kept)\n",
+            (int)c->in_w, (int)c->in_h, out_w, out_h);
+    return true;
+}
 
 bool vsr_set_quality(struct vsr_context *c, int quality) {
     if (!c->handle || !c->ready) return false;
@@ -392,29 +414,22 @@ bool vsr_set_quality(struct vsr_context *c, int quality) {
 void vsr_destroy(struct vsr_context *c) {
     if (c->stream)
         cuStreamSynchronize(c->stream);
-    // 再等 VO map 流（stream 0）完成：SDK DestroyEffect（NGX
-    // ReleaseBuffers）内部等待"全部 CUDA 流空闲"——stream 0 上有 GUI
-    // 渲染的 map 拷贝在途时（map 的等待已由 ext_wait 的 flush 满足，
-    // 拷贝无依赖会完成），不等就进入 DestroyEffect → SDK 等流空闲卡死
-    //（Xid 109 CTX SWITCH TIMEOUT，core 实测卡在 ReleaseBuffers）。
-    // 注意：只能流级同步，不能 cuCtxSynchronize——device 级会把渲染
-    // 循环持续提交的 map 也等进来，GPU 永不静止 → 同样死锁。
     cuStreamSynchronize(0);
     if (c->handle) {
         pfn_NvVFX_DestroyEffect(c->handle);
         c->handle = NULL;
     }
-    if (g_out_img.pixels) {
-        pfn_NvCVImage_Dealloc(&g_out_img);
-        memset(&g_out_img, 0, sizeof(g_out_img));
+    if (c->out_img.pixels) {
+        pfn_NvCVImage_Dealloc(&c->out_img);
+        memset(&c->out_img, 0, sizeof(c->out_img));
     }
-    if (g_in_img.pixels) {
-        pfn_NvCVImage_Dealloc(&g_in_img);
-        memset(&g_in_img, 0, sizeof(g_in_img));
+    if (c->in_img.pixels) {
+        pfn_NvCVImage_Dealloc(&c->in_img);
+        memset(&c->in_img, 0, sizeof(c->in_img));
     }
-    if (g_tmp_img.pixels) {
-        pfn_NvCVImage_Dealloc(&g_tmp_img);
-        memset(&g_tmp_img, 0, sizeof(g_tmp_img));
+    if (c->tmp_img.pixels) {
+        pfn_NvCVImage_Dealloc(&c->tmp_img);
+        memset(&c->tmp_img, 0, sizeof(c->tmp_img));
     }
     if (c->own_stream && c->stream) {
         cuStreamDestroy(c->stream);
