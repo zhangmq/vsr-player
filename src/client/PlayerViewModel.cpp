@@ -421,7 +421,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
                         else if (!strcmp(k, "title") && v->format == MPV_FORMAT_STRING)
                             t["title"] = QString::fromUtf8(v->u.string);
                         else if (!strcmp(k, "selected") && v->format == MPV_FORMAT_FLAG)
-                            t["selected"] = v->u.flag;
+                            t["selected"] = v->u.flag != 0;   // bool 而非 int（QML 严格相等陷阱）
                     }
                     tracks.append(t);
                 }
@@ -858,12 +858,19 @@ void PlayerViewModel::selectTrack(const QString &type, qlonglong id) {
 
 void PlayerViewModel::toggleSubtitles() {
     if (!mpv_) return;
-    mpv_->setPropertyFlagAsync("sub-visibility", !subVisible_);
+    // 乐观翻转（观察器回填校正——双击连击基于本地新值计算，
+    // 避免陈旧状态发送相同目标值）
+    subVisible_ = !subVisible_;
+    emit subVisibleChanged();
+    mpv_->setPropertyFlagAsync("sub-visibility", subVisible_);
 }
 
 void PlayerViewModel::adjustSubDelay(double delta) {
     if (!mpv_) return;
-    mpv_->setPropertyDoubleAsync("sub-delay", subDelay_ + delta);
+    // 乐观累加（绝对赋值：连续两次调节后终值正确）
+    subDelay_ += delta;
+    emit subDelayChanged();
+    mpv_->setPropertyDoubleAsync("sub-delay", subDelay_);
 }
 
 void PlayerViewModel::playlistRemove(int index) {
