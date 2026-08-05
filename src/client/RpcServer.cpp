@@ -141,6 +141,14 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             QMetaObject::invokeMethod(vm, "play", Qt::QueuedConnection);
             response = formatResponse("success");
         }
+    } else if (cmd == "fullscreen") {
+        // 切换全屏（Qt 窗口侧，经 viewModel.toggleFullscreen——mpv
+        // fullscreen 属性无客户端观察器，直接发 mpv 命令不生效）
+        if (!vm) { response = formatResponse("no view model"); }
+        else {
+            QMetaObject::invokeMethod(vm, "toggleFullscreen", Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
     } else if (cmd == "pause") {
         // 无参数 → 确保暂停（viewModel::pause 非 toggle）；yes/no → setPaused
         if (!vm) { response = formatResponse("no view model"); }

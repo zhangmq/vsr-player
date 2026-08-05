@@ -171,7 +171,13 @@ bool Video::ensureRenderTarget(int w, int h) {
     if (w <= 0 || h <= 0) return false;
     if (rtImage_ != VK_NULL_HANDLE && w == w_ && h == h_) return true;
 
-    // Previous frame's GPU work is complete (vkQueueWaitIdle after each render).
+    // 销毁前无条件排空 GPU：原实现依赖"上一帧 need_render 时执行过
+    // vkQueueWaitIdle"——但 need_render=false 的帧不 waitIdle，而场景图
+    // 绘制命令（引用 rtImage）每帧提交——销毁旧 rtImage 时可能有在途
+    // 命令引用它 → Vulkan UAF → GPU hang（Xid 109 根因，2026-08-05
+    // 定位，4/4 压测验证）。vkDestroyImage 要求该 image 不被队列引用。
+    vkQueueWaitIdle(queue_);
+
     if (rtImage_ != VK_NULL_HANDLE) {
         vkDestroyImageView(dev_, rtView_, nullptr);
         vkDestroyImage(dev_, rtImage_, nullptr);

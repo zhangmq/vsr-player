@@ -33,7 +33,6 @@ public:
     int width() const { return w_; }
     int height() const { return h_; }
 
-    std::atomic<double> lastCb_{0.0};
     /// Set by the update callback: mpv requests rendering (new frame or
     /// state change — seek/reconfig produce no new frame but still need
     /// render to consume pending VO work; see vo_libmpv flip_page).
@@ -84,8 +83,9 @@ private:
     // RT_STABLE_FRAMES 帧未变才重建。拖动中零重建；停止后 ~30 帧重建
     //（0.5s@60fps / 1.25s@24fps）。保守节流：全屏/窗口切换的尺寸连续
     // 变化会重置 stableCount，重建自然延后到切换完成后（modeset 与
-    // render target 重建的 GPU 操作错开，避免切换瞬间 GPU 忙期叠操作；
-    // 注：不能避免 NVIDIA Xid 109 驱动 bug，见 memory nvidia-xid109）。
+    // render target 重建的 GPU 操作错开）。Xid 109 竞态的完整修复链
+    // 见 memory nvidia-xid109（uninit 同步 + hold flush + destroy
+    // 流级同步 + RENDER_HALT_MS 渲染暂停）。
     static constexpr int RT_STABLE_FRAMES = 30;
     int pendingW_ = 0, pendingH_ = 0;
     int stableCount_ = 0;
