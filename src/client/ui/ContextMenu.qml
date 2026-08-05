@@ -32,8 +32,8 @@ PopupBase {
             // signal 声明 + 此数组 + main.qml handler）
             model: [
                 {icon: "󰉋", text: qsTr("Open file"),          hint: "Ctrl+O", sig: "openFilesRequested"},
-                {icon: "󰐍", text: qsTr("Add to playlist"),    hint: "",       sig: "appendFilesRequested"},
-                {icon: "󰂎", text: qsTr("Load subtitles"),     hint: "",       sig: "loadSubsRequested"},
+                {icon: "󰐒", text: qsTr("Add to playlist"),    hint: "",       sig: "appendFilesRequested"},
+                {icon: "󰨖", text: qsTr("Load subtitles"),     hint: "",       sig: "loadSubsRequested"},
                 {sep: true},
                 {icon: "󰐊", text: qsTr("Play/Pause"),         hint: "Space",  sig: "playPauseRequested"},
                 {icon: "󰓛", text: qsTr("Stop"),               hint: "",       sig: "stopRequested"},

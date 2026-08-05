@@ -29,8 +29,8 @@ PopupBase {
         color: trHover.containsMouse ? "#33ffffff" : (track.selected ? "#33ffcc00" : "transparent")
         Text {
             anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
-            // 自包含（inline component 定义体内不可引用外层 root）：
-            // 显示名 = title > lang > "Track N"
+            // 显示名自包含（仅用自身 track/idx 属性，不依赖外层作用域）：
+            // title > lang > "Track N"
             text: {
                 var name = (track.title && track.title.length > 0) ? track.title : track.lang
                 return (name && name.length > 0) ? name : qsTr("Track %1").arg(idx + 1)
@@ -98,7 +98,8 @@ PopupBase {
             }
         }
         // "无字幕"（关闭字幕轨，sid=no）。track 为 JS 对象字面量；
-        // 绑定须内联（不可经 property 中转——悬空绑定）。
+        // 对象字面量的字段是普通 JS 值而非 QML 绑定——整字面量须放在
+        // 绑定表达式内整体重估（内联写法正确；拆到 property 中转会冻结）
         TrackRow {
             visible: root.subTracks.length > 0
             track: ({selected: !root.subTracks.some(t => t.selected), id: -1,

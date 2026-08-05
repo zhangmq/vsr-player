@@ -127,7 +127,7 @@ Item {
             IconButton { id: spdBtn; label: qsTr("Speed"); size: 22; tooltip: qsTr("Playback speed")
                 highlighted: root.speedPopupOpen
                 onClicked: root.speedClicked() }
-            IconButton { id: trkBtn; codepoint: "󰂎"; size: 22; tooltip: qsTr("Tracks")
+            IconButton { id: trkBtn; codepoint: "󰨖"; size: 22; tooltip: qsTr("Tracks")
                 highlighted: root.tracksPopupOpen
                 onClicked: root.tracksClicked() }
             IconButton { id: loopBtn
