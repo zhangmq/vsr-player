@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Dialogs
 import VSR 1.0
 import "ui"
 
@@ -53,6 +54,7 @@ Item {
             anchors { left: parent.left; right: parent.right; top: parent.top }
             videoInfo: viewModel.videoInfo
             overlaysVisible: viewModel.overlaysVisible
+            onOpenRequested: function() { fileDialog.mode = 0; fileDialog.open() }
         }
 
         // ── Center Play Button ─────────────────────────────────────
@@ -175,11 +177,53 @@ Item {
                 viewModel.setSpeed(2.0); event.accepted = true; break
             case Qt.Key_Backslash:
                 viewModel.setSpeed(1.0); event.accepted = true; break
+            case Qt.Key_O:
+                if (event.modifiers & Qt.ControlModifier) {
+                    fileDialog.mode = 0; fileDialog.open(); event.accepted = true
+                }
+                break
+            case Qt.Key_V:
+                viewModel.toggleSubtitles(); event.accepted = true; break
             case Qt.Key_P:
                 root.togglePlaylist(); event.accepted = true; break
             case Qt.Key_F:
                 viewModel.toggleFullscreen(); event.accepted = true; break
             }
+        }
+    }
+
+    // ── 文件打开（FileDialog，TopBar 按钮 / Ctrl+O 触发）──────────
+    FileDialog {
+        id: fileDialog
+        title: qsTr("Open media")
+        fileMode: FileDialog.OpenFiles
+        nameFilters: [
+            qsTr("Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)"),
+            qsTr("Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)"),
+            qsTr("Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)"),
+            qsTr("Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)"),
+            qsTr("All files (*)")
+        ]
+        /// 打开方式：0=replace+queue（打开/拖放）1=append（追加到列表）
+        property int mode: 0
+        onAccepted: {
+            var paths = []
+            for (var i = 0; i < selectedFiles.length; i++)
+                paths.push(selectedFiles[i].toString())
+            viewModel.openFiles(paths, mode)
+        }
+    }
+
+    // ── 拖放（窗口级）：字幕文件 → sub-add；其余 → 播放（多文件排队）──
+    DropArea {
+        id: dropArea
+        anchors.fill: parent
+        onEntered: function(drag) { drag.accepted = true }
+        onDropped: function(drop) {
+            var paths = []
+            for (var i = 0; i < drop.urls.length; i++)
+                paths.push(drop.urls[i].toString())
+            viewModel.openFiles(paths, 0)
         }
     }
 

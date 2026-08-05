@@ -1,9 +1,12 @@
 import QtQuick
+import "components"
 
 Item {
     id: root
     property string videoInfo: ""
     property bool overlaysVisible: true
+    /// 打开文件请求（TopBar 打开按钮触发，main.qml 接线到 FileDialog）
+    signal openRequested()
     implicitHeight: 48
 
     Rectangle {
@@ -24,6 +27,13 @@ Item {
                 if (root.videoInfo) return root.videoInfo
                 return qsTr("VSR Player")
             }
+        }
+
+        // ── 打开文件按钮（右上角，随标题一起淡出）────────────────
+        IconButton {
+            codepoint: "󰉋"; size: 22; tooltip: qsTr("Open file (Ctrl+O)")
+            anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
+            onClicked: root.openRequested()
         }
     }
 }
