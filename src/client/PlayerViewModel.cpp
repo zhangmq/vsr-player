@@ -2,6 +2,7 @@
 #include "MpvController.h"
 
 #include <QMetaObject>
+#include <QVariantMap>
 
 #include <cstdio>
 #include <cstring>
@@ -388,6 +389,59 @@ void PlayerViewModel::attach(MpvController *mpv) {
                 resetSegmentCounters(drops);
             seekingPrev_ = seeking;
         });
+    });
+
+    // ── 轨道列表（音轨/字幕轨/视频轨，TracksPopup 数据源）────────
+    // 与 playlist 观察器同构：事件线程解析 mpv_node → QVariantList →
+    // Queued 转发主线程。变化低频（加载/切换），延迟可接受。
+    mpv_->observeProperty("track-list", MPV_FORMAT_NODE, [this, post] {
+        QVariantList tracks;
+        mpv_node node;
+        if (mpv_get_property(mpv_->handle(), "track-list", MPV_FORMAT_NODE,
+                             &node) >= 0) {
+            if (node.format == MPV_FORMAT_NODE_ARRAY) {
+                for (int i = 0; i < node.u.list->num; i++) {
+                    mpv_node *e = &node.u.list->values[i];
+                    if (e->format != MPV_FORMAT_NODE_MAP) continue;
+                    QVariantMap t;
+                    t["type"] = QStringLiteral("video");
+                    t["id"] = qlonglong(0);
+                    t["lang"] = QString();
+                    t["title"] = QString();
+                    t["selected"] = false;
+                    for (int j = 0; j < e->u.list->num; j++) {
+                        const char *k = e->u.list->keys[j];
+                        mpv_node *v = &e->u.list->values[j];
+                        if (!strcmp(k, "type") && v->format == MPV_FORMAT_STRING)
+                            t["type"] = QString::fromUtf8(v->u.string);
+                        else if (!strcmp(k, "id") && v->format == MPV_FORMAT_INT64)
+                            t["id"] = qlonglong(v->u.int64);
+                        else if (!strcmp(k, "lang") && v->format == MPV_FORMAT_STRING)
+                            t["lang"] = QString::fromUtf8(v->u.string);
+                        else if (!strcmp(k, "title") && v->format == MPV_FORMAT_STRING)
+                            t["title"] = QString::fromUtf8(v->u.string);
+                        else if (!strcmp(k, "selected") && v->format == MPV_FORMAT_FLAG)
+                            t["selected"] = v->u.flag;
+                    }
+                    tracks.append(t);
+                }
+            }
+            mpv_free_node_contents(&node);
+        }
+        post([this, tracks] {
+            if (trackList_ != tracks) { trackList_ = tracks; emit trackListChanged(); }
+        });
+    });
+
+    // 字幕可见性 / 延迟（初始值随 observe 立即送达；setter 全异步，
+    // 主线程零 mpv 读——遵循 attach 线程模型注释）
+    mpv_->observeProperty("sub-visibility", MPV_FORMAT_FLAG, [this, post] {
+        bool v = mpv_->propertyFlag("sub-visibility");
+        post([this, v] { if (subVisible_ != v) { subVisible_ = v; emit subVisibleChanged(); } });
+    });
+    mpv_->observeProperty("sub-delay", MPV_FORMAT_DOUBLE, [this, post] {
+        double d = mpv_->propertyDouble("sub-delay");
+        post([this, d] { if (subDelay_ != d) { subDelay_ = d; emit subDelayChanged(); } });
     });
 }
 
