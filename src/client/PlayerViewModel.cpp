@@ -187,8 +187,8 @@ void PlayerViewModel::attach(MpvController *mpv) {
         post([this, files, cur] {
             playlistModel_.setSnapshot(files, cur);
             // 持久化上次播放列表（启动 restorePlaylist 用；清空也写）
-            settings_.setValue("playlist", files);
-            settings_.setValue("playlistCurrent", cur);
+            saveSettings("playlist", files);
+            saveSettings("playlistCurrent", cur);
         });
     });
 
@@ -442,8 +442,16 @@ void PlayerViewModel::setGpuName(const QString &name) { gpuName_ = name; }
 
 // ── 持久化（QSettings；键名与 Task 4 main.cpp 几何恢复一致约定）───────
 
+void PlayerViewModel::saveSettings(const char *key, const QVariant &value) {
+    if (!settingsEnabled_) return;
+    settings_.setValue(key, value);
+}
+
 void PlayerViewModel::loadSettings() {
+    settingsEnabled_ = true;
     persistScale_ = settings_.value("scale", 0.0).toDouble();
+    if (persistScale_ < -1.0 || persistScale_ > 4.0 || persistScale_ == 1.0)
+        persistScale_ = 0.0;   // 非法值（手改配置）→ auto
     persistQuality_ = settings_.value("quality", 3).toInt();
     persistDenoise_ = settings_.value("denoiseQuality", -1).toInt();
 }
@@ -581,7 +589,7 @@ void PlayerViewModel::setVolume(double vol) {
     // 乐观更新：QML 立即反馈，mpv volume 观察事件随后回写校正。
     // 静音为派生状态（volume==0），无需额外状态迁移。
     if (volume_ != vol) { volume_ = vol; emit volumeChanged(); }
-    settings_.setValue("volume", vol);
+    saveSettings("volume", vol);
     // 转发 + 节流：slider 拖动高频调用只记录最新值，事件循环每迭代
     // 合并投递一次（async，主线程零阻塞——避免同步 set 与 flip_page
     // 的 core-lock 互锁窗口，见 PlayerViewModel 线程模型注释）。
@@ -635,7 +643,7 @@ void PlayerViewModel::setScale(double s) {
     //（实测 1080p 4×→7680×4320 成功），超出引擎能力的请求由引擎侧处理。
     bool wasActive = vsrActive();
     if (fabs(scale_ - s) > 0.001) { scale_ = s; emit scaleChanged(); }
-    settings_.setValue("scale", s);
+    saveSettings("scale", s);
     pushVf("scale", scaleStr());  // 热更新，不重建 filter 链
     bool nowActive = vsrActive();
     if (wasActive != nowActive) emit vsrActiveChanged();
@@ -645,7 +653,7 @@ void PlayerViewModel::setQuality(int q) {
     if (!mpv_) return;
     if (q < 1 || q > 4) return;
     if (quality_ != q) { quality_ = q; emit qualityChanged(); }
-    settings_.setValue("quality", q);
+    saveSettings("quality", q);
     pushVf("quality", qualityStr());
 }
 
@@ -654,7 +662,7 @@ void PlayerViewModel::setDenoiseQuality(int d) {
     if (d != -1 && (d < 8 || d > 11)) return;
     bool wasActive = vsrActive();
     if (denoise_ != d) { denoise_ = d; emit denoiseQualityChanged(); }
-    settings_.setValue("denoiseQuality", d);
+    saveSettings("denoiseQuality", d);
     pushVf("denoise", denoiseStr());
     bool nowActive = vsrActive();
     if (wasActive != nowActive) emit vsrActiveChanged();
@@ -667,7 +675,7 @@ void PlayerViewModel::setSpeed(double speed) {
     if (speed < 0.1) speed = 0.1;
     if (speed > 4.0) speed = 4.0;
     if (speed_.load() != speed) { speed_.store(speed); emit speedChanged(); }
-    settings_.setValue("speed", speed);
+    saveSettings("speed", speed);
     mpv_->setPropertyDouble("speed", speed);
 }
 
@@ -731,7 +739,7 @@ void PlayerViewModel::setLoopMode(int m) {
         break;
     }
     if (loopMode_ != m) { loopMode_ = m; emit loopModeChanged(); }
-    settings_.setValue("loopMode", m);
+    saveSettings("loopMode", m);
 }
 
 void PlayerViewModel::toggleLoop() {

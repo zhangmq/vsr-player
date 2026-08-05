@@ -268,6 +268,9 @@ private:
     std::string scaleStr() const;
     std::string qualityStr() const;
     std::string denoiseStr() const;
+    /// 写持久化统一入口：benchmark 不读也不写（loadSettings 未调用 →
+    /// settingsEnabled_ 恒 false，测量口径无副作用）。
+    void saveSettings(const char *key, const QVariant &value);
 
     MpvController *mpv_ = nullptr;
     std::string hwdecInit_;      // 启动时 hwdec 值（切换硬解时恢复）
@@ -335,6 +338,7 @@ private:
     // ── 持久化（QSettings 原生格式 → ~/.config/vsr-player/vsr-player.conf）─
     // 主线程专用（setter/观察器 post 均主线程）。benchmark 不调用 loadSettings。
     QSettings settings_{QStringLiteral("vsr-player"), QStringLiteral("vsr-player")};
+    bool settingsEnabled_ = false;   // loadSettings 调用后才允许写（benchmark 恒 false）
     QVariantList trackList_;      // track-list 观察器填充（Task 3）
     bool subVisible_ = false;
     double subDelay_ = 0.0;
