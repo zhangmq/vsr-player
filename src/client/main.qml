@@ -44,9 +44,21 @@ Item {
                 if (_popups[i] !== exclude) _popups[i].close()
         }
         Component.onCompleted: {
-            _popups = [volumePopup, qualityPopup, speedPopup]
+            _popups = [volumePopup, qualityPopup, speedPopup, contextMenu]
             // 启动即按当前状态应用 auto-hide（onShowUiChanged 只在翻转时触发）
             viewModel.overlaysVisible = showUi
+        }
+
+        // 右键菜单触发器（最底层：右击未被按钮/弹窗消费时到达此处）
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.RightButton
+            onClicked: {
+                if (mouse.button === Qt.RightButton) {
+                    closeOtherPopups(contextMenu)
+                    contextMenu.showAt(uiLayer, mouse.x, mouse.y)
+                }
+            }
         }
 
         // ── Top Bar ────────────────────────────────────────────────
@@ -129,6 +141,18 @@ Item {
         // ── Playlist Panel ─────────────────────────────────────────
         PlaylistPanel {
             id: playlistPanel
+        }
+
+        // ── Context Menu（右键，showAt 定位 = 鼠标位置）──────────────
+        ContextMenu {
+            id: contextMenu
+            onOpenFilesRequested: function() { fileDialog.mode = 0; fileDialog.open() }
+            onAppendFilesRequested: function() { fileDialog.mode = 1; fileDialog.open() }
+            onLoadSubsRequested: function() { fileDialog.mode = 2; fileDialog.open() }
+            onPlayPauseRequested: viewModel.togglePlayPause()
+            onStopRequested: viewModel.stop()
+            onFullscreenRequested: viewModel.toggleFullscreen()
+            onPlaylistRequested: root.togglePlaylist()
         }
 
         // ── Fullscreen 双向同步 + 键盘（快捷键单点）─────────────────
