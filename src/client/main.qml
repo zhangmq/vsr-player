@@ -44,7 +44,7 @@ Item {
                 if (_popups[i] !== exclude) _popups[i].close()
         }
         Component.onCompleted: {
-            _popups = [volumePopup, qualityPopup, speedPopup, contextMenu]
+            _popups = [volumePopup, qualityPopup, speedPopup, contextMenu, tracksPopup]
             // 启动即按当前状态应用 auto-hide（onShowUiChanged 只在翻转时触发）
             viewModel.overlaysVisible = showUi
         }
@@ -92,6 +92,7 @@ Item {
             volumePopupOpen: volumePopup.visible
             qualityPopupOpen: qualityPopup.visible
             speedPopupOpen: speedPopup.visible
+            tracksPopupOpen: tracksPopup.visible
             playlistOpen: playlistPanel.visible
             onSeeked: function(ms) { viewModel.seekAbsolute(ms) }
             onPlayPauseClicked: viewModel.togglePlayPause()
@@ -102,6 +103,7 @@ Item {
             onQualityClicked: qualityPopup.visible ? qualityPopup.close() : qualityPopup.open()
             onHwaccelClicked: viewModel.toggleHwaccel()
             onSpeedClicked: speedPopup.visible ? speedPopup.close() : speedPopup.open()
+            onTracksClicked: tracksPopup.visible ? tracksPopup.close() : tracksPopup.open()
             onFullscreenClicked: viewModel.toggleFullscreen()
             onPlaylistClicked: root.togglePlaylist()
             onLoopClicked: viewModel.toggleLoop()
@@ -136,6 +138,18 @@ Item {
             speed: viewModel.speed
             onSpeedAdjusted: function(v) { viewModel.setSpeed(v) }
             onOpened: closeOtherPopups(speedPopup)
+        }
+
+        TracksPopup {
+            id: tracksPopup
+            anchorTarget: bottomBar.tracksBtn
+            trackList: viewModel.trackList
+            subVisible: viewModel.subVisible
+            subDelay: viewModel.subDelay
+            onTrackSelected: function(type, id) { viewModel.selectTrack(type, id) }
+            onSubVisibilityToggled: viewModel.toggleSubtitles()
+            onSubDelayAdjusted: function(d) { viewModel.adjustSubDelay(d) }
+            onOpened: closeOtherPopups(tracksPopup)
         }
 
         // ── Playlist Panel ─────────────────────────────────────────
