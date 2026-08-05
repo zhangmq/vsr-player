@@ -32,6 +32,8 @@ Item {
         // ── 打开文件按钮（右上角，随标题一起淡出）────────────────
         IconButton {
             codepoint: "󰉋"; size: 22; tooltip: qsTr("Open file (Ctrl+O)")
+            // 淡出后仍命中测试——隐藏时禁点（含 tooltip）
+            enabled: root.overlaysVisible
             anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
             onClicked: root.openRequested()
         }

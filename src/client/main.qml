@@ -178,7 +178,7 @@ Item {
             case Qt.Key_Backslash:
                 viewModel.setSpeed(1.0); event.accepted = true; break
             case Qt.Key_O:
-                if (event.modifiers & Qt.ControlModifier) {
+                if (event.modifiers === Qt.ControlModifier) {
                     fileDialog.mode = 0; fileDialog.open(); event.accepted = true
                 }
                 break
@@ -205,6 +205,7 @@ Item {
             qsTr("All files (*)")
         ]
         /// 打开方式：0=replace+queue（打开/拖放）1=append（追加到列表）
+        /// 2=加载字幕（sub-add，后续入口用）
         property int mode: 0
         onAccepted: {
             var paths = []
@@ -218,6 +219,8 @@ Item {
     DropArea {
         id: dropArea
         anchors.fill: parent
+        // benchmark 模式无 UI——拖入不触发 loadfile
+        enabled: !benchmarkMode
         onEntered: function(drag) { drag.accepted = true }
         onDropped: function(drop) {
             var paths = []
