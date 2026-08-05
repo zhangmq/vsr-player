@@ -17,6 +17,7 @@
 #include <QFile>
 #include <QFontDatabase>
 #include <QQmlContext>
+#include <QSettings>
 
 #include "Options.h"
 #include "VulkanContext.h"
@@ -97,6 +98,10 @@ int main(int argc, char *argv[]) {
 
     // ── VSR 参数 → vf string（viewModel 单一来源）────────────────────
     PlayerViewModel viewModel;
+    // 持久化 VSR 参数：CLI 未显式指定时用上次值（须在 initVsr 前——
+    // 决定 vf 字符串）。benchmark 不读（测量口径：默认 auto/high/off）。
+    if (!opts.benchmark)
+        viewModel.loadSettings();
     viewModel.initVsr(opts.scale, opts.quality, opts.denoise);
     std::string vf = viewModel.vfOption();
 
@@ -122,6 +127,8 @@ int main(int argc, char *argv[]) {
         // 事件线程的 [this] lambda 捕获 viewModel 仍指向存活对象。
         viewModel.setGpuName(vk.deviceName());
         viewModel.attach(&mpv);          // 注册属性观察（须在 startEvents 前）
+        if (!opts.benchmark)
+            viewModel.applyPlaybackSettings();   // 音量/倍速/循环（观察器回填 UI）
 
         QQuickView view;
         view.setVulkanInstance(&qtVi);
@@ -133,7 +140,17 @@ int main(int argc, char *argv[]) {
         // 覆盖 resize() → 窗口/RT 尺寸错误、scale=auto 决策失真、fps 虚高。
         // SizeRootObjectToView：根对象跟随窗口尺寸（Video anchors.fill）。
         view.setResizeMode(QQuickView::SizeRootObjectToView);
-        view.resize(1280, 720);  // 默认窗口尺寸，对齐 client-glfw
+        {
+            // 窗口几何恢复：benchmark 固定默认尺寸（测量口径）。
+            QSettings geom(QStringLiteral("vsr-player"), QStringLiteral("vsr-player"));
+            int gw = opts.benchmark ? 1280 : geom.value("winWidth", 1280).toInt();
+            int gh = opts.benchmark ? 720 : geom.value("winHeight", 720).toInt();
+            int gx = opts.benchmark ? -1 : geom.value("winX", -1).toInt();
+            int gy = opts.benchmark ? -1 : geom.value("winY", -1).toInt();
+            // Wayland 下位置由 compositor 忽略（setGeometry 安全），只恢复大小
+            if (gx >= 0 && gy >= 0) view.setGeometry(gx, gy, gw, gh);
+            else view.resize(gw, gh);
+        }
         MLOG_INFO("after resize: %dx%d", view.width(), view.height());
 
         view.rootContext()->setContextProperty("viewModel", &viewModel);
@@ -290,10 +307,28 @@ int main(int argc, char *argv[]) {
                        video->width(), video->height());
         MLOG_INFO("skip render pass done (%dx%d)", video->width(), video->height());
 
-        mpv.loadFile(opts.video_file.c_str());
+        if (opts.benchmark || !opts.video_file.empty()) {
+            mpv.loadFile(opts.video_file.c_str());   // CLI 文件优先
+        } else {
+            viewModel.restorePlaylist();             // 无参数 → 恢复上次列表
+        }
         MLOG_INFO("loadFile, entering app.exec()");
 
         app.exec();
+
+        // 保存最后文件进度：mpv_terminate_destroy 不写 watch-later，
+        // 须显式 quit-watch-later（对照 command.c cmd_quit_watch_later）。
+        // app.exec 返回后 mpv 事件线程仍运行（stopEvents 在下方）——
+        // 同步命令与事件线程的 mpv API 调用由 core lock 串行化，安全。
+        mpv.commandStr("quit-watch-later");
+
+        if (!opts.benchmark) {
+            QSettings geom(QStringLiteral("vsr-player"), QStringLiteral("vsr-player"));
+            geom.setValue("winX", view.x());
+            geom.setValue("winY", view.y());
+            geom.setValue("winWidth", view.width());
+            geom.setValue("winHeight", view.height());
+        }
 
         // 摘除 mpv update 回调（必须在 QML 场景析构之前）：mpv VO 线程
         // 仍可能触发回调 → invokeMethod("requestRender") 打在正在销毁的
