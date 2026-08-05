@@ -18,6 +18,7 @@ PopupBase {
 
     /// 在 item 坐标系 (x,y)（即鼠标位置）弹出，屏幕边缘钳制
     function showAt(item, x, y) {
+        if (!item || !parent) return
         var p = item.mapToItem(parent, x, y)
         root.x = Math.min(Math.max(p.x, 4), parent.width - root.width - 4)
         root.y = Math.min(Math.max(p.y, 4), parent.height - root.height - 4)
@@ -27,6 +28,8 @@ PopupBase {
     Column {
         anchors { left: parent.left; right: parent.right }
         Repeater {
+            // 菜单项（sig 须与上方 signal 声明同名；新增项同步改三处：
+            // signal 声明 + 此数组 + main.qml handler）
             model: [
                 {icon: "󰉋", text: qsTr("Open file"),          hint: "Ctrl+O", sig: "openFilesRequested"},
                 {icon: "󰐍", text: qsTr("Add to playlist"),    hint: "",       sig: "appendFilesRequested"},
@@ -46,6 +49,11 @@ PopupBase {
                     anchors.fill: parent
                     color: !isSep && miHover.containsMouse ? "#33ffffff" : "transparent"
                     visible: !isSep
+                }
+                // 分隔线（sep 行）
+                Rectangle {
+                    anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 10 }
+                    height: 1; color: "#22ffffff"; visible: isSep
                 }
                 Row {
                     anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
