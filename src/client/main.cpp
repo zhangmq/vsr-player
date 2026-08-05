@@ -193,9 +193,6 @@ int main(int argc, char *argv[]) {
             // setUpdateCallback 注册时若 context 有 pending updates 会立即
             // 同步调用回调——UI-only 模式（无 Video）下 data 为 nullptr。
             if (!v) return;
-            using namespace std::chrono;
-            double t = duration<double>(steady_clock::now().time_since_epoch()).count();
-            v->lastCb_.store(t, std::memory_order_release);
             v->renderRequested_.store(true, std::memory_order_release);
             // 社区标准模式：invokeMethod(QueuedConnection) 跨线程驱动渲染
             //（Qt 官方元对象队列，非裸 postEvent）。mpv 核心线程 → GUI。

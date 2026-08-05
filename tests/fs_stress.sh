@@ -18,7 +18,9 @@ rpc() { printf '%s\n' "$1" | socat - UNIX-CONNECT:$SOCK >/dev/null 2>&1; }
 
 pkill -f "$BIN" 2>/dev/null
 sleep 1
-START_TS=$(date '+%m-%d %H:%M:%S')
+# journalctl --since 用 epoch（@前缀）——本地化时间格式（如"8月 04"）
+# 与 shell 生成格式不匹配会漏报 Xid
+START_TS="@$(date +%s)"
 # stdbuf -oL：stderr 行缓冲——崩溃日志实时落盘（重定向到文件默认块
 # 缓冲，崩溃内容会滞留在 libc 缓冲区导致检测不到）
 stdbuf -oL -eL "$BIN" --lang en "$VIDEO" --scale auto >"$LOG" 2>&1 &
@@ -45,6 +47,24 @@ for i in $(seq 1 "$ROUNDS"); do
     fi
     if grep -q "Device loss" "$LOG"; then
         echo "ROUND $i: DEVICE LOSS"; fail=1; break
+    fi
+    # Xid 检测：驱动报错立即 SIGABRT——core 离 hang 点最近（stall 检测
+    # 会晚 6s+，core 反映的是 Xid 之后的状态，可能已失真）
+    XID_NOW=$(journalctl -k --no-pager --since "$START_TS" 2>/dev/null | grep -c "Xid" || true)
+    if [ "${XID_NOW:-0}" -gt 0 ]; then
+        echo "ROUND $i: XID DETECTED ($XID_NOW) — SIGABRT for core"
+        kill -ABRT "$PID" 2>/dev/null
+        sleep 3
+        if command -v gdb >/dev/null 2>&1; then
+            coredumpctl dump -o /tmp/fs_stress.core 2>/dev/null
+            gdb -batch -ex "thread apply all bt" \
+                "$(realpath "$BIN")" /tmp/fs_stress.core \
+                > "$LOG.stack" 2>&1 || true
+            echo "thread stacks: $LOG.stack"
+        else
+            echo "no core dump captured"
+        fi
+        fail=1; break
     fi
     # 卡死检测：日志无增长（GPU hang 后渲染循环停止，日志冻结）
     cur_size=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
