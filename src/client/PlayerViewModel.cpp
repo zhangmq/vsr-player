@@ -20,6 +20,19 @@ QString fmtTime(int64_t ms) {
         .arg(s % 60,         2, 10, QChar('0'));
 }
 
+bool isSubtitleFile(const QString &p) {
+    const QString ext = p.section('.', -1).toLower();
+    static const char *subs[] = {"srt", "ass", "ssa", "vtt", "sub", "sbv"};
+    for (const char *s : subs)
+        if (ext == QLatin1String(s)) return true;
+    return false;
+}
+
+QString toLocalPath(const QString &s) {
+    QUrl u(s);
+    return u.isLocalFile() ? u.toLocalFile() : s;   // 网络流原样传 mpv
+}
+
 const char *qualityName(int v) {
     switch (v) {
     case 1:  return QT_TR_NOOP("Low");
@@ -171,7 +184,12 @@ void PlayerViewModel::attach(MpvController *mpv) {
         // 全量快照 → PlaylistModel 前缀 diff 增量生效（切歌只刷
         // current 行高亮，不重建列表——QStringList 属性全量 reset
         // 是大列表卡顿主因）
-        post([this, files, cur] { playlistModel_.setSnapshot(files, cur); });
+        post([this, files, cur] {
+            playlistModel_.setSnapshot(files, cur);
+            // 持久化上次播放列表（启动 restorePlaylist 用；清空也写）
+            settings_.setValue("playlist", files);
+            settings_.setValue("playlistCurrent", cur);
+        });
     });
 
     mpv_->observeProperty("loop-file", MPV_FORMAT_STRING, [this] {
@@ -376,14 +394,19 @@ void PlayerViewModel::attach(MpvController *mpv) {
 void PlayerViewModel::initVsr(const std::string &scale,
                               const std::string &quality,
                               const std::string &denoise) {
-    double s = 0.0;
-    if (!parseScale(scale, &s)) s = 0.0;   // "auto" / empty / unknown
+    // 空 = CLI 未显式指定 → 用持久化值（loadSettings 已读）；显式但
+    // 无法解析 → 回退默认（auto / high / off）。
+    double s;
+    if (scale.empty()) s = persistScale_;
+    else if (!parseScale(scale, &s)) s = 0.0;
     scale_ = s;
-    int q = 3;
-    if (!parseQuality(quality, &q)) q = 3; // "high" / empty
+    int q;
+    if (quality.empty()) q = persistQuality_;
+    else if (!parseQuality(quality, &q)) q = 3;
     quality_ = q;
-    int d = -1;
-    if (!parseDenoise(denoise, &d)) d = -1; // "off" / empty
+    int d;
+    if (denoise.empty()) d = persistDenoise_;
+    else if (!parseDenoise(denoise, &d)) d = -1;
     denoise_ = d;
 }
 
@@ -416,6 +439,36 @@ bool PlayerViewModel::parseDenoise(const std::string &s, int *out) {
 }
 
 void PlayerViewModel::setGpuName(const QString &name) { gpuName_ = name; }
+
+// ── 持久化（QSettings；键名与 Task 4 main.cpp 几何恢复一致约定）───────
+
+void PlayerViewModel::loadSettings() {
+    persistScale_ = settings_.value("scale", 0.0).toDouble();
+    persistQuality_ = settings_.value("quality", 3).toInt();
+    persistDenoise_ = settings_.value("denoiseQuality", -1).toInt();
+}
+
+void PlayerViewModel::applyPlaybackSettings() {
+    if (!mpv_) return;
+    setVolume(settings_.value("volume", 1.0).toDouble());
+    setSpeed(settings_.value("speed", 1.0).toDouble());
+    setLoopMode(settings_.value("loopMode", 0).toInt());
+}
+
+void PlayerViewModel::restorePlaylist() {
+    if (!mpv_) return;
+    QStringList files = settings_.value("playlist").toStringList();
+    int cur = settings_.value("playlistCurrent", -1).toInt();
+    if (files.isEmpty()) return;
+    if (cur < 0 || cur >= files.size()) cur = 0;
+    // 首条 replace 开始播放，其余 append 排队；最后定位上次条目。
+    // loadfile 全部同步命令（mpv 启动阶段无 core-lock 竞争）。
+    mpv_->commandV({"loadfile", files[0].toUtf8().constData(), nullptr});
+    for (int i = 1; i < files.size(); i++)
+        mpv_->commandV({"loadfile", files[i].toUtf8().constData(), "append", nullptr});
+    if (cur != 0)
+        mpv_->commandV({"playlist-play-index", std::to_string(cur).c_str(), nullptr});
+}
 
 // ── Playback（乐观更新：本地状态立即反映，mpv 回写校正）──────────────
 
@@ -528,6 +581,7 @@ void PlayerViewModel::setVolume(double vol) {
     // 乐观更新：QML 立即反馈，mpv volume 观察事件随后回写校正。
     // 静音为派生状态（volume==0），无需额外状态迁移。
     if (volume_ != vol) { volume_ = vol; emit volumeChanged(); }
+    settings_.setValue("volume", vol);
     // 转发 + 节流：slider 拖动高频调用只记录最新值，事件循环每迭代
     // 合并投递一次（async，主线程零阻塞——避免同步 set 与 flip_page
     // 的 core-lock 互锁窗口，见 PlayerViewModel 线程模型注释）。
@@ -581,6 +635,7 @@ void PlayerViewModel::setScale(double s) {
     //（实测 1080p 4×→7680×4320 成功），超出引擎能力的请求由引擎侧处理。
     bool wasActive = vsrActive();
     if (fabs(scale_ - s) > 0.001) { scale_ = s; emit scaleChanged(); }
+    settings_.setValue("scale", s);
     pushVf("scale", scaleStr());  // 热更新，不重建 filter 链
     bool nowActive = vsrActive();
     if (wasActive != nowActive) emit vsrActiveChanged();
@@ -590,6 +645,7 @@ void PlayerViewModel::setQuality(int q) {
     if (!mpv_) return;
     if (q < 1 || q > 4) return;
     if (quality_ != q) { quality_ = q; emit qualityChanged(); }
+    settings_.setValue("quality", q);
     pushVf("quality", qualityStr());
 }
 
@@ -598,6 +654,7 @@ void PlayerViewModel::setDenoiseQuality(int d) {
     if (d != -1 && (d < 8 || d > 11)) return;
     bool wasActive = vsrActive();
     if (denoise_ != d) { denoise_ = d; emit denoiseQualityChanged(); }
+    settings_.setValue("denoiseQuality", d);
     pushVf("denoise", denoiseStr());
     bool nowActive = vsrActive();
     if (wasActive != nowActive) emit vsrActiveChanged();
@@ -610,6 +667,7 @@ void PlayerViewModel::setSpeed(double speed) {
     if (speed < 0.1) speed = 0.1;
     if (speed > 4.0) speed = 4.0;
     if (speed_.load() != speed) { speed_.store(speed); emit speedChanged(); }
+    settings_.setValue("speed", speed);
     mpv_->setPropertyDouble("speed", speed);
 }
 
@@ -656,9 +714,8 @@ void PlayerViewModel::toggleOsd() {
 
 // ── Loop / playlist ──────────────────────────────────────────────────
 
-void PlayerViewModel::toggleLoop() {
-    if (!mpv_) return;
-    int m = (loopMode_ + 1) % 3;
+void PlayerViewModel::setLoopMode(int m) {
+    if (!mpv_ || m < 0 || m > 2) return;
     switch (m) {
     case 1:
         mpv_->setPropertyString("loop-file", "inf");
@@ -673,8 +730,13 @@ void PlayerViewModel::toggleLoop() {
         mpv_->setPropertyString("loop-playlist", "no");
         break;
     }
-    loopMode_ = m;
-    emit loopModeChanged();
+    if (loopMode_ != m) { loopMode_ = m; emit loopModeChanged(); }
+    settings_.setValue("loopMode", m);
+}
+
+void PlayerViewModel::toggleLoop() {
+    if (!mpv_) return;
+    setLoopMode((loopMode_ + 1) % 3);
 }
 
 void PlayerViewModel::playlistNext() { if (mpv_) mpv_->commandStr("playlist-next"); }
@@ -694,6 +756,64 @@ void PlayerViewModel::loadFile(const QString &path) {
     videoInfo_ = path.section('/', -1);
     emit videoInfoChanged();
     mpv_->commandV({"loadfile", path.toUtf8().constData(), nullptr});
+}
+
+// ── 轨道/字幕/文件/列表管理（Task 3 计划代码；moc 要求 slot 有定义）──
+
+void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
+    if (!mpv_ || pathsIn.isEmpty()) return;
+    QStringList paths;
+    for (const QString &p : pathsIn) paths.append(toLocalPath(p));
+    if (mode == 2) {   // 加载字幕
+        for (const QString &p : paths)
+            mpv_->commandAsync({"sub-add", p.toUtf8().constData(), "select", nullptr});
+        return;
+    }
+    // 混拖分类：字幕文件 → sub-add，其余 → loadfile（混合目录场景）
+    bool first = true;
+    for (const QString &p : paths) {
+        if (isSubtitleFile(p)) {
+            mpv_->commandAsync({"sub-add", p.toUtf8().constData(), "select", nullptr});
+            continue;
+        }
+        if (mode == 1 || !first)
+            mpv_->commandV({"loadfile", p.toUtf8().constData(), "append", nullptr});
+        else
+            mpv_->commandV({"loadfile", p.toUtf8().constData(), nullptr});
+        first = false;
+    }
+}
+
+void PlayerViewModel::selectTrack(const QString &type, qlonglong id) {
+    if (!mpv_) return;
+    if (type == "audio")      { mpv_->setPropertyInt64Async("aid", id); return; }
+    if (type == "video")      { mpv_->setPropertyInt64Async("vid", id); return; }
+    if (type == "sub") {
+        if (id >= 0) mpv_->setPropertyInt64Async("sid", id);
+        else         mpv_->setPropertyStringAsync("sid", "no");
+    }
+}
+
+void PlayerViewModel::toggleSubtitles() {
+    if (!mpv_) return;
+    mpv_->setPropertyFlagAsync("sub-visibility", !subVisible_);
+}
+
+void PlayerViewModel::adjustSubDelay(double delta) {
+    if (!mpv_) return;
+    mpv_->setPropertyDoubleAsync("sub-delay", subDelay_ + delta);
+}
+
+void PlayerViewModel::playlistRemove(int index) {
+    if (!mpv_) return;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d", index);
+    mpv_->commandAsync({"playlist-remove", buf, nullptr});
+}
+
+void PlayerViewModel::playlistClear() {
+    if (!mpv_) return;
+    mpv_->commandAsync({"playlist-clear", nullptr});
 }
 
 void PlayerViewModel::screenshot() {

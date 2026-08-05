@@ -2,9 +2,12 @@
 
 #include <QElapsedTimer>
 #include <QObject>
+#include <QSettings>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <QUrl>
+#include <QVariantList>
 
 #include <atomic>
 #include <cstdint>
@@ -68,6 +71,10 @@ class PlayerViewModel : public QObject {
     // Q_PROPERTY 无——QML 不再承载 OSD 显示
     // Loop mode: 0=none, 1=file, 2=playlist (mpv loop-file / loop-playlist)
     Q_PROPERTY(int loopMode READ loopMode NOTIFY loopModeChanged)
+    // 轨道列表（track-list 观察器填充）/ 字幕可见性/延迟（TracksPopup 数据源）
+    Q_PROPERTY(QVariantList trackList READ trackList NOTIFY trackListChanged)
+    Q_PROPERTY(bool subVisible READ subVisible NOTIFY subVisibleChanged)
+    Q_PROPERTY(double subDelay READ subDelay NOTIFY subDelayChanged)
     // Playlist（mpv `playlist` 属性 → PlaylistModel 增量镜像）。
     // currentIndex 由 PlaylistModel 自带 currentIndexChanged，切歌不再
     // 触发列表 reset（旧实现 QStringList 属性 + 共用 NOTIFY 全量重建）。
@@ -94,6 +101,14 @@ public:
                  const std::string &denoise);
 
     void setGpuName(const QString &name);
+    /// 持久化：启动时读（须在 initVsr 前调用——scale/quality/denoise
+    /// 决定 vf 字符串）；各 setter 写入。benchmark 模式不调用（测量口径）。
+    void loadSettings();
+    /// mpv init 后应用持久化的音量/倍速/循环（观察器随后回填 viewModel）。
+    void applyPlaybackSettings();
+    /// 恢复上次播放列表（无 CLI 文件时调用）：首条 replace 开始播放，
+    /// 其余 append，最后定位上次条目。
+    void restorePlaylist();
     void setFullscreen(bool fs);   // Q_PROPERTY WRITE（QML 窗口同步回写）
 
     bool playing() const        { return playing_; }
@@ -127,6 +142,9 @@ public:
     int videoBitDepth() const { return videoBitDepth_.load(); }
     bool fullscreen() const     { return fullscreen_; }
     bool osdVisible() const     { return osdVisible_; }
+    QVariantList trackList() const { return trackList_; }
+    bool subVisible() const { return subVisible_; }
+    double subDelay() const { return subDelay_; }
     int loopMode() const        { return loopMode_; }
     PlaylistModel *playlistModel() { return &playlistModel_; }
 
@@ -175,7 +193,17 @@ public slots:
     void setQuality(int q);
     void setDenoiseQuality(int d);
     void toggleLoop();
+    void setLoopMode(int m);   // 0=none, 1=file, 2=playlist（applyPlaybackSettings/toggleLoop 共用）
     void loadFile(const QString &path);
+    /// 打开文件/追加/字幕（mode: 0=replace+queue, 1=append, 2=subs）。
+    /// 路径分类（字幕扩展名 → sub-add）在 C++ 单一入口。
+    void openFiles(const QStringList &paths, int mode);
+    /// 轨道选择（type: "audio"/"video"/"sub"；sub 且 id<0 = 关闭字幕）
+    void selectTrack(const QString &type, qlonglong id);
+    void toggleSubtitles();          // sub-visibility 翻转
+    void adjustSubDelay(double delta);  // 字幕延迟 ±0.1s 步进
+    void playlistRemove(int index);
+    void playlistClear();
     void playlistNext();
     void playlistPrev();
     void playlistPlayIndex(int index);
@@ -197,6 +225,9 @@ signals:
     void fullscreenChanged();
     void osdVisibleChanged();
     void loopModeChanged();
+    void trackListChanged();
+    void subVisibleChanged();
+    void subDelayChanged();
 
 private:
     // ── 主线程状态更新（值由事件线程读好后随 lambda 传入；
@@ -300,4 +331,14 @@ private:
     // 每事件循环迭代最多投递一次（latest-wins，async 不阻塞）。无 QTimer。
     double pendingVolume_ = 0.0;
     bool volumeSetQueued_ = false;
+
+    // ── 持久化（QSettings 原生格式 → ~/.config/vsr-player/vsr-player.conf）─
+    // 主线程专用（setter/观察器 post 均主线程）。benchmark 不调用 loadSettings。
+    QSettings settings_{QStringLiteral("vsr-player"), QStringLiteral("vsr-player")};
+    QVariantList trackList_;      // track-list 观察器填充（Task 3）
+    bool subVisible_ = false;
+    double subDelay_ = 0.0;
+    double persistScale_ = 0.0;   // 持久化 VSR 参数（initVsr 用，CLI 未显式时生效）
+    int persistQuality_ = 3;
+    int persistDenoise_ = -1;
 };
