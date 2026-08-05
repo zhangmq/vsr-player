@@ -2,17 +2,28 @@
 # fs_stress.sh — 全屏切换 × VSR 引擎重建压力复现（RPC 驱动，无需手动操作）
 #
 # 用途：复现 NVIDIA Xid 109（全屏 modeset 与 VSR 重建并发 → GPU hang）。
-# 用法：./tests/fs_stress.sh [rounds] [video]
-#   默认 rounds=12，video=input（目录）
+# 用法：./tests/fs_stress.sh [rounds] [video] [vsync] [benchmark] [scale]
+#   默认 rounds=12，video=input（目录）；vsync=on 加 --vsync（对照）；
+#   benchmark=yes 加 --benchmark（untimed 无 A/V 同步，渲染循环自由跑对照）；
+#   scale=自定义倍率（默认 auto，如 2 强制 2x——4K 视频 + 高倍率压狠）
 # 检测：stderr 的 "Device loss" + 进程存活；失败时输出日志路径。
 # 成功（无 device loss）时自动 kill 播放器。
 
 set -u
 ROUNDS=${1:-12}
 VIDEO=${2:-input}
+VSYNC=${3:-off}
+BENCH=${4:-no}
+SCALE=${5:-auto}
 SOCK=/tmp/vsr-player.sock
 LOG=/tmp/fs_stress.log
 BIN=./build/src/client/vsr-player
+VSYNC_ARG=""
+[ "$VSYNC" = "on" ] && VSYNC_ARG="--vsync"
+BENCH_ARG=""
+[ "$BENCH" = "yes" ] && BENCH_ARG="--benchmark"
+SCALE_ARG=""
+[ "$SCALE" != "auto" ] && SCALE_ARG="--scale $SCALE"
 
 rpc() { printf '%s\n' "$1" | socat - UNIX-CONNECT:$SOCK >/dev/null 2>&1; }
 
@@ -23,10 +34,27 @@ sleep 1
 START_TS="@$(date +%s)"
 # stdbuf -oL：stderr 行缓冲——崩溃日志实时落盘（重定向到文件默认块
 # 缓冲，崩溃内容会滞留在 libc 缓冲区导致检测不到）
-stdbuf -oL -eL "$BIN" --lang en "$VIDEO" --scale auto >"$LOG" 2>&1 &
+stdbuf -oL -eL "$BIN" --lang en "$VIDEO" $SCALE_ARG $VSYNC_ARG $BENCH_ARG >"$LOG" 2>&1 &
 PID=$!
 echo "pid=$PID log=$LOG  rounds=$ROUNDS  start=$START_TS"
 sleep 10   # 等播放稳定（解码 + VSR 初始化 + 首帧渲染）
+
+# GPU 后台采样（诊断）：每 100ms 记录利用率+显存+时间戳——Xid 挂死时
+# 对照利用率判断 GPU 是"空闲等待"还是"kernel 挂起"；显存曲线验证
+# "多实例累积/销毁不释放 → 显存耗尽 → Load 卡死"假设（延迟销毁方案
+# 首次压测 24 轮后挂死，日志显示挂死点在 init 的 Load，用户观察到
+# 显存耗尽）。
+GPU_LOG=/tmp/fs_stress.gpu
+: > "$GPU_LOG"
+(
+    while true; do
+        read -r U M <<< "$(nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader,nounits 2>/dev/null | tr ',' ' ')"
+        echo "$(date +%s.%N) util=$U mem=$M" >> "$GPU_LOG" 2>/dev/null
+        sleep 0.1
+    done
+) &
+GPUMON=$!
+trap 'kill $GPUMON 2>/dev/null' EXIT
 
 # 日志停滞检测：记录上次日志大小/时间，多轮无增长 = 卡死（GPU hang）
 last_size=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
