@@ -74,14 +74,18 @@ bool Options::parse(int argc, char *argv[], Options *out) {
         }
     }
     if (o.video_file.empty()) {
-        fprintf(stderr,
-            "Usage: %s [--benchmark] [--no-hwaccel] [--vsync] "
-            "[--no-rpc] [--rpc-socket <path>] "
-            "[--scale off|auto|2|3|4] [--denoise off|low|medium|high|ultra] "
-            "[--quality low|medium|high|ultra] "
-            "[--lang <locale>] [--screenshot-dir <dir>] [-- mpv-opt ...] <video>\n",
-            argv[0]);
-        return false;
+        if (o.benchmark) {
+            fprintf(stderr,
+                "Usage: %s [--benchmark] [--no-hwaccel] [--vsync] "
+                "[--no-rpc] [--rpc-socket <path>] "
+                "[--scale off|auto|2|3|4] [--denoise off|low|medium|high|ultra] "
+                "[--quality low|medium|high|ultra] "
+                "[--lang <locale>] [--screenshot-dir <dir>] [-- mpv-opt ...] <video>\n",
+                argv[0]);
+            return false;
+        }
+        // 无参数正常启动：恢复上次播放列表（main.cpp restorePlaylist 分支）。
+        // benchmark 必须显式给文件——测量无列表可恢复。
     }
     *out = o;
     return true;
