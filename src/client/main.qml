@@ -24,13 +24,15 @@ Item {
 
         // ── Auto-hide ───────────────────────────────────────────────
         // 显示 = 底部区域 hover（bottomBar.mouseInRegion：热区+进度条+
-        // bottombar 一体）或音量/画质/倍速弹窗打开。播放列表打开
-        // 不阻止消失（侧边栏独立，不依赖底部 UI）。状态翻转即写回
-        // viewModel——移出热区立即隐藏，无计时器。启动即按当前状态
-        // 应用（onCompleted 写回初始值；onChanged 只在翻转时触发），
-        // 鼠标不在热区则初始隐藏。弹窗注册表化：新增弹窗只需在
-        // Component.onCompleted 的 _popups 数组中登记一行。
-        property bool showUi: bottomBar.mouseInRegion || anyPopupOpen
+        // bottombar 一体）或顶部区域 hover（topBar.mouseInRegion：渐变条
+        // + 下方 40px 热区——鼠标靠近顶缘即显示，否则顶部打开按钮
+        // 不可达）或音量/画质/倍速弹窗打开。播放列表打开不阻止消失
+        //（侧边栏独立，不依赖底部 UI）。状态翻转即写回 viewModel——
+        // 移出热区立即隐藏，无计时器。启动即按当前状态应用（onCompleted
+        // 写回初始值；onChanged 只在翻转时触发），鼠标不在热区则初始
+        // 隐藏。弹窗注册表化：新增弹窗只需在 Component.onCompleted 的
+        // _popups 数组中登记一行。
+        property bool showUi: bottomBar.mouseInRegion || topBar.mouseInRegion || anyPopupOpen
         onShowUiChanged: viewModel.overlaysVisible = showUi
         property var _popups: []
         readonly property bool anyPopupOpen: {
@@ -63,6 +65,7 @@ Item {
 
         // ── Top Bar ────────────────────────────────────────────────
         TopBar {
+            id: topBar
             anchors { left: parent.left; right: parent.right; top: parent.top }
             videoInfo: viewModel.videoInfo
             overlaysVisible: viewModel.overlaysVisible
