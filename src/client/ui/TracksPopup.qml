@@ -4,14 +4,20 @@ import "components"
 
 /// 轨道选择 + 字幕控制（字幕/音频/视频三页签，标准 TabBar）。数据源：
 /// viewModel.trackList（track-list 属性观察器）+ viewModel.subtitleFiles
-///（目录扫描，优先级：精确同名 > 语言后缀 > 其余）。modal 居中、定高
-///（用户实测反馈：内容自适应高度导致切 tab 跳变；滚动只在列表区，
-/// 控制行/按钮固定，2026-08-06）。
+///（目录扫描，优先级：精确同名 > 语言后缀 > 其余）。modal 居中、尺寸
+/// 随窗口自适应（宽 55% / 高 80%，下限 480×420 防局促，窗口过小钳制
+/// 防溢出；滚动只在列表区，控制行/按钮固定，2026-08-06）。
 PopupBase {
     id: root
-    width: 560
-    // 定高（钳制防超窗）：模态面板固定高度，不再随内容自适应
-    height: Math.min(520, (parent ? parent.height : 520) - 40)
+    // 自适应 + 最小尺寸（用户实测反馈，2026-08-06）
+    width: {
+        var a = parent ? parent.width : 560
+        return Math.min(Math.max(a * 0.55, 480), a - 40)
+    }
+    height: {
+        var a = parent ? parent.height : 520
+        return Math.min(Math.max(a * 0.8, 420), a - 40)
+    }
     modal: true
     // modal 不自动居中（Popup 默认 x/y=0 靠左）——显式居中（parent=overlay）
     x: parent ? (parent.width - width) / 2 : 0
