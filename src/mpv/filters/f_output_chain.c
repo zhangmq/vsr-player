@@ -5,6 +5,7 @@
 #include "options/m_config.h"
 #include "options/m_option.h"
 #include "video/out/vo.h"
+#include "video/out/vo_libmpv_internal.h"
 
 #include "filter_internal.h"
 
@@ -391,8 +392,16 @@ static void get_render_target_size(struct mp_stream_info *i, int *res)
 {
     struct chain *p = i->priv;
     res[0] = res[1] = 0;
-    if (p->vo)
+    if (p->vo && p->vo->driver &&
+        strcmp(p->vo->driver->name, "libmpv") == 0) {
+        // 非阻塞：直接读 vo_libmpv 的 RT 尺寸缓存（render 时更新）。走
+        // vo_control 同步 dispatch 会与渲染循环三方死锁（filter 等 VO
+        // dispatch → VO dispatch 等渲染循环 → 渲染循环等 core 心跳 →
+        // core 卡 filter，fs_stress 实测 2026-08-06）。
+        mpv_render_context_get_target_size(p->vo, res);
+    } else if (p->vo) {
         vo_control(p->vo, VOCTRL_GET_RENDER_TARGET_SIZE, res);
+    }
 }
 
 void mp_output_chain_set_vo(struct mp_output_chain *c, struct vo *vo)

@@ -433,6 +433,22 @@ int mpv_render_context_render(mpv_render_context *ctx, mpv_render_param *params)
     return err;
 }
 
+// 非阻塞查询渲染目标尺寸（render 时从 params 提取更新，见 343 行）。
+// 供 f_output_chain 的 get_render_target_size 使用：vo_control 同步
+// dispatch 与渲染循环三方死锁（filter 等 VO dispatch → VO dispatch 等
+// 渲染循环 → 渲染循环等 core 心跳 → core 卡 filter，fs_stress 实测
+// 2026-08-06）。未渲染过（缓存未就绪）时 res 置 0。
+void mpv_render_context_get_target_size(struct vo *vo, int *res)
+{
+    res[0] = res[1] = 0;
+    struct vo_priv *p = vo->priv;
+    if (!p || !p->ctx) return;
+    mp_mutex_lock(&p->ctx->lock);
+    res[0] = p->ctx->vp_w;
+    res[1] = p->ctx->vp_h;
+    mp_mutex_unlock(&p->ctx->lock);
+}
+
 void mpv_render_context_report_swap(mpv_render_context *ctx)
 {
     MP_STATS(ctx, "glcb-reportflip");

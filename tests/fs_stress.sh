@@ -29,14 +29,16 @@ rpc() { printf '%s\n' "$1" | socat - UNIX-CONNECT:$SOCK >/dev/null 2>&1; }
 
 pkill -f "$BIN" 2>/dev/null
 sleep 1
-# journalctl --since 用 epoch（@前缀）——本地化时间格式（如"8月 04"）
-# 与 shell 生成格式不匹配会漏报 Xid
-START_TS="@$(date +%s)"
+# journalctl --since 在本机实测失效（@epoch 与本地格式均静默忽略 →
+# 统计全部历史 Xid，恒等于历史总数造成误报）。改用前后计数对比：
+# 运行前记 XID_BASE，检测 Xid 数量是否超过基线（新增）。
+export LC_ALL=C
+XID_BASE=$(journalctl -k --no-pager 2>/dev/null | grep -c "Xid" || true)
 # stdbuf -oL：stderr 行缓冲——崩溃日志实时落盘（重定向到文件默认块
 # 缓冲，崩溃内容会滞留在 libc 缓冲区导致检测不到）
 stdbuf -oL -eL "$BIN" --lang en "$VIDEO" $SCALE_ARG $VSYNC_ARG $BENCH_ARG >"$LOG" 2>&1 &
 PID=$!
-echo "pid=$PID log=$LOG  rounds=$ROUNDS  start=$START_TS"
+echo "pid=$PID log=$LOG  rounds=$ROUNDS"
 sleep 10   # 等播放稳定（解码 + VSR 初始化 + 首帧渲染）
 
 # GPU 后台采样（诊断）：每 100ms 记录利用率+显存+时间戳——Xid 挂死时
@@ -78,9 +80,9 @@ for i in $(seq 1 "$ROUNDS"); do
     fi
     # Xid 检测：驱动报错立即 SIGABRT——core 离 hang 点最近（stall 检测
     # 会晚 6s+，core 反映的是 Xid 之后的状态，可能已失真）
-    XID_NOW=$(journalctl -k --no-pager --since "$START_TS" 2>/dev/null | grep -c "Xid" || true)
-    if [ "${XID_NOW:-0}" -gt 0 ]; then
-        echo "ROUND $i: XID DETECTED ($XID_NOW) — SIGABRT for core"
+    XID_NOW=$(journalctl -k --no-pager 2>/dev/null | grep -c "Xid" || true)
+    if [ "${XID_NOW:-0}" -gt "$XID_BASE" ]; then
+        echo "ROUND $i: XID DETECTED ($((XID_NOW - XID_BASE)) new) — SIGABRT for core"
         kill -ABRT "$PID" 2>/dev/null
         sleep 3
         if command -v gdb >/dev/null 2>&1; then
@@ -126,9 +128,9 @@ for i in $(seq 1 "$ROUNDS"); do
 done
 
 # 内核日志 Xid 检测（最可靠：驱动级证据）
-XID_CNT=$(journalctl -k --no-pager --since "$START_TS" 2>/dev/null | grep -c "Xid" || true)
+XID_CNT=$(( $(journalctl -k --no-pager 2>/dev/null | grep -c "Xid" || true) - XID_BASE ))
 
-if [ "$fail" -eq 0 ] && [ "$XID_CNT" -eq 0 ]; then
+if [ "$fail" -eq 0 ] && [ "$XID_CNT" -le 0 ]; then
     echo "PASS: $ROUNDS rounds, no device loss (Xid=$XID_CNT)"
     kill "$PID" 2>/dev/null
 else
