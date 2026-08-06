@@ -95,14 +95,19 @@
 </context>
 <context>
     <name>TracksPopup</name>
-    <message><source>Audio</source><translation>Audio</translation></message>
-    <message><source>Subtitles</source><translation>Subtitles</translation></message>
-    <message><source>Video</source><translation>Video</translation></message>
     <message><source>Visible</source><translation>Visible</translation></message>
     <message><source>Hidden</source><translation>Hidden</translation></message>
     <message><source>Track %1</source><translation>Track %1</translation></message>
     <message><source>%1s</source><translation>%1s</translation></message>
     <message><source>No subtitles</source><translation>No subtitles</translation></message>
+    <message><source>External</source><translation>External</translation></message>
+    <message><source>Load subtitle file…</source><translation>Load subtitle file…</translation></message>
+    <message><source>Load subtitle</source><translation>Load subtitle</translation></message>
+    <message><source>No audio tracks</source><translation>No audio tracks</translation></message>
+    <message><source>No video tracks</source><translation>No video tracks</translation></message>
+    <message><source>Audio</source><translation>Audio</translation></message>
+    <message><source>Subtitles</source><translation>Subtitles</translation></message>
+    <message><source>Video</source><translation>Video</translation></message>
 </context>
 <context>
     <name>ContextMenu</name>

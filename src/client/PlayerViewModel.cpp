@@ -3,6 +3,9 @@
 
 #include <QMetaObject>
 #include <QVariantMap>
+#include <QFileInfo>
+#include <QDir>
+#include <QSet>
 
 #include <cstdio>
 #include <cstring>
@@ -409,6 +412,8 @@ void PlayerViewModel::attach(MpvController *mpv) {
                     t["lang"] = QString();
                     t["title"] = QString();
                     t["selected"] = false;
+                    t["external"] = false;
+                    t["filename"] = QString();
                     for (int j = 0; j < e->u.list->num; j++) {
                         const char *k = e->u.list->keys[j];
                         mpv_node *v = &e->u.list->values[j];
@@ -422,6 +427,10 @@ void PlayerViewModel::attach(MpvController *mpv) {
                             t["title"] = QString::fromUtf8(v->u.string);
                         else if (!strcmp(k, "selected") && v->format == MPV_FORMAT_FLAG)
                             t["selected"] = v->u.flag != 0;   // bool 而非 int（QML 严格相等陷阱）
+                        else if (!strcmp(k, "external") && v->format == MPV_FORMAT_FLAG)
+                            t["external"] = v->u.flag != 0;
+                        else if (!strcmp(k, "filename") && v->format == MPV_FORMAT_STRING)
+                            t["filename"] = QString::fromUtf8(v->u.string);   // 外部轨完整路径
                     }
                     tracks.append(t);
                 }
@@ -430,6 +439,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
         }
         post([this, tracks] {
             if (trackList_ != tracks) { trackList_ = tracks; emit trackListChanged(); }
+            scanSubtitleFiles(lastPath_);   // 外部字幕加载/移除后重新对照
         });
     });
 
@@ -880,6 +890,50 @@ void PlayerViewModel::playlistRemove(int index) {
     mpv_->commandAsync({"playlist-remove", buf, nullptr});
 }
 
+// ── 外部字幕扫描（轨道弹窗"字幕"页签数据源）────────────────────────
+// 主线程调用（文件 IO ~ms 级、低频：文件加载/轨道变化时）。排除已
+// 加载的外部字幕（track-list external 轨的 filename 对照）。优先级：
+//   0 = 精确同名（video.mp4 ↔ video.srt）
+//   1 = 语言后缀（video.zh.srt / video.en-US.ass——basename 前缀匹配）
+//   2 = 其余按文件名
+void PlayerViewModel::scanSubtitleFiles(const QString &videoPath) {
+    QVariantList files;
+    if (!videoPath.isEmpty()) {
+        QFileInfo vi(videoPath);
+        QDir dir(vi.dir());
+        const QStringList exts = {"*.srt", "*.ass", "*.ssa", "*.vtt",
+                                  "*.sub", "*.sbv"};
+        QStringList names = dir.entryList(exts, QDir::Files, QDir::Name);
+        // 已加载的外部字幕（完整路径）排除
+        QSet<QString> loaded;
+        for (const QVariant &t : trackList_) {
+            const QVariantMap m = t.toMap();
+            if (m["type"] == "sub" && m["external"].toBool())
+                loaded.insert(m["filename"].toString());
+        }
+        names.removeIf([&](const QString &n) {
+            return loaded.contains(dir.filePath(n));
+        });
+        // 优先级排序（稳定：同级保持文件名序——entryList Name 已排序）
+        const QString base = vi.completeBaseName();
+        std::stable_sort(names.begin(), names.end(),
+            [&base](const QString &a, const QString &b) {
+                auto prio = [&base](const QString &n) {
+                    const QString stem = n.section('.', 0, -2);   // 去扩展名
+                    if (stem == base) return 0;                    // 精确同名
+                    if (stem.startsWith(base + ".")) return 1;     // 语言后缀
+                    return 2;
+                };
+                int pa = prio(a), pb = prio(b);
+                if (pa != pb) return pa < pb;
+                return a < b;
+            });
+        for (const QString &n : names)
+            files.append(QVariantMap{{"name", n}, {"path", dir.filePath(n)}});
+    }
+    if (subtitleFiles_ != files) { subtitleFiles_ = files; emit subtitleFilesChanged(); }
+}
+
 void PlayerViewModel::playlistClear() {
     if (!mpv_) return;
     mpv_->commandAsync({"playlist-clear", nullptr});
@@ -1019,6 +1073,7 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
         // 时 mpv 不通知——此回调保证 UI 状态必然收敛到真实值。
         updatePlaying(!paused);
         resetSegmentCounters(drops);   // 新文件 → 段统计归零
+        scanSubtitleFiles(lastPath_);  // 新文件 → 扫描其目录的字幕
     }, Qt::QueuedConnection);
 }
 

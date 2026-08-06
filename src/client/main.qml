@@ -152,6 +152,7 @@ Item {
             onTrackSelected: function(type, id) { viewModel.selectTrack(type, id) }
             onSubVisibilityToggled: viewModel.toggleSubtitles()
             onSubDelayAdjusted: function(d) { viewModel.adjustSubDelay(d) }
+            onSubFileDialogRequested: function() { fileDialog.mode = 2; fileDialog.open() }
             onOpened: closeOtherPopups(tracksPopup)
         }
 

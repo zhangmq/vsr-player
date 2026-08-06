@@ -97,14 +97,19 @@
 </context>
 <context>
     <name>TracksPopup</name>
-    <message><source>Audio</source><translation>音轨</translation></message>
-    <message><source>Subtitles</source><translation>字幕</translation></message>
-    <message><source>Video</source><translation>视频轨</translation></message>
     <message><source>Visible</source><translation>显示</translation></message>
     <message><source>Hidden</source><translation>隐藏</translation></message>
     <message><source>Track %1</source><translation>轨道 %1</translation></message>
     <message><source>%1s</source><translation>%1秒</translation></message>
     <message><source>No subtitles</source><translation>无字幕</translation></message>
+    <message><source>External</source><translation>外部</translation></message>
+    <message><source>Load subtitle file…</source><translation>加载字幕文件…</translation></message>
+    <message><source>Load subtitle</source><translation>加载字幕</translation></message>
+    <message><source>No audio tracks</source><translation>无音轨</translation></message>
+    <message><source>No video tracks</source><translation>无视频轨</translation></message>
+    <message><source>Audio</source><translation>音频</translation></message>
+    <message><source>Subtitles</source><translation>字幕</translation></message>
+    <message><source>Video</source><translation>视频</translation></message>
 </context>
 <context>
     <name>ContextMenu</name>

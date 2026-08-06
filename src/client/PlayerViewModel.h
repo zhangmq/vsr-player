@@ -75,6 +75,8 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(QVariantList trackList READ trackList NOTIFY trackListChanged)
     Q_PROPERTY(bool subVisible READ subVisible NOTIFY subVisibleChanged)
     Q_PROPERTY(double subDelay READ subDelay NOTIFY subDelayChanged)
+    // 视频同目录未加载的外部字幕（{name, path}，优先级排序；已加载排除）
+    Q_PROPERTY(QVariantList subtitleFiles READ subtitleFiles NOTIFY subtitleFilesChanged)
     // Playlist（mpv `playlist` 属性 → PlaylistModel 增量镜像）。
     // currentIndex 由 PlaylistModel 自带 currentIndexChanged，切歌不再
     // 触发列表 reset（旧实现 QStringList 属性 + 共用 NOTIFY 全量重建）。
@@ -145,6 +147,7 @@ public:
     QVariantList trackList() const { return trackList_; }
     bool subVisible() const { return subVisible_; }
     double subDelay() const { return subDelay_; }
+    QVariantList subtitleFiles() const { return subtitleFiles_; }
     int loopMode() const        { return loopMode_; }
     PlaylistModel *playlistModel() { return &playlistModel_; }
 
@@ -202,6 +205,8 @@ public slots:
     void selectTrack(const QString &type, qlonglong id);
     void toggleSubtitles();          // sub-visibility 翻转
     void adjustSubDelay(double delta);  // 字幕延迟 ±0.1s 步进
+    /// 加载外部字幕文件（sub-add select；复用 openFiles mode=2 分类）
+    void loadExternalSubtitle(const QString &path) { openFiles({path}, 2); }
     void playlistRemove(int index);
     void playlistClear();
     void playlistNext();
@@ -228,6 +233,7 @@ signals:
     void trackListChanged();
     void subVisibleChanged();
     void subDelayChanged();
+    void subtitleFilesChanged();
 
 private:
     // ── 主线程状态更新（值由事件线程读好后随 lambda 传入；
@@ -251,6 +257,10 @@ private:
     void resetSegmentCounters(int64_t dropBase);
     /// 事件线程：读 loop-file/loop-playlist 并回写 loopMode。
     void updateLoopModeFromEventThread();
+    /// 扫描视频同目录字幕文件（主线程，文件 IO 低频）：排除已加载的
+    /// 外部字幕（track-list external 轨），按优先级排序（精确同名 >
+    /// 语言后缀 > 其余按文件名）。
+    void scanSubtitleFiles(const QString &videoPath);
 
     /// OSD 文本计算属性（事件线程 idle 回调拉取；纯本地读，零 mpv API）。
     /// 数据源 = viewModel 状态（观察器填充）——OSD 与 UI 同源。
@@ -342,6 +352,7 @@ private:
     QVariantList trackList_;      // track-list 观察器填充（Task 3）
     bool subVisible_ = false;
     double subDelay_ = 0.0;
+    QVariantList subtitleFiles_;  // 目录未加载外部字幕（{name,path}，优先级排序）
     double persistScale_ = 0.0;   // 持久化 VSR 参数（initVsr 用，CLI 未显式时生效）
     int persistQuality_ = 3;
     int persistDenoise_ = -1;
