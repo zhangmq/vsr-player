@@ -10,6 +10,8 @@ import "components"
 PopupBase {
     id: root
     width: 300
+    // 内容为 Flickable（implicitHeight=0）——Popup 显式高度 = 内容 + padding
+    height: flick.height + 32
     modal: true
 
     property var trackList: []
@@ -47,16 +49,28 @@ PopupBase {
             onClicked: root.trackSelected(type, track.id) }
     }
 
+    // ── 内容滚动（多轨道文件限高）────────────────────────────────
+    // 多字幕轨文件（36+ 轨）会使面板超高——Flickable 限高滚动（滚轮），
+    // 高度钳制到窗口 80%（modal 弹窗溢出窗口会被裁剪，2026-08-06）。
+    // 注意：Repeater 必须显式宽度——delegate 的 parent 是 Repeater 本身
+    //（Repeater implicitWidth=0 → delegate width=0 不可见——实机复现
+    // "弹窗空白"的根因，2026-08-06）。
+    Flickable {
+        id: flick
+        anchors { left: parent.left; right: parent.right; top: parent.top }
+        height: Math.min(contentCol.implicitHeight, (parent ? parent.height : 480) * 0.8)
+        contentHeight: contentCol.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+
     Column {
+        id: contentCol
+        width: flick.width
         spacing: 12
-        anchors { left: parent.left; right: parent.right }
 
         // ── 音轨 ─────────────────────────────────────────────────
         Text { text: qsTr("Audio"); color: "#b0b0b0"; font.pixelSize: 13
             visible: root.audioTracks.length > 0 }
-        // Repeater 必须显式宽度：delegate 的 parent 是 Repeater 本身
-        //（Repeater implicitWidth=0 → delegate width=0 不可见——实机
-        // 复现"弹窗空白"的根因，2026-08-06）
         Repeater {
             width: parent.width
             model: root.audioTracks
@@ -132,4 +146,5 @@ PopupBase {
             delegate: TrackRow { track: modelData; idx: index; type: "video" }
         }
     }
+    }   // Flickable
 }
