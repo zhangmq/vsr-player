@@ -145,7 +145,7 @@ Item {
 
         TracksPopup {
             id: tracksPopup
-            anchorTarget: bottomBar.tracksBtn
+            // modal 居中呈现（无需 anchorTarget）
             trackList: viewModel.trackList
             subVisible: viewModel.subVisible
             subDelay: viewModel.subDelay

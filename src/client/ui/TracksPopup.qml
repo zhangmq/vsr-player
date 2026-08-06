@@ -5,9 +5,12 @@ import "components"
 /// 轨道选择 + 字幕控制（音轨/字幕轨/视频轨三 section，无轨自动隐藏）。
 /// 数据源：viewModel.trackList（track-list 属性观察器）；选中态由
 /// track-list 的 selected 字段直接提供，切换走 selectTrack。
+/// modal 呈现（居中 + 遮罩）：多 section 面板锚定式 popup 易越界，
+/// 居中模态更合适（用户实测反馈，2026-08-06）。
 PopupBase {
     id: root
     width: 300
+    modal: true
 
     property var trackList: []
     property bool subVisible: true
@@ -51,7 +54,11 @@ PopupBase {
         // ── 音轨 ─────────────────────────────────────────────────
         Text { text: qsTr("Audio"); color: "#b0b0b0"; font.pixelSize: 13
             visible: root.audioTracks.length > 0 }
+        // Repeater 必须显式宽度：delegate 的 parent 是 Repeater 本身
+        //（Repeater implicitWidth=0 → delegate width=0 不可见——实机
+        // 复现"弹窗空白"的根因，2026-08-06）
         Repeater {
+            width: parent.width
             model: root.audioTracks
             visible: root.audioTracks.length > 0
             delegate: TrackRow { track: modelData; idx: index; type: "audio" }
@@ -107,6 +114,7 @@ PopupBase {
             idx: -1; type: "sub"
         }
         Repeater {
+            width: parent.width
             model: root.subTracks
             visible: root.subTracks.length > 0
             delegate: TrackRow { track: modelData; idx: index; type: "sub" }
@@ -118,6 +126,7 @@ PopupBase {
         Text { text: qsTr("Video"); color: "#b0b0b0"; font.pixelSize: 13
             visible: root.videoTracks.length > 0 }
         Repeater {
+            width: parent.width
             model: root.videoTracks
             visible: root.videoTracks.length > 0
             delegate: TrackRow { track: modelData; idx: index; type: "video" }
