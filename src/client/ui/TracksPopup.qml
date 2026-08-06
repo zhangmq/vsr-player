@@ -67,20 +67,26 @@ PopupBase {
             id: shape
             anchors.fill: parent
             ShapePath {
-                fillColor: shape.parent.fill
+                // shape.parent（TabBlock）在组件初始化早期为 null——
+                // 直接引用 width/height 求值 undefined → QML 警告
+                //（Unable to assign [undefined] to double），防御写法
+                fillColor: shape.parent ? shape.parent.fill : "transparent"
                 strokeColor: "transparent"
                 startX: 0
-                startY: shape.parent.roundLeft ? 8 : 0
+                startY: shape.parent && shape.parent.roundLeft ? 8 : 0
                 PathArc { x: 8; y: 0
-                    radiusX: shape.parent.roundLeft ? 8 : 0
-                    radiusY: shape.parent.roundLeft ? 8 : 0 }
-                PathLine { x: shape.parent.width - (shape.parent.roundRight ? 8 : 0); y: 0 }
-                PathArc { x: shape.parent.width; y: 8
-                    radiusX: shape.parent.roundRight ? 8 : 0
-                    radiusY: shape.parent.roundRight ? 8 : 0 }
-                PathLine { x: shape.parent.width; y: shape.parent.height }
-                PathLine { x: 0; y: shape.parent.height }
-                PathLine { x: 0; y: shape.parent.startY }
+                    radiusX: shape.parent && shape.parent.roundLeft ? 8 : 0
+                    radiusY: shape.parent && shape.parent.roundLeft ? 8 : 0 }
+                PathLine {
+                    x: (shape.parent ? shape.parent.width : 0) - (shape.parent && shape.parent.roundRight ? 8 : 0)
+                    y: 0 }
+                PathArc {
+                    x: shape.parent ? shape.parent.width : 0; y: 8
+                    radiusX: shape.parent && shape.parent.roundRight ? 8 : 0
+                    radiusY: shape.parent && shape.parent.roundRight ? 8 : 0 }
+                PathLine { x: shape.parent ? shape.parent.width : 0; y: shape.parent ? shape.parent.height : 0 }
+                PathLine { x: 0; y: shape.parent ? shape.parent.height : 0 }
+                PathLine { x: 0; y: shape.parent && shape.parent.roundLeft ? 8 : 0 }
             }
         }
         // 选中顶部高亮条（避开圆角区——与弧端点相切）
@@ -199,10 +205,15 @@ PopupBase {
         background: Rectangle { color: "transparent" }
         TabButton {
             height: 48
+            // implicitHeight 与显式高度一致：ListView delegate 定位以
+            // implicitHeight 为基准对齐——不一致时产生 (48−implicitHeight)/2
+            // 的居中偏移（实测 implicitHeight≈31 → 偏移 −8.5px，页签块
+            // 顶出 modal 顶边 7.5px；加大高度就错位）
+            implicitHeight: 48
             onClicked: root.currentTab = 0
             background: TabBlock {
                 roundLeft: true
-                fill: root.currentTab === 0 ? "#d9111111" : "#66262626"
+                fill: root.currentTab === 0 ? "transparent" : "#66262626"
                 showTopBar: root.currentTab === 0
                 showHover: tabH0.hovered && root.currentTab !== 0
             }
@@ -215,9 +226,14 @@ PopupBase {
         }
         TabButton {
             height: 48
+            // implicitHeight 与显式高度一致：ListView delegate 定位以
+            // implicitHeight 为基准对齐——不一致时产生 (48−implicitHeight)/2
+            // 的居中偏移（实测 implicitHeight≈31 → 偏移 −8.5px，页签块
+            // 顶出 modal 顶边 7.5px；加大高度就错位）
+            implicitHeight: 48
             onClicked: root.currentTab = 1
             background: TabBlock {
-                fill: root.currentTab === 1 ? "#d9111111" : "#66262626"
+                fill: root.currentTab === 1 ? "transparent" : "#66262626"
                 showTopBar: root.currentTab === 1
                 showHover: tabH1.hovered && root.currentTab !== 1
             }
@@ -230,10 +246,15 @@ PopupBase {
         }
         TabButton {
             height: 48
+            // implicitHeight 与显式高度一致：ListView delegate 定位以
+            // implicitHeight 为基准对齐——不一致时产生 (48−implicitHeight)/2
+            // 的居中偏移（实测 implicitHeight≈31 → 偏移 −8.5px，页签块
+            // 顶出 modal 顶边 7.5px；加大高度就错位）
+            implicitHeight: 48
             onClicked: root.currentTab = 2
             background: TabBlock {
                 roundRight: true
-                fill: root.currentTab === 2 ? "#d9111111" : "#66262626"
+                fill: root.currentTab === 2 ? "transparent" : "#66262626"
                 showTopBar: root.currentTab === 2
                 showHover: tabH2.hovered && root.currentTab !== 2
             }
@@ -255,8 +276,8 @@ PopupBase {
     StackLayout {
         anchors {
             left: parent.left; leftMargin: 16; right: parent.right; rightMargin: 16
-            top: tabBar.bottom; topMargin: 8
-            bottom: parent.bottom
+            top: tabBar.bottom; topMargin: 16
+            bottom: parent.bottom; bottomMargin: 16
         }
         currentIndex: root.currentTab
 
@@ -421,4 +442,5 @@ PopupBase {
             }
         }
     }
+
 }

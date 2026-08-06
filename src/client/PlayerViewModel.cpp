@@ -524,6 +524,7 @@ void PlayerViewModel::applyPlaybackSettings() {
     setVolume(settings_.value("volume", 1.0).toDouble());
     setSpeed(settings_.value("speed", 1.0).toDouble());
     setLoopMode(settings_.value("loopMode", 0).toInt());
+    setAspect(settings_.value("aspect", QStringLiteral("no")).toString());
 }
 
 void PlayerViewModel::restorePlaylist() {
@@ -733,6 +734,13 @@ void PlayerViewModel::setDenoiseQuality(int d) {
 }
 
 // ── Speed / window / OSD ─────────────────────────────────────────────
+
+void PlayerViewModel::setAspect(const QString &v) {
+    if (!mpv_) return;
+    if (aspect_ != v) { aspect_ = v; emit aspectChanged(); }
+    saveSettings("aspect", v);
+    mpv_->setPropertyString("video-aspect-override", v.toStdString());
+}
 
 void PlayerViewModel::setSpeed(double speed) {
     if (!mpv_) return;

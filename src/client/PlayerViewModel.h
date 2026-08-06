@@ -46,6 +46,8 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(int denoiseQuality READ denoiseQuality NOTIFY denoiseQualityChanged)
     // Speed
     Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
+    // Aspect ratio（mpv video-aspect-override：-1=auto, no=不覆盖, 或 16:9 等）
+    Q_PROPERTY(QString aspect READ aspect NOTIFY aspectChanged)
     // Info
     Q_PROPERTY(bool hwDecoding READ hwDecoding NOTIFY hwDecodingChanged)
     Q_PROPERTY(QString videoInfo READ videoInfo NOTIFY videoInfoChanged)
@@ -114,8 +116,12 @@ public:
     /// 外部字幕持久化：trackList 变化时保存全部 external 轨路径 + 选中轨；
     /// 无参数启动路径下每个文件加载完成后 sub-add 恢复（external 轨随
     /// 文件切换清除，须每次恢复；trackList 对照防同文件重复）。
-    void saveExternalSubs();
-    void restoreExternalSubs();
+    /// 按文件记忆（QSettings trackMem map：path → {aid,sid,vid,subs,sel}）。
+    /// 保存当前文件（lastPath_）的轨道状态——切文件（FILE_LOADED 先存旧）
+    /// 与退出时调用；恢复 = 文件加载完成 hook，仅当该路径有记忆时生效
+    ///（再次打开对应文件才恢复，2026-08-06 设计变更）。
+    void saveTrackMemory();
+    void restoreTrackMemory(const QString &path);
     void setFullscreen(bool fs);   // Q_PROPERTY WRITE（QML 窗口同步回写）
 
     bool playing() const        { return playing_; }
@@ -129,6 +135,7 @@ public:
     double scale() const        { return scale_.load(); }
     int denoiseQuality() const  { return denoise_.load(); }
     double speed() const        { return speed_.load(); }
+    QString aspect() const      { return aspect_; }
     bool hwDecoding() const     { return hwDecoding_.load(); }
     QString videoInfo() const   { return videoInfo_; }
     int videoWidth() const { return videoWidth_.load(); }
@@ -191,6 +198,7 @@ public slots:
     void toggleMute();
     void toggleHwaccel();
     void setSpeed(double speed);
+    Q_INVOKABLE void setAspect(const QString &v);
     void toggleFullscreen();
     void setOverlaysVisible(bool v);
     void toggleOsd();
@@ -229,6 +237,7 @@ signals:
     void scaleChanged();
     void denoiseQualityChanged();
     void speedChanged();
+    void aspectChanged();
     void hwDecodingChanged();
     void videoInfoChanged();
     void osdDataChanged();
@@ -300,6 +309,7 @@ private:
     double volume_ = 1.0;    // 初始与持久化默认一致（0.65 从未生效——观察器首轮回填覆盖）
     double savedVolume_ = 0.5;   // 静音前音量（toggle mute 恢复用；未静音过则 0.5）
     std::atomic<double> speed_{1.0};
+    QString aspect_ = QStringLiteral("no");    // no=容器比例（mpv 0.41 -1 已弃用，no 等价无警告）
     std::atomic<bool> hwDecoding_{false};
     QString videoInfo_;
     // ── OSD 数据源（主线程观察器 post 写；事件线程 osdTextString 拉取读；
@@ -354,7 +364,6 @@ private:
     // 主线程专用（setter/观察器 post 均主线程）。benchmark 不调用 loadSettings。
     QSettings settings_{QStringLiteral("vsr-player"), QStringLiteral("vsr-player")};
     bool settingsEnabled_ = false;   // loadSettings 调用后才允许写（benchmark 恒 false）
-    bool restoreExtSubs_ = false;    // restorePlaylist 置位 → 首文件加载后恢复外部字幕
     QVariantList trackList_;      // track-list 观察器填充（Task 3）
     bool subVisible_ = false;
     double subDelay_ = 0.0;

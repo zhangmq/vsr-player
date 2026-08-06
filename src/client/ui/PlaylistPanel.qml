@@ -18,15 +18,13 @@ Drawer {
     width: 320; height: parent ? parent.height : 600; z: 10
     dragMargin: 0
     topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
-    // 配色同 PopupBase：面板底 #d9111111 + 1px 白边 + 圆角
-    //（原纯黑 #d9000000 非方案色）
-    background: Rectangle { color: "#d9111111"; radius: 8
-        border { width: 1; color: "#22ffffff" } }
+    // 面板底 #d9111111（无圆角无边框——侧边栏贴边，用户确认 2026-08-06）
+    background: Rectangle { color: "#d9111111" }
 
     Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top }
         height: 48; color: "#22ffffff"
         Text { anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
-            text: qsTr("Playlist"); color: "#e0e0e0"; font.pixelSize: 13; font.bold: true }
+            text: qsTr("Playlist"); color: "#e0e0e0"; font.pixelSize: 13 }
         Text { anchors { right: clearBtn.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
             text: viewModel.playlistModel.currentIndex >= 0
                   ? (viewModel.playlistModel.currentIndex + 1) + "/" + viewModel.playlistModel.count
@@ -37,7 +35,7 @@ Drawer {
         IconButton {
             id: clearBtn
             anchors { right: closeBtn.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
-            label: qsTr("Clear"); size: 22
+            codepoint: "󰆴"; size: 22   // mdi-delete 垃圾箱（清空列表）
             tooltip: qsTr("Clear playlist")
             onClicked: viewModel.playlistClear()
         }

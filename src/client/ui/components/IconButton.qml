@@ -20,7 +20,7 @@ Item {
     Text {
         anchors.centerIn: parent
         font.family: label ? "" : iconFont
-        font.pixelSize: label ? size - 7 : size
+        font.pixelSize: label ? 13 : size   // label 固定 13（统一字号）；字形随 size
         text: label ? label : codepoint
         color: ibHover.hovered || root.highlighted ? "#ffffff" : "#c8c8c8"
         Behavior on color { ColorAnimation { duration: 150 } }

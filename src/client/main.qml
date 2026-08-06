@@ -46,8 +46,8 @@ Item {
                 if (_popups[i] !== exclude) _popups[i].close()
         }
         Component.onCompleted: {
-            _popups = [volumePopup, qualityPopup, speedPopup, contextMenu, tracksPopup,
-                       openMenu, urlPopup]
+            _popups = [volumePopup, qualityPopup, speedPopup, aspectPopup, contextMenu,
+                       tracksPopup, openMenu, urlPopup]
             // 启动即按当前状态应用 auto-hide（onShowUiChanged 只在翻转时触发）
             viewModel.overlaysVisible = showUi
         }
@@ -97,6 +97,7 @@ Item {
             qualityPopupOpen: qualityPopup.visible
             speedPopupOpen: speedPopup.visible
             tracksPopupOpen: tracksPopup.visible
+            aspectPopupOpen: aspectPopup.visible
             playlistOpen: playlistPanel.visible
             onSeeked: function(ms) { viewModel.seekAbsolute(ms) }
             onPlayPauseClicked: viewModel.togglePlayPause()
@@ -108,6 +109,7 @@ Item {
             onHwaccelClicked: viewModel.toggleHwaccel()
             onSpeedClicked: speedPopup.visible ? speedPopup.close() : speedPopup.open()
             onTracksClicked: tracksPopup.visible ? tracksPopup.close() : tracksPopup.open()
+            onAspectClicked: aspectPopup.visible ? aspectPopup.close() : aspectPopup.open()
             onFullscreenClicked: viewModel.toggleFullscreen()
             onPlaylistClicked: root.togglePlaylist()
             onLoopClicked: viewModel.toggleLoop()
@@ -159,6 +161,14 @@ Item {
             speed: viewModel.speed
             onSpeedAdjusted: function(v) { viewModel.setSpeed(v) }
             onOpened: uiLayer.closeOtherPopups(speedPopup)
+        }
+
+        AspectPopup {
+            id: aspectPopup
+            anchorTarget: bottomBar.aspectBtn
+            aspect: viewModel.aspect
+            onAspectPicked: function(v) { viewModel.setAspect(v) }
+            onOpened: uiLayer.closeOtherPopups(aspectPopup)
         }
 
         TracksPopup {

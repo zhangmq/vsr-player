@@ -929,6 +929,13 @@ static void f_process(struct mp_filter *f)
         p->out_buf = 0; p->out_buf_size = 0;
     }
 
+    // 保留像素宽高比（aspect override：解码器层 video-aspect-override
+    // 经 mp_image_params_set_dsize 换算进 p_w/p_h——VSR 重建 params 时
+    // 须带出，否则 VO 按方形像素渲染 → 画面比例设置失效。实测缺失时
+    // aspect 选项点击无效果。PAR 与尺寸无关，放大后直接复制）
+    out->params.p_w = mpi->params.p_w;
+    out->params.p_h = mpi->params.p_h;
+
     out->pts         = mpi->pts;
     out->dts         = mpi->dts;
     out->nominal_fps = mpi->nominal_fps;

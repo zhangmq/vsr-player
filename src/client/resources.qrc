@@ -7,6 +7,7 @@
         <file>ui/ProgressSlider.qml</file>
         <file>ui/VolumePopup.qml</file>
         <file>ui/QualityPopup.qml</file>
+        <file>ui/AspectPopup.qml</file>
         <file>ui/SpeedPopup.qml</file>
         <file>ui/ContextMenu.qml</file>
         <file>ui/TracksPopup.qml</file>

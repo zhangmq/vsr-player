@@ -15,6 +15,7 @@ Item {
     property bool qualityPopupOpen: false
     property bool speedPopupOpen: false
     property bool tracksPopupOpen: false
+    property bool aspectPopupOpen: false
     property bool playlistOpen: false
     property int loopMode: 0    // 0=No loop, 1=Loop file, 2=Loop playlist
 
@@ -27,6 +28,7 @@ Item {
     signal hwaccelClicked()
     signal speedClicked()
     signal tracksClicked()
+    signal aspectClicked()
     signal fullscreenClicked()
     signal playlistClicked()
     signal loopClicked()
@@ -44,6 +46,7 @@ Item {
     property alias qualityBtn: qualBtn
     property alias speedBtn: spdBtn
     property alias tracksBtn: trkBtn
+    property alias aspectBtn: aspBtn
 
     // bottombar(48) + 进度条(14) + 热区(40) 一体
     implicitHeight: 48 + 14 + 40
@@ -83,7 +86,6 @@ Item {
         Row {
             anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 12 }
             spacing: 4
-
             IconButton { codepoint: "󰒮"; size: 22; tooltip: qsTr("Previous (B)")
                 onClicked: root.prevClicked() }
             IconButton { codepoint: root.playing ? "󰏤" : "󰐊"; size: 22
@@ -130,6 +132,9 @@ Item {
             IconButton { id: trkBtn; codepoint: "󰨖"; size: 22; tooltip: qsTr("Tracks")
                 highlighted: root.tracksPopupOpen
                 onClicked: root.tracksClicked() }
+            IconButton { id: aspBtn; codepoint: "󰨤"; size: 22; tooltip: qsTr("Aspect ratio")
+                highlighted: root.aspectPopupOpen
+                onClicked: root.aspectClicked() }
             IconButton { id: loopBtn
                 // 三态三字形：No loop=loop(环形箭头)/单曲=repeat_one/
                 // 列表=repeat（E028/E041/E040）。状态只由图标区分，
