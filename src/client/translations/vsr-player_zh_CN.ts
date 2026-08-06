@@ -22,10 +22,12 @@
     <message><source>Exit fullscreen</source><translation>退出全屏</translation></message>
     <message><source>Fullscreen</source><translation>全屏</translation></message>
     <message><source>Playlist (P)</source><translation>播放列表 (P)</translation></message>
+    <message><source>Tracks</source><translation>轨道</translation></message>
 </context>
 <context>
     <name>TopBar</name>
     <message><source>VSR Player</source><translation>VSR Player</translation></message>
+    <message><source>Open file (Ctrl+O)</source><translation>打开文件 (Ctrl+O)</translation></message>
 </context>
 <context>
     <name>VolumePopup</name>
@@ -55,6 +57,8 @@
 <context>
     <name>PlaylistPanel</name>
     <message><source>Playlist</source><translation>播放列表</translation></message>
+    <message><source>Clear</source><translation>清空</translation></message>
+    <message><source>Clear playlist</source><translation>清空播放列表</translation></message>
 </context>
 <context>
     <name>PlayerViewModel</name>
@@ -90,5 +94,35 @@
     <message><source>Medium</source><translation>Medium</translation></message>
     <message><source>High</source><translation>High</translation></message>
     <message><source>Ultra</source><translation>Ultra</translation></message>
+</context>
+<context>
+    <name>TracksPopup</name>
+    <message><source>Audio</source><translation>音轨</translation></message>
+    <message><source>Subtitles</source><translation>字幕</translation></message>
+    <message><source>Video</source><translation>视频轨</translation></message>
+    <message><source>Visible</source><translation>显示</translation></message>
+    <message><source>Hidden</source><translation>隐藏</translation></message>
+    <message><source>Track %1</source><translation>轨道 %1</translation></message>
+    <message><source>%1s</source><translation>%1秒</translation></message>
+    <message><source>No subtitles</source><translation>无字幕</translation></message>
+</context>
+<context>
+    <name>ContextMenu</name>
+    <message><source>Open file</source><translation>打开文件</translation></message>
+    <message><source>Add to playlist</source><translation>追加到播放列表</translation></message>
+    <message><source>Load subtitles</source><translation>加载字幕</translation></message>
+    <message><source>Play/Pause</source><translation>播放/暂停</translation></message>
+    <message><source>Stop</source><translation>停止</translation></message>
+    <message><source>Fullscreen</source><translation>全屏</translation></message>
+    <message><source>Playlist</source><translation>播放列表</translation></message>
+</context>
+<context>
+    <name>main</name>
+    <message><source>Open media</source><translation>打开媒体</translation></message>
+    <message><source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</source><translation>媒体文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</translation></message>
+    <message><source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</source><translation>视频文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</translation></message>
+    <message><source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source><translation>音频文件 (*.mp3 *.flac *.wav *.ogg *.m4a)</translation></message>
+    <message><source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source><translation>字幕文件 (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation></message>
+    <message><source>All files (*)</source><translation>所有文件 (*)</translation></message>
 </context>
 </TS>

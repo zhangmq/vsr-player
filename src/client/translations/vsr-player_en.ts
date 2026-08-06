@@ -22,10 +22,12 @@
     <message><source>Exit fullscreen</source><translation>Exit fullscreen</translation></message>
     <message><source>Fullscreen</source><translation>Fullscreen</translation></message>
     <message><source>Playlist (P)</source><translation>Playlist (P)</translation></message>
+    <message><source>Tracks</source><translation>Tracks</translation></message>
 </context>
 <context>
     <name>TopBar</name>
     <message><source>VSR Player</source><translation>VSR Player</translation></message>
+    <message><source>Open file (Ctrl+O)</source><translation>Open file (Ctrl+O)</translation></message>
 </context>
 <context>
     <name>VolumePopup</name>
@@ -55,6 +57,8 @@
 <context>
     <name>PlaylistPanel</name>
     <message><source>Playlist</source><translation>Playlist</translation></message>
+    <message><source>Clear</source><translation>Clear</translation></message>
+    <message><source>Clear playlist</source><translation>Clear playlist</translation></message>
 </context>
 <context>
     <name>PlayerViewModel</name>
@@ -88,5 +92,35 @@
     <message><source>Medium</source><translation>Medium</translation></message>
     <message><source>High</source><translation>High</translation></message>
     <message><source>Ultra</source><translation>Ultra</translation></message>
+</context>
+<context>
+    <name>TracksPopup</name>
+    <message><source>Audio</source><translation>Audio</translation></message>
+    <message><source>Subtitles</source><translation>Subtitles</translation></message>
+    <message><source>Video</source><translation>Video</translation></message>
+    <message><source>Visible</source><translation>Visible</translation></message>
+    <message><source>Hidden</source><translation>Hidden</translation></message>
+    <message><source>Track %1</source><translation>Track %1</translation></message>
+    <message><source>%1s</source><translation>%1s</translation></message>
+    <message><source>No subtitles</source><translation>No subtitles</translation></message>
+</context>
+<context>
+    <name>ContextMenu</name>
+    <message><source>Open file</source><translation>Open file</translation></message>
+    <message><source>Add to playlist</source><translation>Add to playlist</translation></message>
+    <message><source>Load subtitles</source><translation>Load subtitles</translation></message>
+    <message><source>Play/Pause</source><translation>Play/Pause</translation></message>
+    <message><source>Stop</source><translation>Stop</translation></message>
+    <message><source>Fullscreen</source><translation>Fullscreen</translation></message>
+    <message><source>Playlist</source><translation>Playlist</translation></message>
+</context>
+<context>
+    <name>main</name>
+    <message><source>Open media</source><translation>Open media</translation></message>
+    <message><source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</source><translation>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</translation></message>
+    <message><source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</source><translation>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</translation></message>
+    <message><source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source><translation>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</translation></message>
+    <message><source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source><translation>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation></message>
+    <message><source>All files (*)</source><translation>All files (*)</translation></message>
 </context>
 </TS>
