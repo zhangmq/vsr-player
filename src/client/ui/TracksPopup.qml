@@ -1,12 +1,14 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import "components"
 
-/// 轨道选择 + 字幕控制（字幕/音频/视频三页签，标准 TabBar）。数据源：
-/// viewModel.trackList（track-list 属性观察器）+ viewModel.subtitleFiles
+/// 轨道选择 + 字幕控制（字幕/音频/视频三页签，标准 TabBar + StackLayout 分页）。
+/// 数据源：viewModel.trackList（track-list 属性观察器）+ viewModel.subtitleFiles
 ///（目录扫描，优先级：精确同名 > 语言后缀 > 其余）。modal 居中、尺寸
 /// 随窗口自适应（宽 55% / 高 80%，下限 480×420 防局促，窗口过小钳制
-/// 防溢出；滚动只在列表区，控制行/按钮固定，2026-08-06）。
+/// 防溢出）。内容区高度固定锚定（定高 − 页签），整区不滚动；滚动只在
+/// 各页列表区（字幕页控制行/加载按钮固定，2026-08-06）。
 PopupBase {
     id: root
     // 自适应 + 最小尺寸（用户实测反馈，2026-08-06）
@@ -33,8 +35,22 @@ PopupBase {
     signal subDelayAdjusted(real delta)
     signal subFileDialogRequested()   // "加载字幕文件…" → main.qml FileDialog
 
+    /// 点击外部字幕文件：已加载 → 选择现有轨（不重复 sub-add）；未加载 →
+    /// 加载（sub-add select）。external 轨的 filename = 完整路径。
+    function onSubFileClicked(path) {
+        for (var i = 0; i < root.trackList.length; i++) {
+            var t = root.trackList[i]
+            if (t.type === "sub" && t.external && t.filename === path) {
+                root.trackSelected("sub", t.id)
+                return
+            }
+        }
+        viewModel.loadExternalSubtitle(path)
+    }
+
     readonly property var audioTracks: root.trackList.filter(t => t.type === "audio")
-    readonly property var subTracks: root.trackList.filter(t => t.type === "sub")
+    // 内置字幕轨（排除 external——已加载的外部字幕只显示在右列外部区，2026-08-06）
+    readonly property var subTracks: root.trackList.filter(t => t.type === "sub" && !t.external)
     readonly property var videoTracks: root.trackList.filter(t => t.type === "video")
 
     component TrackRow: Rectangle {
@@ -60,166 +76,225 @@ PopupBase {
             onClicked: root.trackSelected(type, track.id) }
     }
 
-    /// 未加载的外部字幕文件行（点击 → viewModel.loadExternalSubtitle = sub-add select）
+    /// 外部字幕文件行。点击：已加载（trackList 有 external 轨匹配）→ 选择
+    /// 现有轨；未加载 → sub-add select。目录全部文件常显，不因加载移除。
+    /// 黄色高亮 = 当前选中（与内置轨互斥：mpv sid 单值）。
     component SubFileRow: Rectangle {
         property string name
         property string path
+        // 绑定体内引用 root.trackList 建立属性依赖（trackList 变化重估）
+        property bool selected: {
+            for (var i = 0; i < root.trackList.length; i++) {
+                var t = root.trackList[i]
+                if (t.type === "sub" && t.external && t.filename === path && t.selected)
+                    return true
+            }
+            return false
+        }
         width: parent ? parent.width : 0; height: 32; radius: 4
-        color: sfHover.containsMouse ? "#33ffffff" : "transparent"
+        color: sfHover.containsMouse ? "#33ffffff"
+             : (selected ? "#33ffcc00" : "transparent")
         Text {
             anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
-            text: name   // SubFileRow 的 property（Text 是其子项，作用域可见）
-            color: "#e0e0e0"; font.pixelSize: 13; elide: Text.ElideRight
+            text: name
+            color: selected ? "#ffcc00" : "#e0e0e0"
+            font.pixelSize: 13; elide: Text.ElideRight
             width: parent.width - 20
         }
         MouseArea { id: sfHover; anchors.fill: parent; hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onClicked: viewModel.loadExternalSubtitle(path)
+            onClicked: root.onSubFileClicked(path)
             ToolTip.text: qsTr("Load subtitle"); ToolTip.delay: 600
             ToolTip.visible: sfHover.containsMouse }
     }
 
-    // ── 页签（固定；切换归零列表滚动位置）──────────────────────
-    // 注意：TabBar.currentIndex 不可绑定到 root.currentTab——带绑定的
-    // 属性拒绝 TabButton 点击的外部赋值（绑定回弹），点击失效、页签
-    // 恒显示字幕页（"三个页签内容一样"根因，2026-08-06）。TabBar 自
-    // 管理 currentIndex，onCurrentIndexChanged 单向写入 root.currentTab。
+    // ── 页签（固定）──────────────────────────────────────────
+    // 点击经 TabButton onClicked 显式驱动 root.currentTab（不依赖 TabBar
+    // 内部联动）；onCurrentIndexChanged 同步键盘导航。currentIndex 保持
+    // 字面量（勿改绑定——绑定会拒绝内部写入，高亮/联动失效）。
     TabBar {
         id: tabBar
         anchors { left: parent.left; right: parent.right; top: parent.top }
         currentIndex: 0
-        onCurrentIndexChanged: {
-            root.currentTab = tabBar.currentIndex
-            flick.contentY = 0   // 切换归零——否则列表残留在旧页滚动位置
-        }
-        TabButton { text: qsTr("Subtitles") }
-        TabButton { text: qsTr("Audio") }
-        TabButton { text: qsTr("Video") }
+        onCurrentIndexChanged: root.currentTab = tabBar.currentIndex
+        TabButton { text: qsTr("Subtitles"); onClicked: root.currentTab = 0 }
+        TabButton { text: qsTr("Audio"); onClicked: root.currentTab = 1 }
+        TabButton { text: qsTr("Video"); onClicked: root.currentTab = 2 }
     }
 
-    // ── 字幕 tab 控制行（固定，不滚）────────────────────────────
-    Row {
-        id: controlRow
-        anchors { left: parent.left; right: parent.right; top: tabBar.bottom; topMargin: 8 }
-        visible: root.currentTab === 0
-        spacing: 6
-        Rectangle {
-            width: 86; height: 32; radius: 4
-            color: visHover.containsMouse ? "#33ffffff"
-                 : (root.subVisible ? "#33ffcc00" : "transparent")
-            Text { anchors.centerIn: parent
-                text: root.subVisible ? qsTr("Visible") : qsTr("Hidden")
-                color: root.subVisible ? "#ffcc00" : "#e0e0e0"
-                font.pixelSize: 13 }
-            MouseArea { id: visHover; anchors.fill: parent; hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.subVisibilityToggled() }
-        }
-        Rectangle {
-            width: 44; height: 32; radius: 4
-            color: dMinusHover.containsMouse ? "#33ffffff" : "transparent"
-            Text { anchors.centerIn: parent; text: "−0.1s"; color: "#e0e0e0"; font.pixelSize: 13 }
-            MouseArea { id: dMinusHover; anchors.fill: parent; hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.subDelayAdjusted(-0.1) }
-        }
-        Text {
-            anchors.verticalCenter: parent.verticalCenter
-            text: qsTr("%1s").arg(root.subDelay.toFixed(1))
-            color: "#b0b0b0"; font.pixelSize: 13
-        }
-        Rectangle {
-            width: 44; height: 32; radius: 4
-            color: dPlusHover.containsMouse ? "#33ffffff" : "transparent"
-            Text { anchors.centerIn: parent; text: "+0.1s"; color: "#e0e0e0"; font.pixelSize: 13 }
-            MouseArea { id: dPlusHover; anchors.fill: parent; hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.subDelayAdjusted(0.1) }
-        }
-    }
-
-    // ── 加载字幕文件按钮（固定，不滚）──────────────────────────
-    Rectangle {
-        id: loadSubBtn
-        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: 32; radius: 4
-        visible: root.currentTab === 0
-        color: subFbHover.containsMouse ? "#33ffffff" : "transparent"
-        Text { anchors.centerIn: parent
-            text: qsTr("Load subtitle file…")
-            color: "#e0e0e0"; font.pixelSize: 13 }
-        MouseArea { id: subFbHover; anchors.fill: parent; hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.subFileDialogRequested() }
-    }
-
-    // ── 列表区（唯一滚动区；Repeater 必须显式宽度——delegate 的
-    //     parent 是 Repeater 本身，implicitWidth=0 → 宽 0 不可见，
-    //     "弹窗空白"根因 2026-08-06）──────────────────────────
-    Flickable {
-        id: flick
+    // ── 三个独立内容区（StackLayout 分页：一次只显示一页）─────────
+    // 高度固定锚定（TabBar 下 → 弹窗底），整区不滚动；滚动只在列表区。
+    // 注意：Repeater 的 delegate 插入为 Repeater 的父项的子项（兄弟关系，
+    // qquickrepeater.cpp setParentItem(parentItem())），Repeater 上设
+    // visible 无效——页可见性由 StackLayout 统一管理，delegate 宽度须
+    // 显式绑定（width: parent.width）。
+    StackLayout {
         anchors {
             left: parent.left; right: parent.right
-            top: root.currentTab === 0 ? controlRow.bottom : tabBar.bottom
-            topMargin: 8
-            bottom: root.currentTab === 0 ? loadSubBtn.top : parent.bottom
-            bottomMargin: root.currentTab === 0 ? 8 : 0
+            top: tabBar.bottom; topMargin: 8
+            bottom: parent.bottom
         }
-        contentHeight: contentCol.implicitHeight
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
+        currentIndex: root.currentTab
 
-        Column {
-            id: contentCol
-            width: flick.width
-            spacing: 12
+        // ── 字幕页（控制行固定 + 列表滚动 + 加载按钮固定）────────
+        Item {
+            Row {
+                id: controlRow
+                anchors { left: parent.left; right: parent.right; top: parent.top }
+                spacing: 6
+                Rectangle {
+                    width: 86; height: 32; radius: 4
+                    color: visHover.containsMouse ? "#33ffffff"
+                         : (root.subVisible ? "#33ffcc00" : "transparent")
+                    Text { anchors.centerIn: parent
+                        text: root.subVisible ? qsTr("Visible") : qsTr("Hidden")
+                        color: root.subVisible ? "#ffcc00" : "#e0e0e0"
+                        font.pixelSize: 13 }
+                    MouseArea { id: visHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.subVisibilityToggled() }
+                }
+                Rectangle {
+                    width: 44; height: 32; radius: 4
+                    color: dMinusHover.containsMouse ? "#33ffffff" : "transparent"
+                    Text { anchors.centerIn: parent; text: "−0.1s"; color: "#e0e0e0"; font.pixelSize: 13 }
+                    MouseArea { id: dMinusHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.subDelayAdjusted(-0.1) }
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("%1s").arg(root.subDelay.toFixed(1))
+                    color: "#b0b0b0"; font.pixelSize: 13
+                }
+                Rectangle {
+                    width: 44; height: 32; radius: 4
+                    color: dPlusHover.containsMouse ? "#33ffffff" : "transparent"
+                    Text { anchors.centerIn: parent; text: "+0.1s"; color: "#e0e0e0"; font.pixelSize: 13 }
+                    MouseArea { id: dPlusHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.subDelayAdjusted(0.1) }
+                }
+            }
 
-            // ── 字幕页签：无字幕 + 已加载轨 + 外部字幕 ──────────
-            // "无字幕"（关闭字幕轨，sid=no）。track 为 JS 对象字面量；
-            // 对象字面量的字段是普通 JS 值而非 QML 绑定——整字面量须放
-            // 在绑定表达式内整体重估（内联正确；拆 property 中转会冻结）
-            TrackRow {
-                visible: root.currentTab === 0
-                track: ({selected: !root.subTracks.some(t => t.selected), id: -1,
-                         title: qsTr("No subtitles"), lang: ""})
-                idx: -1; type: "sub"
-            }
-            Repeater {
-                width: parent.width
-                visible: root.currentTab === 0
-                model: root.subTracks
-                delegate: TrackRow { track: modelData; idx: index; type: "sub" }
-            }
-            Text {
-                text: qsTr("External"); color: "#b0b0b0"; font.pixelSize: 13
-                visible: root.currentTab === 0 && viewModel.subtitleFiles.length > 0
-            }
-            Repeater {
-                width: parent.width
-                visible: root.currentTab === 0
-                model: viewModel.subtitleFiles
-                delegate: SubFileRow { name: modelData.name; path: modelData.path }
+            Rectangle {
+                id: loadSubBtn
+                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                height: 32; radius: 4
+                color: subFbHover.containsMouse ? "#33ffffff" : "transparent"
+                Text { anchors.centerIn: parent
+                    text: qsTr("Load subtitle file…")
+                    color: "#e0e0e0"; font.pixelSize: 13 }
+                MouseArea { id: subFbHover; anchors.fill: parent; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.subFileDialogRequested() }
             }
 
-            // ── 音频页签 ─────────────────────────────────────────
-            Repeater {
-                width: parent.width
-                visible: root.currentTab === 1
-                model: root.audioTracks
-                delegate: TrackRow { track: modelData; idx: index; type: "audio" }
-            }
-            Text { text: qsTr("No audio tracks"); color: "#808080"; font.pixelSize: 13
-                visible: root.currentTab === 1 && root.audioTracks.length === 0 }
+            // 列表区（两列：内置字幕轨 | 外部字幕文件，各自独立滚动）
+            Flickable {
+                id: subTrackFlick
+                anchors {
+                    left: parent.left
+                    top: controlRow.bottom; topMargin: 8
+                    bottom: loadSubBtn.top; bottomMargin: 8
+                }
+                width: parent.width * 0.45   // 外部列更宽：字幕文件名通常长于轨道名
+                contentHeight: subTrackCol.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
 
-            // ── 视频页签 ─────────────────────────────────────────
-            Repeater {
-                width: parent.width
-                visible: root.currentTab === 2
-                model: root.videoTracks
-                delegate: TrackRow { track: modelData; idx: index; type: "video" }
+                Column {
+                    id: subTrackCol
+                    width: parent.width
+                    spacing: 12
+                    Repeater {
+                        model: root.subTracks
+                        delegate: TrackRow { track: modelData; idx: index; type: "sub" }
+                    }
+                    Text {   // 无内置字幕轨时空状态提示（隐藏/显示由控制行按钮管理，无需"无字幕"项）
+                        text: qsTr("No subtitles"); color: "#808080"; font.pixelSize: 13
+                        visible: root.subTracks.length === 0
+                    }
+                }
             }
-            Text { text: qsTr("No video tracks"); color: "#808080"; font.pixelSize: 13
-                visible: root.currentTab === 2 && root.videoTracks.length === 0 }
+
+            // 两列分隔线
+            Rectangle {
+                id: colSep
+                anchors { left: subTrackFlick.right; leftMargin: 6
+                    top: subTrackFlick.top; bottom: subTrackFlick.bottom }
+                width: 1; color: "#22ffffff"
+            }
+
+            Flickable {
+                id: extSubFlick
+                anchors {
+                    left: colSep.right; leftMargin: 6
+                    right: parent.right
+                    top: subTrackFlick.top; bottom: subTrackFlick.bottom
+                }
+                contentHeight: extSubCol.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                Column {
+                    id: extSubCol
+                    width: parent.width
+                    spacing: 12
+                    Text {
+                        text: qsTr("External"); color: "#b0b0b0"; font.pixelSize: 13
+                        visible: viewModel.subtitleFiles.length > 0
+                    }
+                    Repeater {
+                        model: viewModel.subtitleFiles
+                        delegate: SubFileRow { name: modelData.name; path: modelData.path }
+                    }
+                    Text {   // 无外部字幕文件时占位（列结构保持）
+                        text: qsTr("No subtitle files"); color: "#808080"; font.pixelSize: 13
+                        visible: viewModel.subtitleFiles.length === 0
+                    }
+                }
+            }
+        }
+
+        // ── 音频页 ────────────────────────────────────────────
+        Flickable {
+            anchors.fill: parent
+            contentHeight: audioCol.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            Column {
+                id: audioCol
+                width: parent.width
+                spacing: 12
+                Repeater {
+                    model: root.audioTracks
+                    delegate: TrackRow { track: modelData; idx: index; type: "audio" }
+                }
+                Text { text: qsTr("No audio tracks"); color: "#808080"; font.pixelSize: 13
+                    visible: root.audioTracks.length === 0 }
+            }
+        }
+
+        // ── 视频页 ────────────────────────────────────────────
+        Flickable {
+            anchors.fill: parent
+            contentHeight: videoCol.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            Column {
+                id: videoCol
+                width: parent.width
+                spacing: 12
+                Repeater {
+                    model: root.videoTracks
+                    delegate: TrackRow { track: modelData; idx: index; type: "video" }
+                }
+                Text { text: qsTr("No video tracks"); color: "#808080"; font.pixelSize: 13
+                    visible: root.videoTracks.length === 0 }
+            }
         }
     }
 }

@@ -429,8 +429,8 @@ void PlayerViewModel::attach(MpvController *mpv) {
                             t["selected"] = v->u.flag != 0;   // bool 而非 int（QML 严格相等陷阱）
                         else if (!strcmp(k, "external") && v->format == MPV_FORMAT_FLAG)
                             t["external"] = v->u.flag != 0;
-                        else if (!strcmp(k, "filename") && v->format == MPV_FORMAT_STRING)
-                            t["filename"] = QString::fromUtf8(v->u.string);   // 外部轨完整路径
+                        else if (!strcmp(k, "external-filename") && v->format == MPV_FORMAT_STRING)
+                            t["filename"] = QString::fromUtf8(v->u.string);   // 外部轨完整路径（mpv 字段名）
                     }
                     tracks.append(t);
                 }
@@ -439,7 +439,6 @@ void PlayerViewModel::attach(MpvController *mpv) {
         }
         post([this, tracks] {
             if (trackList_ != tracks) { trackList_ = tracks; emit trackListChanged(); }
-            scanSubtitleFiles(lastPath_);   // 外部字幕加载/移除后重新对照
         });
     });
 
@@ -529,6 +528,7 @@ void PlayerViewModel::applyPlaybackSettings() {
 
 void PlayerViewModel::restorePlaylist() {
     if (!mpv_) return;
+    restoreExtSubs_ = true;   // 无参数启动路径 → 首文件加载后恢复外部字幕
     QStringList files = settings_.value("playlist").toStringList();
     int cur = settings_.value("playlistCurrent", -1).toInt();
     if (files.isEmpty()) return;
@@ -891,8 +891,9 @@ void PlayerViewModel::playlistRemove(int index) {
 }
 
 // ── 外部字幕扫描（轨道弹窗"字幕"页签数据源）────────────────────────
-// 主线程调用（文件 IO ~ms 级、低频：文件加载/轨道变化时）。排除已
-// 加载的外部字幕（track-list external 轨的 filename 对照）。优先级：
+// 主线程调用（文件 IO ~ms 级、低频：文件加载时）。目录全部字幕文件
+// 常显（不因加载状态移除）；点击时 QML 侧对照 trackList 决定加载
+//（sub-add select）或选择现有轨。优先级：
 //   0 = 精确同名（video.mp4 ↔ video.srt）
 //   1 = 语言后缀（video.zh.srt / video.en-US.ass——basename 前缀匹配）
 //   2 = 其余按文件名
@@ -904,16 +905,6 @@ void PlayerViewModel::scanSubtitleFiles(const QString &videoPath) {
         const QStringList exts = {"*.srt", "*.ass", "*.ssa", "*.vtt",
                                   "*.sub", "*.sbv"};
         QStringList names = dir.entryList(exts, QDir::Files, QDir::Name);
-        // 已加载的外部字幕（完整路径）排除
-        QSet<QString> loaded;
-        for (const QVariant &t : trackList_) {
-            const QVariantMap m = t.toMap();
-            if (m["type"] == "sub" && m["external"].toBool())
-                loaded.insert(m["filename"].toString());
-        }
-        names.removeIf([&](const QString &n) {
-            return loaded.contains(dir.filePath(n));
-        });
         // 优先级排序（稳定：同级保持文件名序——entryList Name 已排序）
         const QString base = vi.completeBaseName();
         std::stable_sort(names.begin(), names.end(),
@@ -932,6 +923,56 @@ void PlayerViewModel::scanSubtitleFiles(const QString &videoPath) {
             files.append(QVariantMap{{"name", n}, {"path", dir.filePath(n)}});
     }
     if (subtitleFiles_ != files) { subtitleFiles_ = files; emit subtitleFilesChanged(); }
+}
+
+// ── 外部字幕持久化（重启恢复）──────────────────────────────────────
+// 保存：退出时（main.cpp quit-watch-later 后）记录全部 external 轨的
+// 完整路径 + 当前选中的路径——不在 trackList 变化时写：启动时 track-list
+// 首次填充（无 external 轨）会覆盖清空上次持久化值（实测根因，
+// 2026-08-06）。恢复：无参数启动恢复播放列表路径下，每个文件加载完成时
+// sub-add 全部保存文件（选中轨带 select）；external 轨随文件切换被 mpv
+// 清除，须每次恢复（exists 对照防同文件重复）。CLI 显式文件不恢复。
+void PlayerViewModel::saveExternalSubs() {
+    if (!settingsEnabled_) return;
+    QStringList subs;
+    QString sel;
+    for (const QVariant &t : trackList_) {
+        const QVariantMap m = t.toMap();
+        if (m["type"] == "sub" && m["external"].toBool()) {
+            const QString f = m["filename"].toString();
+            if (!f.isEmpty()) {
+                subs.append(f);
+                if (m["selected"].toBool()) sel = f;
+            }
+        }
+    }
+    saveSettings("externalSubs", subs);
+    saveSettings("externalSubSelected", sel);
+}
+
+void PlayerViewModel::restoreExternalSubs() {
+    if (!mpv_ || !restoreExtSubs_ || !settingsEnabled_) return;
+    // 不设"会话一次"：external 轨随文件切换被 mpv 清除，播放列表每个文件
+    // 加载完成时都需要恢复（首个 FILE_LOADED 可能是列表首条而非目标条）；
+    // exists 对照（trackList）防同一文件重复添加（2026-08-06）。
+    const QStringList subs = settings_.value("externalSubs").toStringList();
+    const QString sel = settings_.value("externalSubSelected").toString();
+    for (const QString &p : subs) {
+        if (p.isEmpty()) continue;
+        // 已加载（trackList 对照）→ 跳过，防重复轨
+        bool exists = false;
+        for (const QVariant &t : trackList_) {
+            const QVariantMap m = t.toMap();
+            if (m["type"] == "sub" && m["external"].toBool() &&
+                m["filename"].toString() == p) { exists = true; break; }
+        }
+        if (exists) continue;
+        // mpv_command_async 返回前复制参数（client.c mp_input_parse_cmd_strv）
+        if (p == sel)
+            mpv_->commandAsync({"sub-add", p.toUtf8().constData(), "select", nullptr});
+        else
+            mpv_->commandAsync({"sub-add", p.toUtf8().constData(), nullptr});
+    }
 }
 
 void PlayerViewModel::playlistClear() {
@@ -1074,6 +1115,7 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
         updatePlaying(!paused);
         resetSegmentCounters(drops);   // 新文件 → 段统计归零
         scanSubtitleFiles(lastPath_);  // 新文件 → 扫描其目录的字幕
+        restoreExternalSubs();         // 上次会话的外部字幕（无参数启动路径）
     }, Qt::QueuedConnection);
 }
 

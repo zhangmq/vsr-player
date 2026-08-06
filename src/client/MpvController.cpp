@@ -218,7 +218,10 @@ bool MpvController::setPropertyDoubleAsync(const char *name, double value) {
 }
 
 bool MpvController::setPropertyStringAsync(const char *name, const std::string &value) {
-    int e = mpv_set_property_async(mpv_, 0, name, MPV_FORMAT_STRING, (void *)value.c_str());
+    // MPV_FORMAT_STRING 的 data 约定是 char**（指针地址）——传 c_str()
+    // 会被 m_option_copy 当指针读取（崩溃根因，2026-08-06）
+    const char *v = value.c_str();
+    int e = mpv_set_property_async(mpv_, 0, name, MPV_FORMAT_STRING, &v);
     if (e < 0)
         MLOG_ERR("setPropertyAsync(\"%s\") failed: %s", name, mpv_error_string(e));
     return e >= 0;

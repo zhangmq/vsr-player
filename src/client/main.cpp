@@ -323,6 +323,7 @@ int main(int argc, char *argv[]) {
         // 防挂死兜底 = vo_libmpv flip_page 的 200ms 超时（等待 render/
         // report_swap 有界，core 不会无限持锁）。
         mpv.commandStr("quit-watch-later");
+        viewModel.saveExternalSubs();   // 退出竞态兜底：事件队列已停，最后轨道状态显式落盘
 
         if (!opts.benchmark) {
             QSettings geom(QStringLiteral("vsr-player"), QStringLiteral("vsr-player"));

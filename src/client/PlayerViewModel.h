@@ -111,6 +111,11 @@ public:
     /// 恢复上次播放列表（无 CLI 文件时调用）：首条 replace 开始播放，
     /// 其余 append，最后定位上次条目。
     void restorePlaylist();
+    /// 外部字幕持久化：trackList 变化时保存全部 external 轨路径 + 选中轨；
+    /// 无参数启动路径下每个文件加载完成后 sub-add 恢复（external 轨随
+    /// 文件切换清除，须每次恢复；trackList 对照防同文件重复）。
+    void saveExternalSubs();
+    void restoreExternalSubs();
     void setFullscreen(bool fs);   // Q_PROPERTY WRITE（QML 窗口同步回写）
 
     bool playing() const        { return playing_; }
@@ -349,6 +354,7 @@ private:
     // 主线程专用（setter/观察器 post 均主线程）。benchmark 不调用 loadSettings。
     QSettings settings_{QStringLiteral("vsr-player"), QStringLiteral("vsr-player")};
     bool settingsEnabled_ = false;   // loadSettings 调用后才允许写（benchmark 恒 false）
+    bool restoreExtSubs_ = false;    // restorePlaylist 置位 → 首文件加载后恢复外部字幕
     QVariantList trackList_;      // track-list 观察器填充（Task 3）
     bool subVisible_ = false;
     double subDelay_ = 0.0;

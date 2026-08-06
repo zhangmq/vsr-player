@@ -239,7 +239,11 @@ Item {
         id: fileDialog
         title: qsTr("Open media")
         fileMode: FileDialog.OpenFiles
-        nameFilters: [
+        /// 过滤器按 mode 切换：加载字幕（2）时字幕优先，否则媒体优先
+        nameFilters: fileDialog.mode === 2 ? [
+            qsTr("Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)"),
+            qsTr("All files (*)")
+        ] : [
             qsTr("Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)"),
             qsTr("Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)"),
             qsTr("Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)"),

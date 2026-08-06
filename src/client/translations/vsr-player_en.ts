@@ -100,6 +100,7 @@
     <message><source>Track %1</source><translation>Track %1</translation></message>
     <message><source>%1s</source><translation>%1s</translation></message>
     <message><source>No subtitles</source><translation>No subtitles</translation></message>
+    <message><source>No subtitle files</source><translation>No subtitle files</translation></message>
     <message><source>External</source><translation>External</translation></message>
     <message><source>Load subtitle file…</source><translation>Load subtitle file…</translation></message>
     <message><source>Load subtitle</source><translation>Load subtitle</translation></message>

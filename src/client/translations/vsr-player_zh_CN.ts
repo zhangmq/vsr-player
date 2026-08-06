@@ -102,6 +102,7 @@
     <message><source>Track %1</source><translation>轨道 %1</translation></message>
     <message><source>%1s</source><translation>%1秒</translation></message>
     <message><source>No subtitles</source><translation>无字幕</translation></message>
+    <message><source>No subtitle files</source><translation>没有外部字幕文件</translation></message>
     <message><source>External</source><translation>外部</translation></message>
     <message><source>Load subtitle file…</source><translation>加载字幕文件…</translation></message>
     <message><source>Load subtitle</source><translation>加载字幕</translation></message>
