@@ -11,13 +11,13 @@ Item {
         width: 72; height: 72; radius: 36
         x: (parent.width - width) / 2; y: (parent.height - height) / 2
         color: cpHover.hovered ? (cpMouse.pressed ? "#55000000" : "#44000000") : "#33000000"
-        opacity: (!root.playing && root.overlaysVisible) ? 1.0 : 0.0
+        opacity: (!root.playing || root.overlaysVisible) ? 1.0 : 0.0
         Behavior on opacity { OpacityAnimator { duration: 200 } }
 
         Text {
             anchors.centerIn: parent
             font.family: iconFont; font.pixelSize: 36
-            text: "󰐊"; color: "#ffffff"
+            text: root.playing ? "󰏤" : "󰐊"; color: "#ffffff"   // 暂停→播放箭头；播放中→暂停条（hover 时可见）
             renderType: Text.NativeRendering
         }
         MouseArea {
