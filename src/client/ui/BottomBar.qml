@@ -115,6 +115,13 @@ Item {
             anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 12 }
             spacing: 4
 
+            // 轨道选择 = 按文件记忆（其余按钮 = 全局设置）——置前并
+            // 以纵向分割线与全局按钮区分（2026-08-06）
+            IconButton { id: trkBtn; codepoint: "󰨖"; size: 22; tooltip: qsTr("Tracks")
+                highlighted: root.tracksPopupOpen
+                onClicked: root.tracksClicked() }
+            Rectangle { width: 1; height: 20; color: "#0fffffff"
+                anchors.verticalCenter: parent.verticalCenter }
             IconButton { id: volBtn
                 // 静音状态由图标表达（与 VolumePopup 同字形 󰖁/󰕾）
                 codepoint: root.muted ? "󰖁" : "󰕾"; size: 22; tooltip: qsTr("Volume")
@@ -129,9 +136,7 @@ Item {
             IconButton { id: spdBtn; label: qsTr("Speed"); size: 22; tooltip: qsTr("Playback speed")
                 highlighted: root.speedPopupOpen
                 onClicked: root.speedClicked() }
-            IconButton { id: trkBtn; codepoint: "󰨖"; size: 22; tooltip: qsTr("Tracks")
-                highlighted: root.tracksPopupOpen
-                onClicked: root.tracksClicked() }
+
             IconButton { id: aspBtn; codepoint: "󰨤"; size: 22; tooltip: qsTr("Aspect ratio")
                 highlighted: root.aspectPopupOpen
                 onClicked: root.aspectClicked() }
@@ -140,10 +145,10 @@ Item {
                 // 列表=repeat（E028/E041/E040）。状态只由图标区分，
                 // 不做背景持续高亮。
                 codepoint: root.loopMode === 0 ? "󰑗" :
-                           root.loopMode === 1 ? "󰑘" : "󰑖"
+                root.loopMode === 1 ? "󰑘" : "󰑖"
                 size: 22
                 tooltip: root.loopMode === 1 ? qsTr("Loop file") :
-                          root.loopMode === 2 ? qsTr("Loop playlist") : qsTr("No loop")
+                root.loopMode === 2 ? qsTr("Loop playlist") : qsTr("No loop")
                 onClicked: root.loopClicked() }
             IconButton { codepoint: root.fullscreen ? "󰊔" : "󰊓"; size: 22
                 tooltip: root.fullscreen ? qsTr("Exit fullscreen") : qsTr("Fullscreen")

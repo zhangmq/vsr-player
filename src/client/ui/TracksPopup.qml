@@ -33,7 +33,6 @@ PopupBase {
     property int currentTab: 0   // 0=字幕 1=音频 2=视频
 
     signal trackSelected(string type, var id)
-    signal subVisibilityToggled()
     signal subDelayAdjusted(real delta)
     signal subFileDialogRequested()   // "加载字幕文件…" → main.qml FileDialog
 
@@ -283,34 +282,14 @@ PopupBase {
 
         // ── 字幕页（控制行固定 + 列表滚动 + 加载按钮固定）────────
         Item {
+            // 字幕偏移行（label + +0.1 | 当前偏移 | −0.1 | 重置偏移）
             Row {
-                id: controlRow
+                id: delayRow
                 anchors { left: parent.left; right: parent.right; top: parent.top }
                 spacing: 6
-                Rectangle {
-                    width: 86; height: 32; radius: 4
-                    color: visHover.containsMouse ? "#33ffffff"
-                         : (root.subVisible ? "#33ffcc00" : "transparent")
-                    Text { anchors.centerIn: parent
-                        text: root.subVisible ? qsTr("Visible") : qsTr("Hidden")
-                        color: root.subVisible ? "#ffcc00" : "#e0e0e0"
-                        font.pixelSize: 13 }
-                    MouseArea { id: visHover; anchors.fill: parent; hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.subVisibilityToggled() }
-                }
-                Rectangle {
-                    width: 44; height: 32; radius: 4
-                    color: dMinusHover.containsMouse ? "#33ffffff" : "transparent"
-                    Text { anchors.centerIn: parent; text: "−0.1s"; color: "#e0e0e0"; font.pixelSize: 13 }
-                    MouseArea { id: dMinusHover; anchors.fill: parent; hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.subDelayAdjusted(-0.1) }
-                }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: qsTr("%1s").arg(root.subDelay.toFixed(1))
-                    color: "#b0b0b0"; font.pixelSize: 13
+                    text: qsTr("Subtitle delay"); color: "#b0b0b0"; font.pixelSize: 13
                 }
                 Rectangle {
                     width: 44; height: 32; radius: 4
@@ -320,19 +299,80 @@ PopupBase {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: root.subDelayAdjusted(0.1) }
                 }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("%1s").arg(root.subDelay.toFixed(1))   // 当前偏移
+                    color: "#b0b0b0"; font.pixelSize: 13
+                }
+                Rectangle {
+                    width: 44; height: 32; radius: 4
+                    color: dMinusHover.containsMouse ? "#33ffffff" : "transparent"
+                    Text { anchors.centerIn: parent; text: "−0.1s"; color: "#e0e0e0"; font.pixelSize: 13 }
+                    MouseArea { id: dMinusHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.subDelayAdjusted(-0.1) }
+                }
+                Rectangle {   // 重置偏移为 0
+                    width: 76; height: 32; radius: 4
+                    color: rstDelayHover.containsMouse ? "#33ffffff" : "transparent"
+                    Text { anchors.centerIn: parent
+                        text: qsTr("Reset delay")
+                        color: "#e0e0e0"; font.pixelSize: 13 }
+                    MouseArea { id: rstDelayHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: viewModel.resetSubDelay() }
+                }
             }
 
-            Rectangle {
-                id: loadSubBtn
+            // 底部按钮行（加载字幕文件 | 清除字幕设置）
+            Row {
+                id: bottomBtnRow
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                height: 32; radius: 4
-                color: subFbHover.containsMouse ? "#33ffffff" : "transparent"
-                Text { anchors.centerIn: parent
-                    text: qsTr("Load subtitle file…")
-                    color: "#e0e0e0"; font.pixelSize: 13 }
-                MouseArea { id: subFbHover; anchors.fill: parent; hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.subFileDialogRequested() }
+                spacing: 6
+                Rectangle {
+                    width: 130; height: 32; radius: 4
+                    color: subFbHover.containsMouse ? "#33ffffff" : "transparent"
+                    Text { anchors.centerIn: parent
+                        text: qsTr("Load subtitle file…")
+                        color: "#e0e0e0"; font.pixelSize: 13 }
+                    MouseArea { id: subFbHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.subFileDialogRequested() }
+                }
+                // 清除当前文件的字幕记忆（下次打开不再恢复；音轨/视频轨保留）
+                Rectangle {
+                    width: 150; height: 32; radius: 4
+                    color: clrSubHover.containsMouse ? "#33ffffff" : "transparent"
+                    Text { anchors.centerIn: parent
+                        text: qsTr("Clear subtitle settings")
+                        color: "#e0e0e0"; font.pixelSize: 13 }
+                    MouseArea { id: clrSubHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: viewModel.clearSubtitleMemory() }
+                }
+            }
+
+            // 列标题行（"字幕轨道" | "匹配字幕文件"）——与下方两列左缘
+            // 对齐（左列起点 parent.left；右列起点 colSep.right + 6）
+            Item {
+                id: colTitleRow
+                anchors { left: parent.left; right: parent.right
+                    top: delayRow.bottom; topMargin: 8 }
+                height: 16
+                Text {
+                    anchors { left: parent.left; top: parent.top }
+                    text: qsTr("Subtitle tracks"); color: "#b0b0b0"; font.pixelSize: 13
+                }
+                Text {
+                    // x 显式计算——不能 anchors 到 colSep：colSep 是
+                    // 本容器（colTitleRow）的兄弟，非 Text 的父/兄弟，
+                    // 跨级锚定静默失效（实测右标题叠在左标题处）。
+                    // 45% 列宽 + colSep leftMargin 6 + 宽 1 + 右列 6
+                    x: subTrackFlick.x + subTrackFlick.width + 13
+                    anchors.top: parent.top
+                    text: qsTr("Matched subtitle files"); color: "#b0b0b0"; font.pixelSize: 13
+                    visible: viewModel.subtitleFiles.length > 0
+                }
             }
 
             // 列表区（两列：内置字幕轨 | 外部字幕文件，各自独立滚动）
@@ -340,8 +380,8 @@ PopupBase {
                 id: subTrackFlick
                 anchors {
                     left: parent.left
-                    top: controlRow.bottom; topMargin: 8
-                    bottom: loadSubBtn.top; bottomMargin: 8
+                    top: colTitleRow.bottom; topMargin: 8
+                    bottom: bottomBtnRow.top; bottomMargin: 8
                 }
                 width: parent.width * 0.45   // 外部列更宽：字幕文件名通常长于轨道名
                 contentHeight: subTrackCol.implicitHeight
@@ -386,10 +426,6 @@ PopupBase {
                     id: extSubCol
                     width: parent.width
                     spacing: 12
-                    Text {
-                        text: qsTr("External"); color: "#b0b0b0"; font.pixelSize: 13
-                        visible: viewModel.subtitleFiles.length > 0
-                    }
                     Repeater {
                         model: viewModel.subtitleFiles
                         delegate: SubFileRow { name: modelData.name; path: modelData.path }

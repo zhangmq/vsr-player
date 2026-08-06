@@ -145,6 +145,11 @@
         <translation type="unfinished">Open URL</translation>
     </message>
     <message>
+        <location filename="../ui/ContextMenu.qml" line="44"/>
+        <source>Quit</source>
+        <translation type="unfinished">Quit</translation>
+    </message>
+    <message>
         <location filename="../ui/ContextMenu.qml" line="39"/>
         <source>Add to playlist</source>
         <translation>Add to playlist</translation>
@@ -424,8 +429,28 @@
     </message>
     <message>
         <location filename="../ui/TracksPopup.qml" line="384"/>
-        <source>External</source>
-        <translation>External</translation>
+        <source>Subtitle tracks</source>
+        <translation>Subtitle tracks</translation>
+    </message>
+    <message>
+        <location filename="../ui/TracksPopup.qml" line="384"/>
+        <source>Matched subtitle files</source>
+        <translation>Matched subtitle files</translation>
+    </message>
+    <message>
+        <location filename="../ui/TracksPopup.qml" line="384"/>
+        <source>Clear subtitle settings</source>
+        <translation>Clear subtitle settings</translation>
+    </message>
+    <message>
+        <location filename="../ui/TracksPopup.qml" line="384"/>
+        <source>Reset delay</source>
+        <translation>Reset delay</translation>
+    </message>
+    <message>
+        <location filename="../ui/TracksPopup.qml" line="384"/>
+        <source>Subtitle delay</source>
+        <translation>Subtitle delay</translation>
     </message>
     <message>
         <location filename="../ui/TracksPopup.qml" line="325"/>

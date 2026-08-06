@@ -145,6 +145,11 @@
         <translation type="unfinished">打开 URL</translation>
     </message>
     <message>
+        <location filename="../ui/ContextMenu.qml" line="44"/>
+        <source>Quit</source>
+        <translation>退出</translation>
+    </message>
+    <message>
         <location filename="../ui/ContextMenu.qml" line="39"/>
         <source>Add to playlist</source>
         <translation>追加到播放列表</translation>
@@ -424,8 +429,28 @@
     </message>
     <message>
         <location filename="../ui/TracksPopup.qml" line="384"/>
-        <source>External</source>
-        <translation>外部</translation>
+        <source>Subtitle tracks</source>
+        <translation>字幕轨道</translation>
+    </message>
+    <message>
+        <location filename="../ui/TracksPopup.qml" line="384"/>
+        <source>Matched subtitle files</source>
+        <translation>匹配字幕文件</translation>
+    </message>
+    <message>
+        <location filename="../ui/TracksPopup.qml" line="384"/>
+        <source>Clear subtitle settings</source>
+        <translation>清除字幕设置</translation>
+    </message>
+    <message>
+        <location filename="../ui/TracksPopup.qml" line="384"/>
+        <source>Reset delay</source>
+        <translation>重置偏移</translation>
+    </message>
+    <message>
+        <location filename="../ui/TracksPopup.qml" line="384"/>
+        <source>Subtitle delay</source>
+        <translation>字幕偏移</translation>
     </message>
     <message>
         <location filename="../ui/TracksPopup.qml" line="325"/>
