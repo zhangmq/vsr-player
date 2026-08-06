@@ -46,6 +46,8 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(int denoiseQuality READ denoiseQuality NOTIFY denoiseQualityChanged)
     // Speed
     Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
+    // Aspect ratio（mpv video-aspect-override：-1=auto, no=不覆盖, 或 16:9 等）
+    Q_PROPERTY(QString aspect READ aspect NOTIFY aspectChanged)
     // Info
     Q_PROPERTY(bool hwDecoding READ hwDecoding NOTIFY hwDecodingChanged)
     Q_PROPERTY(QString videoInfo READ videoInfo NOTIFY videoInfoChanged)
@@ -111,11 +113,17 @@ public:
     /// 恢复上次播放列表（无 CLI 文件时调用）：首条 replace 开始播放，
     /// 其余 append，最后定位上次条目。
     void restorePlaylist();
-    /// 外部字幕持久化：trackList 变化时保存全部 external 轨路径 + 选中轨；
-    /// 无参数启动路径下每个文件加载完成后 sub-add 恢复（external 轨随
-    /// 文件切换清除，须每次恢复；trackList 对照防同文件重复）。
-    void saveExternalSubs();
-    void restoreExternalSubs();
+    /// 轨道记忆（按文件，QSettings trackMem map：path →
+    /// {aid,sid,vid,subs,sel,subDelay}；trackMemOrder 记录
+    /// LRU 访问序，上限 10 个文件，超限淘汰最久未用）。
+    /// 即时落盘：每个轨道设置动作（selectTrack/toggleSubtitles/
+    /// adjustSubDelay/sub-add）完成后同步写盘——保存点乐观更新，记忆
+    /// 永远反映最近一次用户操作。可见性无独立配置（是否显示由 sid
+    /// 决定）。恢复 = 文件加载完成 hook（FILE_LOADED，打开文件与
+    /// 播放列表选取同路径）：有记忆恢复，无记忆走自动字幕策略
+    ///（autoSelectSubtitle，2026-08-06）。
+    void saveTrackMemory();
+    void restoreTrackMemory(const QString &path);
     void setFullscreen(bool fs);   // Q_PROPERTY WRITE（QML 窗口同步回写）
 
     bool playing() const        { return playing_; }
@@ -129,6 +137,7 @@ public:
     double scale() const        { return scale_.load(); }
     int denoiseQuality() const  { return denoise_.load(); }
     double speed() const        { return speed_.load(); }
+    QString aspect() const      { return aspect_; }
     bool hwDecoding() const     { return hwDecoding_.load(); }
     QString videoInfo() const   { return videoInfo_; }
     int videoWidth() const { return videoWidth_.load(); }
@@ -191,6 +200,7 @@ public slots:
     void toggleMute();
     void toggleHwaccel();
     void setSpeed(double speed);
+    Q_INVOKABLE void setAspect(const QString &v);
     void toggleFullscreen();
     void setOverlaysVisible(bool v);
     void toggleOsd();
@@ -210,8 +220,17 @@ public slots:
     void selectTrack(const QString &type, qlonglong id);
     void toggleSubtitles();          // sub-visibility 翻转
     void adjustSubDelay(double delta);  // 字幕延迟 ±0.1s 步进
+    /// 重置字幕偏移为 0（"重置偏移"按钮；即时落盘按文件）
+    Q_INVOKABLE void resetSubDelay();
     /// 加载外部字幕文件（sub-add select；复用 openFiles mode=2 分类）
     void loadExternalSubtitle(const QString &path) { openFiles({path}, 2); }
+    /// 清除当前文件（lastPath_）的字幕记忆（sid/subs/sel/subDelay）——
+    /// 下次打开该文件字幕回到默认状态；音轨/视频轨记忆保留。字幕项
+    /// 全清时条目整体删除（trackMemOrder 同步移除）。
+    /// 同时清除运行时字幕设置：全部外部字幕轨移除、字幕轨关闭
+    ///（sid no）、偏移归零、**可见性关闭（清除设置 = 不显示字幕，
+    /// 手动选字幕轨时恢复）**。
+    Q_INVOKABLE void clearSubtitleMemory();
     void playlistRemove(int index);
     void playlistClear();
     void playlistNext();
@@ -229,6 +248,7 @@ signals:
     void scaleChanged();
     void denoiseQualityChanged();
     void speedChanged();
+    void aspectChanged();
     void hwDecodingChanged();
     void videoInfoChanged();
     void osdDataChanged();
@@ -264,8 +284,15 @@ private:
     void updateLoopModeFromEventThread();
     /// 扫描视频同目录字幕文件（主线程，文件 IO 低频）：排除已加载的
     /// 外部字幕（track-list external 轨），按优先级排序（精确同名 >
-    /// 语言后缀 > 其余按文件名）。
+    /// 命名后缀 > 其余按文件名），条目带 prio 字段。
     void scanSubtitleFiles(const QString &videoPath);
+    /// 无记忆加载时的字幕自动策略（restoreTrackMemory 无记忆分支）：
+    /// 内置字幕轨按 locale 匹配 > 英文轨 > 目录匹配字幕文件
+    ///（prio≤1）自动加载 > 其他不显示（sid no）。
+    void autoSelectSubtitle();
+    /// sub-add 即时落盘：pendingSubs_ 暂存 + 保存（mpv 异步回写
+    /// trackList_ 前，保存须含刚加入的路径——否则丢失本次操作）。
+    void noteExternalSubAdded(const QString &path);
 
     /// OSD 文本计算属性（事件线程 idle 回调拉取；纯本地读，零 mpv API）。
     /// 数据源 = viewModel 状态（观察器填充）——OSD 与 UI 同源。
@@ -300,6 +327,7 @@ private:
     double volume_ = 1.0;    // 初始与持久化默认一致（0.65 从未生效——观察器首轮回填覆盖）
     double savedVolume_ = 0.5;   // 静音前音量（toggle mute 恢复用；未静音过则 0.5）
     std::atomic<double> speed_{1.0};
+    QString aspect_ = QStringLiteral("no");    // no=容器比例（mpv 0.41 -1 已弃用，no 等价无警告）
     std::atomic<bool> hwDecoding_{false};
     QString videoInfo_;
     // ── OSD 数据源（主线程观察器 post 写；事件线程 osdTextString 拉取读；
@@ -354,8 +382,8 @@ private:
     // 主线程专用（setter/观察器 post 均主线程）。benchmark 不调用 loadSettings。
     QSettings settings_{QStringLiteral("vsr-player"), QStringLiteral("vsr-player")};
     bool settingsEnabled_ = false;   // loadSettings 调用后才允许写（benchmark 恒 false）
-    bool restoreExtSubs_ = false;    // restorePlaylist 置位 → 首文件加载后恢复外部字幕
     QVariantList trackList_;      // track-list 观察器填充（Task 3）
+    QStringList pendingSubs_;     // 刚 sub-add 未回写 trackList_ 的路径（保存合并用）
     bool subVisible_ = false;
     double subDelay_ = 0.0;
     QVariantList subtitleFiles_;  // 目录未加载外部字幕（{name,path}，优先级排序）

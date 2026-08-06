@@ -4,8 +4,9 @@ import "components"
 
 /// 播放列表面板（数据源：mpv `playlist` 属性 → PlaylistModel 增量镜像）。
 /// 点击条目 → viewModel.playlistPlayIndex（mpv playlist-play-index）。
-/// 性能：reuseItems 复用 delegate（滚动零创建销毁）；ToolTip 抽共享
-/// 单例（delegate 不再各自实例化 ToolTip+HoverHandler，每项 7 对象 → 4）。
+/// 性能：reuseItems 复用 delegate（滚动零创建销毁，ToolTip 实例数 =
+/// 可见项数而非条目总数）。ToolTip 用显式实例（attached 共享实例视觉
+/// 取系统 palette，无法断开系统配色——2026-08-06）。
 /// 显示 basename（model.display），完整路径放 tooltip（model.path）。
 Drawer {
     id: root
@@ -17,23 +18,24 @@ Drawer {
     width: 320; height: parent ? parent.height : 600; z: 10
     dragMargin: 0
     topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
-    background: Rectangle { color: "#d9000000" }
+    // 面板底 #d9111111（无圆角无边框——侧边栏贴边，用户确认 2026-08-06）
+    background: Rectangle { color: "#d9111111" }
 
     Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top }
         height: 48; color: "#22ffffff"
         Text { anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
-            text: qsTr("Playlist"); color: "#e0e0e0"; font.pixelSize: 15; font.bold: true }
+            text: qsTr("Playlist"); color: "#e0e0e0"; font.pixelSize: 13 }
         Text { anchors { right: clearBtn.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
             text: viewModel.playlistModel.currentIndex >= 0
                   ? (viewModel.playlistModel.currentIndex + 1) + "/" + viewModel.playlistModel.count
                   : ""
-            color: "#b0b0b0"; font.pixelSize: 12 }
+            color: "#b0b0b0"; font.pixelSize: 13 }
 
         // 清空列表（无确认弹窗——误点损失低，文件可随时重拖入，YAGNI）
         IconButton {
             id: clearBtn
             anchors { right: closeBtn.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
-            label: qsTr("Clear"); size: 22
+            codepoint: "󰆴"; size: 22   // mdi-delete 垃圾箱（清空列表）
             tooltip: qsTr("Clear playlist")
             onClicked: viewModel.playlistClear()
         }
@@ -103,8 +105,9 @@ Drawer {
         delegate: Rectangle {
             id: plDelegate
             width: ListView.view.width; height: 42; clip: true
-            color: plMouse.containsMouse ? "#22ffffff"
-                 : (index === viewModel.playlistModel.currentIndex ? "#11ffffff" : "transparent")
+            // 选中/悬停对齐全局方案（选中 #33ffcc00 / 悬停 #33ffffff）
+            color: plMouse.containsMouse ? "#33ffffff"
+                 : (index === viewModel.playlistModel.currentIndex ? "#33ffcc00" : "transparent")
 
             Row {
                 anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
@@ -112,7 +115,7 @@ Drawer {
                 Text {
                     text: (index + 1) + ". " + model.display
                     width: 260
-                    color: index === viewModel.playlistModel.currentIndex ? "#ffffff" : "#b0b0b0"
+                    color: index === viewModel.playlistModel.currentIndex ? "#ffcc00" : "#e0e0e0"
                     font.pixelSize: 13
                     elide: Text.ElideMiddle
                     renderType: Text.NativeRendering
@@ -125,7 +128,7 @@ Drawer {
                 z: 2
                 width: 24; height: 24
                 anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
-                text: "×"; color: "#c8c8c8"; font.pixelSize: 16
+                text: "×"; color: "#c8c8c8"; font.pixelSize: 13
                 horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 visible: plMouse.containsMouse
                 MouseArea {
@@ -145,9 +148,16 @@ Drawer {
                 anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                 hoverEnabled: true
                 onClicked: viewModel.playlistPlayIndex(index)
-                ToolTip.text: model.path
-                ToolTip.delay: 600
-                ToolTip.visible: plMouse.containsMouse
+                // 断开系统配色：attached ToolTip 视觉 = 样式共享实例（系统
+                // palette）且无法自绘——改显式实例（样式自带 parent 上方
+                // 居中定位；reuseItems 复用下实例数 = 可见项数，可接受）
+                ToolTip {
+                    visible: plMouse.containsMouse
+                    text: model.path; delay: 600
+                    background: Rectangle { color: "#d9111111"; radius: 4
+                        border { width: 1; color: "#22ffffff" } }
+                    contentItem: Text { text: model.path; color: "#e0e0e0"; font.pixelSize: 13 }
+                }
             }
         }
     }

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Shapes
 import "components"
 
 /// 轨道选择 + 字幕控制（字幕/音频/视频三页签，标准 TabBar + StackLayout 分页）。
@@ -11,6 +12,7 @@ import "components"
 /// 各页列表区（字幕页控制行/加载按钮固定，2026-08-06）。
 PopupBase {
     id: root
+    padding: 0   // 移除最外层边距（PopupBase 默认 16——页签/内容贴边，实测效果）
     // 自适应 + 最小尺寸（用户实测反馈，2026-08-06）
     width: {
         var a = parent ? parent.width : 560
@@ -31,7 +33,6 @@ PopupBase {
     property int currentTab: 0   // 0=字幕 1=音频 2=视频
 
     signal trackSelected(string type, var id)
-    signal subVisibilityToggled()
     signal subDelayAdjusted(real delta)
     signal subFileDialogRequested()   // "加载字幕文件…" → main.qml FileDialog
 
@@ -46,6 +47,62 @@ PopupBase {
             }
         }
         viewModel.loadExternalSubtitle(path)
+    }
+
+    /// 页签块自绘形状：顶部两端圆角 8（= modal 背景圆角半径，用户确认
+    /// margin=1 保留 + radius=8）。底部直角（连体）。选中顶部高亮条与
+    /// hover 块避开圆角区（x=8 起，与弧端点相切）。
+    /// ShapePath 的 parent 是 Shape——TabBlock 属性须经 shape.parent 引用
+    ///（直接 parent.fill 是 Shape 不存在的属性 → undefined → 渲染白色）。
+    /// PathArc 半径 0 = 直线（SVG 椭圆弧语义）——条件圆角无需 if 元素。
+    component TabBlock: Item {
+        property bool roundLeft: false
+        property bool roundRight: false
+        property color fill: "transparent"
+        property bool showTopBar: false
+        property bool showHover: false
+
+        Shape {
+            id: shape
+            anchors.fill: parent
+            ShapePath {
+                // shape.parent（TabBlock）在组件初始化早期为 null——
+                // 直接引用 width/height 求值 undefined → QML 警告
+                //（Unable to assign [undefined] to double），防御写法
+                fillColor: shape.parent ? shape.parent.fill : "transparent"
+                strokeColor: "transparent"
+                startX: 0
+                startY: shape.parent && shape.parent.roundLeft ? 8 : 0
+                PathArc { x: 8; y: 0
+                    radiusX: shape.parent && shape.parent.roundLeft ? 8 : 0
+                    radiusY: shape.parent && shape.parent.roundLeft ? 8 : 0 }
+                PathLine {
+                    x: (shape.parent ? shape.parent.width : 0) - (shape.parent && shape.parent.roundRight ? 8 : 0)
+                    y: 0 }
+                PathArc {
+                    x: shape.parent ? shape.parent.width : 0; y: 8
+                    radiusX: shape.parent && shape.parent.roundRight ? 8 : 0
+                    radiusY: shape.parent && shape.parent.roundRight ? 8 : 0 }
+                PathLine { x: shape.parent ? shape.parent.width : 0; y: shape.parent ? shape.parent.height : 0 }
+                PathLine { x: 0; y: shape.parent ? shape.parent.height : 0 }
+                PathLine { x: 0; y: shape.parent && shape.parent.roundLeft ? 8 : 0 }
+            }
+        }
+        // 选中顶部高亮条（避开圆角区——与弧端点相切）
+        Rectangle {
+            x: parent.roundLeft ? 8 : 0
+            y: 0
+            width: parent.width - x - (parent.roundRight ? 8 : 0)
+            height: 2; color: "#ffcc00"
+            visible: parent.showTopBar
+        }
+        // hover 高亮（内缩 8px 浅色块——不顶到页签块边缘）
+        Rectangle {
+            anchors { left: parent.left; leftMargin: 8; right: parent.right; rightMargin: 8
+                      top: parent.top; topMargin: 8; bottom: parent.bottom; bottomMargin: 8 }
+            radius: 4; color: "#33ffffff"
+            visible: parent.showHover
+        }
     }
 
     readonly property var audioTracks: root.trackList.filter(t => t.type === "audio")
@@ -104,22 +161,109 @@ PopupBase {
         MouseArea { id: sfHover; anchors.fill: parent; hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: root.onSubFileClicked(path)
-            ToolTip.text: qsTr("Load subtitle"); ToolTip.delay: 600
-            ToolTip.visible: sfHover.containsMouse }
+            // 断开系统配色：attached ToolTip 视觉 = 样式共享实例（系统
+            // palette.toolTipBase/Text）且无法自绘——改显式实例（样式自带
+            // parent 上方居中定位，同 IconButton 模式）
+            ToolTip {
+                visible: sfHover.containsMouse
+                text: qsTr("Load subtitle"); delay: 600
+                background: Rectangle { color: "#d9111111"; radius: 4
+                    border { width: 1; color: "#22ffffff" } }
+                contentItem: Text { text: qsTr("Load subtitle"); color: "#e0e0e0"; font.pixelSize: 13 }
+            } }
     }
 
     // ── 页签（固定）──────────────────────────────────────────
     // 点击经 TabButton onClicked 显式驱动 root.currentTab（不依赖 TabBar
     // 内部联动）；onCurrentIndexChanged 同步键盘导航。currentIndex 保持
     // 字面量（勿改绑定——绑定会拒绝内部写入，高亮/联动失效）。
+    // 完全断开系统配色：Fusion 默认背景全部由系统 palette 驱动（选中页签
+    // 渐变顶部的"蓝色高亮" = 系统 button 蓝灰调 #292c30 lighter 的结果），
+    // 故页签全自绘、色值写死。tab 形式保留：选中页签 = 面板色与内容区
+    // 连体 + 顶部 2px 高亮条（#ffcc00，应用高亮色）+ 高亮文本；未选中 =
+    // #262626 块 + #e0e0e0；悬停 #33ffffff。
+    // 圆角处理：页签块自身顶部两端圆角 7（TabBlock，= background 圆角
+    // 8 − 边框线 1px，与边框内缘弧线贴合）——任何状态（hover/黄条）
+    // 都在圆角内，等效"被 modal 边框裁剪"。MultiEffect mask 方案已
+    // 放弃（采样在 popup 场景不可靠，4 轮失败）。top/left/rightMargin
+    // 1 = 边框线宽（页签块不压边框线）。
     TabBar {
         id: tabBar
-        anchors { left: parent.left; right: parent.right; top: parent.top }
+        // 显式 height = TabButton 高度：否则 TabBar implicitHeight 由
+        // background（transparent，implicit 0）+ ListView implicitHeight
+        // 计算（远小于 48），TabButton 48 高渲染溢出 TabBar 底部——
+        // 压住 tabs body 的 8px 间距（用户实测：间距消失、紧贴 body）
+        // margins 1 = 边框线宽（页签块不压边框线）；页签块弧线圆心
+        // 相应内移 (1,1) = 局部 (7,7)（见 TabBlock 注释）
+        height: 48
+        anchors { left: parent.left; leftMargin: 1; right: parent.right; rightMargin: 1
+                  top: parent.top; topMargin: 1 }
         currentIndex: 0
         onCurrentIndexChanged: root.currentTab = tabBar.currentIndex
-        TabButton { text: qsTr("Subtitles"); onClicked: root.currentTab = 0 }
-        TabButton { text: qsTr("Audio"); onClicked: root.currentTab = 1 }
-        TabButton { text: qsTr("Video"); onClicked: root.currentTab = 2 }
+        spacing: 0
+        background: Rectangle { color: "transparent" }
+        TabButton {
+            height: 48
+            // implicitHeight 与显式高度一致：ListView delegate 定位以
+            // implicitHeight 为基准对齐——不一致时产生 (48−implicitHeight)/2
+            // 的居中偏移（实测 implicitHeight≈31 → 偏移 −8.5px，页签块
+            // 顶出 modal 顶边 7.5px；加大高度就错位）
+            implicitHeight: 48
+            onClicked: root.currentTab = 0
+            background: TabBlock {
+                roundLeft: true
+                fill: root.currentTab === 0 ? "transparent" : "#66262626"
+                showTopBar: root.currentTab === 0
+                showHover: tabH0.hovered && root.currentTab !== 0
+            }
+            contentItem: Text {
+                text: qsTr("Subtitles"); font.pixelSize: 13
+                color: root.currentTab === 0 ? "#ffcc00" : "#e0e0e0"
+                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+            }
+            HoverHandler { id: tabH0 }
+        }
+        TabButton {
+            height: 48
+            // implicitHeight 与显式高度一致：ListView delegate 定位以
+            // implicitHeight 为基准对齐——不一致时产生 (48−implicitHeight)/2
+            // 的居中偏移（实测 implicitHeight≈31 → 偏移 −8.5px，页签块
+            // 顶出 modal 顶边 7.5px；加大高度就错位）
+            implicitHeight: 48
+            onClicked: root.currentTab = 1
+            background: TabBlock {
+                fill: root.currentTab === 1 ? "transparent" : "#66262626"
+                showTopBar: root.currentTab === 1
+                showHover: tabH1.hovered && root.currentTab !== 1
+            }
+            contentItem: Text {
+                text: qsTr("Audio"); font.pixelSize: 13
+                color: root.currentTab === 1 ? "#ffcc00" : "#e0e0e0"
+                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+            }
+            HoverHandler { id: tabH1 }
+        }
+        TabButton {
+            height: 48
+            // implicitHeight 与显式高度一致：ListView delegate 定位以
+            // implicitHeight 为基准对齐——不一致时产生 (48−implicitHeight)/2
+            // 的居中偏移（实测 implicitHeight≈31 → 偏移 −8.5px，页签块
+            // 顶出 modal 顶边 7.5px；加大高度就错位）
+            implicitHeight: 48
+            onClicked: root.currentTab = 2
+            background: TabBlock {
+                roundRight: true
+                fill: root.currentTab === 2 ? "transparent" : "#66262626"
+                showTopBar: root.currentTab === 2
+                showHover: tabH2.hovered && root.currentTab !== 2
+            }
+            contentItem: Text {
+                text: qsTr("Video"); font.pixelSize: 13
+                color: root.currentTab === 2 ? "#ffcc00" : "#e0e0e0"
+                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+            }
+            HoverHandler { id: tabH2 }
+        }
     }
 
     // ── 三个独立内容区（StackLayout 分页：一次只显示一页）─────────
@@ -130,42 +274,22 @@ PopupBase {
     // 显式绑定（width: parent.width）。
     StackLayout {
         anchors {
-            left: parent.left; right: parent.right
-            top: tabBar.bottom; topMargin: 8
-            bottom: parent.bottom
+            left: parent.left; leftMargin: 16; right: parent.right; rightMargin: 16
+            top: tabBar.bottom; topMargin: 16
+            bottom: parent.bottom; bottomMargin: 16
         }
         currentIndex: root.currentTab
 
         // ── 字幕页（控制行固定 + 列表滚动 + 加载按钮固定）────────
         Item {
+            // 字幕偏移行（label + +0.1 | 当前偏移 | −0.1 | 重置偏移）
             Row {
-                id: controlRow
+                id: delayRow
                 anchors { left: parent.left; right: parent.right; top: parent.top }
                 spacing: 6
-                Rectangle {
-                    width: 86; height: 32; radius: 4
-                    color: visHover.containsMouse ? "#33ffffff"
-                         : (root.subVisible ? "#33ffcc00" : "transparent")
-                    Text { anchors.centerIn: parent
-                        text: root.subVisible ? qsTr("Visible") : qsTr("Hidden")
-                        color: root.subVisible ? "#ffcc00" : "#e0e0e0"
-                        font.pixelSize: 13 }
-                    MouseArea { id: visHover; anchors.fill: parent; hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.subVisibilityToggled() }
-                }
-                Rectangle {
-                    width: 44; height: 32; radius: 4
-                    color: dMinusHover.containsMouse ? "#33ffffff" : "transparent"
-                    Text { anchors.centerIn: parent; text: "−0.1s"; color: "#e0e0e0"; font.pixelSize: 13 }
-                    MouseArea { id: dMinusHover; anchors.fill: parent; hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.subDelayAdjusted(-0.1) }
-                }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: qsTr("%1s").arg(root.subDelay.toFixed(1))
-                    color: "#b0b0b0"; font.pixelSize: 13
+                    text: qsTr("Subtitle delay"); color: "#b0b0b0"; font.pixelSize: 13
                 }
                 Rectangle {
                     width: 44; height: 32; radius: 4
@@ -175,19 +299,80 @@ PopupBase {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: root.subDelayAdjusted(0.1) }
                 }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("%1s").arg(root.subDelay.toFixed(1))   // 当前偏移
+                    color: "#b0b0b0"; font.pixelSize: 13
+                }
+                Rectangle {
+                    width: 44; height: 32; radius: 4
+                    color: dMinusHover.containsMouse ? "#33ffffff" : "transparent"
+                    Text { anchors.centerIn: parent; text: "−0.1s"; color: "#e0e0e0"; font.pixelSize: 13 }
+                    MouseArea { id: dMinusHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.subDelayAdjusted(-0.1) }
+                }
+                Rectangle {   // 重置偏移为 0
+                    width: 76; height: 32; radius: 4
+                    color: rstDelayHover.containsMouse ? "#33ffffff" : "transparent"
+                    Text { anchors.centerIn: parent
+                        text: qsTr("Reset delay")
+                        color: "#e0e0e0"; font.pixelSize: 13 }
+                    MouseArea { id: rstDelayHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: viewModel.resetSubDelay() }
+                }
             }
 
-            Rectangle {
-                id: loadSubBtn
+            // 底部按钮行（加载字幕文件 | 清除字幕设置）
+            Row {
+                id: bottomBtnRow
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                height: 32; radius: 4
-                color: subFbHover.containsMouse ? "#33ffffff" : "transparent"
-                Text { anchors.centerIn: parent
-                    text: qsTr("Load subtitle file…")
-                    color: "#e0e0e0"; font.pixelSize: 13 }
-                MouseArea { id: subFbHover; anchors.fill: parent; hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.subFileDialogRequested() }
+                spacing: 6
+                Rectangle {
+                    width: 130; height: 32; radius: 4
+                    color: subFbHover.containsMouse ? "#33ffffff" : "transparent"
+                    Text { anchors.centerIn: parent
+                        text: qsTr("Load subtitle file…")
+                        color: "#e0e0e0"; font.pixelSize: 13 }
+                    MouseArea { id: subFbHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.subFileDialogRequested() }
+                }
+                // 清除当前文件的字幕记忆（下次打开不再恢复；音轨/视频轨保留）
+                Rectangle {
+                    width: 150; height: 32; radius: 4
+                    color: clrSubHover.containsMouse ? "#33ffffff" : "transparent"
+                    Text { anchors.centerIn: parent
+                        text: qsTr("Clear subtitle settings")
+                        color: "#e0e0e0"; font.pixelSize: 13 }
+                    MouseArea { id: clrSubHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: viewModel.clearSubtitleMemory() }
+                }
+            }
+
+            // 列标题行（"字幕轨道" | "匹配字幕文件"）——与下方两列左缘
+            // 对齐（左列起点 parent.left；右列起点 colSep.right + 6）
+            Item {
+                id: colTitleRow
+                anchors { left: parent.left; right: parent.right
+                    top: delayRow.bottom; topMargin: 8 }
+                height: 16
+                Text {
+                    anchors { left: parent.left; top: parent.top }
+                    text: qsTr("Subtitle tracks"); color: "#b0b0b0"; font.pixelSize: 13
+                }
+                Text {
+                    // x 显式计算——不能 anchors 到 colSep：colSep 是
+                    // 本容器（colTitleRow）的兄弟，非 Text 的父/兄弟，
+                    // 跨级锚定静默失效（实测右标题叠在左标题处）。
+                    // 45% 列宽 + colSep leftMargin 6 + 宽 1 + 右列 6
+                    x: subTrackFlick.x + subTrackFlick.width + 13
+                    anchors.top: parent.top
+                    text: qsTr("Matched subtitle files"); color: "#b0b0b0"; font.pixelSize: 13
+                    visible: viewModel.subtitleFiles.length > 0
+                }
             }
 
             // 列表区（两列：内置字幕轨 | 外部字幕文件，各自独立滚动）
@@ -195,8 +380,8 @@ PopupBase {
                 id: subTrackFlick
                 anchors {
                     left: parent.left
-                    top: controlRow.bottom; topMargin: 8
-                    bottom: loadSubBtn.top; bottomMargin: 8
+                    top: colTitleRow.bottom; topMargin: 8
+                    bottom: bottomBtnRow.top; bottomMargin: 8
                 }
                 width: parent.width * 0.45   // 外部列更宽：字幕文件名通常长于轨道名
                 contentHeight: subTrackCol.implicitHeight
@@ -241,10 +426,6 @@ PopupBase {
                     id: extSubCol
                     width: parent.width
                     spacing: 12
-                    Text {
-                        text: qsTr("External"); color: "#b0b0b0"; font.pixelSize: 13
-                        visible: viewModel.subtitleFiles.length > 0
-                    }
                     Repeater {
                         model: viewModel.subtitleFiles
                         delegate: SubFileRow { name: modelData.name; path: modelData.path }
@@ -258,8 +439,9 @@ PopupBase {
         }
 
         // ── 音频页 ────────────────────────────────────────────
+        // 尺寸由 StackLayout 管理（fillWidth/fillHeight 默认 true）——
+        // 子项上设 anchors 会被布局管理警告（undefined behavior）
         Flickable {
-            anchors.fill: parent
             contentHeight: audioCol.implicitHeight
             clip: true
             boundsBehavior: Flickable.StopAtBounds
@@ -279,7 +461,6 @@ PopupBase {
 
         // ── 视频页 ────────────────────────────────────────────
         Flickable {
-            anchors.fill: parent
             contentHeight: videoCol.implicitHeight
             clip: true
             boundsBehavior: Flickable.StopAtBounds
@@ -297,4 +478,5 @@ PopupBase {
             }
         }
     }
+
 }

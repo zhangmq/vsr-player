@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QSet>
+#include <QLocale>
 
 #include <cstdio>
 #include <cstring>
@@ -524,11 +525,11 @@ void PlayerViewModel::applyPlaybackSettings() {
     setVolume(settings_.value("volume", 1.0).toDouble());
     setSpeed(settings_.value("speed", 1.0).toDouble());
     setLoopMode(settings_.value("loopMode", 0).toInt());
+    setAspect(settings_.value("aspect", QStringLiteral("no")).toString());
 }
 
 void PlayerViewModel::restorePlaylist() {
     if (!mpv_) return;
-    restoreExtSubs_ = true;   // 无参数启动路径 → 首文件加载后恢复外部字幕
     QStringList files = settings_.value("playlist").toStringList();
     int cur = settings_.value("playlistCurrent", -1).toInt();
     if (files.isEmpty()) return;
@@ -734,6 +735,13 @@ void PlayerViewModel::setDenoiseQuality(int d) {
 
 // ── Speed / window / OSD ─────────────────────────────────────────────
 
+void PlayerViewModel::setAspect(const QString &v) {
+    if (!mpv_) return;
+    if (aspect_ != v) { aspect_ = v; emit aspectChanged(); }
+    saveSettings("aspect", v);
+    mpv_->setPropertyString("video-aspect-override", v.toStdString());
+}
+
 void PlayerViewModel::setSpeed(double speed) {
     if (!mpv_) return;
     if (speed < 0.1) speed = 0.1;
@@ -837,8 +845,20 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
     QStringList paths;
     for (const QString &p : pathsIn) paths.append(toLocalPath(p));
     if (mode == 2) {   // 加载字幕
-        for (const QString &p : paths)
+        for (const QString &p : paths) {
             mpv_->commandAsync({"sub-add", p.toUtf8().constData(), "select", nullptr});
+            noteExternalSubAdded(p);   // 即时落盘（pending 暂存未回写路径）
+        }
+        return;
+    }
+    if (mode == 4) {   // 打开 URL：网络流播放（toLocalPath 原样透传），
+        // 跳过混拖分类（URL 以 .srt 结尾会被误判为字幕 sub-add）
+        bool first = true;
+        for (const QString &p : paths) {
+            if (first) mpv_->commandV({"loadfile", p.toUtf8().constData(), nullptr});
+            else       mpv_->commandV({"loadfile", p.toUtf8().constData(), "append", nullptr});
+            first = false;
+        }
         return;
     }
     if (mode == 3) {   // 打开文件夹：扫描其中媒体文件 → replace + queue（同 mode 0）
@@ -864,6 +884,7 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
     for (const QString &p : paths) {
         if (isSubtitleFile(p)) {
             mpv_->commandAsync({"sub-add", p.toUtf8().constData(), "select", nullptr});
+            noteExternalSubAdded(p);   // 即时落盘（pending 暂存未回写路径）
             continue;
         }
         if (mode == 1 || !first)
@@ -876,12 +897,28 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
 
 void PlayerViewModel::selectTrack(const QString &type, qlonglong id) {
     if (!mpv_) return;
-    if (type == "audio")      { mpv_->setPropertyInt64Async("aid", id); return; }
-    if (type == "video")      { mpv_->setPropertyInt64Async("vid", id); return; }
-    if (type == "sub") {
-        if (id >= 0) mpv_->setPropertyInt64Async("sid", id);
-        else         mpv_->setPropertyStringAsync("sid", "no");
+    if (type == "audio")      { mpv_->setPropertyInt64Async("aid", id); }
+    else if (type == "video") { mpv_->setPropertyInt64Async("vid", id); }
+    else if (type == "sub") {
+        if (id >= 0) {
+            mpv_->setPropertyInt64Async("sid", id);
+            // 手动选字幕轨 = 要求显示（"清除字幕设置"已关可见性）
+            if (!subVisible_) { subVisible_ = true; emit subVisibleChanged(); }
+            mpv_->setPropertyFlagAsync("sub-visibility", true);
+        } else {
+            mpv_->setPropertyStringAsync("sid", "no");
+        }
     }
+    // 乐观更新 selected 标志（sub<0 = 关闭 → 全部取消）：
+    // 即时落盘要求保存反映刚发生的选择——mpv 异步回写 trackList_
+    // 前本地已是新状态；同时 UI 立即高亮。命令失败由观察器回写自愈。
+    for (QVariant &t : trackList_) {
+        QVariantMap m = t.toMap();
+        if (m["type"] == type) m["selected"] = (m["id"].toLongLong() == id);
+        t = m;
+    }
+    emit trackListChanged();
+    saveTrackMemory();   // 即时落盘（按文件）
 }
 
 void PlayerViewModel::toggleSubtitles() {
@@ -891,6 +928,7 @@ void PlayerViewModel::toggleSubtitles() {
     subVisible_ = !subVisible_;
     emit subVisibleChanged();
     mpv_->setPropertyFlagAsync("sub-visibility", subVisible_);
+    saveTrackMemory();   // 即时落盘（按文件；subVisible_ 已乐观更新）
 }
 
 void PlayerViewModel::adjustSubDelay(double delta) {
@@ -899,6 +937,14 @@ void PlayerViewModel::adjustSubDelay(double delta) {
     subDelay_ += delta;
     emit subDelayChanged();
     mpv_->setPropertyDoubleAsync("sub-delay", subDelay_);
+    saveTrackMemory();   // 即时落盘（按文件；subDelay_ 已乐观更新）
+}
+
+void PlayerViewModel::resetSubDelay() {
+    if (!mpv_) return;
+    if (subDelay_ != 0.0) { subDelay_ = 0.0; emit subDelayChanged(); }
+    mpv_->setPropertyDoubleAsync("sub-delay", 0.0);
+    saveTrackMemory();   // 即时落盘（按文件；subDelay_ 已乐观更新）
 }
 
 void PlayerViewModel::playlistRemove(int index) {
@@ -923,61 +969,129 @@ void PlayerViewModel::scanSubtitleFiles(const QString &videoPath) {
         const QStringList exts = {"*.srt", "*.ass", "*.ssa", "*.vtt",
                                   "*.sub", "*.sbv"};
         QStringList names = dir.entryList(exts, QDir::Files, QDir::Name);
-        // 优先级排序（稳定：同级保持文件名序——entryList Name 已排序）
+        // 优先级（单点定义，排序与条目共用；entryList Name 已排序，
+        // 同级保持文件名序）：
+        //   0 = 精确同名（video.mp4 ↔ video.srt）
+        //   1 = 命名后缀（video.zh.srt / "video zh-cn.ass"——点或空格分隔）
+        //   2 = 其余按文件名（不匹配视频名——不自动加载）
         const QString base = vi.completeBaseName();
+        auto prio = [&base](const QString &n) {
+            const QString stem = n.section('.', 0, -2);   // 去扩展名
+            if (stem == base) return 0;
+            if (stem.startsWith(base + ".") || stem.startsWith(base + " ")) return 1;
+            return 2;
+        };
         std::stable_sort(names.begin(), names.end(),
-            [&base](const QString &a, const QString &b) {
-                auto prio = [&base](const QString &n) {
-                    const QString stem = n.section('.', 0, -2);   // 去扩展名
-                    if (stem == base) return 0;                    // 精确同名
-                    if (stem.startsWith(base + ".")) return 1;     // 语言后缀
-                    return 2;
-                };
+            [&prio](const QString &a, const QString &b) {
                 int pa = prio(a), pb = prio(b);
                 if (pa != pb) return pa < pb;
                 return a < b;
             });
         for (const QString &n : names)
-            files.append(QVariantMap{{"name", n}, {"path", dir.filePath(n)}});
+            files.append(QVariantMap{{"name", n}, {"path", dir.filePath(n)},
+                                     {"prio", prio(n)}});
     }
     if (subtitleFiles_ != files) { subtitleFiles_ = files; emit subtitleFilesChanged(); }
 }
 
-// ── 外部字幕持久化（重启恢复）──────────────────────────────────────
-// 保存：退出时（main.cpp quit-watch-later 后）记录全部 external 轨的
-// 完整路径 + 当前选中的路径——不在 trackList 变化时写：启动时 track-list
-// 首次填充（无 external 轨）会覆盖清空上次持久化值（实测根因，
-// 2026-08-06）。恢复：无参数启动恢复播放列表路径下，每个文件加载完成时
-// sub-add 全部保存文件（选中轨带 select）；external 轨随文件切换被 mpv
-// 清除，须每次恢复（exists 对照防同文件重复）。CLI 显式文件不恢复。
-void PlayerViewModel::saveExternalSubs() {
-    if (!settingsEnabled_) return;
-    QStringList subs;
-    QString sel;
+// ── 轨道记忆（按文件，QSettings trackMem map + trackMemOrder LRU）──
+// 即时落盘：每个轨道设置动作（selectTrack/toggleSubtitles/
+// adjustSubDelay/sub-add）完成后同步写盘——保存点在动作处乐观更新
+//（selected 标志翻转 / pendingSubs_ 暂存），记忆永远反映最近一次
+// 用户操作，无需等待 mpv 异步回写。内容 = 弹框全部设置项：
+// aid/sid/vid 选中 + 外部字幕（subs/sel）+ subVisible/subDelay。
+// 容量上限 10 个文件（trackMemOrder 头部 = 最近使用，超限淘汰尾部；
+// 恢复即使用，同样前移）。不参与播放器全局设置的开机加载/关闭落盘
+// 生命周期（loadSettings/applyPlaybackSettings/main.cpp 退出路径）。
+// 恢复：文件加载完成 hook（FILE_LOADED——打开文件与播放列表选取同
+// 路径），仅当该路径有记忆时生效（再次打开对应文件才恢复；含 CLI
+// 显式文件）。外部字幕恢复 = sub-add（exists 对照 trackList 防重复轨）。
+void PlayerViewModel::saveTrackMemory() {
+    if (!settingsEnabled_ || lastPath_.isEmpty()) return;
+    QVariantMap mem;
     for (const QVariant &t : trackList_) {
         const QVariantMap m = t.toMap();
-        if (m["type"] == "sub" && m["external"].toBool()) {
+        const QString type = m["type"].toString();
+        const int id = m["id"].toInt();
+        if (m["selected"].toBool()) {
+            if (type == "audio") mem["aid"] = id;
+            else if (type == "video") mem["vid"] = id;
+            else if (type == "sub" && !m["external"].toBool()) mem["sid"] = id;
+        }
+        if (type == "sub" && m["external"].toBool()) {
             const QString f = m["filename"].toString();
             if (!f.isEmpty()) {
+                QStringList subs = mem["subs"].toStringList();
                 subs.append(f);
-                if (m["selected"].toBool()) sel = f;
+                mem["subs"] = subs;
+                if (m["selected"].toBool()) mem["sel"] = f;
             }
         }
     }
-    saveSettings("externalSubs", subs);
-    saveSettings("externalSubSelected", sel);
+    // 刚 sub-add 尚未回写 trackList_ 的路径（mpv 异步，毫秒级）——
+    // 并入 subs 保证即时落盘完整；trackList_ 回写后自然合并。
+    // 最近一次 sub-add select 的路径即为选中（trackList_ 尚未反映）。
+    for (const QString &p : pendingSubs_) {
+        QStringList subs = mem["subs"].toStringList();
+        if (!subs.contains(p)) {
+            subs.append(p);
+            mem["subs"] = subs;
+        }
+    }
+    if (!mem.contains("sel") && !pendingSubs_.isEmpty())
+        mem["sel"] = pendingSubs_.constLast();
+    // 字幕偏移（可见性无独立配置：是否显示由 sid 决定，2026-08-06）
+    mem["subDelay"] = subDelay_;
+    // LRU：trackMem 按 path 键存内容；trackMemOrder 记录访问序
+    //（头部 = 最近使用）。超上限（10）淘汰最久未用。
+    QVariantMap all = settings_.value("trackMem").toMap();
+    QStringList order = settings_.value("trackMemOrder").toStringList();
+    all[lastPath_] = mem;
+    order.removeAll(lastPath_);
+    order.prepend(lastPath_);
+    constexpr int kMaxTrackMemFiles = 10;
+    while (order.size() > kMaxTrackMemFiles)
+        all.remove(order.takeLast());
+    // 兜底：order 未覆盖的历史残留键（LRU 引入前的旧数据）一并淘汰，
+    // 保证 map 规模与 order 一致（≤10）。
+    for (auto it = all.begin(); it != all.end();) {
+        if (!order.contains(it.key())) it = all.erase(it);
+        else ++it;
+    }
+    settings_.setValue("trackMem", all);
+    settings_.setValue("trackMemOrder", order);
+    settings_.sync();   // 即时落盘（QSettings 默认内存缓冲，须显式刷盘）
 }
 
-void PlayerViewModel::restoreExternalSubs() {
-    if (!mpv_ || !restoreExtSubs_ || !settingsEnabled_) return;
-    // 不设"会话一次"：external 轨随文件切换被 mpv 清除，播放列表每个文件
-    // 加载完成时都需要恢复（首个 FILE_LOADED 可能是列表首条而非目标条）；
-    // exists 对照（trackList）防同一文件重复添加（2026-08-06）。
-    const QStringList subs = settings_.value("externalSubs").toStringList();
-    const QString sel = settings_.value("externalSubSelected").toString();
+void PlayerViewModel::restoreTrackMemory(const QString &path) {
+    if (!mpv_ || path.isEmpty() || !settingsEnabled_) return;
+    const QVariantMap all = settings_.value("trackMem").toMap();
+    const QVariantMap mem = all.value(path).toMap();
+    if (mem.isEmpty()) {   // 无记忆 → 自动字幕策略（locale > 英文 > 目录匹配文件 > 不显示）
+        autoSelectSubtitle();
+        return;
+    }
+    // 恢复即使用：LRU 顺序前移（头部 = 最近使用）
+    QStringList order = settings_.value("trackMemOrder").toStringList();
+    order.removeAll(path);
+    order.prepend(path);
+    settings_.setValue("trackMemOrder", order);
+    settings_.sync();
+    // 轨道选择（FILE_LOADED 后 track-list 已填充，设置 aid/sid/vid 生效）
+    if (mem.contains("aid"))
+        mpv_->setPropertyString("aid", std::to_string(mem["aid"].toInt()));
+    if (mem.contains("vid"))
+        mpv_->setPropertyString("vid", std::to_string(mem["vid"].toInt()));
+    if (mem.contains("sid"))
+        mpv_->setPropertyString("sid", std::to_string(mem["sid"].toInt()));
+    // 字幕偏移（可见性无独立记忆——是否显示由 sid 决定）
+    if (mem.contains("subDelay"))
+        mpv_->setPropertyDouble("sub-delay", mem["subDelay"].toDouble());
+    // 外部字幕（external 轨随文件切换被 mpv 清除，须重新 sub-add）
+    const QStringList subs = mem["subs"].toStringList();
+    const QString sel = mem["sel"].toString();
     for (const QString &p : subs) {
         if (p.isEmpty()) continue;
-        // 已加载（trackList 对照）→ 跳过，防重复轨
         bool exists = false;
         for (const QVariant &t : trackList_) {
             const QVariantMap m = t.toMap();
@@ -991,6 +1105,95 @@ void PlayerViewModel::restoreExternalSubs() {
         else
             mpv_->commandAsync({"sub-add", p.toUtf8().constData(), nullptr});
     }
+}
+
+// ── 字幕自动选择（无记忆加载时，restoreTrackMemory 无记忆分支）──
+// 策略（用户定义，2026-08-06）：
+//   1. 内置字幕轨按 locale 匹配（系统语言前 2 字母 vs 轨 lang）
+//   2. locale 无匹配 → 英文轨
+//   3. 无内置匹配 → 目录匹配视频文件名的字幕文件（prio ≤ 1：
+//      精确同名 / 点或空格分隔的命名后缀）→ sub-add select
+//   4. 其他 → 不显示字幕（sid no，无轨被选）
+void PlayerViewModel::autoSelectSubtitle() {
+    if (!mpv_) return;
+    // 1/2) 内置字幕轨：locale > 英文
+    QString sys = QLocale::system().name();
+    if (sys.size() >= 2) sys = sys.left(2).toLower();
+    int best = -1;
+    for (const QVariant &t : trackList_) {
+        const QVariantMap m = t.toMap();
+        if (m["type"] != "sub" || m["external"].toBool()) continue;
+        if (m["lang"].toString().left(2).toLower() == sys) { best = m["id"].toInt(); break; }
+    }
+    if (best < 0) {
+        for (const QVariant &t : trackList_) {
+            const QVariantMap m = t.toMap();
+            if (m["type"] != "sub" || m["external"].toBool()) continue;
+            if (m["lang"].toString().left(2).toLower() == "en") { best = m["id"].toInt(); break; }
+        }
+    }
+    if (best >= 0) { mpv_->setPropertyString("sid", std::to_string(best)); return; }
+    // 3) 目录匹配字幕文件（只取匹配视频名的 prio ≤ 1）
+    for (const QVariant &f : subtitleFiles_) {
+        const QVariantMap m = f.toMap();
+        if (m["prio"].toInt() > 1) continue;
+        const QString p = m["path"].toString();
+        mpv_->commandAsync({"sub-add", p.toUtf8().constData(), "select", nullptr});
+        noteExternalSubAdded(p);
+        return;
+    }
+    // 4) 其他 → 不显示字幕
+    mpv_->setPropertyString("sid", "no");
+}
+
+void PlayerViewModel::noteExternalSubAdded(const QString &path) {
+    // sub-add 是异步命令——trackList_ 回写前即时落盘须暂存该路径，
+    // 保存时并入 subs；trackList_ 回写后自然合并，不会重复。
+    if (!pendingSubs_.contains(path))
+        pendingSubs_.append(path);
+    saveTrackMemory();
+}
+
+void PlayerViewModel::clearSubtitleMemory() {
+    if (!settingsEnabled_ || lastPath_.isEmpty()) return;
+    QVariantMap all = settings_.value("trackMem").toMap();
+    QVariantMap mem = all.value(lastPath_).toMap();
+    if (!mem.isEmpty()) {
+        // 只清除字幕相关项（音轨/视频轨记忆保留）
+        mem.remove("sid");
+        mem.remove("subs");
+        mem.remove("sel");
+        mem.remove("subVisible");
+        mem.remove("subDelay");
+        if (mem.isEmpty()) {
+            // 字幕项全清 → 条目整体删除（trackMemOrder 同步移除，避免
+            // 空条目残留在 LRU 序里）
+            all.remove(lastPath_);
+            QStringList order = settings_.value("trackMemOrder").toStringList();
+            order.removeAll(lastPath_);
+            settings_.setValue("trackMemOrder", order);
+        } else {
+            all[lastPath_] = mem;
+        }
+        settings_.setValue("trackMem", all);
+        settings_.sync();
+    }
+    // ── 运行时清除：当前播放的字幕设置同步重置为默认 ────────────
+    // 全部外部字幕轨移除（sub-remove 按轨 id）+ 字幕轨关闭 +
+    // 偏移归零 + 可见性恢复默认。异步命令，乐观更新本地状态。
+    for (const QVariant &t : trackList_) {
+        const QVariantMap m = t.toMap();
+        if (m["type"] == "sub" && m["external"].toBool())
+            mpv_->commandAsync({"sub-remove",
+                                std::to_string(m["id"].toInt()).c_str(), nullptr});
+    }
+    pendingSubs_.clear();   // 尚未回写 trackList_ 的外部字幕路径一并作废
+    mpv_->setPropertyStringAsync("sid", "no");
+    // 清除设置即代表不显示字幕（可见性关闭；用户手动选字幕轨时恢复）
+    if (subVisible_) { subVisible_ = false; emit subVisibleChanged(); }
+    mpv_->setPropertyFlagAsync("sub-visibility", false);
+    if (subDelay_ != 0.0) { subDelay_ = 0.0; emit subDelayChanged(); }
+    mpv_->setPropertyDoubleAsync("sub-delay", 0.0);
 }
 
 void PlayerViewModel::playlistClear() {
@@ -1125,6 +1328,10 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
     int64_t drops = mpv_->propertyInt64("frame-drop-count");
     QMetaObject::invokeMethod(this, [this, p, paused, drops] {
         fileLoaded_ = true;
+        // 按文件记忆：即时落盘保证旧文件状态已随动作写盘，无需在此保存。
+        // external 轨随文件切换被 mpv 清除——pending 待确认列表作废
+        //（其内容已随 sub-add 动作落盘，此处只防陈旧路径并入新文件）。
+        pendingSubs_.clear();
         if (!p.empty())
             lastPath_ = QString::fromStdString(p);
         // 每次加载完成重新同步 playing = !pause。path 在曲目切换时
@@ -1133,7 +1340,7 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
         updatePlaying(!paused);
         resetSegmentCounters(drops);   // 新文件 → 段统计归零
         scanSubtitleFiles(lastPath_);  // 新文件 → 扫描其目录的字幕
-        restoreExternalSubs();         // 上次会话的外部字幕（无参数启动路径）
+        restoreTrackMemory(lastPath_); // 按文件恢复轨道/字幕记忆（再次打开对应文件才恢复）
     }, Qt::QueuedConnection);
 }
 

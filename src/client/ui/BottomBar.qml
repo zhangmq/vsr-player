@@ -15,6 +15,7 @@ Item {
     property bool qualityPopupOpen: false
     property bool speedPopupOpen: false
     property bool tracksPopupOpen: false
+    property bool aspectPopupOpen: false
     property bool playlistOpen: false
     property int loopMode: 0    // 0=No loop, 1=Loop file, 2=Loop playlist
 
@@ -27,6 +28,7 @@ Item {
     signal hwaccelClicked()
     signal speedClicked()
     signal tracksClicked()
+    signal aspectClicked()
     signal fullscreenClicked()
     signal playlistClicked()
     signal loopClicked()
@@ -44,6 +46,7 @@ Item {
     property alias qualityBtn: qualBtn
     property alias speedBtn: spdBtn
     property alias tracksBtn: trkBtn
+    property alias aspectBtn: aspBtn
 
     // bottombar(48) + 进度条(14) + 热区(40) 一体
     implicitHeight: 48 + 14 + 40
@@ -83,7 +86,6 @@ Item {
         Row {
             anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 12 }
             spacing: 4
-
             IconButton { codepoint: "󰒮"; size: 22; tooltip: qsTr("Previous (B)")
                 onClicked: root.prevClicked() }
             IconButton { codepoint: root.playing ? "󰏤" : "󰐊"; size: 22
@@ -113,6 +115,13 @@ Item {
             anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 12 }
             spacing: 4
 
+            // 轨道选择 = 按文件记忆（其余按钮 = 全局设置）——置前并
+            // 以纵向分割线与全局按钮区分（2026-08-06）
+            IconButton { id: trkBtn; codepoint: "󰨖"; size: 22; tooltip: qsTr("Tracks")
+                highlighted: root.tracksPopupOpen
+                onClicked: root.tracksClicked() }
+            Rectangle { width: 1; height: 20; color: "#0fffffff"
+                anchors.verticalCenter: parent.verticalCenter }
             IconButton { id: volBtn
                 // 静音状态由图标表达（与 VolumePopup 同字形 󰖁/󰕾）
                 codepoint: root.muted ? "󰖁" : "󰕾"; size: 22; tooltip: qsTr("Volume")
@@ -127,18 +136,19 @@ Item {
             IconButton { id: spdBtn; label: qsTr("Speed"); size: 22; tooltip: qsTr("Playback speed")
                 highlighted: root.speedPopupOpen
                 onClicked: root.speedClicked() }
-            IconButton { id: trkBtn; codepoint: "󰨖"; size: 22; tooltip: qsTr("Tracks")
-                highlighted: root.tracksPopupOpen
-                onClicked: root.tracksClicked() }
+
+            IconButton { id: aspBtn; codepoint: "󰨤"; size: 22; tooltip: qsTr("Aspect ratio")
+                highlighted: root.aspectPopupOpen
+                onClicked: root.aspectClicked() }
             IconButton { id: loopBtn
                 // 三态三字形：No loop=loop(环形箭头)/单曲=repeat_one/
                 // 列表=repeat（E028/E041/E040）。状态只由图标区分，
                 // 不做背景持续高亮。
                 codepoint: root.loopMode === 0 ? "󰑗" :
-                           root.loopMode === 1 ? "󰑘" : "󰑖"
+                root.loopMode === 1 ? "󰑘" : "󰑖"
                 size: 22
                 tooltip: root.loopMode === 1 ? qsTr("Loop file") :
-                          root.loopMode === 2 ? qsTr("Loop playlist") : qsTr("No loop")
+                root.loopMode === 2 ? qsTr("Loop playlist") : qsTr("No loop")
                 onClicked: root.loopClicked() }
             IconButton { codepoint: root.fullscreen ? "󰊔" : "󰊓"; size: 22
                 tooltip: root.fullscreen ? qsTr("Exit fullscreen") : qsTr("Fullscreen")

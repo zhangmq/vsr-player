@@ -5,10 +5,11 @@ Item {
     id: root
     property string videoInfo: ""
     property bool overlaysVisible: true
-    /// 打开文件请求（TopBar 打开按钮触发，main.qml 接线到 FileDialog）
-    signal openRequested()
-    /// 打开文件夹请求（TopBar 文件夹按钮 → FolderDialog）
-    signal openFolderRequested()
+    /// 打开菜单请求（右上角打开按钮触发，main.qml 弹出 OpenMenu：
+    /// 文件 / 文件夹 / URL 三入口合并）
+    signal openMenuRequested()
+    /// 打开按钮引用（供 OpenMenu 的 anchorTarget 定位）
+    property alias openBtn: openFileBtn
     /// 自动隐藏保持条件：TopBar 本体 hover 或下方热区（与 BottomBar
     /// hotZone 对称——鼠标靠近顶缘即激活 UI 显示，否则顶部按钮不可达）
     readonly property bool mouseInRegion: topHover.hovered || topHot.containsMouse
@@ -36,7 +37,7 @@ Item {
 
         Text {
             anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
-            font.pixelSize: 14; elide: Text.ElideRight
+            font.pixelSize: 13; elide: Text.ElideRight
             color: "#e0e0e0"
             text: {
                 if (root.videoInfo) return root.videoInfo
@@ -44,21 +45,14 @@ Item {
             }
         }
 
-        // ── 打开文件按钮（右上角，随标题一起淡出）────────────────
+        // ── 打开按钮（右上角，随标题一起淡出；点击弹三入口菜单）──
         IconButton {
             id: openFileBtn
-            codepoint: "󰉋"; size: 22; tooltip: qsTr("Open file (Ctrl+O)")
+            codepoint: "󰉋"; size: 22; tooltip: qsTr("Open")
             // 淡出后仍命中测试——隐藏时禁点（含 tooltip）
             enabled: root.overlaysVisible
             anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
-            onClicked: root.openRequested()
-        }
-        // ── 打开文件夹按钮（并列，folder-outline U+F0256）────────
-        IconButton {
-            codepoint: "󰉖"; size: 22; tooltip: qsTr("Open folder (Ctrl+Shift+O)")
-            enabled: root.overlaysVisible
-            anchors { right: openFileBtn.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
-            onClicked: root.openFolderRequested()
+            onClicked: root.openMenuRequested()
         }
     }
 }

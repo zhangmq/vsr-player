@@ -20,7 +20,7 @@ Item {
     Text {
         anchors.centerIn: parent
         font.family: label ? "" : iconFont
-        font.pixelSize: label ? size - 7 : size
+        font.pixelSize: label ? 13 : size   // label 固定 13（统一字号）；字形随 size
         text: label ? label : codepoint
         color: ibHover.hovered || root.highlighted ? "#ffffff" : "#c8c8c8"
         Behavior on color { ColorAnimation { duration: 150 } }
@@ -33,8 +33,8 @@ Item {
     HoverHandler { id: ibHover }
     ToolTip {
         visible: ibHover.hovered && tooltip !== ""; text: tooltip
-        delay: 600; font.pixelSize: 11
+        delay: 600; font.pixelSize: 13
         background: Rectangle { color: "#d9111111"; radius: 4; border { width: 1; color: "#22ffffff" } }
-        contentItem: Text { text: tooltip; color: "#e0e0e0"; font.pixelSize: 11 }
+        contentItem: Text { text: tooltip; color: "#e0e0e0"; font.pixelSize: 13 }
     }
 }
