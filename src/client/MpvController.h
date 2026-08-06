@@ -60,6 +60,9 @@ public:
     /// 返回 false 表示投递失败（记录日志），执行结果不追踪。
     bool setPropertyDoubleAsync(const char *name, double value);
     bool setPropertyStringAsync(const char *name, const std::string &value);
+    /// Async 版 int64 / flag 属性设置（轨道切换 sid/aid/vid、字幕可见性）。
+    bool setPropertyInt64Async(const char *name, int64_t value);
+    bool setPropertyFlagAsync(const char *name, bool value);
     /// Async 版 commandV（如 vf-command）。
     void commandAsync(std::initializer_list<const char *> args);
 

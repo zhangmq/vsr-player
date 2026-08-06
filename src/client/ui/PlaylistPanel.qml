@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import "components"
 
 /// 播放列表面板（数据源：mpv `playlist` 属性 → PlaylistModel 增量镜像）。
 /// 点击条目 → viewModel.playlistPlayIndex（mpv playlist-play-index）。
@@ -22,11 +23,20 @@ Drawer {
         height: 48; color: "#22ffffff"
         Text { anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
             text: qsTr("Playlist"); color: "#e0e0e0"; font.pixelSize: 15; font.bold: true }
-        Text { anchors { right: closeBtn.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
+        Text { anchors { right: clearBtn.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
             text: viewModel.playlistModel.currentIndex >= 0
                   ? (viewModel.playlistModel.currentIndex + 1) + "/" + viewModel.playlistModel.count
                   : ""
             color: "#b0b0b0"; font.pixelSize: 12 }
+
+        // 清空列表（无确认弹窗——误点损失低，文件可随时重拖入，YAGNI）
+        IconButton {
+            id: clearBtn
+            anchors { right: closeBtn.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
+            label: qsTr("Clear"); size: 22
+            tooltip: qsTr("Clear playlist")
+            onClicked: viewModel.playlistClear()
+        }
 
         Item { id: closeBtn; width: 34; height: 34
             anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
@@ -101,11 +111,27 @@ Drawer {
 
                 Text {
                     text: (index + 1) + ". " + model.display
-                    width: 296
+                    width: 260
                     color: index === viewModel.playlistModel.currentIndex ? "#ffffff" : "#b0b0b0"
                     font.pixelSize: 13
                     elide: Text.ElideMiddle
                     renderType: Text.NativeRendering
+                }
+            }
+
+            // 行尾移除按钮（hover 显示；z 高于 plMouse——否则点击被抢）
+            Text {
+                id: removeBtn
+                z: 2
+                width: 24; height: 24
+                anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+                text: "×"; color: "#c8c8c8"; font.pixelSize: 16
+                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                visible: plMouse.containsMouse
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: viewModel.playlistRemove(index)
                 }
             }
 
@@ -123,6 +149,19 @@ Drawer {
                 ToolTip.delay: 600
                 ToolTip.visible: plMouse.containsMouse
             }
+        }
+    }
+
+    // 拖入文件 → 一律追加到列表（不打断当前播放；DropArea 在 ListView
+    // 之后声明，z 更高，拖放优先于 delegate 的点击命中）
+    DropArea {
+        anchors.fill: parent
+        onEntered: function(drag) { drag.accepted = true }
+        onDropped: function(drop) {
+            var paths = []
+            for (var i = 0; i < drop.urls.length; i++)
+                paths.push(drop.urls[i].toString())
+            viewModel.openFiles(paths, 1)
         }
     }
 }

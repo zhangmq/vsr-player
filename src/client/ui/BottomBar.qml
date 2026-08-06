@@ -14,6 +14,7 @@ Item {
     property bool volumePopupOpen: false
     property bool qualityPopupOpen: false
     property bool speedPopupOpen: false
+    property bool tracksPopupOpen: false
     property bool playlistOpen: false
     property int loopMode: 0    // 0=No loop, 1=Loop file, 2=Loop playlist
 
@@ -25,6 +26,7 @@ Item {
     signal qualityClicked()
     signal hwaccelClicked()
     signal speedClicked()
+    signal tracksClicked()
     signal fullscreenClicked()
     signal playlistClicked()
     signal loopClicked()
@@ -41,6 +43,7 @@ Item {
     property alias volumeBtn: volBtn
     property alias qualityBtn: qualBtn
     property alias speedBtn: spdBtn
+    property alias tracksBtn: trkBtn
 
     // bottombar(48) + 进度条(14) + 热区(40) 一体
     implicitHeight: 48 + 14 + 40
@@ -124,6 +127,9 @@ Item {
             IconButton { id: spdBtn; label: qsTr("Speed"); size: 22; tooltip: qsTr("Playback speed")
                 highlighted: root.speedPopupOpen
                 onClicked: root.speedClicked() }
+            IconButton { id: trkBtn; codepoint: "󰨖"; size: 22; tooltip: qsTr("Tracks")
+                highlighted: root.tracksPopupOpen
+                onClicked: root.tracksClicked() }
             IconButton { id: loopBtn
                 // 三态三字形：No loop=loop(环形箭头)/单曲=repeat_one/
                 // 列表=repeat（E028/E041/E040）。状态只由图标区分，

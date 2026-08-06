@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Dialogs
 import VSR 1.0
 import "ui"
 
@@ -16,20 +17,22 @@ Item {
 
     // ── UI 层（benchmark 模式隐藏）────────────────────────────────
     Item {
-        id: uiLayer
+        id: uiLayer   // 信号处理器作用域不含父对象——弹窗互斥须经 uiLayer 显式调用
         anchors.fill: parent
         visible: !benchmarkMode
         enabled: !benchmarkMode
 
         // ── Auto-hide ───────────────────────────────────────────────
         // 显示 = 底部区域 hover（bottomBar.mouseInRegion：热区+进度条+
-        // bottombar 一体）或音量/画质/倍速弹窗打开。播放列表打开
-        // 不阻止消失（侧边栏独立，不依赖底部 UI）。状态翻转即写回
-        // viewModel——移出热区立即隐藏，无计时器。启动即按当前状态
-        // 应用（onCompleted 写回初始值；onChanged 只在翻转时触发），
-        // 鼠标不在热区则初始隐藏。弹窗注册表化：新增弹窗只需在
-        // Component.onCompleted 的 _popups 数组中登记一行。
-        property bool showUi: bottomBar.mouseInRegion || anyPopupOpen
+        // bottombar 一体）或顶部区域 hover（topBar.mouseInRegion：渐变条
+        // + 下方 40px 热区——鼠标靠近顶缘即显示，否则顶部打开按钮
+        // 不可达）或音量/画质/倍速弹窗打开。播放列表打开不阻止消失
+        //（侧边栏独立，不依赖底部 UI）。状态翻转即写回 viewModel——
+        // 移出热区立即隐藏，无计时器。启动即按当前状态应用（onCompleted
+        // 写回初始值；onChanged 只在翻转时触发），鼠标不在热区则初始
+        // 隐藏。弹窗注册表化：新增弹窗只需在 Component.onCompleted 的
+        // _popups 数组中登记一行。
+        property bool showUi: bottomBar.mouseInRegion || topBar.mouseInRegion || anyPopupOpen
         onShowUiChanged: viewModel.overlaysVisible = showUi
         property var _popups: []
         readonly property bool anyPopupOpen: {
@@ -43,16 +46,31 @@ Item {
                 if (_popups[i] !== exclude) _popups[i].close()
         }
         Component.onCompleted: {
-            _popups = [volumePopup, qualityPopup, speedPopup]
+            _popups = [volumePopup, qualityPopup, speedPopup, contextMenu, tracksPopup]
             // 启动即按当前状态应用 auto-hide（onShowUiChanged 只在翻转时触发）
             viewModel.overlaysVisible = showUi
         }
 
+        // 右键菜单触发器（最底层：右击未被按钮/弹窗消费时到达此处）
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.RightButton
+            onClicked: {
+                if (mouse.button === Qt.RightButton) {
+                    uiLayer.closeOtherPopups(contextMenu)
+                    contextMenu.showAt(uiLayer, mouse.x, mouse.y)
+                }
+            }
+        }
+
         // ── Top Bar ────────────────────────────────────────────────
         TopBar {
+            id: topBar
             anchors { left: parent.left; right: parent.right; top: parent.top }
             videoInfo: viewModel.videoInfo
             overlaysVisible: viewModel.overlaysVisible
+            onOpenRequested: function() { fileDialog.mode = 0; fileDialog.open() }
+            onOpenFolderRequested: folderDialog.open()
         }
 
         // ── Center Play Button ─────────────────────────────────────
@@ -78,6 +96,7 @@ Item {
             volumePopupOpen: volumePopup.visible
             qualityPopupOpen: qualityPopup.visible
             speedPopupOpen: speedPopup.visible
+            tracksPopupOpen: tracksPopup.visible
             playlistOpen: playlistPanel.visible
             onSeeked: function(ms) { viewModel.seekAbsolute(ms) }
             onPlayPauseClicked: viewModel.togglePlayPause()
@@ -88,6 +107,7 @@ Item {
             onQualityClicked: qualityPopup.visible ? qualityPopup.close() : qualityPopup.open()
             onHwaccelClicked: viewModel.toggleHwaccel()
             onSpeedClicked: speedPopup.visible ? speedPopup.close() : speedPopup.open()
+            onTracksClicked: tracksPopup.visible ? tracksPopup.close() : tracksPopup.open()
             onFullscreenClicked: viewModel.toggleFullscreen()
             onPlaylistClicked: root.togglePlaylist()
             onLoopClicked: viewModel.toggleLoop()
@@ -101,7 +121,7 @@ Item {
             muted: viewModel.muted
             onVolAdjusted: function(v) { viewModel.setVolume(v) }
             onMuteToggled: viewModel.toggleMute()
-            onOpened: closeOtherPopups(volumePopup)
+            onOpened: uiLayer.closeOtherPopups(volumePopup)
         }
 
         QualityPopup {
@@ -113,7 +133,7 @@ Item {
             onScalPicked: function(v) { viewModel.setScale(v) }
             onQualityPicked: function(v) { viewModel.setQuality(v) }
             onDenoiseQualityPicked: function(v) { viewModel.setDenoiseQuality(v) }
-            onOpened: closeOtherPopups(qualityPopup)
+            onOpened: uiLayer.closeOtherPopups(qualityPopup)
         }
 
         SpeedPopup {
@@ -121,12 +141,38 @@ Item {
             anchorTarget: bottomBar.speedBtn
             speed: viewModel.speed
             onSpeedAdjusted: function(v) { viewModel.setSpeed(v) }
-            onOpened: closeOtherPopups(speedPopup)
+            onOpened: uiLayer.closeOtherPopups(speedPopup)
+        }
+
+        TracksPopup {
+            id: tracksPopup
+            // modal 居中呈现（无需 anchorTarget）
+            trackList: viewModel.trackList
+            subVisible: viewModel.subVisible
+            subDelay: viewModel.subDelay
+            onTrackSelected: function(type, id) { viewModel.selectTrack(type, id) }
+            onSubVisibilityToggled: viewModel.toggleSubtitles()
+            onSubDelayAdjusted: function(d) { viewModel.adjustSubDelay(d) }
+            onSubFileDialogRequested: function() { fileDialog.mode = 2; fileDialog.open() }
+            onOpened: uiLayer.closeOtherPopups(tracksPopup)
         }
 
         // ── Playlist Panel ─────────────────────────────────────────
         PlaylistPanel {
             id: playlistPanel
+        }
+
+        // ── Context Menu（右键，showAt 定位 = 鼠标位置）──────────────
+        ContextMenu {
+            id: contextMenu
+            onOpenFilesRequested: function() { fileDialog.mode = 0; fileDialog.open() }
+            onOpenFolderRequested: folderDialog.open()
+            onAppendFilesRequested: function() { fileDialog.mode = 1; fileDialog.open() }
+            onLoadSubsRequested: function() { fileDialog.mode = 2; fileDialog.open() }
+            onPlayPauseRequested: viewModel.togglePlayPause()
+            onStopRequested: viewModel.stop()
+            onFullscreenRequested: viewModel.toggleFullscreen()
+            onPlaylistRequested: root.togglePlaylist()
         }
 
         // ── Fullscreen 双向同步 + 键盘（快捷键单点）─────────────────
@@ -175,11 +221,70 @@ Item {
                 viewModel.setSpeed(2.0); event.accepted = true; break
             case Qt.Key_Backslash:
                 viewModel.setSpeed(1.0); event.accepted = true; break
+            case Qt.Key_O:
+                if (event.modifiers === Qt.ControlModifier) {
+                    fileDialog.mode = 0; fileDialog.open(); event.accepted = true
+                } else if (event.modifiers === (Qt.ControlModifier | Qt.ShiftModifier)) {
+                    folderDialog.open(); event.accepted = true
+                }
+                break
+            case Qt.Key_V:
+                viewModel.toggleSubtitles(); event.accepted = true; break
             case Qt.Key_P:
                 root.togglePlaylist(); event.accepted = true; break
             case Qt.Key_F:
                 viewModel.toggleFullscreen(); event.accepted = true; break
             }
+        }
+    }
+
+    // ── 文件夹打开（FolderDialog：原生文件夹选择 → 扫描媒体文件入列表，
+    //     右键菜单 / Ctrl+Shift+O 触发）───────────────────────────
+    FolderDialog {
+        id: folderDialog
+        title: qsTr("Open folder")
+        onAccepted: viewModel.openFiles([folderDialog.selectedFolder.toString()], 3)
+    }
+
+    // ── 文件打开（FileDialog，TopBar 按钮 / Ctrl+O 触发）──────────
+    FileDialog {
+        id: fileDialog
+        title: qsTr("Open media")
+        fileMode: FileDialog.OpenFiles
+        /// 过滤器按 mode 切换：加载字幕（2）时字幕优先，否则媒体优先
+        nameFilters: fileDialog.mode === 2 ? [
+            qsTr("Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)"),
+            qsTr("All files (*)")
+        ] : [
+            qsTr("Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)"),
+            qsTr("Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)"),
+            qsTr("Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)"),
+            qsTr("Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)"),
+            qsTr("All files (*)")
+        ]
+        /// 打开方式：0=replace+queue（打开/拖放）1=append（追加到列表）
+        /// 2=加载字幕（sub-add，后续入口用）
+        property int mode: 0
+        onAccepted: {
+            var paths = []
+            for (var i = 0; i < selectedFiles.length; i++)
+                paths.push(selectedFiles[i].toString())
+            viewModel.openFiles(paths, mode)
+        }
+    }
+
+    // ── 拖放（窗口级）：字幕文件 → sub-add；其余 → 播放（多文件排队）──
+    DropArea {
+        id: dropArea
+        anchors.fill: parent
+        // benchmark 模式无 UI——拖入不触发 loadfile
+        enabled: !benchmarkMode
+        onEntered: function(drag) { drag.accepted = true }
+        onDropped: function(drop) {
+            var paths = []
+            for (var i = 0; i < drop.urls.length; i++)
+                paths.push(drop.urls[i].toString())
+            viewModel.openFiles(paths, 0)
         }
     }
 

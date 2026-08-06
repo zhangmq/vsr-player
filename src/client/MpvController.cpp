@@ -1,6 +1,8 @@
 #include "MpvController.h"
 #include "Log.h"
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 static double now() {
     using namespace std::chrono;
     return duration<double>(steady_clock::now().time_since_epoch()).count();
@@ -42,6 +44,9 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
         mpv_set_option_string(mpv_, "untimed", "yes");
         mpv_set_option_string(mpv_, "video-sync", "display-desync");
         mpv_set_option_string(mpv_, "framedrop", "no");
+        // 基准测量口径：禁用位置恢复（mpv 默认 resume-playback=yes，
+        // 会按 watch_later 恢复起始位置 → 时长/吞吐失真）
+        mpv_set_option_string(mpv_, "resume-playback", "no");
         mpv_set_option_string(mpv_, "msg-level", "all=no");
     } else {
         // 默认只输出 info 及以上（规划：info=状态变更节点，warn/err/
@@ -50,6 +55,19 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
         // 关闭 mpv 自身 OSD：seek 进度/音量条等由 Qt UI 呈现，
         // mpv 的 seek OSD（osd-level=1 默认）会叠加显示进度。
         mpv_set_option_string(mpv_, "osd-level", "0");
+        // ── 播放器完整性：位置记忆 + 字幕自动加载 ──────────────
+        // watch-later 用独立目录（不污染系统 mpv 配置 ~/.config/mpv）。
+        const char *home = getenv("HOME");
+        if (home && *home) {
+            char wl[1024];
+            snprintf(wl, sizeof(wl), "%s/.config/vsr-player/watch_later", home);
+            mpv_set_option_string(mpv_, "watch-later-directory", wl);
+        }
+        mpv_set_option_string(mpv_, "save-position-on-quit", "yes");
+        mpv_set_option_string(mpv_, "resume-playback", "yes");
+        // 同名字幕自动加载（exact：同名精确，fuzzy 易误配）
+        mpv_set_option_string(mpv_, "sub-auto", "exact");
+        mpv_set_option_string(mpv_, "autoload-files", "yes");
     }
 
     int advanced = 1;
@@ -200,7 +218,25 @@ bool MpvController::setPropertyDoubleAsync(const char *name, double value) {
 }
 
 bool MpvController::setPropertyStringAsync(const char *name, const std::string &value) {
-    int e = mpv_set_property_async(mpv_, 0, name, MPV_FORMAT_STRING, (void *)value.c_str());
+    // MPV_FORMAT_STRING 的 data 约定是 char**（指针地址）——传 c_str()
+    // 会被 m_option_copy 当指针读取（崩溃根因，2026-08-06）
+    const char *v = value.c_str();
+    int e = mpv_set_property_async(mpv_, 0, name, MPV_FORMAT_STRING, &v);
+    if (e < 0)
+        MLOG_ERR("setPropertyAsync(\"%s\") failed: %s", name, mpv_error_string(e));
+    return e >= 0;
+}
+
+bool MpvController::setPropertyInt64Async(const char *name, int64_t value) {
+    int e = mpv_set_property_async(mpv_, 0, name, MPV_FORMAT_INT64, &value);
+    if (e < 0)
+        MLOG_ERR("setPropertyAsync(\"%s\") failed: %s", name, mpv_error_string(e));
+    return e >= 0;
+}
+
+bool MpvController::setPropertyFlagAsync(const char *name, bool value) {
+    int v = value ? 1 : 0;
+    int e = mpv_set_property_async(mpv_, 0, name, MPV_FORMAT_FLAG, &v);
     if (e < 0)
         MLOG_ERR("setPropertyAsync(\"%s\") failed: %s", name, mpv_error_string(e));
     return e >= 0;
