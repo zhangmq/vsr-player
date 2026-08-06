@@ -282,7 +282,7 @@ private:
     QString decoderName_;                 // 实际解码器（软解 libdav1d 等 / 硬解 codec 名）
     QString hwdecName_;                   // hwdec-current 原值（nvdec-copy/nvdec/no）
     bool overlaysVisible_ = true;
-    double volume_ = 0.65;
+    double volume_ = 1.0;    // 初始与持久化默认一致（0.65 从未生效——观察器首轮回填覆盖）
     double savedVolume_ = 0.5;   // 静音前音量（toggle mute 恢复用；未静音过则 0.5）
     std::atomic<double> speed_{1.0};
     std::atomic<bool> hwDecoding_{false};

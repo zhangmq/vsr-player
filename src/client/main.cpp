@@ -319,7 +319,9 @@ int main(int argc, char *argv[]) {
         // 保存最后文件进度：mpv_terminate_destroy 不写 watch-later，
         // 须显式 quit-watch-later（对照 command.c cmd_quit_watch_later）。
         // app.exec 返回后 mpv 事件线程仍运行（stopEvents 在下方）——
-        // 同步命令与事件线程的 mpv API 调用由 core lock 串行化，安全。
+        // 同步命令与事件线程的 mpv API 调用由 core lock 串行化，安全；
+        // 防挂死兜底 = vo_libmpv flip_page 的 200ms 超时（等待 render/
+        // report_swap 有界，core 不会无限持锁）。
         mpv.commandStr("quit-watch-later");
 
         if (!opts.benchmark) {

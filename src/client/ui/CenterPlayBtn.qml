@@ -17,7 +17,7 @@ Item {
         Text {
             anchors.centerIn: parent
             font.family: iconFont; font.pixelSize: 36
-            text: root.playing ? "󰏤" : "󰐊"; color: "#ffffff"   // 暂停→播放箭头；播放中→暂停条（hover 时可见）
+            text: root.playing ? "󰏤" : "󰐊"; color: "#ffffff"   // 暂停→播放箭头；播放中→暂停条（overlaysVisible 时可见）
             renderType: Text.NativeRendering
         }
         MouseArea {
