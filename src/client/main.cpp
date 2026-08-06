@@ -17,6 +17,7 @@
 #include <QFile>
 #include <QFontDatabase>
 #include <QQmlContext>
+#include <QQmlEngine>
 #include <QSettings>
 
 #include "Options.h"
@@ -180,6 +181,11 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         view.show();
+        // QML 的 Qt.quit() → QQmlEngine::quit() signal——文档不保证默认
+        // 连接，QQuickView 场景实测不退出（"退出无效"根因，2026-08-06）。
+        // 显式连接：菜单"退出"/Ctrl+Q 走标准退出路径（exec 返回 → 清理）。
+        QObject::connect(view.engine(), &QQmlEngine::quit, &app,
+                         &QCoreApplication::quit);
         MLOG_INFO("view.show() done");
 
         auto *root = view.rootObject();
@@ -316,7 +322,8 @@ int main(int argc, char *argv[]) {
         // 防挂死兜底 = vo_libmpv flip_page 的 200ms 超时（等待 render/
         // report_swap 有界，core 不会无限持锁）。
         mpv.commandStr("quit-watch-later");
-        viewModel.saveExternalSubs();   // 退出竞态兜底：事件队列已停，最后轨道状态显式落盘
+        // 按文件轨道记忆不参与退出落盘：即时落盘已随每个轨道设置动作
+        // 写盘（2026-08-06：关闭落盘/启动加载生命周期排除基于文件的设置）
 
         // 窗口几何不再持久化（2026-08-06，用户取消记录窗口大小）
 

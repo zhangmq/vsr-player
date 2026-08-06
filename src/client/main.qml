@@ -178,7 +178,6 @@ Item {
             subVisible: viewModel.subVisible
             subDelay: viewModel.subDelay
             onTrackSelected: function(type, id) { viewModel.selectTrack(type, id) }
-            onSubVisibilityToggled: viewModel.toggleSubtitles()
             onSubDelayAdjusted: function(d) { viewModel.adjustSubDelay(d) }
             onSubFileDialogRequested: function() { fileDialog.mode = 2; fileDialog.open() }
             onOpened: uiLayer.closeOtherPopups(tracksPopup)
@@ -196,11 +195,7 @@ Item {
             onOpenFolderRequested: folderDialog.open()
             onOpenUrlRequested: urlPopup.open()
             onAppendFilesRequested: function() { fileDialog.mode = 1; fileDialog.open() }
-            onLoadSubsRequested: function() { fileDialog.mode = 2; fileDialog.open() }
-            onPlayPauseRequested: viewModel.togglePlayPause()
-            onStopRequested: viewModel.stop()
-            onFullscreenRequested: viewModel.toggleFullscreen()
-            onPlaylistRequested: root.togglePlaylist()
+            onQuitRequested: Qt.quit()   // 走标准退出路径（watch-later 落盘）
         }
 
         // ── Fullscreen 双向同步 + 键盘（快捷键单点）─────────────────
@@ -239,6 +234,10 @@ Item {
                 viewModel.screenshot(); event.accepted = true; break
             case Qt.Key_Tab:
                 viewModel.toggleOsd(); event.accepted = true; break
+            case Qt.Key_Q:
+                // Ctrl+Q 退出（与右键菜单 Quit 一致；走标准退出路径）
+                if (event.modifiers & Qt.ControlModifier) { Qt.quit(); event.accepted = true }
+                break
             case Qt.Key_N:
                 viewModel.playlistNext(); event.accepted = true; break
             case Qt.Key_B:

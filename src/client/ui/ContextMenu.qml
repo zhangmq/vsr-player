@@ -12,11 +12,7 @@ PopupBase {
     signal openFolderRequested()
     signal openUrlRequested()
     signal appendFilesRequested()
-    signal loadSubsRequested()
-    signal playPauseRequested()
-    signal stopRequested()
-    signal fullscreenRequested()
-    signal playlistRequested()
+    signal quitRequested()
 
     /// 在 item 坐标系 (x,y)（即鼠标位置）弹出，屏幕边缘钳制
     function showAt(item, x, y) {
@@ -37,13 +33,8 @@ PopupBase {
                 {icon: "󰉖", text: qsTr("Open folder"), hint: "Ctrl+Shift+O", sig: "openFolderRequested"},
                 {icon: "󰌷", text: qsTr("Open URL"), hint: "Ctrl+L", sig: "openUrlRequested"},
                 {icon: "󰐒", text: qsTr("Add to playlist"),    hint: "",       sig: "appendFilesRequested"},
-                {icon: "󰨖", text: qsTr("Load subtitles"),     hint: "",       sig: "loadSubsRequested"},
                 {sep: true},
-                {icon: "󰐊", text: qsTr("Play/Pause"),         hint: "Space",  sig: "playPauseRequested"},
-                {icon: "󰓛", text: qsTr("Stop"),               hint: "",       sig: "stopRequested"},
-                {sep: true},
-                {icon: "󰊓", text: qsTr("Fullscreen"),         hint: "F",      sig: "fullscreenRequested"},
-                {icon: "󰐑", text: qsTr("Playlist"),           hint: "P",      sig: "playlistRequested"}
+                {icon: "󰐥", text: qsTr("Quit"),               hint: "Ctrl+Q", sig: "quitRequested"}
             ]
             delegate: Item {
                 // modelData 字段缺失时为 undefined——显式 bool/默认值
