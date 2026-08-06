@@ -143,17 +143,9 @@ int main(int argc, char *argv[]) {
         // 覆盖 resize() → 窗口/RT 尺寸错误、scale=auto 决策失真、fps 虚高。
         // SizeRootObjectToView：根对象跟随窗口尺寸（Video anchors.fill）。
         view.setResizeMode(QQuickView::SizeRootObjectToView);
-        {
-            // 窗口几何恢复：benchmark 固定默认尺寸（测量口径）。
-            QSettings geom(QStringLiteral("vsr-player"), QStringLiteral("vsr-player"));
-            int gw = opts.benchmark ? 1280 : geom.value("winWidth", 1280).toInt();
-            int gh = opts.benchmark ? 720 : geom.value("winHeight", 720).toInt();
-            int gx = opts.benchmark ? -1 : geom.value("winX", -1).toInt();
-            int gy = opts.benchmark ? -1 : geom.value("winY", -1).toInt();
-            // Wayland 下位置由 compositor 忽略（setGeometry 安全），只恢复大小
-            if (gx >= 0 && gy >= 0) view.setGeometry(gx, gy, gw, gh);
-            else view.resize(gw, gh);
-        }
+        // 窗口固定默认尺寸（不持久化几何——用户取消记录窗口大小，
+        // 2026-08-06；benchmark 同为 1280x720 测量口径）。
+        view.resize(1280, 720);
         MLOG_INFO("after resize: %dx%d", view.width(), view.height());
 
         view.rootContext()->setContextProperty("viewModel", &viewModel);
@@ -284,6 +276,7 @@ int main(int argc, char *argv[]) {
         if (opts.rpc) {
             rpc.setMpv(&mpv);
             rpc.setViewModel(&viewModel);
+            rpc.setWindow(&view);   // resize 命令（逐级 resize 压测）
             rpc.setQuitCallback([&app]() {
                 // Cross-thread: RPC thread → Qt event loop.
                 QMetaObject::invokeMethod(&app, &QCoreApplication::quit,
@@ -325,13 +318,7 @@ int main(int argc, char *argv[]) {
         mpv.commandStr("quit-watch-later");
         viewModel.saveExternalSubs();   // 退出竞态兜底：事件队列已停，最后轨道状态显式落盘
 
-        if (!opts.benchmark) {
-            QSettings geom(QStringLiteral("vsr-player"), QStringLiteral("vsr-player"));
-            geom.setValue("winX", view.x());
-            geom.setValue("winY", view.y());
-            geom.setValue("winWidth", view.width());
-            geom.setValue("winHeight", view.height());
-        }
+        // 窗口几何不再持久化（2026-08-06，用户取消记录窗口大小）
 
         // 摘除 mpv update 回调（必须在 QML 场景析构之前）：mpv VO 线程
         // 仍可能触发回调 → invokeMethod("requestRender") 打在正在销毁的

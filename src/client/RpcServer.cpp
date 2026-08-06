@@ -3,6 +3,7 @@
 #include "PlayerViewModel.h"
 #include <mpv/client.h>
 #include <QMetaObject>
+#include <QQuickWindow>
 #include <QVariant>
 #include <cmath>
 #include <cstdio>
@@ -175,6 +176,24 @@ void RpcServer::handleLine(int fd, const std::string &line) {
     } else if (cmd == "quit") {
         if (quit_cb_) quit_cb_();
         response = formatResponse("success");
+    } else if (cmd == "resize") {
+        // 逐级 resize 压测（非全屏切换）：Queued 路由主线程改窗口尺寸。
+        if (args.size() != 2) {
+            response = formatResponse("usage: resize <width> <height>");
+        } else if (!win_) {
+            response = formatResponse("no window");
+        } else {
+            int w = atoi(args[0].c_str());
+            int h = atoi(args[1].c_str());
+            if (w <= 0 || h <= 0) {
+                response = formatResponse("invalid size");
+            } else {
+                QMetaObject::invokeMethod(win_, [win = win_, w, h] {
+                    win->resize(w, h);
+                }, Qt::QueuedConnection);
+                response = formatResponse("success");
+            }
+        }
     } else if (cmd == "seek") {
         if (args.empty()) {
             response = formatResponse("missing position");

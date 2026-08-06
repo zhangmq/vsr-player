@@ -268,7 +268,8 @@ QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
 
     // ── render target sizing (window framebuffer size) ────────────────
     // resize 节流：尺寸连续 RT_STABLE_FRAMES 帧未变才重建。拖动中
-    // 每帧尺寸变化 → 只更新 pending（零重建）；停止后 ~3 帧重建一次。
+    // 每帧尺寸变化 → 只更新 pending（零重建）；停止后 ~10 帧重建一次
+    //（2026-08-06 由 30 缩短——快速 resize 时重建曾被节流吞掉）。
     // 重建会触发 mpv reconfig（VSR 分辨率重配 + vsr_reconfigure），
     // 若每帧重建 → resize 拖动全程卡顿。
     if (node->w > 0 && node->h > 0) {

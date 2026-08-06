@@ -7,6 +7,7 @@
 struct mpv_handle;
 class MpvController;
 class PlayerViewModel;
+class QQuickWindow;
 
 /// mpv-compatible JSON IPC server (Unix domain socket).
 ///
@@ -36,6 +37,7 @@ public:
 
     void setMpv(MpvController *mpv) { mpv_ = mpv; }
     void setViewModel(PlayerViewModel *vm) { vm_ = vm; }
+    void setWindow(QQuickWindow *win) { win_ = win; }   // resize 命令路由目标
     void setQuitCallback(std::function<void()> cb) { quit_cb_ = std::move(cb); }
 
 private:
@@ -67,5 +69,6 @@ private:
     std::atomic<bool> running_{false};
     MpvController *mpv_ = nullptr;
     PlayerViewModel *vm_ = nullptr;
+    QQuickWindow *win_ = nullptr;
     std::function<void()> quit_cb_;
 };
