@@ -33,7 +33,7 @@ Drawer {
         IconButton {
             id: clearBtn
             anchors { right: closeBtn.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
-            label: qsTr("Clear"); size: 15
+            label: qsTr("Clear"); size: 22
             tooltip: qsTr("Clear playlist")
             onClicked: viewModel.playlistClear()
         }
@@ -123,8 +123,10 @@ Drawer {
             Text {
                 id: removeBtn
                 z: 2
+                width: 24; height: 24
                 anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
                 text: "×"; color: "#c8c8c8"; font.pixelSize: 16
+                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 visible: plMouse.containsMouse
                 MouseArea {
                     anchors.fill: parent
