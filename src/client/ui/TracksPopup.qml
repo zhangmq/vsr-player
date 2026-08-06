@@ -8,7 +8,7 @@ import "components"
 ///（目录扫描，优先级：精确同名 > 语言后缀 > 其余）。modal 居中呈现。
 PopupBase {
     id: root
-    width: 420
+    width: 560
     // 内容为 Flickable（implicitHeight=0）——Popup 显式高度 =
     // TabBar + 间距(8) + 内容 + padding(32)
     height: tabBar.height + 8 + flick.height + 32
