@@ -2,17 +2,16 @@ import QtQuick
 import QtQuick.Controls
 import "components"
 
-/// 轨道选择 + 字幕控制（字幕/音频/视频三页签，自绘 tab——项目视觉
-/// 惯例，不用 TabBar 默认样式）。数据源：viewModel.trackList（track-list
-/// 属性观察器）+ viewModel.subtitleFiles（目录扫描，优先级：精确同名 >
-/// 语言后缀 > 其余）。modal 居中呈现（用户实测反馈：锚定式 popup 易
-/// 越界/靠边，2026-08-06）。
+/// 轨道选择 + 字幕控制（字幕/音频/视频三页签，标准 TabBar 组件——
+/// 用户实测反馈：自绘 tab 切换无内容切换感，2026-08-06）。数据源：
+/// viewModel.trackList（track-list 属性观察器）+ viewModel.subtitleFiles
+///（目录扫描，优先级：精确同名 > 语言后缀 > 其余）。modal 居中呈现。
 PopupBase {
     id: root
-    width: 300
+    width: 420
     // 内容为 Flickable（implicitHeight=0）——Popup 显式高度 =
-    // 页签(30) + 间距(8) + 内容 + padding(32)
-    height: 30 + 8 + flick.height + 32
+    // TabBar + 间距(8) + 内容 + padding(32)
+    height: tabBar.height + 8 + flick.height + 32
     modal: true
     // modal 不自动居中（Popup 默认 x/y=0 靠左）——显式居中（parent=overlay）
     x: parent ? (parent.width - width) / 2 : 0
@@ -74,32 +73,18 @@ PopupBase {
             ToolTip.visible: sfHover.containsMouse }
     }
 
-    // ── 页签（固定区，不随内容滚动）────────────────────────────
-    Row {
-        id: tabRow
+    // ── 页签（标准 TabBar；切换归零内容滚动位置）────────────────
+    TabBar {
+        id: tabBar
         anchors { left: parent.left; right: parent.right; top: parent.top }
-        spacing: 6
-        Repeater {
-            model: [
-                {label: qsTr("Subtitles"), idx: 0},
-                {label: qsTr("Audio"), idx: 1},
-                {label: qsTr("Video"), idx: 2}
-            ]
-            delegate: Rectangle {
-                width: 84; height: 30; radius: 4
-                color: tabHover.containsMouse ? "#33ffffff"
-                     : (root.currentTab === modelData.idx ? "#33ffcc00" : "transparent")
-                Text {
-                    anchors.centerIn: parent
-                    text: modelData.label
-                    color: root.currentTab === modelData.idx ? "#ffcc00" : "#e0e0e0"
-                    font.pixelSize: 13
-                }
-                MouseArea { id: tabHover; anchors.fill: parent; hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.currentTab = modelData.idx }
-            }
+        currentIndex: root.currentTab
+        onCurrentIndexChanged: {
+            root.currentTab = tabBar.currentIndex
+            flick.contentY = 0   // 切换归零——否则内容残留在旧页滚动位置
         }
+        TabButton { text: qsTr("Subtitles") }
+        TabButton { text: qsTr("Audio") }
+        TabButton { text: qsTr("Video") }
     }
 
     // ── 内容区（限高滚动：多字幕轨文件 36+ 轨不溢出，2026-08-06；
@@ -107,7 +92,7 @@ PopupBase {
     //     implicitWidth=0 → delegate width=0 不可见——"弹窗空白"根因）──
     Flickable {
         id: flick
-        anchors { left: parent.left; right: parent.right; top: tabRow.bottom; topMargin: 8 }
+        anchors { left: parent.left; right: parent.right; top: tabBar.bottom; topMargin: 8 }
         height: Math.min(contentCol.implicitHeight, (parent ? parent.height : 480) * 0.8)
         contentHeight: contentCol.implicitHeight
         clip: true
