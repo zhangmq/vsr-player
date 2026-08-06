@@ -69,6 +69,9 @@ int main(int argc, char *argv[]) {
     MLOG_INFO("shared VkDevice ready (qfi=%u)", vk.queueFamilyIndex());
 
     // ── Qt ──────────────────────────────────────────────────────────────
+    // 原生文件/文件夹对话框：XDG desktop portal（系统文件管理器）。
+    // 必须在 QGuiApplication 构造前设置；无 portal 环境时回退 Qt 自绘。
+    qputenv("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
     QGuiApplication app(argc, argv);
     setlocale(LC_NUMERIC, "C");
     QVulkanInstance qtVi; qtVi.setVkInstance(vk.instance()); qtVi.create();

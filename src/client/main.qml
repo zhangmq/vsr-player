@@ -17,7 +17,7 @@ Item {
 
     // ── UI 层（benchmark 模式隐藏）────────────────────────────────
     Item {
-        id: uiLayer
+        id: uiLayer   // 信号处理器作用域不含父对象——弹窗互斥须经 uiLayer 显式调用
         anchors.fill: parent
         visible: !benchmarkMode
         enabled: !benchmarkMode
@@ -57,7 +57,7 @@ Item {
             acceptedButtons: Qt.RightButton
             onClicked: {
                 if (mouse.button === Qt.RightButton) {
-                    closeOtherPopups(contextMenu)
+                    uiLayer.closeOtherPopups(contextMenu)
                     contextMenu.showAt(uiLayer, mouse.x, mouse.y)
                 }
             }
@@ -70,6 +70,7 @@ Item {
             videoInfo: viewModel.videoInfo
             overlaysVisible: viewModel.overlaysVisible
             onOpenRequested: function() { fileDialog.mode = 0; fileDialog.open() }
+            onOpenFolderRequested: folderDialog.open()
         }
 
         // ── Center Play Button ─────────────────────────────────────
@@ -120,7 +121,7 @@ Item {
             muted: viewModel.muted
             onVolAdjusted: function(v) { viewModel.setVolume(v) }
             onMuteToggled: viewModel.toggleMute()
-            onOpened: closeOtherPopups(volumePopup)
+            onOpened: uiLayer.closeOtherPopups(volumePopup)
         }
 
         QualityPopup {
@@ -132,7 +133,7 @@ Item {
             onScalPicked: function(v) { viewModel.setScale(v) }
             onQualityPicked: function(v) { viewModel.setQuality(v) }
             onDenoiseQualityPicked: function(v) { viewModel.setDenoiseQuality(v) }
-            onOpened: closeOtherPopups(qualityPopup)
+            onOpened: uiLayer.closeOtherPopups(qualityPopup)
         }
 
         SpeedPopup {
@@ -140,7 +141,7 @@ Item {
             anchorTarget: bottomBar.speedBtn
             speed: viewModel.speed
             onSpeedAdjusted: function(v) { viewModel.setSpeed(v) }
-            onOpened: closeOtherPopups(speedPopup)
+            onOpened: uiLayer.closeOtherPopups(speedPopup)
         }
 
         TracksPopup {
@@ -153,7 +154,7 @@ Item {
             onSubVisibilityToggled: viewModel.toggleSubtitles()
             onSubDelayAdjusted: function(d) { viewModel.adjustSubDelay(d) }
             onSubFileDialogRequested: function() { fileDialog.mode = 2; fileDialog.open() }
-            onOpened: closeOtherPopups(tracksPopup)
+            onOpened: uiLayer.closeOtherPopups(tracksPopup)
         }
 
         // ── Playlist Panel ─────────────────────────────────────────
@@ -165,6 +166,7 @@ Item {
         ContextMenu {
             id: contextMenu
             onOpenFilesRequested: function() { fileDialog.mode = 0; fileDialog.open() }
+            onOpenFolderRequested: folderDialog.open()
             onAppendFilesRequested: function() { fileDialog.mode = 1; fileDialog.open() }
             onLoadSubsRequested: function() { fileDialog.mode = 2; fileDialog.open() }
             onPlayPauseRequested: viewModel.togglePlayPause()
@@ -222,6 +224,8 @@ Item {
             case Qt.Key_O:
                 if (event.modifiers === Qt.ControlModifier) {
                     fileDialog.mode = 0; fileDialog.open(); event.accepted = true
+                } else if (event.modifiers === (Qt.ControlModifier | Qt.ShiftModifier)) {
+                    folderDialog.open(); event.accepted = true
                 }
                 break
             case Qt.Key_V:
@@ -232,6 +236,14 @@ Item {
                 viewModel.toggleFullscreen(); event.accepted = true; break
             }
         }
+    }
+
+    // ── 文件夹打开（FolderDialog：原生文件夹选择 → 扫描媒体文件入列表，
+    //     右键菜单 / Ctrl+Shift+O 触发）───────────────────────────
+    FolderDialog {
+        id: folderDialog
+        title: qsTr("Open folder")
+        onAccepted: viewModel.openFiles([folderDialog.selectedFolder.toString()], 3)
     }
 
     // ── 文件打开（FileDialog，TopBar 按钮 / Ctrl+O 触发）──────────

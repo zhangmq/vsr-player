@@ -9,6 +9,7 @@ PopupBase {
     width: 230
 
     signal openFilesRequested()
+    signal openFolderRequested()
     signal appendFilesRequested()
     signal loadSubsRequested()
     signal playPauseRequested()
@@ -32,6 +33,7 @@ PopupBase {
             // signal 声明 + 此数组 + main.qml handler）
             model: [
                 {icon: "󰉋", text: qsTr("Open file"),          hint: "Ctrl+O", sig: "openFilesRequested"},
+                {icon: "󰉖", text: qsTr("Open folder"), hint: "Ctrl+Shift+O", sig: "openFolderRequested"},
                 {icon: "󰐒", text: qsTr("Add to playlist"),    hint: "",       sig: "appendFilesRequested"},
                 {icon: "󰨖", text: qsTr("Load subtitles"),     hint: "",       sig: "loadSubsRequested"},
                 {sep: true},

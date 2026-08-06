@@ -115,6 +115,8 @@
 <context>
     <name>ContextMenu</name>
     <message><source>Open file</source><translation>打开文件</translation></message>
+    <message><source>Open folder</source><translation>打开文件夹</translation></message>
+    <message><source>Open folder (Ctrl+Shift+O)</source><translation>打开文件夹 (Ctrl+Shift+O)</translation></message>
     <message><source>Add to playlist</source><translation>追加到播放列表</translation></message>
     <message><source>Load subtitles</source><translation>加载字幕</translation></message>
     <message><source>Play/Pause</source><translation>播放/暂停</translation></message>

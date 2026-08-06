@@ -28,6 +28,7 @@
     <name>TopBar</name>
     <message><source>VSR Player</source><translation>VSR Player</translation></message>
     <message><source>Open file (Ctrl+O)</source><translation>Open file (Ctrl+O)</translation></message>
+    <message><source>Open folder (Ctrl+Shift+O)</source><translation>Open folder (Ctrl+Shift+O)</translation></message>
 </context>
 <context>
     <name>VolumePopup</name>
@@ -113,6 +114,7 @@
 <context>
     <name>ContextMenu</name>
     <message><source>Open file</source><translation>Open file</translation></message>
+    <message><source>Open folder</source><translation>Open folder</translation></message>
     <message><source>Add to playlist</source><translation>Add to playlist</translation></message>
     <message><source>Load subtitles</source><translation>Load subtitles</translation></message>
     <message><source>Play/Pause</source><translation>Play/Pause</translation></message>
