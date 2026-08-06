@@ -25,9 +25,20 @@
     <message><source>Tracks</source><translation>轨道</translation></message>
 </context>
 <context>
+    <name>OpenMenu</name>
+    <message><source>Open URL</source><translation>打开 URL</translation></message>
+</context>
+<context>
+    <name>UrlPopup</name>
+    <message><source>Open URL</source><translation>打开 URL</translation></message>
+    <message><source>https://…</source><translation>https://…</translation></message>
+    <message><source>Open</source><translation>打开</translation></message>
+    <message><source>Cancel</source><translation>取消</translation></message>
+</context>
+<context>
     <name>TopBar</name>
     <message><source>VSR Player</source><translation>VSR Player</translation></message>
-    <message><source>Open file (Ctrl+O)</source><translation>打开文件 (Ctrl+O)</translation></message>
+    <message><source>Open</source><translation>打开</translation></message>
 </context>
 <context>
     <name>VolumePopup</name>

@@ -17,7 +17,7 @@ PopupBase {
                 color: spm.containsMouse ? "#33ffffff" : "transparent"
                 Text { anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter }
                     text: qsTr("%1×").arg(Number(modelData))
-                    color: Math.abs(root.speed - modelData) < 0.01 ? "#ffcc00" : "#e0e0e0"; font.pixelSize: 14 }
+                    color: Math.abs(root.speed - modelData) < 0.01 ? "#ffcc00" : "#e0e0e0"; font.pixelSize: 13 }
                 MouseArea { id: spm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                     onClicked: root.speedAdjusted(modelData) }
             }

@@ -25,9 +25,20 @@
     <message><source>Tracks</source><translation>Tracks</translation></message>
 </context>
 <context>
+    <name>OpenMenu</name>
+    <message><source>Open URL</source><translation>Open URL</translation></message>
+</context>
+<context>
+    <name>UrlPopup</name>
+    <message><source>Open URL</source><translation>Open URL</translation></message>
+    <message><source>https://…</source><translation>https://…</translation></message>
+    <message><source>Open</source><translation>Open</translation></message>
+    <message><source>Cancel</source><translation>Cancel</translation></message>
+</context>
+<context>
     <name>TopBar</name>
     <message><source>VSR Player</source><translation>VSR Player</translation></message>
-    <message><source>Open file (Ctrl+O)</source><translation>Open file (Ctrl+O)</translation></message>
+    <message><source>Open</source><translation>Open</translation></message>
     <message><source>Open folder (Ctrl+Shift+O)</source><translation>Open folder (Ctrl+Shift+O)</translation></message>
 </context>
 <context>

@@ -10,6 +10,7 @@ PopupBase {
 
     signal openFilesRequested()
     signal openFolderRequested()
+    signal openUrlRequested()
     signal appendFilesRequested()
     signal loadSubsRequested()
     signal playPauseRequested()
@@ -34,6 +35,7 @@ PopupBase {
             model: [
                 {icon: "󰉋", text: qsTr("Open file"),          hint: "Ctrl+O", sig: "openFilesRequested"},
                 {icon: "󰉖", text: qsTr("Open folder"), hint: "Ctrl+Shift+O", sig: "openFolderRequested"},
+                {icon: "󰌷", text: qsTr("Open URL"), hint: "Ctrl+L", sig: "openUrlRequested"},
                 {icon: "󰐒", text: qsTr("Add to playlist"),    hint: "",       sig: "appendFilesRequested"},
                 {icon: "󰨖", text: qsTr("Load subtitles"),     hint: "",       sig: "loadSubsRequested"},
                 {sep: true},
@@ -44,7 +46,9 @@ PopupBase {
                 {icon: "󰐑", text: qsTr("Playlist"),           hint: "P",      sig: "playlistRequested"}
             ]
             delegate: Item {
-                property bool isSep: modelData.sep
+                // modelData 字段缺失时为 undefined——显式 bool/默认值
+                //（undefined 赋 bool/QString 报 "Unable to assign"）
+                property bool isSep: modelData.sep === true
                 width: parent.width
                 height: isSep ? 1 : 30
                 Rectangle {
@@ -61,12 +65,12 @@ PopupBase {
                     anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
                     spacing: 8
                     visible: !isSep
-                    Text { font.family: iconFont; font.pixelSize: 16; text: modelData.icon
+                    Text { font.family: iconFont; font.pixelSize: 16; text: modelData.icon || ""
                         color: "#e0e0e0"; renderType: Text.NativeRendering }
-                    Text { text: modelData.text; color: "#e0e0e0"; font.pixelSize: 13 }
+                    Text { text: modelData.text || ""; color: "#e0e0e0"; font.pixelSize: 13 }
                 }
                 Text { anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
-                    text: modelData.hint; color: "#808080"; font.pixelSize: 11; visible: !isSep && modelData.hint !== "" }
+                    text: modelData.hint || ""; color: "#808080"; font.pixelSize: 13; visible: !isSep && modelData.hint !== "" }
                 MouseArea { id: miHover; anchors.fill: parent; hoverEnabled: true
                     visible: !isSep; cursorShape: Qt.PointingHandCursor
                     onClicked: { root.close(); root[modelData.sig]() } }

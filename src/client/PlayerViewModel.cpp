@@ -841,6 +841,16 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
             mpv_->commandAsync({"sub-add", p.toUtf8().constData(), "select", nullptr});
         return;
     }
+    if (mode == 4) {   // 打开 URL：网络流播放（toLocalPath 原样透传），
+        // 跳过混拖分类（URL 以 .srt 结尾会被误判为字幕 sub-add）
+        bool first = true;
+        for (const QString &p : paths) {
+            if (first) mpv_->commandV({"loadfile", p.toUtf8().constData(), nullptr});
+            else       mpv_->commandV({"loadfile", p.toUtf8().constData(), "append", nullptr});
+            first = false;
+        }
+        return;
+    }
     if (mode == 3) {   // 打开文件夹：扫描其中媒体文件 → replace + queue（同 mode 0）
         QStringList media;
         for (const QString &p : paths) {

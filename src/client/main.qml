@@ -46,7 +46,8 @@ Item {
                 if (_popups[i] !== exclude) _popups[i].close()
         }
         Component.onCompleted: {
-            _popups = [volumePopup, qualityPopup, speedPopup, contextMenu, tracksPopup]
+            _popups = [volumePopup, qualityPopup, speedPopup, contextMenu, tracksPopup,
+                       openMenu, urlPopup]
             // 启动即按当前状态应用 auto-hide（onShowUiChanged 只在翻转时触发）
             viewModel.overlaysVisible = showUi
         }
@@ -69,8 +70,7 @@ Item {
             anchors { left: parent.left; right: parent.right; top: parent.top }
             videoInfo: viewModel.videoInfo
             overlaysVisible: viewModel.overlaysVisible
-            onOpenRequested: function() { fileDialog.mode = 0; fileDialog.open() }
-            onOpenFolderRequested: folderDialog.open()
+            onOpenMenuRequested: openMenu.open()
         }
 
         // ── Center Play Button ─────────────────────────────────────
@@ -111,6 +111,23 @@ Item {
             onFullscreenClicked: viewModel.toggleFullscreen()
             onPlaylistClicked: root.togglePlaylist()
             onLoopClicked: viewModel.toggleLoop()
+        }
+
+        // ── 右上角打开菜单（文件/文件夹/URL 三入口）──────────────────
+        OpenMenu {
+            id: openMenu
+            anchorTarget: topBar.openBtn
+            onFileRequested: function() { fileDialog.mode = 0; fileDialog.open() }
+            onFolderRequested: folderDialog.open()
+            onUrlRequested: urlPopup.open()
+            onOpened: uiLayer.closeOtherPopups(openMenu)
+        }
+
+        // ── URL 输入弹窗（Ctrl+L 触发）──────────────────────────────
+        UrlPopup {
+            id: urlPopup
+            onUrlEntered: function(url) { viewModel.openFiles([url], 4) }
+            onOpened: uiLayer.closeOtherPopups(urlPopup)
         }
 
         // ── Popups（PopupBase.anchorTarget 定位）────────────────────
@@ -167,6 +184,7 @@ Item {
             id: contextMenu
             onOpenFilesRequested: function() { fileDialog.mode = 0; fileDialog.open() }
             onOpenFolderRequested: folderDialog.open()
+            onOpenUrlRequested: urlPopup.open()
             onAppendFilesRequested: function() { fileDialog.mode = 1; fileDialog.open() }
             onLoadSubsRequested: function() { fileDialog.mode = 2; fileDialog.open() }
             onPlayPauseRequested: viewModel.togglePlayPause()
@@ -226,6 +244,11 @@ Item {
                     fileDialog.mode = 0; fileDialog.open(); event.accepted = true
                 } else if (event.modifiers === (Qt.ControlModifier | Qt.ShiftModifier)) {
                     folderDialog.open(); event.accepted = true
+                }
+                break
+            case Qt.Key_L:
+                if (event.modifiers === Qt.ControlModifier) {
+                    urlPopup.open(); event.accepted = true
                 }
                 break
             case Qt.Key_V:
