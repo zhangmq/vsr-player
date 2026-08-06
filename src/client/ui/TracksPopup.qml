@@ -80,10 +80,14 @@ PopupBase {
     }
 
     // ── 页签（固定；切换归零列表滚动位置）──────────────────────
+    // 注意：TabBar.currentIndex 不可绑定到 root.currentTab——带绑定的
+    // 属性拒绝 TabButton 点击的外部赋值（绑定回弹），点击失效、页签
+    // 恒显示字幕页（"三个页签内容一样"根因，2026-08-06）。TabBar 自
+    // 管理 currentIndex，onCurrentIndexChanged 单向写入 root.currentTab。
     TabBar {
         id: tabBar
         anchors { left: parent.left; right: parent.right; top: parent.top }
-        currentIndex: root.currentTab
+        currentIndex: 0
         onCurrentIndexChanged: {
             root.currentTab = tabBar.currentIndex
             flick.contentY = 0   // 切换归零——否则列表残留在旧页滚动位置
