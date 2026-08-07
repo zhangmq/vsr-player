@@ -107,6 +107,7 @@ const struct mp_user_filter_entry *vf_list[] = {
     &vf_gpu,
 #endif
     &vf_vsr,
+    &vf_rife,
 };
 
 static bool get_vf_desc(struct m_obj_desc *dst, int index)

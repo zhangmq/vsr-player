@@ -368,6 +368,26 @@
         <source>Force denoise (active when scale=1)</source>
         <translation>强制降噪（scale=1时生效）</translation>
     </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="101"/>
+        <source>Frame interpolation</source>
+        <translation>帧插值</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="104"/>
+        <source>30 fps</source>
+        <translation>30 fps</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="105"/>
+        <source>40 fps</source>
+        <translation>40 fps</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="106"/>
+        <source>60 fps</source>
+        <translation>60 fps</translation>
+    </message>
 </context>
 <context>
     <name>SpeedPopup</name>

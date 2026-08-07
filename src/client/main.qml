@@ -149,9 +149,11 @@ Item {
             scal: viewModel.scale
             quality: viewModel.quality
             denoiseQuality: viewModel.denoiseQuality
+            frucFps: viewModel.frucFps
             onScalPicked: function(v) { viewModel.setScale(v) }
             onQualityPicked: function(v) { viewModel.setQuality(v) }
             onDenoiseQualityPicked: function(v) { viewModel.setDenoiseQuality(v) }
+            onFrucFpsPicked: function(v) { viewModel.setFrucFps(v) }
             onOpened: uiLayer.closeOtherPopups(qualityPopup)
         }
 

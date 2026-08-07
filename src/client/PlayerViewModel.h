@@ -44,6 +44,8 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(bool vsrActive READ vsrActive NOTIFY vsrActiveChanged)
     Q_PROPERTY(double scale READ scale NOTIFY scaleChanged)
     Q_PROPERTY(int denoiseQuality READ denoiseQuality NOTIFY denoiseQualityChanged)
+    // Frame interpolation (RIFE): -1=off | 30/40/60 target fps (UI presets)
+    Q_PROPERTY(int frucFps READ frucFps NOTIFY frucFpsChanged)
     // Speed
     Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
     // Aspect ratio（mpv video-aspect-override：-1=auto, no=不覆盖, 或 16:9 等）
@@ -103,6 +105,10 @@ public:
     /// ("off"/"auto"/"2"/"3"/"4", "low"/"medium"/"high"/"ultra").
     void initVsr(const std::string &scale, const std::string &quality,
                  const std::string &denoise);
+    /// Initialize frame interpolation from CLI string. benchmark=true: value is
+    /// a hard multiplier ("2"/"3"/"4", 0=off) — no passthrough, no persistence.
+    /// Normal mode: "off" | "30" | "40" | "60" (target fps, persists fallback).
+    void initFruc(const std::string &fruc, bool benchmark);
 
     void setGpuName(const QString &name);
     /// 持久化：启动时读（须在 initVsr 前调用——scale/quality/denoise
@@ -136,6 +142,7 @@ public:
     bool vsrActive() const      { return scale_.load() != -1 || denoise_.load() != -1; }
     double scale() const        { return scale_.load(); }
     int denoiseQuality() const  { return denoise_.load(); }
+    int frucFps() const         { return frucFps_.load(); }
     double speed() const        { return speed_.load(); }
     QString aspect() const      { return aspect_; }
     bool hwDecoding() const     { return hwDecoding_.load(); }
@@ -210,6 +217,7 @@ public slots:
     void setScale(double s);
     void setQuality(int q);
     void setDenoiseQuality(int d);
+    void setFrucFps(int v);   // -1 | 30 | 40 | 60（乐观更新 + pushVf + saveSettings）
     void toggleLoop();
     void setLoopMode(int m);   // 0=none, 1=file, 2=playlist（applyPlaybackSettings/toggleLoop 共用）
     void loadFile(const QString &path);
@@ -247,6 +255,7 @@ signals:
     void vsrActiveChanged();
     void scaleChanged();
     void denoiseQualityChanged();
+    void frucFpsChanged();
     void speedChanged();
     void aspectChanged();
     void hwDecodingChanged();
@@ -361,6 +370,8 @@ private:
     std::atomic<int> quality_{3};
     std::atomic<int> denoise_{-1};
     std::atomic<double> scale_{0.0};
+    std::atomic<int> frucFps_{-1};      // -1 off | 30/40/60 target (persisted)
+    std::atomic<int> frucScale_{0};     // benchmark multiplier 2/3/4 (CLI only)
     int loopMode_ = 0;           // 0 none, 1 loop-file, 2 loop-playlist
     PlaylistModel playlistModel_;   // 播放列表镜像（观察器 setSnapshot 增量喂入）
     QString gpuName_;
@@ -390,4 +401,5 @@ private:
     double persistScale_ = 0.0;   // 持久化 VSR 参数（initVsr 用，CLI 未显式时生效）
     int persistQuality_ = 3;
     int persistDenoise_ = -1;
+    int persistFruc_ = -1;        // 持久化插帧目标 fps（initFruc 用）
 };

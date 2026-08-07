@@ -107,6 +107,7 @@ int main(int argc, char *argv[]) {
     if (!opts.benchmark)
         viewModel.loadSettings();
     viewModel.initVsr(opts.scale, opts.quality, opts.denoise);
+    viewModel.initFruc(opts.fruc, opts.benchmark);
     std::string vf = viewModel.vfOption();
 
     // ── mpv ─────────────────────────────────────────────────────────────

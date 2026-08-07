@@ -60,6 +60,16 @@ else
     exit 1
 fi
 
+# ── 3.5 RIFE 运行时（vf_rife.c 搜索路径含 ~/.local/lib/vsr-player/）──
+if ls "$PROJECT_ROOT/third_party/rife/"*.engine >/dev/null 2>&1; then
+    mkdir -p "$LIB_DIR"
+    cp "$PROJECT_ROOT/third_party/rife/"*.engine "$LIB_DIR/"
+    cp "$PROJECT_ROOT/third_party/rife/"*.onnx "$LIB_DIR/" 2>/dev/null || true
+    echo "  ✅ RIFE engine → $LIB_DIR/"
+else
+    echo "  ⚠ rife512.engine missing (run scripts/build_rife_engine.sh) — rife passthrough"
+fi
+
 # ── 4. 图标字体（main.cpp fallback：<appdir>/../share/vsr-player/fonts/）─
 if [ -f "$PROJECT_ROOT/third_party/material-icons/materialdesignicons-webfont.ttf" ]; then
     mkdir -p "$FONT_DIR"

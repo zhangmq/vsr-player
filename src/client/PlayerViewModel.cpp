@@ -474,6 +474,20 @@ void PlayerViewModel::initVsr(const std::string &scale,
     denoise_ = d;
 }
 
+void PlayerViewModel::initFruc(const std::string &fruc, bool benchmark) {
+    if (benchmark) {
+        // 倍率语义（能力评估）：2/3/4 硬跑；off/空 → 0。不读持久化。
+        int n = (fruc == "2" || fruc == "3" || fruc == "4") ? atoi(fruc.c_str()) : 0;
+        frucScale_ = n;
+        return;
+    }
+    // 目标帧率语义：空 = CLI 未指定 → 持久化；off → -1；非法 → 持久化。
+    if (fruc.empty())              { frucFps_ = persistFruc_; return; }
+    if (fruc == "off")             { frucFps_ = -1; return; }
+    int v = atoi(fruc.c_str());
+    frucFps_ = (v == 30 || v == 40 || v == 60) ? v : persistFruc_;
+}
+
 bool PlayerViewModel::parseScale(const std::string &s, double *out) {
     if (s == "off")      { *out = -1.0; return true; }
     if (s == "auto" || s.empty()) { *out = 0.0; return true; }
@@ -518,6 +532,9 @@ void PlayerViewModel::loadSettings() {
         persistScale_ = 0.0;   // 非法值（手改配置）→ auto
     persistQuality_ = settings_.value("quality", 3).toInt();
     persistDenoise_ = settings_.value("denoiseQuality", -1).toInt();
+    persistFruc_ = settings_.value("frucFps", -1).toInt();
+    if (persistFruc_ != -1 && persistFruc_ != 30 && persistFruc_ != 40 && persistFruc_ != 60)
+        persistFruc_ = -1;   // 非法值（手改配置）→ off
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -731,6 +748,14 @@ void PlayerViewModel::setDenoiseQuality(int d) {
     pushVf("denoise", denoiseStr());
     bool nowActive = vsrActive();
     if (wasActive != nowActive) emit vsrActiveChanged();
+}
+
+void PlayerViewModel::setFrucFps(int v) {
+    if (!mpv_) return;
+    if (v != -1 && v != 30 && v != 40 && v != 60) return;
+    if (frucFps_ != v) { frucFps_ = v; emit frucFpsChanged(); }
+    saveSettings("frucFps", v);
+    pushVf("fps", v == -1 ? "off" : std::to_string(v));
 }
 
 // ── Speed / window / OSD ─────────────────────────────────────────────
@@ -1209,6 +1234,19 @@ void PlayerViewModel::screenshot() {
 // ── vf string ────────────────────────────────────────────────────────
 
 std::string PlayerViewModel::vfOption() const {
+    // 链序：decode → rife（插帧，源分辨率）→ vsr（超分）→ VO。
+    // rife：fps（目标帧率，off=-1 时透传）+ scale（benchmark 倍率，优先）
+    //       + adaptive（正常模式成本降级；benchmark 关）。
+    std::string vf;
+    int fs = frucScale_.load();
+    int ff = frucFps_.load();
+    if (fs > 0) {
+        vf += "@rife:rife:fps=off:scale=" + std::to_string(fs) + ":adaptive=no,";
+    } else if (ff > 0) {
+        vf += "@rife:rife:fps=" + std::to_string(ff) + ":scale=off:adaptive=yes,";
+    } else {
+        vf += "@rife:rife:fps=off:scale=off:adaptive=yes,";
+    }
     // scale: OPT_FLOAT 仅 strtod——"auto"/"off"/"4/3" 必须换算为数字
     double s = scale_.load();
     std::string scaleOpt;
@@ -1216,7 +1254,7 @@ std::string PlayerViewModel::vfOption() const {
     else if (s == 0)     scaleOpt = "0";
     else if (fabs(s - 4.0 / 3.0) < 0.01) scaleOpt = "1.3333";
     else { char buf[16]; snprintf(buf, sizeof buf, "%g", s); scaleOpt = buf; }
-    std::string vf = "@vsr:vsr:scale=" + scaleOpt;
+    vf += "@vsr:vsr:scale=" + scaleOpt;
     vf += ":denoise=" + denoiseString();
     vf += ":quality=" + qualityString();
     return vf;
