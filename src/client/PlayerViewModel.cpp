@@ -726,7 +726,7 @@ void PlayerViewModel::setScale(double s) {
     bool wasActive = vsrActive();
     if (fabs(scale_ - s) > 0.001) { scale_ = s; emit scaleChanged(); }
     saveSettings("scale", s);
-    pushVf("scale", scaleStr());  // 热更新，不重建 filter 链
+    pushVf("vsr", "scale", scaleStr());  // 热更新，不重建 filter 链
     bool nowActive = vsrActive();
     if (wasActive != nowActive) emit vsrActiveChanged();
 }
@@ -736,7 +736,7 @@ void PlayerViewModel::setQuality(int q) {
     if (q < 1 || q > 4) return;
     if (quality_ != q) { quality_ = q; emit qualityChanged(); }
     saveSettings("quality", q);
-    pushVf("quality", qualityStr());
+    pushVf("vsr", "quality", qualityStr());
 }
 
 void PlayerViewModel::setDenoiseQuality(int d) {
@@ -745,7 +745,7 @@ void PlayerViewModel::setDenoiseQuality(int d) {
     bool wasActive = vsrActive();
     if (denoise_ != d) { denoise_ = d; emit denoiseQualityChanged(); }
     saveSettings("denoiseQuality", d);
-    pushVf("denoise", denoiseStr());
+    pushVf("vsr", "denoise", denoiseStr());
     bool nowActive = vsrActive();
     if (wasActive != nowActive) emit vsrActiveChanged();
 }
@@ -755,7 +755,12 @@ void PlayerViewModel::setFrucFps(int v) {
     if (v != -1 && v != 30 && v != 40 && v != 60) return;
     if (frucFps_ != v) { frucFps_ = v; emit frucFpsChanged(); }
     saveSettings("frucFps", v);
-    pushVf("fps", v == -1 ? "off" : std::to_string(v));
+    pushVf("rife", "fps", v == -1 ? "off" : std::to_string(v));
+}
+
+void PlayerViewModel::setFrucStatus(const std::string &s) {
+    std::lock_guard<std::mutex> lk(frucStatusMtx_);
+    frucStatus_ = s;
 }
 
 // ── Speed / window / OSD ─────────────────────────────────────────────
@@ -1294,12 +1299,13 @@ std::string PlayerViewModel::denoiseStr() const {
     }
 }
 
-void PlayerViewModel::pushVf(const char *param, const std::string &value) {
+void PlayerViewModel::pushVf(const char *filter, const char *param,
+                             const std::string &value) {
     if (!mpv_) return;
-    // label 用 "vsr"（无 @）——mpv 的 filter label 匹配不含 @ 前缀
-    //（实测 "@vsr" 不匹配；RpcServer 的 vf-command 同用法）。
-    // 命令在调用时同步复制，无需保活。
-    mpv_->commandAsync({"vf-command", "vsr", param, value.c_str(), nullptr});
+    // label 无 @ 前缀——mpv 的 filter label 匹配不含 @（实测 "@vsr" 不
+    // 匹配；RpcServer 的 vf-command 同用法）。命令在调用时同步复制，
+    // 无需保活。
+    mpv_->commandAsync({"vf-command", filter, param, value.c_str(), nullptr});
 }
 
 // ── 主线程状态更新（值由事件线程传入，不调 mpv API）─────────────────
@@ -1462,6 +1468,14 @@ std::string PlayerViewModel::osdTextString() {
         if (denoise != -1)
             parts << tr("Denoise %1").arg(tr(denoiseName(denoise)));
         lines << tag("VSR") + (parts.isEmpty() ? tr("off") : parts.join("  "));
+
+    // FRUC：插帧实时状态（rife filter 的 MSGL_STATUS 状态行，事件线程
+    // 从 "fruc-status:" 日志行提取；fps=off 时无意义不显示）
+    if (frucFps_.load() != -1) {
+        std::lock_guard<std::mutex> lk(frucStatusMtx_);
+        if (!frucStatus_.empty())
+            lines << tag("FRUC") + QString::fromStdString(frucStatus_);
+    }
     }
 
     // 硬解显示实际格式（hw-pixelformat，如 p010/nv12）——pixelformat

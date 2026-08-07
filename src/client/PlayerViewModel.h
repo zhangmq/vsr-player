@@ -10,6 +10,7 @@
 #include <QVariantList>
 
 #include <atomic>
+#include <mutex>
 #include <cstdint>
 #include <string>
 
@@ -218,6 +219,8 @@ public slots:
     void setQuality(int q);
     void setDenoiseQuality(int d);
     void setFrucFps(int v);   // -1 | 30 | 40 | 60（乐观更新 + pushVf + saveSettings）
+    // rife 状态行（事件线程从 mpv status 日志提取，"fruc-status:" 前缀）
+    void setFrucStatus(const std::string &s);
     void toggleLoop();
     void setLoopMode(int m);   // 0=none, 1=file, 2=playlist（applyPlaybackSettings/toggleLoop 共用）
     void loadFile(const QString &path);
@@ -315,7 +318,7 @@ private:
     /// 不重建 filter 链——vf_vsr 的 vsr_command 更新私有选项，f_process
     /// 下一帧自动重配（scale→effective_scale 重算 / quality→ensure_vsr
     /// 检测 / denoise→passthrough 判定）。参数调用时同步复制，无需保活。
-    void pushVf(const char *param, const std::string &value);
+    void pushVf(const char *filter, const char *param, const std::string &value);
     std::string scaleStr() const;
     std::string qualityStr() const;
     std::string denoiseStr() const;
@@ -371,6 +374,8 @@ private:
     std::atomic<int> denoise_{-1};
     std::atomic<double> scale_{0.0};
     std::atomic<int> frucFps_{-1};      // -1 off | 30/40/60 target (persisted)
+    std::mutex frucStatusMtx_;
+    std::string frucStatus_;            // 最新 rife 状态行（OSD 显示）
     std::atomic<int> frucScale_{0};     // benchmark multiplier 2/3/4 (CLI only)
     int loopMode_ = 0;           // 0 none, 1 loop-file, 2 loop-playlist
     PlaylistModel playlistModel_;   // 播放列表镜像（观察器 setSnapshot 增量喂入）

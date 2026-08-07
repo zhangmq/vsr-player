@@ -221,6 +221,18 @@ int main(int argc, char *argv[]) {
 
         MLOG_INFO("Video wired");
 
+        // ── rife 状态行 → OSD ────────────────────────────────────────
+        // rife filter 每 ~0.5s 输出 MSGL_STATUS 状态行（"fruc-status:"
+        // 前缀），事件线程提取后存入 viewModel，osdTextString 拼入 OSD。
+        mpv.setLogMessageCallback([&viewModel](const char *text) {
+            if (strncmp(text, "fruc-status:", 12) == 0) {
+                viewModel.setFrucStatus(text + 12);
+                // 调试可见性：rife 状态行同步转发 stderr（其余 status 级
+                // 消息（mpv 进度行）默认过滤）。
+                fprintf(stderr, "[mpv status] %s", text);
+            }
+        });
+
         // ── 事件线程 ─────────────────────────────────────────────────
         // benchmark：END_FILE（EOF/error）→ 命令行 summary → 退出。
         // 非 benchmark：END_FILE 不处理——mpv 播放列表自动续播。

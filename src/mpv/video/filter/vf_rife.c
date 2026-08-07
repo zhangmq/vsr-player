@@ -204,6 +204,7 @@ struct priv {
     int queue_len, queue_pos;
 
     enum rife_mode mode;
+    char  pt_reason[32];      // passthrough reason (for the status line)
 
     // adaptive measurement
     bool    adapt_warmup_done;
@@ -212,6 +213,36 @@ struct priv {
 
     int frame_count;
 };
+
+// ── Status line (MSGL_STATUS, ~2Hz) ──────────────────────────────────
+// Consumed by the client: the event thread picks up "fruc-status:" lines
+// and shows them in the OSD (debugging the interpolation live).
+
+#define RIFE_STATUS_EVERY 30   // frames between status lines (~0.5s @60fps)
+
+static double adapt_avg(struct priv *p);   // defined below (adaptive section)
+
+static void rife_status(struct mp_filter *f, struct priv *p)
+{
+    char buf[256];
+    int n = 0;
+    if (p->mode == RIFE_ACTIVE) {
+        n = snprintf(buf, sizeof(buf),
+                     "fruc-status: mode=active src=%.2f out=%.2f tiles=%dx%d",
+                     p->src_fps, p->out_fps,
+                     p->eng.tiles_x, p->eng.tiles_y);
+        if (p->opts->adaptive && p->adapt_warmup_done)
+            n += snprintf(buf + n, sizeof(buf) - n,
+                          " cost=%.1fms budget=%.1fms",
+                          adapt_avg(p), p->frame_budget_ms);
+    } else {
+        n = snprintf(buf, sizeof(buf),
+                     "fruc-status: mode=passthrough reason=%s src=%.2f out=%.2f",
+                     p->pt_reason, p->src_fps, p->out_fps);
+    }
+    snprintf(buf + n, sizeof(buf) - n, " frames=%d", p->frame_count);
+    mp_msg(f->log, MSGL_STATUS, "%s\n", buf);
+}
 
 // ── CUDA context (mirror vf_vsr.c) ────────────────────────────────────
 // Borrows the hwdec's CUDA context from the frame hwctx (single-context
@@ -424,15 +455,26 @@ static bool decide_mode(struct mp_filter *f, struct priv *p,
     bool benchmark = p->opts->scale > 0;
 
     if (!benchmark) {
-        if (p->opts->fps == -1) { p->mode = RIFE_PASSTHROUGH; return false; }
-        if (cur->w > 1920 || cur->h > 1080) { p->mode = RIFE_PASSTHROUGH; return false; }
+        if (p->opts->fps == -1) {
+            p->mode = RIFE_PASSTHROUGH;
+            snprintf(p->pt_reason, sizeof(p->pt_reason), "off");
+            return false;
+        }
+        if (cur->w > 1920 || cur->h > 1080) {
+            p->mode = RIFE_PASSTHROUGH;
+            snprintf(p->pt_reason, sizeof(p->pt_reason), "resolution");
+            return false;
+        }
         double src_fps = p->src_fps;
         if (p->opts->fps > 0 && src_fps > 0 && src_fps >= p->opts->fps) {
-            p->mode = RIFE_PASSTHROUGH; return false;
+            p->mode = RIFE_PASSTHROUGH;
+            snprintf(p->pt_reason, sizeof(p->pt_reason), "src-fps");
+            return false;
         }
         if (p->opts->adaptive && p->adapt_warmup_done &&
             adapt_avg(p) > p->frame_budget_ms * 1.05) {
             p->mode = RIFE_PASSTHROUGH;
+            snprintf(p->pt_reason, sizeof(p->pt_reason), "cost");
             if (!p->degrade_warned) {
                 MP_WARN(f, "rife: adaptive passthrough — avg %.1fms > budget %.1fms\n",
                         adapt_avg(p), p->frame_budget_ms);
@@ -612,6 +654,10 @@ static void f_process(struct mp_filter *f)
             MP_WARN(f, "rife: software frames — passthrough\n");
             p->sw_warned = true;
         }
+        p->mode = RIFE_PASSTHROUGH;
+        snprintf(p->pt_reason, sizeof(p->pt_reason), "sw");
+        if (p->frame_count % RIFE_STATUS_EVERY == 0)
+            rife_status(f, p);
         mp_pin_in_write(f->ppins[1], frame);
         return;
     }
@@ -639,6 +685,8 @@ static void f_process(struct mp_filter *f)
 
     // mode decision (re-evaluated every frame — hot updates take effect here)
     if (!decide_mode(f, p, cur)) {
+        if (p->frame_count % RIFE_STATUS_EVERY == 0)
+            rife_status(f, p);
         mp_pin_in_write(f->ppins[1], frame);   // passthrough: forward untouched
         return;
     }
@@ -668,6 +716,9 @@ static void f_process(struct mp_filter *f)
                 p->degrade_warned = true;
             }
             p->mode = RIFE_PASSTHROUGH;
+            snprintf(p->pt_reason, sizeof(p->pt_reason), "engine");
+            if (p->frame_count % RIFE_STATUS_EVERY == 0)
+                rife_status(f, p);
             mp_pin_in_write(f->ppins[1], frame);
             return;
         }
@@ -692,6 +743,7 @@ static void f_process(struct mp_filter *f)
     if (!p->have_prev) {
         if (cur->pts == MP_NOPTS_VALUE) {
             p->mode = RIFE_PASSTHROUGH;
+            snprintf(p->pt_reason, sizeof(p->pt_reason), "no-pts");
             if (!p->degrade_warned) {
                 MP_WARN(f, "rife: no PTS — passthrough\n");
                 p->degrade_warned = true;
@@ -759,6 +811,8 @@ static void f_process(struct mp_filter *f)
             p->queue_len = p->queue_pos = 0;
         mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out));
     }
+    if (p->frame_count % RIFE_STATUS_EVERY == 0)
+        rife_status(f, p);
 }
 
 // ── reset / destroy / command ─────────────────────────────────────────
