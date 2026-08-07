@@ -890,6 +890,20 @@ static bool rife_command(struct mp_filter *f, struct mp_filter_command *cmd)
             MP_INFO(f, "rife: fps %d -> %d\n", p->opts->fps, v);
             p->opts->fps = v;
             p->degrade_warned = false;
+            // out_fps 只在尺寸变化时重算——fps 热切换后必须同步重算，
+            // 否则沿用旧值（首帧 off → out_fps=-1 → 切 active 后 grid
+            // 计算产生 0 输出 → 画面卡住）。
+            if (p->src_fps > 0) {
+                if (p->opts->scale > 0)
+                    p->out_fps = p->opts->scale * p->src_fps;
+                else if (p->opts->fps == 0)
+                    p->out_fps = 2 * p->src_fps;
+                else
+                    p->out_fps = p->opts->fps;
+            }
+            // 连续性破坏：重置调度状态（prev/t0/queue，f_reset 不销毁
+            // 引擎——跨 seek/切换保留），下一帧按新网格重新起算。
+            f_reset(f);
         }
         return true;
     }
