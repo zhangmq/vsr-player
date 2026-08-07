@@ -820,7 +820,12 @@ static void f_process(struct mp_filter *f)
 static void f_reset(struct mp_filter *f)
 {
     struct priv *p = f->priv;
-    for (int i = 0; i < p->queue_len; i++)
+    // Free only frames not yet handed to the out pin: queue[0..queue_pos)
+    // were emitted (ownership moved to the pin — freeing them here would
+    // double-free once the downstream releases them; observed canary
+    // assertion on fps hot-switch mid-drain). Queue slots before queue_pos
+    // are stale by design.
+    for (int i = p->queue_pos; i < p->queue_len; i++)
         talloc_free(p->queue[i]);
     p->queue_len = p->queue_pos = 0;
     mp_image_unrefp(&p->prev);
@@ -841,7 +846,8 @@ static void f_reset(struct mp_filter *f)
 static void f_destroy(struct mp_filter *f)
 {
     struct priv *p = f->priv;
-    for (int i = 0; i < p->queue_len; i++)
+    // same ownership rule as f_reset: queue[0..queue_pos) belong to the pin
+    for (int i = p->queue_pos; i < p->queue_len; i++)
         talloc_free(p->queue[i]);
     mp_image_unrefp(&p->prev);
     bool ctx_pushed = false;
