@@ -19,9 +19,10 @@ env = dict(os.environ, LD_LIBRARY_PATH=C12)
 src = subprocess.Popen(
     ["ffmpeg", "-v", "error", "-i", V, "-frames:v", str(N),
      "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+errlog = open(f"{OUT}.fruc_err.log", "wb")
 fruc = subprocess.Popen([BIN, str(W), str(H)],
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE, env=env)
+                        stderr=errlog, env=env)
 enc = subprocess.Popen(
     ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
      "-s", f"{W}x{H}", "-r", "60", "-i", "-",
@@ -32,12 +33,23 @@ src_q = queue.Queue(maxsize=32)     # >批大小16，防死锁
 mid_q = queue.Queue(maxsize=32)     # >批大小16，防死锁
 t0 = time.time()
 
+def read_exact(fp, n):
+    """凑满 n 字节再返回；EOF 返回 None。大帧 >> 64KB pipe 时 read(n)
+    可能短读，直接处理会把帧边界破坏（此前卡死/输出错乱隐患）。"""
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = fp.read(n - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return bytes(buf)
+
 def feeder():
     buf4 = np.zeros((H, W, 4), np.uint8)
     n = 0
     while True:
-        b = src.stdout.read(FR)
-        if not b or len(b) != FR:
+        b = read_exact(src.stdout, FR)
+        if b is None:
             break
         f3 = np.frombuffer(b, np.uint8).reshape(H, W, 3)
         buf4[..., 0] = f3[..., 0]; buf4[..., 1] = f3[..., 1]
@@ -52,8 +64,8 @@ def feeder():
 
 def mid_reader():
     while True:
-        mid = fruc.stdout.read(FR)
-        if not mid or len(mid) != FR:
+        mid = read_exact(fruc.stdout, FR)
+        if mid is None:
             mid_q.put(None)
             break
         mid_q.put(mid)
@@ -69,7 +81,13 @@ def collector():
             print("mid timeout", flush=True); break
         if mid is None:
             break
-        f = src_q.get()
+        try:
+            f = src_q.get(timeout=60)
+        except queue.Empty:
+            # fruc 输出 N 个 mid（与源帧同数），交错 N-1 对后源帧
+            # 用尽 = 正常收尾（mid 流比源多 1 个），非错误。
+            print(f"[{time.time()-t0:.0f}s] src exhausted after {n} pairs", flush=True)
+            break
         enc.stdin.write(mid)
         enc.stdin.write(f)
         n += 1
@@ -88,9 +106,8 @@ try:
     fruc.wait(timeout=120)
 except subprocess.TimeoutExpired:
     print("FRUC HUNG - killing"); fruc.kill()
-err = fruc.stderr.read().decode()
+errlog.close()
 print("fruc rc =", fruc.returncode)
-print(err[-400:])
 src.kill()
 enc.wait()
 print(f"done: {OUT}")

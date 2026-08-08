@@ -225,7 +225,9 @@ int main(int argc, char **argv)
     CUstream inStream = nullptr, outStream = nullptr;
     CUDA_CHECK(cuInit(0));
     CUDA_CHECK(cuDeviceGet(&cuDevice, 0));
-    CUDA_CHECK(cuCtxCreate(&cuContext, 0, cuDevice));   /* CUDA 12 signature */
+    /* CUDA 13: cuCtxCreate requires CUctxCreateParams (empty = default) */
+    CUctxCreateParams ctxParams{};
+    CUDA_CHECK(cuCtxCreate(&cuContext, &ctxParams, 0, cuDevice));
     CUDA_CHECK(cuStreamCreate(&inStream, CU_STREAM_DEFAULT));
     CUDA_CHECK(cuStreamCreate(&outStream, CU_STREAM_DEFAULT));
 
@@ -448,35 +450,37 @@ int main(int argc, char **argv)
 
                 /* quality fallback (official bHasFrameRepetitionOccurred
                  * semantics): occ-heavy or off-segment mid -> prev frame */
-                double dp = 0, dn = 0, ds = 0;
+                /* 观测值先行：dp/dn/ds 对所有帧计算（含 repeat 帧），
+                 * 仅用于 stderr 统计输出，不影响输出帧选择逻辑 */
+                unsigned long long sp = 0, sn = 0, ss = 0;
+                for (int p = 0; p < (int)(W * H); p++) {
+                    int a0 = f0[p * 4], a1 = f0[p * 4 + 1], a2 = f0[p * 4 + 2];
+                    int b0 = f1[p * 4], b1 = f1[p * 4 + 1], b2 = f1[p * 4 + 2];
+                    sp += abs(mid[p].x - a0) + abs(mid[p].y - a1) + abs(mid[p].z - a2);
+                    sn += abs(mid[p].x - b0) + abs(mid[p].y - b1) + abs(mid[p].z - b2);
+                    ss += abs(a0 - b0) + abs(a1 - b1) + abs(a2 - b2);
+                }
+                double r_dp = (double)sp / (3.0 * W * H);
+                double r_dn = (double)sn / (3.0 * W * H);
+                double r_ds = (double)ss / (3.0 * W * H);
+                double dp = r_dp, dn = r_dn, ds = r_ds, dev = r_dp + r_dn - r_ds;
+                int repFlag = 0;   /* 引擎判定本对输出为 repeat */
                 if (bad > (int)(0.25f * W * H)) {
                     for (int p = 0; p < (int)(W * H); p++)
                         mid[p] = make_uchar3(f0[p * 4], f0[p * 4 + 1], f0[p * 4 + 2]);
-                    repeats++; rep_bad++;
+                    repeats++; rep_bad++; repFlag = 1;
                 } else {
-                    unsigned long long sp = 0, sn = 0, ss = 0;
-                    for (int p = 0; p < (int)(W * H); p++) {
-                        int a0 = f0[p * 4], a1 = f0[p * 4 + 1], a2 = f0[p * 4 + 2];
-                        int b0 = f1[p * 4], b1 = f1[p * 4 + 1], b2 = f1[p * 4 + 2];
-                        sp += abs(mid[p].x - a0) + abs(mid[p].y - a1) + abs(mid[p].z - a2);
-                        sn += abs(mid[p].x - b0) + abs(mid[p].y - b1) + abs(mid[p].z - b2);
-                        ss += abs(a0 - b0) + abs(a1 - b1) + abs(a2 - b2);
-                    }
-                    dp = (double)sp / (3.0 * W * H);
-                    dn = (double)sn / (3.0 * W * H);
-                    ds = (double)ss / (3.0 * W * H);
-                    double dev = dp + dn - ds;
                     /* dev = off-segment content; threshold motion-scaled */
                     if (dev > (ds > 0.5 ? fmax(3.0, 0.25 * ds) : 3.0)) {
                         for (int p = 0; p < (int)(W * H); p++)
                             mid[p] = make_uchar3(f0[p * 4], f0[p * 4 + 1], f0[p * 4 + 2]);
-                        repeats++; rep_dev++;
+                        repeats++; rep_dev++; repFlag = 1;
                         dp = dn = ds = 0;
                     }
                 }
                 fwrite(mid, 3, W * H, stdout);
                 {
-                    double dev = dp + dn - ds;
+                    dev = dp + dn - ds;
                     int dbk = ds <= 0.5 ? 0 : (dev < 1 ? 1 : dev < 2 ? 2 : dev < 3 ? 3 :
                                 dev < 4 ? 4 : dev < 6 ? 5 : dev < 8 ? 6 : dev < 12 ? 7 : 8);
                     dev_hist[dbk]++;
@@ -487,6 +491,8 @@ int main(int argc, char **argv)
                         }
                     }
                 }
+                fprintf(stderr, "P %llu bad=%d dev=%.2f ds=%.2f dp=%.2f dn=%.2f rep=%d\n",
+                        (unsigned long long)pairIndex, bad, dev, r_ds, r_dp, r_dn, repFlag);
                 if (pairIndex % 100 == 0)
                     fprintf(stderr, "pair %llu (repeats %d, rep_bad %d, rep_dev %d)\n",
                             (unsigned long long)pairIndex, repeats, rep_bad, rep_dev);
