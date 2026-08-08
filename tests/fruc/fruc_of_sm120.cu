@@ -47,10 +47,10 @@
 /* Guide-based densification (official FRUC guide: dense flow map from
  * block vectors; EdgeAwareFlowUpscale analog — guide = prev frame, weights
  * neighbor block flows by color similarity so flow does not bleed across
- * object edges). blk: driver flow buffer (W/G)x(H/G) block flow, STRIDE
- * padded (blkStrideElems = strideXInBytes/4 elements per row) -> dense WxH.
- * Reads the driver buffer directly — no D2H/H2D round trip. */
-__global__ void densify_kernel(const short2 *blk, int blkStrideElems, short2 *dense,
+ * object edges). blk: LINEAR (ow x oh) block flow -> dense WxH. Flow is
+ * brought to linear via the official DownloadData path (driver buffers are
+ * stride-padded; direct stride reads were the garbage-flow suspect). */
+__global__ void densify_kernel(const short2 *blk, short2 *dense,
                                const uchar4 *guide, int W, int H, int G) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -60,8 +60,8 @@ __global__ void densify_kernel(const short2 *blk, int blkStrideElems, short2 *de
     int bx = (int)floorf(gx), by = (int)floorf(gy);
     int bx0 = min(max(bx, 0), gw - 1), bx1 = min(bx0 + 1, gw - 1);
     int by0 = min(max(by, 0), gh - 1), by1 = min(by0 + 1, gh - 1);
-    short2 fv[4] = { blk[by0 * blkStrideElems + bx0], blk[by0 * blkStrideElems + bx1],
-                     blk[by1 * blkStrideElems + bx0], blk[by1 * blkStrideElems + bx1] };
+    short2 fv[4] = { blk[by0 * gw + bx0], blk[by0 * gw + bx1],
+                     blk[by1 * gw + bx0], blk[by1 * gw + bx1] };
     uchar4 pc = guide[y * W + x];
     float2 cen[4] = { make_float2((bx0 + 0.5f) * G - 0.5f, (by0 + 0.5f) * G - 0.5f),
                       make_float2((bx1 + 0.5f) * G - 0.5f, (by0 + 0.5f) * G - 0.5f),
@@ -170,9 +170,11 @@ __global__ void warp_kernel(const uchar4 *img, const short2 *flow,
 }
 
 /* Blend: mid = w0*w0w + w1*w1w (no frame-average term — the average is the
- * ghost source). Rejected pixels (occ) fall back to the PREVIOUS frame
- * pixel — official FRUC "quality bar -> previous frame" at pixel level.
- * Counts fallbacks for the whole-frame repetition decision. ABGR->RGB. */
+ * ghost source). Rejected pixels (occ) fall back to the WARP0 result (prev
+ * advanced +0.5*fwd — the mid-timestamp estimate): the raw prev pixel sits
+ * visibly offset in motion areas (blocky color patches), the advanced
+ * estimate is continuous. Counts fallbacks for the whole-frame repetition
+ * decision. ABGR->RGB. */
 __global__ void blend_kernel(const float4 *w0, const float4 *w1,
                              const uchar4 *src0, const unsigned char *occmask,
                              const short *mag,
@@ -182,8 +184,10 @@ __global__ void blend_kernel(const float4 *w0, const float4 *w1,
     if (x >= W || y >= H) return;
     if (occmask[y * W + x]) {
         atomicAdd(d_bad_count, 1);
-        uchar4 a = src0[y * W + x];
-        out[y * W + x] = make_uchar3(a.x, a.y, a.z);
+        float4 a = w0[y * W + x];
+        out[y * W + x] = make_uchar3((unsigned char)fminf(fmaxf(a.x, 0), 255),
+                                     (unsigned char)fminf(fmaxf(a.y, 0), 255),
+                                     (unsigned char)fminf(fmaxf(a.z, 0), 255));
         return;
     }
     float magf = (float)mag[y * W + x] / 32.0f;
@@ -309,14 +313,36 @@ int main(int argc, char **argv)
         if (r2 != CUDA_SUCCESS)
             fprintf(stderr, "lin copy fail slot %u code=%d\n", idx, (int)r2);
     };
+    /* flow download (official DownloadData, NvOFCuda.cpp:231-256): D2H via
+     * stride pitch + sync(outStream); flow then HtoD linear for kernels. */
+    NV_OF_FLOW_VECTOR *hFwd = (NV_OF_FLOW_VECTOR *)malloc((size_t)ow * oh * sizeof(NV_OF_FLOW_VECTOR));
+    NV_OF_FLOW_VECTOR *hBwd = (NV_OF_FLOW_VECTOR *)malloc((size_t)ow * oh * sizeof(NV_OF_FLOW_VECTOR));
+    auto downloadFlow = [&](uint32_t idx, bool fwd) -> void {
+        CUDA_MEMCPY2D cp;
+        memset(&cp, 0, sizeof(cp));
+        cp.WidthInBytes = ow * 4;
+        cp.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+        cp.srcDevice = fwd ? fwdPtr[idx] : bwdPtr[idx];
+        cp.srcPitch = flowStride;
+        cp.dstMemoryType = CU_MEMORYTYPE_HOST;
+        cp.dstHost = fwd ? hFwd : hBwd;
+        cp.dstPitch = ow * 4;
+        cp.Height = oh;
+        CUresult r1 = cuMemcpy2DAsync(&cp, outStream);
+        if (r1 != CUDA_SUCCESS) fprintf(stderr, "flow download fail code=%d\n", (int)r1);
+        CUresult r2 = cuStreamSynchronize(outStream);
+        if (r2 != CUDA_SUCCESS) fprintf(stderr, "flow sync fail code=%d\n", (int)r2);
+    };
 
     /* FRUC scratch */
-    short2 *d_fs, *d_bs, *d_fs2, *d_bs2;
+    short2 *d_fs, *d_bs, *d_fs2, *d_bs2, *d_flow_lin, *d_flowb_lin;
     float4 *d_w0, *d_w1;
     unsigned char *d_occ;
     short *d_mag;
     uchar3 *d_out;
     int *d_bad;
+    cudaMalloc(&d_flow_lin, (size_t)ow * oh * sizeof(NV_OF_FLOW_VECTOR));
+    cudaMalloc(&d_flowb_lin, (size_t)ow * oh * sizeof(NV_OF_FLOW_VECTOR));
     cudaMalloc(&d_fs, W * H * sizeof(short2));
     cudaMalloc(&d_bs, W * H * sizeof(short2));
     cudaMalloc(&d_fs2, W * H * sizeof(short2));
@@ -387,15 +413,20 @@ int main(int argc, char **argv)
             CUDA_CHECK(cuStreamSynchronize(outStream));
 
             /* FRUC synthesis per pair (official guide pipeline):
-             * densify fwd/bwd (reads the driver flow buffers directly via
-             * their stride) -> smooth_y -> smooth_mag -> occ ->
+             * flow via official DownloadData (D2H stride) -> HtoD linear ->
+             * densify -> smooth_y -> smooth_mag -> occ ->
              * warp(prev,+0.5fwd) + warp(cur,+0.5bwd) -> blend */
-            const int flowStrideElems = (int)(flowStride / 4);
             for (uint32_t i = 0; i < curFrameIdx; i++) {
                 const uchar4 *gprev = (const uchar4 *)d_linPool[i];
                 const uchar4 *gcur = (const uchar4 *)d_linPool[i + 1];
-                densify_kernel<<<grid, block>>>((const short2 *)fwdPtr[i], flowStrideElems, d_fs, gprev, W, H, G);
-                densify_kernel<<<grid, block>>>((const short2 *)bwdPtr[i], flowStrideElems, d_bs, gprev, W, H, G);
+                downloadFlow(i, true);
+                downloadFlow(i, false);
+                CUDA_CHECK(cuMemcpyHtoD((CUdeviceptr)d_flow_lin, hFwd,
+                                        (size_t)ow * oh * sizeof(NV_OF_FLOW_VECTOR)));
+                CUDA_CHECK(cuMemcpyHtoD((CUdeviceptr)d_flowb_lin, hBwd,
+                                        (size_t)ow * oh * sizeof(NV_OF_FLOW_VECTOR)));
+                densify_kernel<<<grid, block>>>((const short2 *)d_flow_lin, d_fs, gprev, W, H, G);
+                densify_kernel<<<grid, block>>>((const short2 *)d_flowb_lin, d_bs, gprev, W, H, G);
                 smooth_y_kernel<<<grid, block>>>(d_fs, d_fs2, gprev, W, H, 2);
                 smooth_y_kernel<<<grid, block>>>(d_bs, d_bs2, gprev, W, H, 2);
                 smooth_mag_kernel<<<grid, block>>>(d_fs2, d_mag, gprev, W, H, 2);

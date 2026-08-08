@@ -25,7 +25,7 @@ fruc = subprocess.Popen([BIN, str(W), str(H)],
 enc = subprocess.Popen(
     ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
      "-s", f"{W}x{H}", "-r", "60", "-i", "-",
-     "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+     "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv444p", "-colorspace", "bt709", "-color_range", "tv",
      OUT], stdin=subprocess.PIPE)
 
 src_q = queue.Queue(maxsize=32)     # >批大小16，防死锁
