@@ -30,3 +30,6 @@ logs/
 references/
 docs/notes/
 docs/superpowers/
+tests/fruc/fruc_of_flow
+tests/fruc/fruc_of_interp
+
