@@ -55,7 +55,10 @@ __global__ void densify_kernel(const short2 *blk, short2 *dense,
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= W || y >= H) return;
-    int gw = W / G, gh = H / G;
+    /* block grid = ceil(W/G) x ceil(H/G) — matches the engine's ow x oh
+     * output (integer division W/G truncates at non-multiple widths, e.g.
+     * 854/4=213 vs ow=214, misreading every row by one element) */
+    int gw = (W + G - 1) / G, gh = (H + G - 1) / G;
     float gx = ((float)x + 0.5f) / G - 0.5f, gy = ((float)y + 0.5f) / G - 0.5f;
     int bx = (int)floorf(gx), by = (int)floorf(gy);
     int bx0 = min(max(bx, 0), gw - 1), bx1 = min(bx0 + 1, gw - 1);
