@@ -129,8 +129,9 @@ src/
 third_party/
 ├── mpv/                  # mpv 0.41 完整源码（参考 + 构建基座，只读）
 ├── nvvfx/                # VFX SDK headers（开发者自行准备，不分发）
+├── cuda12/               # CUDA 12.9.2 存档（redist tar.xz，自行下载、gitignored；官方 OF SDK 需 12 的 cuCtxCreate 3 参签名）
 ├── material-icons/       # 图标字体
-└── cuda/                 # CUDA headers
+└── rife/ openframegen/   # RIFE 模型 / NVOFA 调研素材
 
 references/               # 外部项目源码参考（只读，非构建输入）
 ├── celluloid/ glfw/ mpvqt/ vlc/ qtbase/ qtdeclarative/ qt6-multimedia-quick/
@@ -145,6 +146,10 @@ scripts/
 ├── install.sh                # GUI 客户端安装到 ~/.local（二进制 + VFX libs + 字体 + 翻译）
 ├── install_mpv_local.sh      # 独立 mpv-vsr CLI 安装到 ~/.local
 └── mpv-vsr-wrapper.py        # CLI 包装脚本（src/scripts/）
+
+tests/
+├── verify_frames.sh          # 视觉问题数值化验证（baseline/test 两阶段 PSNR）
+└── fruc/                     # FRUC 离线实验（official/ 官方 OF SDK 5.0.7 源码只读 + fruc_of_flow/fruc_of_interp 官方模式引擎 + run_*.py 管线）
 ```
 
 ## Key Findings
