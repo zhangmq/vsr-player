@@ -8,6 +8,26 @@
 - `nvOpticalFlowCommon.h` / `nvOpticalFlowCuda.h` — 官方 API 头（结构体、函数指针）
 - `NvOFUtils.h` — 工具类头（本实验未用）
 
+## 构建官方 demo（二进制输出到 build/，不入库）
+
+```bash
+C12=third_party/cuda12/cuda_cudart-linux-x86_64-12.9.79-archive
+cd tests/fruc/official
+nvcc -O2 -arch=sm_120 -I$C12/include -I. -o ../../build/tests/fruc/appofcuda \
+  AppOFCuda.cpp NvOF.cpp NvOFCuda.cpp NvOFUtils.cpp NvOFUtilsCuda.cpp \
+  NvOFDataLoader.cpp kernel.cu -lcuda -L$C12/lib -lcudart -lfreeimage -ldl
+```
+
+运行（输入 yuv 文件名必须含 `WxH`，如 `input_1280x720.yuv`；所有选项需 `--key=value` 形式，bool 也带值）：
+
+```bash
+LD_LIBRARY_PATH=$C12/lib build/tests/fruc/appofcuda \
+  --input=/tmp/heya_1280x720.yuv --output=/tmp/heya_flow \
+  --measureFPS=true --preset=slow
+```
+
+验证输出（2026-08-08 实测）：720p SLOW 175 fps，299 个 `*_middlebury.flo`（grid 1 逐像素 1280×720）。
+
 ## 官方行为准则（迁移必须遵守）
 
 | # | 准则 | 出处 |
