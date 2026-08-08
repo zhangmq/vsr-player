@@ -13,7 +13,9 @@ import torch
 
 V = sys.argv[1]; W = int(sys.argv[2]); H = int(sys.argv[3]); N = int(sys.argv[4])
 FR = W * H * 3
-ENG = "/home/zmq/projects/vsr-player/build/tests/fruc/rife_v4.25_dyn.engine"
+ENG = sys.argv[5] if len(sys.argv) > 5 else \
+    "/home/zmq/projects/vsr-player/build/tests/fruc/rife_v4.25_dyn.engine"
+LITE = len(sys.argv) > 6 and sys.argv[6] == "lite"
 
 logger = trt.Logger(trt.Logger.WARNING)
 with open(ENG, "rb") as f:
@@ -21,6 +23,19 @@ with open(ENG, "rb") as f:
 ctx = engine.create_execution_context()
 in_name = engine.get_tensor_name(0)
 out_name = engine.get_tensor_name(1)
+
+if LITE:
+    # lite 输入 11 通道: img0(3)+img1(3)+t(1)+gh,gv(2)+mh,mw(2)；
+    # 引擎为固定 shape（动态 profile 在 sm_120 触发 TRT 11.2 autotuner bug），
+    # PH/PW 直接取引擎输入 shape（模型内部有 64 倍数要求，1080p 目标 1152）
+    PH, PW = int(engine.get_tensor_shape(in_name)[2]), int(engine.get_tensor_shape(in_name)[3])
+    x = np.linspace(0, PW - 1, PW); y = np.linspace(0, PH - 1, PH)
+    gx, gy = np.meshgrid(x, y)
+    GH = (2 * gx / (PW - 1) - 1).astype(np.float32)
+    GV = (2 * gy / (PH - 1) - 1).astype(np.float32)
+    MH = np.full((PH, PW), 2 / (PW - 1), np.float32)
+    MW = np.full((PH, PW), 2 / (PH - 1), np.float32)
+    print(f"lite mode: pad {W}x{H} -> {PW}x{PH} (固定 shape 引擎)")
 print("engine io:", in_name, engine.get_tensor_dtype(in_name), "->", out_name)
 
 src = subprocess.Popen(
@@ -41,11 +56,18 @@ sp_ = sn_ = ss_ = 0.0
 prev = None
 n = 0
 t_infer = 0.0
-# 预热（任意小 shape 触发 kernels 编译）
+# 预热（触发 kernels 编译，shape 与正式推理一致）
 t0 = time.time()
-ctx.set_input_shape(in_name, (1, 7, H, W))
-xin = torch.zeros((1, 7, H, W), dtype=torch.float16, device="cuda")
-xout = torch.zeros((1, 3, H, W), dtype=torch.float16, device="cuda")
+if LITE:
+    DT = torch.float16 if engine.get_tensor_dtype(in_name) == trt.DataType.HALF \
+        else torch.float32   # 按引擎 dtype（FP16/FP32 固定引擎都支持）
+    xin = torch.zeros((1, 11, PH, PW), dtype=DT, device="cuda")
+    xout = torch.zeros((1, 3, PH, PW), dtype=DT, device="cuda")
+else:
+    DT = torch.float16
+    ctx.set_input_shape(in_name, (1, 7, H, W))
+    xin = torch.zeros((1, 7, H, W), dtype=torch.float16, device="cuda")
+    xout = torch.zeros((1, 3, H, W), dtype=torch.float16, device="cuda")
 ctx.set_tensor_address(in_name, xin.data_ptr())
 ctx.set_tensor_address(out_name, xout.data_ptr())
 ctx.execute_async_v3(torch.cuda.current_stream().cuda_stream)
@@ -61,16 +83,28 @@ while True:
     if prev is None:
         prev = cur
         continue
-    x0 = torch.from_numpy(prev.astype(np.float16) / 255.0).permute(2, 0, 1)[None].contiguous().cuda()
-    x1 = torch.from_numpy(cur.astype(np.float16) / 255.0).permute(2, 0, 1)[None].contiguous().cuda()
-    t = torch.full((1, 1, H, W), 0.5, dtype=torch.float16, device="cuda")
-    ctx.set_input_shape(in_name, (1, 7, H, W))
-    xin.copy_(torch.cat([x0, x1, t], dim=1))
+    if LITE:
+        p0 = np.zeros((PH, PW, 3), np.uint8); p0[:H, :W] = prev
+        p1 = np.zeros((PH, PW, 3), np.uint8); p1[:H, :W] = cur
+        x0 = torch.from_numpy(p0.astype(np.float32) / 255.0).to(DT).permute(2, 0, 1)[None].contiguous().cuda()
+        x1 = torch.from_numpy(p1.astype(np.float32) / 255.0).to(DT).permute(2, 0, 1)[None].contiguous().cuda()
+        gh = torch.from_numpy(GH).to(DT).cuda()[None, None]
+        gv = torch.from_numpy(GV).to(DT).cuda()[None, None]
+        mh = torch.from_numpy(MH).to(DT).cuda()[None, None]
+        mw = torch.from_numpy(MW).to(DT).cuda()[None, None]
+        t = torch.full((1, 1, PH, PW), 0.5, dtype=DT, device="cuda")
+        xin.copy_(torch.cat([x0, x1, t, gh, gv, mh, mw], dim=1))
+    else:
+        x0 = torch.from_numpy(prev.astype(np.float16) / 255.0).permute(2, 0, 1)[None].contiguous().cuda()
+        x1 = torch.from_numpy(cur.astype(np.float16) / 255.0).permute(2, 0, 1)[None].contiguous().cuda()
+        t = torch.full((1, 1, H, W), 0.5, dtype=torch.float16, device="cuda")
+        ctx.set_input_shape(in_name, (1, 7, H, W))
+        xin.copy_(torch.cat([x0, x1, t], dim=1))
     ts = time.time()
     ctx.execute_async_v3(torch.cuda.current_stream().cuda_stream)
     torch.cuda.synchronize()
     t_infer += time.time() - ts
-    m = (xout[0].permute(1, 2, 0).float().cpu().numpy() * 255.0).astype(np.float32)
+    m = (xout[0, :, :H, :W].permute(1, 2, 0).float().cpu().numpy() * 255.0).astype(np.float32)
     p = prev.astype(np.float32); c = cur.astype(np.float32)
     dp = float(np.mean(np.abs(m - p))); dn = float(np.mean(np.abs(m - c)))
     ds = float(np.mean(np.abs(c - p)))

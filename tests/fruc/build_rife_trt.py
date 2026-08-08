@@ -7,8 +7,9 @@
 import sys, os, time
 import tensorrt as trt
 
-ONNX = "/home/zmq/projects/vsr-player/build/tests/fruc/rife_autocast_fp16.onnx"  # ModelOpt AutoCast FP16
-OUT = sys.argv[1] if len(sys.argv) > 1 else \
+ONNX = sys.argv[1] if len(sys.argv) > 1 else \
+    "/home/zmq/projects/vsr-player/build/tests/fruc/rife_autocast_fp16.onnx"  # ModelOpt AutoCast FP16
+OUT = sys.argv[2] if len(sys.argv) > 2 else \
     "/home/zmq/projects/vsr-player/build/tests/fruc/rife_v4.25_dyn.engine"
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
@@ -30,7 +31,9 @@ profile = b.create_optimization_profile()
 inp = net.get_input(0)
 print("input:", inp.name, inp.shape, "min/max dynamic:", inp.shape[2] < 0)
 # 动态 H/W: min 352x240, opt 1280x720, max 1920x1080
-profile.set_shape(inp.name, (1, 7, 240, 352), (1, 7, 720, 1280), (1, 7, 1080, 1920))
+C = inp.shape[1]   # 通道数: full=7, lite=11
+# lite 模型内部 pad 到 64 倍数（720->768），profile 值需 64 对齐
+profile.set_shape(inp.name, (1, C, 256, 384), (1, C, 1088, 1920), (1, C, 1088, 1920))
 config.add_optimization_profile(profile)
 
 t0 = time.time()
