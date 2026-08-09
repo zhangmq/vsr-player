@@ -1,5 +1,5 @@
-// rife_internal.h — RIFE inference engine plumbing (TRT engine + tile kernels).
-// Implemented in rife_proc.c. No mp_filter concerns; owned by vf_rife.
+// rife_internal.h — RIFE inference engine plumbing (TRT engine + full-frame
+// kernels). Implemented in rife_proc.c. No mp_filter concerns; owned by vf_rife.
 #ifndef RIFE_INTERNAL_H
 #define RIFE_INTERNAL_H
 
@@ -12,16 +12,17 @@
 
 struct mp_log;
 
-#define RIFE_TILE 512  // engine fixed square input size
-
 struct rife_context {
     // TensorRT engine (NULL when TRT unavailable or load failed)
     struct rife_engine *engine;
 
-    // tile kernels (nvrtc)
+    // full-frame kernels (nvrtc)
     CUmodule   module;
-    CUfunction assemble_fn;
-    CUfunction convert_fn;
+    CUfunction assemble_fn;    // rgba staging pair → 11ch FP16 engine input
+                               //   (reflect pad + grid channels + normalize)
+    CUfunction convert_fn;     // 3ch FP16 engine output → RGBA u8
+    CUfunction copy_fn;        // rgba_a → out (scene-change pass-through)
+    CUfunction mae_fn;         // |rgba_a - rgba_b| mean → host scalar
     bool       kernels_ready;
 
     // full-frame RGBA u8 staging (prev / cur), owned here. Cur is converted
@@ -32,7 +33,11 @@ struct rife_context {
     int         rgba_pitch;
     int         w, h;          // current frame size
 
-    int tiles_x, tiles_y;
+    CUdeviceptr mae_partial;   // 256 floats, scene-change block sums
+    bool        mae_partial_alloc;
+
+    // padded engine dims (PH/PW, multiples of 128 — lite alignment)
+    int ph, pw;
 
     bool configured;
 
@@ -40,12 +45,19 @@ struct rife_context {
 };
 
 // ctx must be current; loads engine (searches RIFE_LIBDIR etc), compiles kernels.
+// ph/pw = padded engine dims for this video size (128 multiples).
 bool rife_init(struct rife_context *c, CUcontext ctx, CUstream stream,
-               struct mp_log *log);
+               int ph, int pw, struct mp_log *log);
 void rife_destroy(struct rife_context *c);
 
-// Reallocate staging buffers on frame-size change; recompute tile grid.
+// Reallocate staging buffers on frame-size change (engine dims unchanged —
+// ph/pw are fixed at init by the video size).
 bool rife_reconfig(struct rife_context *c, int w, int h, CUstream stream);
+
+// Scene-change detection: mean |a-b| over the frame region (0-255 scale).
+// Returns true when the mean exceeds thresh. Synchronizes the stream for the
+// host read — call only once per pair before interpolation.
+bool rife_scene_change(struct rife_context *c, CUstream stream, double thresh);
 
 // Interpolate one output frame: input frames are the two RGBA staging buffers
 // (rgba_a = prev, rgba_b = cur), tval in (0,1]. Output written to out_rgba
@@ -54,5 +66,9 @@ bool rife_reconfig(struct rife_context *c, int w, int h, CUstream stream);
 // the stream at its GPU serialization boundary).
 bool rife_interpolate(struct rife_context *c, CUstream stream,
                       double tval, CUdeviceptr out_rgba, int out_pitch);
+
+// Scene-change pass-through: copy rgba_a (prev) to out_rgba, no inference.
+bool rife_pass_through(struct rife_context *c, CUstream stream,
+                       CUdeviceptr out_rgba, int out_pitch);
 
 #endif // RIFE_INTERNAL_H

@@ -11,6 +11,7 @@ import torch
 V = sys.argv[1]; W = int(sys.argv[2]); H = int(sys.argv[3]); N = int(sys.argv[4])
 ENG = sys.argv[5]; OUT = sys.argv[7] if len(sys.argv) > 7 else sys.argv[6]
 FR = W * H * 3
+SC_MAE = 20.0  # 场景切换阈值（帧间 MAE，0-255 尺度，与 stats_repeat.py 一致）
 
 logger = trt.Logger(trt.Logger.WARNING)
 with open(ENG, "rb") as f:
@@ -20,6 +21,8 @@ in_name = engine.get_tensor_name(0)
 out_name = engine.get_tensor_name(1)
 
 PH, PW = int(engine.get_tensor_shape(in_name)[2]), int(engine.get_tensor_shape(in_name)[3])
+assert PH % 128 == 0 and PW % 128 == 0, \
+    f"lite 引擎 shape {PH}x{PW} 非 128 对齐（对齐 64 会出坏引擎，重建用 build_rife_lite_engine.sh）"
 DT = torch.float16 if engine.get_tensor_dtype(in_name) == trt.DataType.HALF else torch.float32
 x = np.linspace(0, PW - 1, PW); y = np.linspace(0, PH - 1, PH)
 gx, gy = np.meshgrid(x, y)
@@ -57,6 +60,7 @@ torch.cuda.synchronize()
 t0 = time.time()
 prev = None
 n = 0
+n_sc = 0
 while True:
     b = read_exact(FR)
     if b is None:
@@ -66,8 +70,22 @@ while True:
         prev = cur
         enc.stdin.write(prev.tobytes())   # 首帧直出
         continue
-    p0 = np.zeros((PH, PW, 3), np.uint8); p0[:H, :W] = prev
-    p1 = np.zeros((PH, PW, 3), np.uint8); p1[:H, :W] = cur
+    # 场景切换检测（帧间 MAE，0-255 尺度，与 stats_repeat.py 同口径）
+    d_src = np.mean(np.abs(cur.astype(np.float32) - prev.astype(np.float32)))
+    if d_src > SC_MAE:
+        # 场景切换：mid 位置直通前帧（vs-mlrt SceneChangeNext 约定，切到
+        # 新内容不插值），源位置照常输出 cur——每对仍输出 2 帧保持
+        # [源, mid, 源, mid...] 帧结构（只写 1 帧会错位，stats 全乱）
+        enc.stdin.write(prev.tobytes())
+        enc.stdin.write(cur.tobytes())
+        n_sc += 1
+        prev = cur
+        continue
+    pad_h, pad_w = PH - H, PW - W
+    # reflect pad（零填充边缘误差 2.2-3.5×）；pad 超源尺寸时退化为 wrap（128 对齐下不会发生）
+    mode = 'reflect' if (pad_h < H and pad_w < W) else 'wrap'
+    p0 = np.pad(prev, ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
+    p1 = np.pad(cur,  ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
     x0 = torch.from_numpy(p0.astype(np.float32) / 255.0).to(DT).permute(2, 0, 1)[None].contiguous().cuda()
     x1 = torch.from_numpy(p1.astype(np.float32) / 255.0).to(DT).permute(2, 0, 1)[None].contiguous().cuda()
     t = torch.full((1, 1, PH, PW), 0.5, dtype=DT, device="cuda")
@@ -88,4 +106,4 @@ while True:
 src.kill()
 enc.stdin.close()
 enc.wait()
-print(f"done: {OUT} ({n} pairs, {time.time()-t0:.0f}s)", flush=True)
+print(f"done: {OUT} ({n} pairs, {n_sc} scene-change pass-through, {time.time()-t0:.0f}s)", flush=True)

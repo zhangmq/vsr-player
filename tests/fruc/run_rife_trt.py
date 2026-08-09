@@ -29,6 +29,8 @@ if LITE:
     # 引擎为固定 shape（动态 profile 在 sm_120 触发 TRT 11.2 autotuner bug），
     # PH/PW 直接取引擎输入 shape（模型内部有 64 倍数要求，1080p 目标 1152）
     PH, PW = int(engine.get_tensor_shape(in_name)[2]), int(engine.get_tensor_shape(in_name)[3])
+    assert PH % 128 == 0 and PW % 128 == 0, \
+        f"lite 引擎 shape {PH}x{PW} 非 128 对齐（对齐 64 会出坏引擎，重建用 build_rife_lite_engine.sh）"
     x = np.linspace(0, PW - 1, PW); y = np.linspace(0, PH - 1, PH)
     gx, gy = np.meshgrid(x, y)
     GH = (2 * gx / (PW - 1) - 1).astype(np.float32)
@@ -84,8 +86,11 @@ while True:
         prev = cur
         continue
     if LITE:
-        p0 = np.zeros((PH, PW, 3), np.uint8); p0[:H, :W] = prev
-        p1 = np.zeros((PH, PW, 3), np.uint8); p1[:H, :W] = cur
+        pad_h, pad_w = PH - H, PW - W
+        # reflect pad（零填充边缘误差 2.2-3.5×）；pad 超源尺寸时退化为 wrap（128 对齐下不会发生）
+        mode = 'reflect' if (pad_h < H and pad_w < W) else 'wrap'
+        p0 = np.pad(prev, ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
+        p1 = np.pad(cur,  ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
         x0 = torch.from_numpy(p0.astype(np.float32) / 255.0).to(DT).permute(2, 0, 1)[None].contiguous().cuda()
         x1 = torch.from_numpy(p1.astype(np.float32) / 255.0).to(DT).permute(2, 0, 1)[None].contiguous().cuda()
         gh = torch.from_numpy(GH).to(DT).cuda()[None, None]
@@ -104,7 +109,7 @@ while True:
     ctx.execute_async_v3(torch.cuda.current_stream().cuda_stream)
     torch.cuda.synchronize()
     t_infer += time.time() - ts
-    m = (xout[0, :, :H, :W].permute(1, 2, 0).float().cpu().numpy() * 255.0).astype(np.float32)
+    m = np.clip(xout[0, :, :H, :W].permute(1, 2, 0).float().cpu().numpy() * 255.0, 0, 255).astype(np.float32)
     p = prev.astype(np.float32); c = cur.astype(np.float32)
     dp = float(np.mean(np.abs(m - p))); dn = float(np.mean(np.abs(m - c)))
     ds = float(np.mean(np.abs(c - p)))

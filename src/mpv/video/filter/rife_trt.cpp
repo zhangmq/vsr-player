@@ -9,6 +9,9 @@
 // Entry: createInferRuntime_INTERNAL is an extern "C" symbol; everything else
 // (IRuntime/ICudaEngine/IExecutionContext) is vtable-based, so no further
 // dlsym is needed. NvInfer.h is used at compile time for types/vtable layout.
+//
+// Engines are fixed-shape RIFE lite builds ([1,11,PH,PW] in, [1,3,PH,PW] out,
+// FP16) — shapes and dtype are read from the engine file itself.
 #include <cstdio>
 #include <dlfcn.h>
 #include <fstream>
@@ -42,7 +45,10 @@ struct rife_engine {
     std::unique_ptr<nvinfer1::IExecutionContext> ctx;
     void *d_in = nullptr;
     void *d_out = nullptr;
-    int size = 0;
+    int ph = 0, pw = 0;      // input spatial dims (padded)
+    int in_elems = 0;        // 11*PH*PW (input channel count from engine)
+    int out_elems = 0;       // 3*PH*PW
+    bool half = false;       // input dtype FP16?
 };
 
 extern "C" {
@@ -108,19 +114,29 @@ struct rife_engine *rife_engine_load(const char *path, rife_log_fn log)
         return nullptr;
     }
 
-    // fixed static shapes: (1,7,512,512) in, (1,3,512,512) out
-    if (!e->ctx->setInputShape("input", nvinfer1::Dims4{1, 7, 512, 512})) {
-        if (log) log(2, "rife_trt: setInputShape failed");
+    // Fixed-shape engine: read dims/dtype from the plan itself.
+    nvinfer1::Dims d_in = e->engine->getTensorShape("input");
+    nvinfer1::Dims d_out = e->engine->getTensorShape("output");
+    if (d_in.nbDims != 4 || d_out.nbDims != 4 ||
+        d_in.d[2] != d_out.d[2] || d_in.d[3] != d_out.d[3] ||
+        d_in.d[0] != 1 || d_out.d[0] != 1 || d_out.d[1] != 3) {
+        if (log) log(2, "rife_trt: unexpected engine shape (want [1,C,PH,PW]/[1,3,PH,PW])");
         dlclose(e->dl);
         delete e;
         return nullptr;
     }
-    e->size = 512;
+    e->ph = d_in.d[2];
+    e->pw = d_in.d[3];
+    e->in_elems = d_in.d[1] * e->ph * e->pw;
+    e->out_elems = 3 * e->ph * e->pw;
+    e->half = e->engine->getTensorDataType("input") == nvinfer1::DataType::kHALF;
+    size_t in_bytes = e->in_elems * (e->half ? 2 : 4);
+    size_t out_bytes = e->out_elems * (e->half ? 2 : 4);
 
     // device buffers (allocated on the context current at load time — the
     // filter pushes its CUDA context before calling rife_engine_load)
-    if (cudaMalloc(&e->d_in, 7ull * 512 * 512 * sizeof(float)) != cudaSuccess ||
-        cudaMalloc(&e->d_out, 3ull * 512 * 512 * sizeof(float)) != cudaSuccess) {
+    if (cudaMalloc(&e->d_in, in_bytes) != cudaSuccess ||
+        cudaMalloc(&e->d_out, out_bytes) != cudaSuccess) {
         if (log) log(2, "rife_trt: cudaMalloc failed");
         dlclose(e->dl);
         delete e;
@@ -147,9 +163,19 @@ void *rife_engine_output(struct rife_engine *e)
     return e ? e->d_out : nullptr;
 }
 
-int rife_engine_size(struct rife_engine *e)
+int rife_engine_height(struct rife_engine *e)
 {
-    return e ? e->size : 0;
+    return e ? e->ph : 0;
+}
+
+int rife_engine_width(struct rife_engine *e)
+{
+    return e ? e->pw : 0;
+}
+
+bool rife_engine_half(struct rife_engine *e)
+{
+    return e ? e->half : false;
 }
 
 void rife_engine_destroy(struct rife_engine *e)

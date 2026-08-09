@@ -8,6 +8,9 @@
   REPEAT: min(d_prev, d_next) < TH（插值帧复制了某一侧源帧）
   有效:   两侧都 >= TH；居中比 r = (d_prev + d_next) / d_src 应 ≈ 1.0
           且 d_prev/d_next 各 ≈ d_src/2（t=0.5 精确居中）
+  场景切换（d_src > SC_MAE，内容跳变）: 直通原帧为正确行为（vs-mlrt
+  SceneChangeNext 约定），单独归类不计入引擎失败——插值帧==前帧/后帧
+  均为正确直通。
 
 用法: stats_repeat.py <video> [W] [H]
 """
@@ -18,6 +21,7 @@ W, H = int(sys.argv[2]) if len(sys.argv) > 2 else 854, \
        int(sys.argv[3]) if len(sys.argv) > 3 else 480
 FR = W * H * 3
 TH = 0.8  # mean abs diff 阈值（0-255 尺度）——压缩噪声 <0.5，复制帧 <0.2
+SC_MAE = 20.0  # 场景切换阈值（与 run_rife_trt_video.py 一致）——内容跳变 > 正常运动
 
 proc = subprocess.Popen(
     ["ffmpeg", "-v", "error", "-i", V, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
@@ -30,6 +34,8 @@ rep_prev = rep_next = 0
 n_still = 0        # 源静止对 (d_src < TH)
 n_rep_motion = 0   # 有运动却 repeat（失败）
 n_eff_motion = 0   # 有运动且插值有效
+n_sc = 0           # 场景切换对 (d_src > SC_MAE)
+n_sc_pass = 0      # 切换且直通（输出 == 任一源帧，正确行为）
 sum_r = sum_r2 = 0.0
 samples = []       # 每 500 对采 1 个有效样本
 first_mid_prev = first_mid_next = None   # 首对对比表
@@ -47,7 +53,12 @@ while True:
             n_mid += 1
             if d_src < TH:
                 n_still += 1
-            if min(d_prev, d_next) < TH:
+            if d_src > SC_MAE:
+                # 场景切换：直通任一源帧为正确（SceneChangeNext 约定）
+                n_sc += 1
+                if min(d_prev, d_next) < TH:
+                    n_sc_pass += 1
+            elif min(d_prev, d_next) < TH:
                 n_rep += 1
                 if d_prev < d_next:
                     rep_prev += 1
@@ -72,16 +83,20 @@ while True:
 proc.wait()
 
 total = n_mid
+n_motion = total - n_still - n_sc   # 有运动且非场景切换的对
 print(f"总帧对: {total}")
 print(f"源静止对 (d_src<{TH}, 内容无运动): {n_still} ({n_still/total*100:.1f}%)")
-print(f"有运动对 (d_src>={TH}): {total-n_still} ({(total-n_still)/total*100:.1f}%)")
+print(f"场景切换对 (d_src>{SC_MAE}, 直通正确): {n_sc} ({n_sc/total*100:.1f}%)"
+      f"  └─ 直通前/后帧: {n_sc_pass} ({n_sc_pass/max(1,n_sc)*100:.1f}%)"
+      f", 仍插值: {n_sc-n_sc_pass}")
+print(f"有运动非切换对 (d_src>={TH} 且 <= {SC_MAE}): {n_motion} ({n_motion/total*100:.1f}%)")
 print()
 print(f"REPEAT 合计: {n_rep} ({n_rep/total*100:.1f}%)  复制前帧 {rep_prev}, 复制后帧 {rep_next}")
 print(f"  ├─ 源静止下的 repeat（正常，无运动可插）: {n_rep-n_rep_motion}")
 print(f"  └─ 有运动却 repeat（引擎失败）: {n_rep_motion}")
 print(f"有效插值: {n_eff} ({n_eff/total*100:.1f}%)")
 print(f"  └─ 其中有运动且插值有效: {n_eff_motion} ({n_eff_motion/total*100:.1f}%)")
-print(f"有运动对中插值成功率: {n_eff_motion/max(1,total-n_still)*100:.1f}%")
+print(f"有运动非切换对中插值成功率: {n_eff_motion/max(1,n_motion)*100:.1f}%")
 if n_eff:
     r_mean = sum_r / n_eff
     r_std = (sum_r2 / n_eff - r_mean ** 2) ** 0.5

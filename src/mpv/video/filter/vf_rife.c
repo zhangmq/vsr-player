@@ -16,8 +16,14 @@
 // passthrough once (MP_WARN), until reset/option change. Benchmark mode
 // (scale > 0) never passes through — it measures the device ceiling.
 //
-// The engine (rife512.engine, fixed 512²) is loaded once and kept across
-// seeks — TRT execution contexts are stateless between enqueues.
+// The engine (rife_lite_fp16_{PH}x{PW}.engine, fixed full-frame FP16 shape
+// padded to 128 multiples) is loaded once and kept across seeks — TRT
+// execution contexts are stateless between enqueues.
+//
+// Scene changes (frame-pair MAE > RIFE_SC_MAE) pass the previous frame
+// through instead of interpolating — vs-mlrt SceneChangeNext convention
+// (interpolating across a cut produces ghosting; the offline heya full-run
+// found 276 such pairs in 13439).
 
 #include <math.h>
 #include <stdatomic.h>
@@ -147,6 +153,9 @@ static const struct vf_rife_opts vf_rife_opts_def = {
 #define RIFE_ADAPT_SKIP    4      // first pairs (cold start) not recorded
 #define RIFE_MAX_PER_PAIR  64     // pathological small-delta cap
 #define RIFE_BUDGET_VSR_MS 12.0   // downstream VSR cost estimate for budget
+#define RIFE_SC_MAE        20.0   // scene-change threshold (mean abs diff,
+                                  // 0-255 scale — matches stats_repeat.py /
+                                  // run_rife_trt_video.py offline runs)
 
 enum rife_mode {
     RIFE_PASSTHROUGH,
@@ -228,9 +237,9 @@ static void rife_status(struct mp_filter *f, struct priv *p)
     int n = 0;
     if (p->mode == RIFE_ACTIVE) {
         n = snprintf(buf, sizeof(buf),
-                     "fruc-status: mode=active src=%.2f out=%.2f tiles=%dx%d",
+                     "fruc-status: mode=active src=%.2f out=%.2f pad=%dx%d",
                      p->src_fps, p->out_fps,
-                     p->eng.tiles_x, p->eng.tiles_y);
+                     p->eng.ph, p->eng.pw);
         if (p->opts->adaptive && p->adapt_warmup_done)
             n += snprintf(buf + n, sizeof(buf) - n,
                           " cost=%.1fms budget=%.1fms",
@@ -521,6 +530,13 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
         return false;
     }
 
+    // scene change detection (mean |prev-cur| on the staging pair; syncs the
+    // stream for the host read — that sync doubles as this pair's early
+    // boundary: the staging convert is complete before any emit below)
+    bool scene = rife_scene_change(&p->eng, p->cuda_stream, RIFE_SC_MAE);
+    if (scene)
+        MP_DBG(f, "rife: scene change (MAE > %.0f) — pass-through\n", RIFE_SC_MAE);
+
     // enumerate grid points in (t_prev, t_cur]
     double fps = p->out_fps;
     long long n0 = (long long)floor((t_prev - p->t0) * fps) + 1;
@@ -529,7 +545,8 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
         n1 = n0 + RIFE_MAX_PER_PAIR - 1;
 
     *grid_emitted_cur = false;
-    MP_DBG(f, "rife: pair (%.3f, %.3f) grid %lld..%lld\n", t_prev, t_cur, n0, n1);
+    MP_DBG(f, "rife: pair (%.3f, %.3f) grid %lld..%lld%s\n", t_prev, t_cur, n0, n1,
+           scene ? " [scene]" : "");
     bool ok = true;
     for (long long n = n0; n <= n1; n++) {
         double tg = p->t0 + n / fps;
@@ -544,7 +561,7 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
             p->queue[p->queue_len++] = out;
             *grid_emitted_cur = true;
         } else if (tval > 0 && tval < 1) {
-            // interpolated frame
+            // interpolated frame (or scene-change pass-through of prev)
             CUdeviceptr out_buf = 0;
             if (cuMemAlloc(&out_buf, (size_t)p->eng.rgba_pitch * p->video_h)
                     != CUDA_SUCCESS) {
@@ -552,11 +569,14 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
                 ok = false;
                 break;
             }
-            bool ok_run = rife_interpolate(&p->eng, p->cuda_stream, tval,
-                                           out_buf, p->eng.rgba_pitch);
+            bool ok_run = scene
+                ? rife_pass_through(&p->eng, p->cuda_stream,
+                                    out_buf, p->eng.rgba_pitch)
+                : rife_interpolate(&p->eng, p->cuda_stream, tval,
+                                   out_buf, p->eng.rgba_pitch);
             if (!ok_run) {
                 cuMemFree(out_buf);
-                MP_ERR(f, "rife: interpolate failed\n");
+                MP_ERR(f, "rife: %s failed\n", scene ? "pass-through" : "interpolate");
                 ok = false;
                 break;
             }
@@ -699,8 +719,12 @@ static void f_process(struct mp_filter *f)
             return;
         }
         cuCtxPushCurrent(p->cuda_ref->ctx);
+        // engine shape = input size padded to 128 multiples (lite alignment,
+        // mirrors build_rife_lite_engine.sh); one fixed-shape engine per size
+        int ph = (cur->h + 127) / 128 * 128;
+        int pw = (cur->w + 127) / 128 * 128;
         p->engine_ok = rife_init(&p->eng, p->cuda_ref->ctx, p->cuda_stream,
-                                 f->log);
+                                 ph, pw, f->log);
         if (p->engine_ok)
             p->engine_ok = rife_reconfig(&p->eng, cur->w, cur->h, p->cuda_stream);
         cuCtxPopCurrent(NULL);
@@ -725,13 +749,38 @@ static void f_process(struct mp_filter *f)
         p->video_w = cur->w;   // size change block above skipped; stage now
         p->video_h = cur->h;
     } else if (cur->w != p->video_w || cur->h != p->video_h) {
-        // size change after init: reallocate staging, recompute grid
+        // size change after init: reallocate staging; reload the engine if
+        // the padded shape changed (one fixed-shape engine per size)
+        int ph = (cur->h + 127) / 128 * 128;
+        int pw = (cur->w + 127) / 128 * 128;
         cuCtxPushCurrent(p->cuda_ref->ctx);
-        bool ok = rife_reconfig(&p->eng, cur->w, cur->h, p->cuda_stream);
+        bool ok = true;
+        if (ph != p->eng.ph || pw != p->eng.pw) {
+            rife_destroy(&p->eng);
+            ok = rife_init(&p->eng, p->cuda_ref->ctx, p->cuda_stream,
+                           ph, pw, f->log);
+            if (!ok && p->opts->scale == 0) {
+                p->mode = RIFE_PASSTHROUGH;
+                snprintf(p->pt_reason, sizeof(p->pt_reason), "engine-size");
+                MP_WARN(f, "rife: engine for %dx%d (pad %dx%d) not found — "
+                        "passthrough\n", cur->w, cur->h, ph, pw);
+            }
+        }
+        if (ok)
+            ok = rife_reconfig(&p->eng, cur->w, cur->h, p->cuda_stream);
         cuCtxPopCurrent(NULL);
         if (!ok) {
-            mp_frame_unref(&frame);
-            mp_filter_internal_mark_failed(f);
+            if (p->opts->scale > 0 || p->mode != RIFE_PASSTHROUGH) {
+                mp_frame_unref(&frame);
+                mp_filter_internal_mark_failed(f);
+                return;
+            }
+            p->engine_ok = false;   // stay in passthrough (engine missing)
+            p->video_w = cur->w;
+            p->video_h = cur->h;
+            if (p->frame_count % RIFE_STATUS_EVERY == 0)
+                rife_status(f, p);
+            mp_pin_in_write(f->ppins[1], frame);
             return;
         }
         p->video_w = cur->w;
