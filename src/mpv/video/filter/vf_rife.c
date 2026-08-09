@@ -189,6 +189,7 @@ struct priv {
     struct rife_context eng;
     bool  engine_ok;          // engine + kernels ready
     bool  degrade_warned;
+    bool  engine_degraded;    // 引擎缺失一次性降级（不再每帧重试 init）
     bool  sw_warned;          // SW-input passthrough warned
 
     // scheduling / grid
@@ -256,9 +257,13 @@ static void rife_status(struct mp_filter *f, struct priv *p)
                       " cost=%.1fms budget=%.1fms",
                       adapt_avg(p), p->frame_budget_ms);
     } else {
+        // 直通：仅 "直通 原因"（无 src/out/fps——直通无插帧网格语义，
+        // fps 数值无意义且会乱）
         n = snprintf(buf, sizeof(buf),
-                     "fruc-status: mode=passthrough reason=%s src=%.2f out=%.2f",
-                     p->pt_reason, p->src_fps, p->out_fps);
+                     "fruc-status: mode=passthrough reason=%s",
+                     p->pt_reason);
+        mp_msg(f->log, MSGL_STATUS, "%s\n", buf);
+        return;
     }
     // 处理频率（窗内帧数 / 耗时）
     double now = now_ms();
@@ -893,6 +898,17 @@ static void f_process(struct mp_filter *f)
 
     // engine lazy init (first active frame)
     if (!p->engine_ok) {
+        if (p->engine_degraded) {
+            // 引擎缺失已降级：直接转发，不再重试——每帧 rife_init +
+            // not-found 警告会刷屏（f_reset 后重置可重试）
+            p->mode = RIFE_PASSTHROUGH;
+            snprintf(p->pt_reason, sizeof(p->pt_reason), "engine");
+            if (p->frame_count % RIFE_STATUS_EVERY == 0)
+                rife_status(f, p);
+            rife_discard_prefetch(p);
+            mp_pin_in_write(f->ppins[1], frame);
+            return;
+        }
         if (!ensure_cuda(f, p, cur)) {
             mp_frame_unref(&frame);
             mp_filter_internal_mark_failed(f);
@@ -919,6 +935,7 @@ static void f_process(struct mp_filter *f)
                 MP_WARN(f, "rife: engine init failed — passthrough\n");
                 p->degrade_warned = true;
             }
+            p->engine_degraded = true;   // 一次性降级（不再每帧重试）
             p->mode = RIFE_PASSTHROUGH;
             snprintf(p->pt_reason, sizeof(p->pt_reason), "engine");
             if (p->frame_count % RIFE_STATUS_EVERY == 0)
@@ -1102,6 +1119,7 @@ static void f_reset(struct mp_filter *f)
     p->adapt_idx = 0;
     p->mode = RIFE_ACTIVE;   // clear one-way adaptive degradation
     p->degrade_warned = false;
+    p->engine_degraded = false;   // 引擎缺失降级重置（换文件/改参数重试）
     MP_INFO(f, "rife: reset\n");
 }
 

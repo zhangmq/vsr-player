@@ -1479,20 +1479,8 @@ std::string PlayerViewModel::osdTextString() {
             .arg(renderFps_.load(), 0, 'f', 1);
     }
 
-    // Render：filter 输出帧尺寸 + 实际生效倍率（renderWidth/videoWidth）
-    int renderW = renderWidth_.load();
-    if (renderW <= 0) {
-        lines << tag("Render") + tr("–");
-    } else {
-        int videoW = videoWidth_.load();
-        double eff = videoW > 0 ? (double)renderW / videoW : 1.0;
-        lines << tag("Render") + tr("%1×%2 (%3×)")
-            .arg(renderW).arg(renderHeight_.load())
-            .arg(eff, 0, 'f', 2);
-    }
-
-    // VSR：设定（配置状态，auto 也显示 quality）| 实际状态（vsr-status
-    // 合并——处理耗时/频率/直通，| 分隔设定与实际）。
+    // VSR：设定 | 状态（原 Render 行合并：输出帧尺寸——倍率由设定段
+    // 已表达，移除重复显示；vsr-status 并入同一状态段）。
     {
         QStringList parts;
         double scale = scale_.load();
@@ -1504,31 +1492,46 @@ std::string PlayerViewModel::osdTextString() {
             parts << tr("auto %1").arg(tr(qualityName(quality)));
         if (denoise != -1)
             parts << tr("Denoise %1").arg(tr(denoiseName(denoise)));
-        QString line = tag("VSR") + (parts.isEmpty() ? tr("off") : parts.join("  "));
-        std::lock_guard<std::mutex> lk(vsrStatusMtx_);
-        if (!vsrStatus_.empty()) {
-            QString vsrs = QString::fromStdString(vsrStatus_);
-            trStatus(vsrs);   // mode/reason 本地化（数值参数保留）
-            line += " | " + vsrs;
+        QStringList st;   // 状态段：输出尺寸 + vsr-status
+        int renderW = renderWidth_.load();
+        if (renderW > 0)
+            st << tr("%1×%2").arg(renderW).arg(renderHeight_.load());
+        // vsr 关闭（scale=-1）时不并入 vsr-status——filter 在链中但无
+        // 处理，status 是切换瞬间的旧值残留（cost/fps 无意义）
+        if (scale > -0.5) {
+            std::lock_guard<std::mutex> lk(vsrStatusMtx_);
+            if (!vsrStatus_.empty()) {
+                QString vsrs = QString::fromStdString(vsrStatus_);
+                trStatus(vsrs);   // mode/reason 本地化（数值参数保留）
+                st << vsrs;
+            }
         }
+        QString line = tag("VSR") + (parts.isEmpty() ? tr("off") : parts.join("  "));
+        if (!st.isEmpty())
+            line += " | " + st.join("  ");
         lines << line;
     }
 
-    // FRUC：设定（目标帧率/倍率）| 实际状态（rife 的 fruc-status 行，
-    // 事件线程从 "fruc-status:" 日志提取；off 时无意义不显示）。
-    if (frucFps_.load() != -1) {
-        std::lock_guard<std::mutex> lk(frucStatusMtx_);
+    // FRUC：设定（目标帧率/倍率，off 显示"关闭"——整行不删除）|
+    // 实际状态（rife 的 fruc-status 行，事件线程从 "fruc-status:"
+    // 日志提取；off 时无状态段）。
+    {
         int fruc = frucFps_.load();
         QString target;
-        if (fruc == 2 || fruc == 3 || fruc == 4)
+        if (fruc == -1)
+            target = tr("off");
+        else if (fruc == 2 || fruc == 3 || fruc == 4)
             target = tr("%1×").arg(fruc);
         else if (fruc > 0)
             target = tr("%1 fps").arg(fruc);
         QString line = tag("FRUC") + target;
-        if (!frucStatus_.empty()) {
-            QString frucs = QString::fromStdString(frucStatus_);
-            trStatus(frucs);
-            line += " | " + frucs;
+        if (fruc != -1) {
+            std::lock_guard<std::mutex> lk(frucStatusMtx_);
+            if (!frucStatus_.empty()) {
+                QString frucs = QString::fromStdString(frucStatus_);
+                trStatus(frucs);
+                line += " | " + frucs;
+            }
         }
         lines << line;
     }
