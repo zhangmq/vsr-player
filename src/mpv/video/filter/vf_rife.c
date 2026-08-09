@@ -185,6 +185,9 @@ struct priv {
     enum yuv_range  yuv_range;
 
     AVBufferRef *device_ref;   // frames-ctx ref keeping the hwdec ctx alive
+    AVBufferRef *av_hw_device;   // CUDA device ctx (wraps cuda_ref->ctx)
+    AVBufferRef *av_hw_frames;   // CUDA/RGBA frames ctx（输出帧尺寸）
+    CUcontext    av_hw_frames_ctx;  // ctx av_hw_frames was created on
 
     struct rife_context eng;
     bool  engine_ok;          // engine + kernels ready
@@ -422,6 +425,19 @@ static struct mp_image *rife_make_output(struct mp_filter *f, struct priv *p,
                                          CUdeviceptr buf, int w, int h, int pitch,
                                          const struct mp_image *src, double pts)
 {
+    // 输出帧 hwctx = 自建 CUDA/RGBA frames（视频尺寸）——hwctx sw_format
+    // 必须与帧 subfmt（RGBA）一致：软解场景（无 hwdec → VO 无 CUDA
+    // interop → 链尾 hwdownload）按 hwctx sw_format 解析帧数据，借用
+    // hwup/hwdec 的 NV12 hwctx 会崩溃（mp_image_hw_download assert，与
+    // vf_vsr 输出段同款修复；helper 见 cuda_shared.h）。ctx 必须 current
+    //（调用方 process_pair 在 cuCtxPushCurrent 内）。
+    if (!mp_cuda_ensure_frames(f->log, p->cuda_ref->ctx, AV_PIX_FMT_RGBA,
+                               p->video_w, p->video_h,
+                               &p->av_hw_device, &p->av_hw_frames,
+                               &p->av_hw_frames_ctx)) {
+        MP_ERR(f, "rife: CUDA/RGBA hw_frames_ctx failed\n");
+        return NULL;
+    }
     atomic_fetch_add(&p->cuda_ref->refs, 1);
     struct mp_image *out = talloc_zero(NULL, struct mp_image);
     talloc_set_destructor(out, mp_image_dtor);
@@ -440,7 +456,7 @@ static struct mp_image *rife_make_output(struct mp_filter *f, struct priv *p,
     out->planes[0] = (uint8_t *)buf;
     out->stride[0] = pitch;
     out->num_planes = 1;
-    out->hwctx = av_buffer_ref(src->hwctx);
+    out->hwctx = av_buffer_ref(p->av_hw_frames);
     out->pts = pts;
     out->dts = src->dts;
     out->nominal_fps = p->out_fps;
@@ -1144,6 +1160,14 @@ static void f_destroy(struct mp_filter *f)
     if (p->device_ref) {
         av_buffer_unref(&p->device_ref);
         p->device_ref = NULL;
+    }
+    if (p->av_hw_frames) {
+        av_buffer_unref(&p->av_hw_frames);
+        p->av_hw_frames = NULL;
+    }
+    if (p->av_hw_device) {
+        av_buffer_unref(&p->av_hw_device);
+        p->av_hw_device = NULL;
     }
     if (p->cuda_ref) {
         rife_cuda_ref_unref(p->cuda_ref);

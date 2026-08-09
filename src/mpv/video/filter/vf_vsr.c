@@ -414,60 +414,24 @@ static bool ensure_cuda(struct mp_filter *f, struct priv *p,
     return true;
 }
 
-// ── AVHWFramesContext for SW-path CUDA/RGBA output ─────────────────────────
+// ── AVHWFramesContext for CUDA/RGBA output ─────────────────────────────────
+// Output frames carry a self-created RGBA frames ctx (NOT a borrow of the
+// input's NV12/P010 hwctx): hwdownload parses frame data per hwctx sw_format
+// — an NV12 hwctx under an RGBA frame crashes on the SW-input download path
+// (no hwdec → VO lacks CUDA interop → chain-tail hwdownload). Shared helper
+// in cuda_shared.h (mp_cuda_ensure_frames).
 
 static bool ensure_av_hw_frames(struct mp_filter *f, struct priv *p,
                                  int w, int h)
 {
-    // Recreate on dimension or context change — downstream autoconvert
-    // needs matching dims; the frames ctx is bound to its device's CUDA ctx
-    if (p->av_hw_frames) {
-        AVHWFramesContext *fctx = (AVHWFramesContext *)p->av_hw_frames->data;
-        if (fctx->width == w && fctx->height == h &&
-            p->av_hw_frames_ctx == p->cuda_ref->ctx)
-            return true;
-        av_buffer_unref(&p->av_hw_frames);
-        p->av_hw_frames = NULL;
-    }
-
     if (!p->cuda_init_done) return false;
-
-    AVBufferRef *dev = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_CUDA);
-    if (!dev) {
-        MP_ERR(f, "av_hwdevice_ctx_alloc failed\n");
+    bool had = p->av_hw_frames != NULL;
+    if (!mp_cuda_ensure_frames(f->log, p->cuda_ref->ctx, AV_PIX_FMT_RGBA,
+                               w, h, &p->av_hw_device, &p->av_hw_frames,
+                               &p->av_hw_frames_ctx))
         return false;
-    }
-    AVCUDADeviceContext *cuda_dev = (AVCUDADeviceContext *)
-        ((AVHWDeviceContext *)dev->data)->hwctx;
-    cuda_dev->cuda_ctx = p->cuda_ref->ctx;
-
-    if (av_hwdevice_ctx_init(dev) < 0) {
-        MP_ERR(f, "av_hwdevice_ctx_init failed\n");
-        av_buffer_unref(&dev);
-        return false;
-    }
-    p->av_hw_device = dev;
-
-    AVBufferRef *frames = av_hwframe_ctx_alloc(dev);
-    if (!frames) {
-        MP_ERR(f, "av_hwframe_ctx_alloc failed\n");
-        return false;
-    }
-    AVHWFramesContext *fctx = (AVHWFramesContext *)frames->data;
-    fctx->format    = AV_PIX_FMT_CUDA;
-    fctx->sw_format = AV_PIX_FMT_RGBA;
-    fctx->width     = w;
-    fctx->height    = h;
-
-    if (av_hwframe_ctx_init(frames) < 0) {
-        MP_ERR(f, "av_hwframe_ctx_init(frames) failed\n");
-        av_buffer_unref(&frames);
-        return false;
-    }
-    p->av_hw_frames = frames;
-    p->av_hw_frames_ctx = p->cuda_ref->ctx;
-
-    MP_VERBOSE(f, "vsr: created CUDA/RGBA hw_frames_ctx %dx%d\n", w, h);
+    if (!had)
+        MP_VERBOSE(f, "vsr: CUDA/RGBA hw_frames_ctx %dx%d\n", w, h);
     return true;
 }
 
@@ -978,53 +942,37 @@ static void f_process(struct mp_filter *f)
     // Each output frame takes a reference on the CUDA context: the frame
     // can outlive the filter (pin teardown frees frames after f_destroy),
     // so free_cuda_buf must never touch a destroyed context.
+    //
+    // hwctx = 自建 CUDA/RGBA frames（输出尺寸，当前 ctx 上）——hwctx 的
+    // sw_format 必须与输出帧 subfmt（RGBA）一致：软解场景 VO 无 CUDA
+    // interop → hwdownload → av_hwframe_transfer_data 按 hwctx sw_format
+    // 解析帧数据，借用 NV12 hwctx（hwup/hwdec 的）解析 RGBA 帧错乱崩溃
+    //（mp_image_hw_download assert，实测）。HW/SW 输入输出段同构。
     atomic_fetch_add(&p->cuda_ref->refs, 1);
     struct mp_image *out;
-    if (mpi->hwctx) {
-        out = talloc_zero(NULL, struct mp_image);
-        talloc_set_destructor(out, mp_image_dtor);
-        out->bufs[0] = av_buffer_create((uint8_t*)p->out_buf, (int)p->out_buf_size,
-                                         free_cuda_buf, p->cuda_ref, 0);
-        if (!out->bufs[0]) {
-            vsr_cuda_ref_unref(p->cuda_ref);
-            talloc_free(out); mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
-        }
-        mp_image_setfmt(out, IMGFMT_CUDA);
-        mp_image_sethwfmt(out, IMGFMT_CUDA, IMGFMT_RGBA);
-        mp_image_params_guess_csp(&out->params);
-        out->params.color = mpi->params.color; // preserve HDR metadata
-        out->w = vsr_out_w; out->h = vsr_out_h;
-        out->params.w = vsr_out_w; out->params.h = vsr_out_h;
-        out->planes[0] = (uint8_t*)p->out_buf;
-        out->stride[0] = vsr_out_pitch;
-        out->num_planes = 1;
-        out->hwctx = av_buffer_ref(mpi->hwctx);
-        p->out_buf = 0; p->out_buf_size = 0;
-    } else {
-        if (!ensure_av_hw_frames(f, p, vsr_out_w, vsr_out_h)) {
-            vsr_cuda_ref_unref(p->cuda_ref);
-            mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
-        }
-        out = talloc_zero(NULL, struct mp_image);
-        talloc_set_destructor(out, mp_image_dtor);
-        out->bufs[0] = av_buffer_create((uint8_t*)p->out_buf, (int)p->out_buf_size,
-                                         free_cuda_buf, p->cuda_ref, 0);
-        if (!out->bufs[0]) {
-            vsr_cuda_ref_unref(p->cuda_ref);
-            talloc_free(out); mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
-        }
-        mp_image_setfmt(out, IMGFMT_CUDA);
-        mp_image_sethwfmt(out, IMGFMT_CUDA, IMGFMT_RGBA);
-        mp_image_params_guess_csp(&out->params);
-        out->params.color = mpi->params.color; // preserve HDR metadata
-        out->w = vsr_out_w; out->h = vsr_out_h;
-        out->params.w = vsr_out_w; out->params.h = vsr_out_h;
-        out->planes[0] = (uint8_t*)p->out_buf;
-        out->stride[0] = vsr_out_pitch;
-        out->num_planes = 1;
-        out->hwctx = av_buffer_ref(p->av_hw_frames);
-        p->out_buf = 0; p->out_buf_size = 0;
+    if (!ensure_av_hw_frames(f, p, vsr_out_w, vsr_out_h)) {
+        vsr_cuda_ref_unref(p->cuda_ref);
+        mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
     }
+    out = talloc_zero(NULL, struct mp_image);
+    talloc_set_destructor(out, mp_image_dtor);
+    out->bufs[0] = av_buffer_create((uint8_t*)p->out_buf, (int)p->out_buf_size,
+                                     free_cuda_buf, p->cuda_ref, 0);
+    if (!out->bufs[0]) {
+        vsr_cuda_ref_unref(p->cuda_ref);
+        talloc_free(out); mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
+    }
+    mp_image_setfmt(out, IMGFMT_CUDA);
+    mp_image_sethwfmt(out, IMGFMT_CUDA, IMGFMT_RGBA);
+    mp_image_params_guess_csp(&out->params);
+    out->params.color = mpi->params.color; // preserve HDR metadata
+    out->w = vsr_out_w; out->h = vsr_out_h;
+    out->params.w = vsr_out_w; out->params.h = vsr_out_h;
+    out->planes[0] = (uint8_t*)p->out_buf;
+    out->stride[0] = vsr_out_pitch;
+    out->num_planes = 1;
+    out->hwctx = av_buffer_ref(p->av_hw_frames);
+    p->out_buf = 0; p->out_buf_size = 0;
 
     // 保留像素宽高比（aspect override：解码器层 video-aspect-override
     // 经 mp_image_params_set_dsize 换算进 p_w/p_h——VSR 重建 params 时

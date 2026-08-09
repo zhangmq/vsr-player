@@ -1262,11 +1262,13 @@ void PlayerViewModel::screenshot() {
 // ── vf string ────────────────────────────────────────────────────────
 
 std::string PlayerViewModel::vfOption() const {
-    // 链序：decode → rife（插帧，源分辨率）→ vsr（超分）→ VO。
-    // rife 目标语义（单一字段 frucFps_，数值自区分）：2/3/4 = 倍率
-    //（benchmark 强制，scale+adaptive=no——decide_mode 的 benchmark 分支
-    // 跳过全部直通限制）；30/40/60 = 目标帧率（正常模式，adaptive=yes）。
-    std::string vf;
+    // 链序：decode → hwup（SW→HW 一致化）→ rife（插帧，源分辨率）→
+    // vsr（超分）→ VO。hwup 使 rife/vsr 只处理 CUDA 帧（软解输入
+    // 也走 HW 路径）。rife 目标语义（单一字段 frucFps_，数值自区分）：
+    // 2/3/4 = 倍率（benchmark 强制，scale+adaptive=no——decide_mode 的
+    // benchmark 分支跳过全部直通限制）；30/40/60 = 目标帧率（正常模式，
+    // adaptive=yes）。
+    std::string vf = "@hwup:hwup,";
     int fruc = frucFps_.load();
     if (fruc == 2 || fruc == 3 || fruc == 4) {
         vf += "@rife:rife:fps=off:scale=" + std::to_string(fruc) + ":adaptive=no,";

@@ -1854,6 +1854,7 @@ if features['vsr']
         'video/filter/vsr_proc.c',
         'video/filter/vf_rife.c',
         'video/filter/rife_proc.c',
+        'video/filter/vf_hwup.c',
     )
     message('VSR filter: enabled')
 else

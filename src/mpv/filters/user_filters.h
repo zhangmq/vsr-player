@@ -38,5 +38,6 @@ extern const struct mp_user_filter_entry vf_d3d11vpp;
 extern const struct mp_user_filter_entry vf_amf_frc;
 extern const struct mp_user_filter_entry vf_fingerprint;
 extern const struct mp_user_filter_entry vf_gpu;
+extern const struct mp_user_filter_entry vf_hwup;
 extern const struct mp_user_filter_entry vf_vsr;
 extern const struct mp_user_filter_entry vf_rife;
