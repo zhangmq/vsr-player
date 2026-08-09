@@ -152,6 +152,10 @@ static const struct vf_rife_opts vf_rife_opts_def = {
 #define RIFE_ADAPT_WARMUP  30     // pairs measured before decision
 #define RIFE_ADAPT_SKIP    4      // first pairs (cold start) not recorded
 #define RIFE_MAX_PER_PAIR  64     // pathological small-delta cap
+#define RIFE_PREFETCH_PAIRS 8     // 预取输入对数——帧生成提前量 = 对数×源帧
+                                  // 间隔（8×33ms≈267ms），吸收下游（VSR+
+                                  // 渲染）耗时（vf_vapoursynth buffered 模型）
+#define RIFE_PREFETCH_MAX_FRAMES 32  // 输出预生成缓冲上限（时间上限）
 #define RIFE_BUDGET_VSR_MS 12.0   // downstream VSR cost estimate for budget
 #define RIFE_SC_MAE        20.0   // scene-change threshold (mean abs diff,
                                   // 0-255 scale — matches stats_repeat.py /
@@ -682,6 +686,15 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
 
 // ── process ───────────────────────────────────────────────────────────
 
+// 模式降级（SW/passthrough/引擎失败）：丢弃预生成输出帧——预取帧 PTS
+// 超前当前播放位置，转发当前帧前必须清空（否则输出顺序倒挂）。
+static void rife_discard_prefetch(struct priv *p)
+{
+    for (int i = p->queue_pos; i < p->queue_len; i++)
+        talloc_free(p->queue[i]);
+    p->queue_len = p->queue_pos = 0;
+}
+
 static void f_process(struct mp_filter *f)
 {
     struct priv *p = f->priv;
@@ -718,27 +731,37 @@ static void f_process(struct mp_filter *f)
         return;
     }
 
-    // 3. need input
-    if (!mp_pin_out_request_data(f->ppins[0]))
-        return;
-    struct mp_frame frame = mp_pin_out_read(f->ppins[0]);
+    // 3. prefetch loop: read input pairs and generate output frames ahead of
+    //    display demand (vf_vapoursynth buffered-frames model — frame
+    //    generation lead time = pairs × source interval absorbs downstream
+    //    cost). PTS semantics unchanged: generated frames carry normal grid
+    //    PTS, the queue drains in display order on VO demand.
+    int prefetch_pairs = 0;
+    struct mp_frame frame = {0};
+    struct mp_image *cur = NULL;
+    while (prefetch_pairs < RIFE_PREFETCH_PAIRS &&
+           mp_pin_out_request_data(f->ppins[0]))
+    {
+        frame = mp_pin_out_read(f->ppins[0]);
+        if (frame.type == MP_FRAME_NONE)
+            break;
 
-    if (mp_frame_is_signaling(frame)) {
-        mp_pin_in_write(f->ppins[1], frame);
-        return;
-    }
-    if (frame.type == MP_FRAME_EOF) {
-        p->eof_seen = true;
-        return;  // flush on next call (queue drains first)
-    }
-    if (frame.type != MP_FRAME_VIDEO) {
-        MP_ERR(f, "rife: unexpected frame type %d\n", frame.type);
-        mp_frame_unref(&frame);
-        mp_filter_internal_mark_failed(f);
-        return;
-    }
-    struct mp_image *cur = frame.data;
-    p->frame_count++;
+        if (mp_frame_is_signaling(frame)) {
+            mp_pin_in_write(f->ppins[1], frame);
+            return;
+        }
+        if (frame.type == MP_FRAME_EOF) {
+            p->eof_seen = true;
+            break;  // flush on next call (queue drains first)
+        }
+        if (frame.type != MP_FRAME_VIDEO) {
+            MP_ERR(f, "rife: unexpected frame type %d\n", frame.type);
+            mp_frame_unref(&frame);
+            mp_filter_internal_mark_failed(f);
+            return;
+        }
+        cur = frame.data;
+        p->frame_count++;
 
     // SW frames: passthrough (rife is CUDA-only; SW input = hwdec disabled)
     if (cur->imgfmt != IMGFMT_CUDA) {
@@ -750,6 +773,7 @@ static void f_process(struct mp_filter *f)
         snprintf(p->pt_reason, sizeof(p->pt_reason), "sw");
         if (p->frame_count % RIFE_STATUS_EVERY == 0)
             rife_status(f, p);
+        rife_discard_prefetch(p);
         mp_pin_in_write(f->ppins[1], frame);
         return;
     }
@@ -779,6 +803,7 @@ static void f_process(struct mp_filter *f)
     if (!decide_mode(f, p, cur)) {
         if (p->frame_count % RIFE_STATUS_EVERY == 0)
             rife_status(f, p);
+        rife_discard_prefetch(p);
         mp_pin_in_write(f->ppins[1], frame);   // passthrough: forward untouched
         return;
     }
@@ -815,6 +840,7 @@ static void f_process(struct mp_filter *f)
             snprintf(p->pt_reason, sizeof(p->pt_reason), "engine");
             if (p->frame_count % RIFE_STATUS_EVERY == 0)
                 rife_status(f, p);
+            rife_discard_prefetch(p);
             mp_pin_in_write(f->ppins[1], frame);
             return;
         }
@@ -836,6 +862,7 @@ static void f_process(struct mp_filter *f)
                 snprintf(p->pt_reason, sizeof(p->pt_reason), "engine-size");
                 MP_WARN(f, "rife: engine for %dx%d (pad %dx%d) not found — "
                         "passthrough\n", cur->w, cur->h, ph, pw);
+                rife_discard_prefetch(p);
             }
         }
         if (ok)
@@ -885,7 +912,7 @@ static void f_process(struct mp_filter *f)
         p->cur_emitted = true;
         cur->nominal_fps = p->out_fps;
         mp_pin_in_write(f->ppins[1], frame);
-        return;
+        continue;   // 首帧直出后继续预取（下帧为对处理）
     }
 
     double t_prev = p->prev_pts;
@@ -895,7 +922,7 @@ static void f_process(struct mp_filter *f)
         MP_DBG(f, "rife: drop frame pts=%.3f (prev=%.3f)\n", t_cur, t_prev);
         mp_frame_unref(&frame);
         p->cur_emitted = true;
-        return;
+        continue;   // 丢弃 cur，继续预取下一帧
     }
 
     // Release the old prev's hwdec frame now — its RGBA already lives in
@@ -925,7 +952,13 @@ static void f_process(struct mp_filter *f)
         return;
     }
 
-    // emit at most one queued output this call
+        prefetch_pairs++;
+        if (p->queue_len >= RIFE_PREFETCH_MAX_FRAMES)
+            break;   // 输出缓冲达时间上限，停止预取
+    }
+
+    // 4. emit one output per call (queue preferred — prefetched frames
+    //    drain in display order on VO demand)
     if (p->queue_len > 0) {
         struct mp_image *out = p->queue[p->queue_pos++];
         if (p->queue_pos == p->queue_len)
