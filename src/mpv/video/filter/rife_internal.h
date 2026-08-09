@@ -67,8 +67,17 @@ bool rife_scene_change(struct rife_context *c, CUstream stream, double thresh);
 bool rife_interpolate(struct rife_context *c, CUstream stream,
                       double tval, CUdeviceptr out_rgba, int out_pitch);
 
-// Scene-change pass-through: copy rgba_a (prev) to out_rgba, no inference.
-bool rife_pass_through(struct rife_context *c, CUstream stream,
+// Scene-change pass-through: copy one endpoint (from_cur ? rgba_b : rgba_a)
+// to out_rgba, no inference. minterpolate semantics: duplicate the temporally
+// nearer endpoint (alpha > 0.5 → next, else previous) — copying the far frame
+// would show content from the wrong side of the cut.
+bool rife_pass_through(struct rife_context *c, CUstream stream, bool from_cur,
                        CUdeviceptr out_rgba, int out_pitch);
+
+// TEST: frame-content fingerprint — mean |a - b| over the frame region
+// (0-255 scale), host-read (syncs the stream). Used to detect abnormal
+// frames in the output sequence (flicker = content-level anomaly).
+bool rife_mae_of(struct rife_context *c, CUstream stream,
+                 CUdeviceptr a, CUdeviceptr b, float *out);
 
 #endif // RIFE_INTERNAL_H

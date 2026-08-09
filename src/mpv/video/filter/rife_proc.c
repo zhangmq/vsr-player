@@ -333,6 +333,38 @@ bool rife_scene_change(struct rife_context *c, CUstream stream, double thresh)
     return total / ((double)c->w * c->h * 3) > thresh;
 }
 
+// TEST: frame-content fingerprint — mean |a - b| over the frame region,
+// host-read (syncs the stream). Used to detect abnormal output frames
+// (flicker = content-level anomaly) from the output sequence.
+bool rife_mae_of(struct rife_context *c, CUstream stream,
+                 CUdeviceptr a, CUdeviceptr b, float *out)
+{
+    if (!c->configured || !out)
+        return false;
+    const int blocks = 256, threads = 256;
+    if (!c->mae_partial_alloc) {
+        if (cuMemAlloc(&c->mae_partial, blocks * sizeof(float)) != CUDA_SUCCESS)
+            return false;
+        c->mae_partial_alloc = true;
+    }
+    int pitch = c->rgba_pitch;
+    void *args[] = {&a, &pitch, &b, &pitch, &c->mae_partial, &c->w, &c->h};
+    if (cuLaunchKernel(c->mae_fn, blocks, 1, 1, threads, 1, 1, 0, stream,
+                       args, NULL) != CUDA_SUCCESS)
+        return false;
+    float sums[blocks];
+    if (cuMemcpyDtoHAsync(sums, c->mae_partial, blocks * sizeof(float), stream)
+            != CUDA_SUCCESS)
+        return false;
+    if (cuStreamSynchronize(stream) != CUDA_SUCCESS)
+        return false;
+    double total = 0;
+    for (int i = 0; i < blocks; i++)
+        total += sums[i];
+    *out = (float)(total / ((double)c->w * c->h * 3));
+    return true;
+}
+
 // ── Interpolation ──────────────────────────────────────────────────────
 
 bool rife_interpolate(struct rife_context *c, CUstream stream,
@@ -386,13 +418,14 @@ bool rife_interpolate(struct rife_context *c, CUstream stream,
 
 // ── Scene-change pass-through (prev frame copy) ────────────────────────
 
-bool rife_pass_through(struct rife_context *c, CUstream stream,
+bool rife_pass_through(struct rife_context *c, CUstream stream, bool from_cur,
                        CUdeviceptr out_rgba, int out_pitch)
 {
     if (!c->configured)
         return false;
+    CUdeviceptr src = from_cur ? c->rgba_b : c->rgba_a;
     int ftotal = c->w * c->h;
-    void *args[] = {&c->rgba_a, &c->rgba_pitch, &out_rgba, &out_pitch,
+    void *args[] = {&src, &c->rgba_pitch, &out_rgba, &out_pitch,
                     &c->w, &c->h};
     return cuLaunchKernel(c->copy_fn, (ftotal + 255) / 256, 1, 1,
                           256, 1, 1, 0, stream, args, NULL) == CUDA_SUCCESS;

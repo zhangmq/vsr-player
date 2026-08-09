@@ -234,6 +234,11 @@ Item {
                 viewModel.setVolume(viewModel.volume - 0.05); event.accepted = true; break
             case Qt.Key_S:
                 viewModel.screenshot(); event.accepted = true; break
+            case Qt.Key_Period:
+                // 单帧步进（调试插帧帧序）：暂停态前进 1 帧
+                viewModel.frameStep(1); event.accepted = true; break
+            case Qt.Key_Comma:
+                viewModel.frameStep(-1); event.accepted = true; break
             case Qt.Key_Tab:
                 viewModel.toggleOsd(); event.accepted = true; break
             case Qt.Key_Q:

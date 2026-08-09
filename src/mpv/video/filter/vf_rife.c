@@ -537,57 +537,126 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
     if (scene)
         MP_DBG(f, "rife: scene change (MAE > %.0f) — pass-through\n", RIFE_SC_MAE);
 
-    // enumerate grid points in (t_prev, t_cur]
-    double fps = p->out_fps;
-    long long n0 = (long long)floor((t_prev - p->t0) * fps) + 1;
-    long long n1 = (long long)floor((t_cur - p->t0) * fps);
-    if (n1 - n0 + 1 > RIFE_MAX_PER_PAIR)
-        n1 = n0 + RIFE_MAX_PER_PAIR - 1;
+    // ── Output scheduling ────────────────────────────────────────────
+    // vs-mlrt semantics for integer factors >= 2 (the community RIFE
+    // model): output = Interleave([src, interp]) — the source frame is
+    // always retained and each interpolated frame sits at a RELATIVE
+    // timepoint t = i/k between the pair (t = 0.5 for 2×). An absolute
+    // grid (t0 + n/out_fps) instead makes tval swing between ~0.01 and
+    // ~0.99 on VFR sources (e.g. goose 33.0/34.0ms alternating PTS),
+    // which forces RIFE to interpolate at extreme times and swallows
+    // the source frame (never on-grid) — observed as content stutter.
+    // Non-integer factors (< 2× or 24→60=2.5) keep the absolute grid.
+    double factor = p->out_fps / p->src_fps;
+    long long k = llround(factor);
+    bool integer_factor = k >= 2 && fabs(factor - k) < 0.01;
 
     *grid_emitted_cur = false;
-    MP_DBG(f, "rife: pair (%.3f, %.3f) grid %lld..%lld%s\n", t_prev, t_cur, n0, n1,
-           scene ? " [scene]" : "");
     bool ok = true;
-    for (long long n = n0; n <= n1; n++) {
-        double tg = p->t0 + n / fps;
-        double tval = (tg - t_prev) / (t_cur - t_prev);
-        if (fabs(tval - 1.0) < 1e-6) {
-            // grid coincides with cur: emit source frame as-is
-            struct mp_image *out = mp_image_new_ref(cur);
-            if (out) {
-                out->nominal_fps = p->out_fps;
-                out->pkt_duration = 1.0 / p->out_fps;
+
+    if (integer_factor) {
+        // [mid(1/k), mid(2/k), ..., cur] — source frame always emitted.
+        // CONTENT time is the relative midpoint (tval = i/k, vs-mlrt
+        // Interleave semantics — no extreme tval on VFR sources). PTS is
+        // stamped on the absolute output grid (t0 + n/out_fps), matching
+        // minterpolate's `out_pts++` counter / vf_vapoursynth's uniform
+        // accumulation: a PTS sequence that follows the input (33.0/34.0ms
+        // alternating on goose) makes display_sync accumulate ±0.3ms
+        // vsync rounding errors and periodically repeat/drop frames —
+        // the offline pipeline has no PTS, hence no stutter (verified).
+        // Each pair emits k frames ending at cur's nearest grid point
+        // (round, not floor — floor would re-emit the previous pair's
+        // last grid point on short VFR intervals).
+        long long n_cur = llround((t_cur - p->t0) * p->out_fps);
+        for (long long i = 0; i < k; i++) {
+            double tval = (double)(i + 1) / k;
+            double tg = p->t0 + (n_cur - (k - 1) + i) / p->out_fps;
+            if (i == k - 1) {
+                struct mp_image *out = mp_image_new_ref(cur);
+                if (out) {
+                    out->pts = tg;   // grid PTS, not the raw input PTS
+                    out->nominal_fps = p->out_fps;
+                    out->pkt_duration = 1.0 / p->out_fps;
+                }
+                p->queue[p->queue_len++] = out;
+                *grid_emitted_cur = true;
+            } else {
+                CUdeviceptr out_buf = 0;
+                if (cuMemAlloc(&out_buf, (size_t)p->eng.rgba_pitch * p->video_h)
+                        != CUDA_SUCCESS) {
+                    MP_ERR(f, "rife: output alloc failed\n");
+                    ok = false;
+                    break;
+                }
+                bool ok_run = scene
+                    // minterpolate scene-change semantics: duplicate the
+                    // temporally nearer endpoint (alpha > 0.5 → next, else
+                    // previous) — copying the far frame would show content
+                    // from the wrong side of the cut.
+                    ? rife_pass_through(&p->eng, p->cuda_stream, tval > 0.5,
+                                        out_buf, p->eng.rgba_pitch)
+                    : rife_interpolate(&p->eng, p->cuda_stream, tval,
+                                       out_buf, p->eng.rgba_pitch);
+                if (!ok_run) {
+                    cuMemFree(out_buf);
+                    MP_ERR(f, "rife: %s failed\n", scene ? "pass-through" : "interpolate");
+                    ok = false;
+                    break;
+                }
+                struct mp_image *out = rife_make_output(f, p, out_buf,
+                                                        p->video_w, p->video_h,
+                                                        p->eng.rgba_pitch,
+                                                        cur, tg);
+                p->queue[p->queue_len++] = out;
             }
-            p->queue[p->queue_len++] = out;
-            *grid_emitted_cur = true;
-        } else if (tval > 0 && tval < 1) {
-            // interpolated frame (or scene-change pass-through of prev)
-            CUdeviceptr out_buf = 0;
-            if (cuMemAlloc(&out_buf, (size_t)p->eng.rgba_pitch * p->video_h)
-                    != CUDA_SUCCESS) {
-                MP_ERR(f, "rife: output alloc failed\n");
-                ok = false;
-                break;
-            }
-            bool ok_run = scene
-                ? rife_pass_through(&p->eng, p->cuda_stream,
-                                    out_buf, p->eng.rgba_pitch)
-                : rife_interpolate(&p->eng, p->cuda_stream, tval,
-                                   out_buf, p->eng.rgba_pitch);
-            if (!ok_run) {
-                cuMemFree(out_buf);
-                MP_ERR(f, "rife: %s failed\n", scene ? "pass-through" : "interpolate");
-                ok = false;
-                break;
-            }
-            struct mp_image *out = rife_make_output(f, p, out_buf,
-                                                    p->video_w, p->video_h,
-                                                    p->eng.rgba_pitch,
-                                                    cur, tg);
-            p->queue[p->queue_len++] = out;
         }
-        if (p->queue_len >= RIFE_MAX_PER_PAIR + 2)
-            break;
+    } else {
+        // absolute grid (non-integer factors)
+        double fps = p->out_fps;
+        long long n0 = (long long)floor((t_prev - p->t0) * fps) + 1;
+        long long n1 = (long long)floor((t_cur - p->t0) * fps);
+        if (n1 - n0 + 1 > RIFE_MAX_PER_PAIR)
+            n1 = n0 + RIFE_MAX_PER_PAIR - 1;
+        MP_DBG(f, "rife: pair (%.3f, %.3f) grid %lld..%lld%s\n", t_prev, t_cur, n0, n1,
+               scene ? " [scene]" : "");
+        for (long long n = n0; n <= n1; n++) {
+            double tg = p->t0 + n / fps;
+            double tval = (tg - t_prev) / (t_cur - t_prev);
+            if (fabs(tval - 1.0) < 1e-6) {
+                struct mp_image *out = mp_image_new_ref(cur);
+                if (out) {
+                    out->pts = tg;   // grid PTS (uniform output clock)
+                    out->nominal_fps = p->out_fps;
+                    out->pkt_duration = 1.0 / p->out_fps;
+                }
+                p->queue[p->queue_len++] = out;
+                *grid_emitted_cur = true;
+            } else if (tval > 0 && tval < 1) {
+                CUdeviceptr out_buf = 0;
+                if (cuMemAlloc(&out_buf, (size_t)p->eng.rgba_pitch * p->video_h)
+                        != CUDA_SUCCESS) {
+                    MP_ERR(f, "rife: output alloc failed\n");
+                    ok = false;
+                    break;
+                }
+                bool ok_run = scene
+                    ? rife_pass_through(&p->eng, p->cuda_stream, tval > 0.5,
+                                        out_buf, p->eng.rgba_pitch)
+                    : rife_interpolate(&p->eng, p->cuda_stream, tval,
+                                       out_buf, p->eng.rgba_pitch);
+                if (!ok_run) {
+                    cuMemFree(out_buf);
+                    MP_ERR(f, "rife: %s failed\n", scene ? "pass-through" : "interpolate");
+                    ok = false;
+                    break;
+                }
+                struct mp_image *out = rife_make_output(f, p, out_buf,
+                                                        p->video_w, p->video_h,
+                                                        p->eng.rgba_pitch,
+                                                        cur, tg);
+                p->queue[p->queue_len++] = out;
+            }
+        }
     }
 
     // ── GPU serialization boundary ────────────────────────────────────
@@ -625,6 +694,9 @@ static void f_process(struct mp_filter *f)
         struct mp_image *out = p->queue[p->queue_pos++];
         if (p->queue_pos == p->queue_len)
             p->queue_len = p->queue_pos = 0;
+        MP_DBG(f, "rife: OUT pts=%.4f src-pts=%.4f %s\n", out->pts,
+               p->prev_pts,
+               fabs(out->pts - p->prev_pts) < 0.001 ? "[copy]" : "[mid]");
         mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out));
         return;
     }
@@ -858,6 +930,24 @@ static void f_process(struct mp_filter *f)
         struct mp_image *out = p->queue[p->queue_pos++];
         if (p->queue_pos == p->queue_len)
             p->queue_len = p->queue_pos = 0;
+        MP_DBG(f, "rife: OUT pts=%.4f src-pts=%.4f %s\n", out->pts,
+               p->prev_pts,
+               fabs(out->pts - p->prev_pts) < 0.001 ? "[copy]" : "[mid]");
+        // TEST: 帧内容指纹——mid 帧 vs-prev/vs-cur 应 ≈ [0.5d, 0.5d]；
+        // [d, 0] = mid 复制了 cur、[0, d] = mid 复制了 prev——帧序错位
+        if (p->engine_ok) {
+            cuCtxPushCurrent(p->cuda_ref->ctx);
+            float mp = 0, mc = 0, dsrc = 0;
+            if (rife_mae_of(&p->eng, p->cuda_stream,
+                            (CUdeviceptr)out->planes[0], p->eng.rgba_b, &mp) &&
+                rife_mae_of(&p->eng, p->cuda_stream,
+                            (CUdeviceptr)out->planes[0], p->eng.rgba_a, &mc) &&
+                rife_mae_of(&p->eng, p->cuda_stream,
+                            p->eng.rgba_a, p->eng.rgba_b, &dsrc))
+                MP_DBG(f, "rife: MAE pts=%.4f vs-prev=%.2f vs-cur=%.2f d_src=%.2f\n",
+                        out->pts, mp, mc, dsrc);
+            cuCtxPopCurrent(NULL);
+        }
         mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out));
     }
     if (p->frame_count % RIFE_STATUS_EVERY == 0)

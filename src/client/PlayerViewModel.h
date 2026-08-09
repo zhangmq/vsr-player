@@ -201,6 +201,9 @@ public slots:
     /// 渲染新帧计数（Video uf>0 分支调用，主线程）——段内 rendered 统计。
     void notifyFrameRendered();
     void togglePlayPause();
+    /// 单帧步进（调试插帧/闪回用）：dir>0 前进 1 帧（frame-step，
+    /// 暂停态推进 1 帧后保持暂停）；dir<0 回退 1 帧（frame-back-step）。
+    void frameStep(int dir);
     void stop();
     void seekAbsolute(int64_t ms);
     void seekRelative(int64_t offsetMs);

@@ -613,6 +613,17 @@ void PlayerViewModel::setMuted(bool m) {
     toggleMute();
 }
 
+void PlayerViewModel::frameStep(int dir) {
+    if (!mpv_) return;
+    // frame-step 在暂停态推进 1 帧后保持暂停；frame-back-step 回退 1 帧
+    // （mpv 0.38+，内部 seek 到前一帧）。参数必须分解传递（commandAsync
+    // 不做整行解析）。
+    if (dir > 0)
+        mpv_->commandAsync({"frame-step", nullptr});
+    else
+        mpv_->commandAsync({"frame-back-step", nullptr});
+}
+
 void PlayerViewModel::togglePlayPause() {
     if (!mpv_) return;
     if (!fileLoaded_) {
