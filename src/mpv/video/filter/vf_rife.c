@@ -479,7 +479,12 @@ static bool decide_mode(struct mp_filter *f, struct priv *p,
             return false;
         }
         double src_fps = p->src_fps;
-        if (p->opts->fps > 0 && src_fps > 0 && src_fps >= p->opts->fps) {
+        // 插帧倍率 ≈ 1 无意义（59.94 源 + 60 目标 = 1.001×——社区 RIFE
+        // 只支持 ≥2×，k7sfunc multi≥2 断言）。1.001× 实际无插帧（每对
+        // 仅 1 个网格点），且 tval 相位漂移（0.016~0.998 缓慢摆动）导致
+        // 插值质量波动 = 闪烁。目标帧率接近源帧率（≥95%）直接直通。
+        if (p->opts->fps > 0 && src_fps > 0 &&
+            src_fps >= p->opts->fps * 0.95) {
             p->mode = RIFE_PASSTHROUGH;
             snprintf(p->pt_reason, sizeof(p->pt_reason), "src-fps");
             return false;
@@ -643,8 +648,12 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
                     ok = false;
                     break;
                 }
-                bool ok_run = scene
-                    ? rife_pass_through(&p->eng, p->cuda_stream, tval > 0.5,
+                // 极端 tval（<0.05/>0.95）：复制较近端点（minterpolate
+                // alpha≈0/1024 语义）——极端时间位置的 RIFE 插值输出伪影
+                bool extreme = tval < 0.05 || tval > 0.95;
+                bool ok_run = (scene || extreme)
+                    ? rife_pass_through(&p->eng, p->cuda_stream,
+                                        scene ? tval > 0.5 : tval > 0.95,
                                         out_buf, p->eng.rgba_pitch)
                     : rife_interpolate(&p->eng, p->cuda_stream, tval,
                                        out_buf, p->eng.rgba_pitch);
