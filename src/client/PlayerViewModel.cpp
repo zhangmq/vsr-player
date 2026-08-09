@@ -767,14 +767,23 @@ void PlayerViewModel::setFrucFps(int v) {
     pushVf("rife", "fps", v == -1 ? "off" : std::to_string(v));
 }
 
+// 剥离 mpv 日志消息尾随换行（mpv 的 log text 以 \n 结尾——原样存入
+// 会让 OSD 行内嵌 \n → 行距异常/提前折行，见 osdTextString）
+static void stripEol(std::string &s) {
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
+        s.pop_back();
+}
+
 void PlayerViewModel::setFrucStatus(const std::string &s) {
     std::lock_guard<std::mutex> lk(frucStatusMtx_);
     frucStatus_ = s;
+    stripEol(frucStatus_);
 }
 
 void PlayerViewModel::setVsrStatus(const std::string &s) {
     std::lock_guard<std::mutex> lk(vsrStatusMtx_);
     vsrStatus_ = s;
+    stripEol(vsrStatus_);
 }
 
 // ── Speed / window / OSD ─────────────────────────────────────────────
@@ -1426,6 +1435,19 @@ std::string PlayerViewModel::osdTextString() {
         return s;
     };
 
+    // 状态行本地化：mode/reason 关键词翻译（src=/out=/cost= 等数值参数
+    // 保留英文缩写——技术参数）。mpv 侧日志英文，显示侧映射（.ts 条目）。
+    auto trStatus = [](QString &s) {
+        static const char *kw[] = {
+            "mode=active", "mode=passthrough",
+            "reason=cost", "reason=src-fps", "reason=off",
+            "reason=sw", "reason=engine", "reason=engine-size",
+            "reason=no-pts",
+        };
+        for (const char *k : kw)
+            s.replace(k, tr(k));
+    };
+
     // Source：源信息（解码尺寸/codec/色深/容器帧率/总帧数）；无视频显示占位
     if (videoWidth_.load() <= 0) {
         lines << tag("Source") + tr("–");
@@ -1469,7 +1491,8 @@ std::string PlayerViewModel::osdTextString() {
             .arg(eff, 0, 'f', 2);
     }
 
-    // VSR：配置状态（auto 也显示 quality；实际倍率由 Render 行显示）
+    // VSR：设定（配置状态，auto 也显示 quality）| 实际状态（vsr-status
+    // 合并——处理耗时/频率/直通，| 分隔设定与实际）。
     {
         QStringList parts;
         double scale = scale_.load();
@@ -1481,22 +1504,33 @@ std::string PlayerViewModel::osdTextString() {
             parts << tr("auto %1").arg(tr(qualityName(quality)));
         if (denoise != -1)
             parts << tr("Denoise %1").arg(tr(denoiseName(denoise)));
-        lines << tag("VSR") + (parts.isEmpty() ? tr("off") : parts.join("  "));
+        QString line = tag("VSR") + (parts.isEmpty() ? tr("off") : parts.join("  "));
+        std::lock_guard<std::mutex> lk(vsrStatusMtx_);
+        if (!vsrStatus_.empty()) {
+            QString vsrs = QString::fromStdString(vsrStatus_);
+            trStatus(vsrs);   // mode/reason 本地化（数值参数保留）
+            line += " | " + vsrs;
+        }
+        lines << line;
+    }
 
-    // FRUC：插帧实时状态（rife filter 的 MSGL_STATUS 状态行，事件线程
-    // 从 "fruc-status:" 日志行提取；off 时无意义不显示。正常/benchmark
-    // 共用同一条件（frucFps_ 单一状态）。
+    // FRUC：设定（目标帧率/倍率）| 实际状态（rife 的 fruc-status 行，
+    // 事件线程从 "fruc-status:" 日志提取；off 时无意义不显示）。
     if (frucFps_.load() != -1) {
         std::lock_guard<std::mutex> lk(frucStatusMtx_);
-        if (!frucStatus_.empty())
-            lines << tag("FRUC") + QString::fromStdString(frucStatus_);
-    }
-    // VSR 状态行（处理耗时 + 频率）
-    {
-        std::lock_guard<std::mutex> lk(vsrStatusMtx_);
-        if (!vsrStatus_.empty())
-            lines << tag("VSR-ST") + QString::fromStdString(vsrStatus_);
-    }
+        int fruc = frucFps_.load();
+        QString target;
+        if (fruc == 2 || fruc == 3 || fruc == 4)
+            target = tr("%1×").arg(fruc);
+        else if (fruc > 0)
+            target = tr("%1 fps").arg(fruc);
+        QString line = tag("FRUC") + target;
+        if (!frucStatus_.empty()) {
+            QString frucs = QString::fromStdString(frucStatus_);
+            trStatus(frucs);
+            line += " | " + frucs;
+        }
+        lines << line;
     }
 
     // 硬解显示实际格式（hw-pixelformat，如 p010/nv12）——pixelformat

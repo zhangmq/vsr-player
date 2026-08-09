@@ -245,17 +245,16 @@ static void rife_status(struct mp_filter *f, struct priv *p)
     char buf[256];
     int n = 0;
     if (p->mode == RIFE_ACTIVE) {
+        // 字段集合（一般模式为准）：mode/src/out/cost/budget/fps——
+        // pad（引擎 padded 尺寸）与 frames（累计计数）不输出
         n = snprintf(buf, sizeof(buf),
-                     "fruc-status: mode=active src=%.2f out=%.2f pad=%dx%d",
-                     p->src_fps, p->out_fps,
-                     p->eng.ph, p->eng.pw);
-        // cost（实际插帧成本）benchmark 也显示——能力评估核心数据；
-        // benchmark（scale>0）不等 adaptive warmup（测量从首对起）
-        if (p->opts->scale > 0 ||
-            (p->opts->adaptive && p->adapt_warmup_done))
-            n += snprintf(buf + n, sizeof(buf) - n,
-                          " cost=%.1fms budget=%.1fms",
-                          adapt_avg(p), p->frame_budget_ms);
+                     "fruc-status: mode=active src=%.2f out=%.2f",
+                     p->src_fps, p->out_fps);
+        // cost/budget 恒显示——一般模式与 benchmark 信息结构一致
+        //（warmup 前为部分窗口均值，数值渐进准确）
+        n += snprintf(buf + n, sizeof(buf) - n,
+                      " cost=%.1fms budget=%.1fms",
+                      adapt_avg(p), p->frame_budget_ms);
     } else {
         n = snprintf(buf, sizeof(buf),
                      "fruc-status: mode=passthrough reason=%s src=%.2f out=%.2f",
@@ -269,7 +268,6 @@ static void rife_status(struct mp_filter *f, struct priv *p)
     p->status_frames = p->frame_count;
     if (el > 0)
         n += snprintf(buf + n, sizeof(buf) - n, " fps=%.0f", df / el);
-    snprintf(buf + n, sizeof(buf) - n, " frames=%d", p->frame_count);
     mp_msg(f->log, MSGL_STATUS, "%s\n", buf);
 }
 
