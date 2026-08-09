@@ -37,8 +37,8 @@ PopupBase {
     ]
     readonly property var frucModel: [
         {label: qsTr("Off"), value: -1},
-        {label: qsTr("30 fps"), value: 30},
         {label: qsTr("40 fps"), value: 40},
+        {label: qsTr("48 fps"), value: 48},
         {label: qsTr("60 fps"), value: 60}
     ]
 

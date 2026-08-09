@@ -263,6 +263,7 @@ struct priv {
     double status_t0;
     int    status_frames;
     double status_cost_ms;
+    int    status_emit;        // passthrough 分支输出计数（每 30 帧）
 };
 
 // dump-both 命令的帧 dump（输入/输出 RGBA → PNG），VSR_TEST_* 复用
@@ -801,6 +802,15 @@ static void f_process(struct mp_filter *f)
             MP_INFO(f, "vsr: switching to passthrough (scale=%.2f, denoise=off)\n",
                     p->effective_scale);
         }
+        // passthrough 也输出状态行（mode=passthrough）——OSD 的 VSR-ST
+        // 行由 vsr-status 驱动，不输出会残留激活时的 cost（陈旧显示）。
+        // 低频（每 30 帧），与激活路径同节奏。
+        if (++p->status_emit >= 30) {
+            p->status_emit = 0;
+            mp_msg(f->log, MSGL_STATUS,
+                   "vsr-status: mode=passthrough scale=%.2f\n",
+                   p->effective_scale);
+        }
         mp_pin_in_write(f->ppins[1], frame);
         return;
     }
@@ -925,6 +935,7 @@ static void f_process(struct mp_filter *f)
                 p->frame_count, video_w, video_h);
         p->test_pending_dumps--;
     }
+
 
     // ── VSR process ──────────────────────────────────────────────────────
     void *vsr_out_ptr = NULL;

@@ -238,6 +238,7 @@ struct priv {
 
 static double adapt_avg(struct priv *p);   // defined below (adaptive section)
 static double now_ms(void);                // defined below (adaptive section)
+static void rife_discard_prefetch(struct priv *p);   // defined below (process section)
 
 static void rife_status(struct mp_filter *f, struct priv *p)
 {
@@ -248,7 +249,10 @@ static void rife_status(struct mp_filter *f, struct priv *p)
                      "fruc-status: mode=active src=%.2f out=%.2f pad=%dx%d",
                      p->src_fps, p->out_fps,
                      p->eng.ph, p->eng.pw);
-        if (p->opts->adaptive && p->adapt_warmup_done)
+        // cost（实际插帧成本）benchmark 也显示——能力评估核心数据；
+        // benchmark（scale>0）不等 adaptive warmup（测量从首对起）
+        if (p->opts->scale > 0 ||
+            (p->opts->adaptive && p->adapt_warmup_done))
             n += snprintf(buf + n, sizeof(buf) - n,
                           " cost=%.1fms budget=%.1fms",
                           adapt_avg(p), p->frame_budget_ms);
@@ -441,6 +445,30 @@ static struct mp_image *rife_make_output(struct mp_filter *f, struct priv *p,
     return out;
 }
 
+// copy 帧输出：full RGBA（staging rgba_b 拷贝）——与 mid 帧同构。
+// 源 NV12 limited 引用会让 VO 对交替帧走不同转换路径（闪烁根因——
+// mid=guess_csp(RGBA)→full 标记，copy=源 limited 标记；vsr 输出全
+// RGBA full 同构故不闪）。staging 已是 full 转换结果（引擎输入），
+// 一次 D2D copy 零额外转换。ctx 必须 current（调用方 process_pair）。
+static struct mp_image *rife_make_copy(struct mp_filter *f, struct priv *p,
+                                       const struct mp_image *cur, double tg)
+{
+    CUdeviceptr out_buf = 0;
+    if (cuMemAlloc(&out_buf, (size_t)p->eng.rgba_pitch * p->video_h)
+            != CUDA_SUCCESS) {
+        MP_ERR(f, "rife: copy output alloc failed\n");
+        return NULL;
+    }
+    if (!rife_pass_through(&p->eng, p->cuda_stream, true,
+                           out_buf, p->eng.rgba_pitch)) {
+        cuMemFree(out_buf);
+        MP_ERR(f, "rife: copy failed\n");
+        return NULL;
+    }
+    return rife_make_output(f, p, out_buf, p->video_w, p->video_h,
+                            p->eng.rgba_pitch, cur, tg);
+}
+
 // ── Adaptive measurement ───────────────────────────────────────────────
 
 static double now_ms(void)
@@ -472,6 +500,37 @@ static double adapt_avg(struct priv *p)
     return sum / n;
 }
 
+// ── 分级降级：cost 超预算时先降目标帧率档位（60→48→40→30），全档
+// 超才 passthrough（decide_mode 调用）。降档 = 网格重建（queue 清空 +
+// prev/t0 重置）+ 测量窗口重置（新档重新测量）；引擎保留。UI 设置不
+// 回退——OSD 的 out= 显示实际档位。降到 ≤src×0.95 时由 src-fps 直通
+// 判定兜底（等价最低档 passthrough）。
+static bool rife_try_downgrade(struct mp_filter *f, struct priv *p)
+{
+    static const int steps[] = {48, 40, 30};
+    double cur = p->out_fps;
+    double avg = adapt_avg(p);   // 触发时成本（重置前取值，日志用）
+    for (int i = 0; i < 3; i++) {
+        if (steps[i] < cur - 0.5) {
+            rife_discard_prefetch(p);
+            mp_image_unrefp(&p->prev);
+            p->have_prev = false;
+            p->prev_pts = 0;
+            p->t0 = 0;
+            p->cur_emitted = false;
+            p->out_fps = steps[i];
+            // 测量窗口重置：旧档成本不参与新档判定
+            p->pair_count = 0;
+            p->adapt_idx = 0;
+            p->adapt_warmup_done = false;
+            MP_WARN(f, "rife: cost downgrade out %.0f -> %d (avg %.1fms > budget %.1fms)\n",
+                    cur, steps[i], avg, p->frame_budget_ms);
+            return true;
+        }
+    }
+    return false;   // 无更低档——调用方 passthrough
+}
+
 // ── Mode decision ─────────────────────────────────────────────────────
 
 static bool decide_mode(struct mp_filter *f, struct priv *p,
@@ -485,11 +544,9 @@ static bool decide_mode(struct mp_filter *f, struct priv *p,
             snprintf(p->pt_reason, sizeof(p->pt_reason), "off");
             return false;
         }
-        if (cur->w > 1920 || cur->h > 1080) {
-            p->mode = RIFE_PASSTHROUGH;
-            snprintf(p->pt_reason, sizeof(p->pt_reason), "resolution");
-            return false;
-        }
+        // 4K 插帧允许（2026-08-09）：移除分辨率上限——实时性由下方
+        // adaptive 成本降级保护（先降档 60→48→40→30，全档超才
+        // passthrough；OSD 标记 reason=cost/out= 实际档位；UI 设置不回退）。
         double src_fps = p->src_fps;
         // 插帧倍率 ≈ 1 无意义（59.94 源 + 60 目标 = 1.001×——社区 RIFE
         // 只支持 ≥2×，k7sfunc multi≥2 断言）。1.001× 实际无插帧（每对
@@ -503,6 +560,9 @@ static bool decide_mode(struct mp_filter *f, struct priv *p,
         }
         if (p->opts->adaptive && p->adapt_warmup_done &&
             adapt_avg(p) > p->frame_budget_ms * 1.05) {
+            // 分级降级：先降档（60→48→40→30），全档超才 passthrough
+            if (rife_try_downgrade(f, p))
+                return true;
             p->mode = RIFE_PASSTHROUGH;
             snprintf(p->pt_reason, sizeof(p->pt_reason), "cost");
             if (!p->degrade_warned) {
@@ -593,11 +653,10 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
             double tval = (double)(i + 1) / k;
             double tg = p->t0 + (n_cur - (k - 1) + i) / p->out_fps;
             if (i == k - 1) {
-                struct mp_image *out = mp_image_new_ref(cur);
-                if (out) {
-                    out->pts = tg;   // grid PTS, not the raw input PTS
-                    out->nominal_fps = p->out_fps;
-                    out->pkt_duration = 1.0 / p->out_fps;
+                struct mp_image *out = rife_make_copy(f, p, cur, tg);
+                if (!out) {
+                    ok = false;
+                    break;
                 }
                 p->queue[p->queue_len++] = out;
                 *grid_emitted_cur = true;
@@ -644,11 +703,10 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
             double tg = p->t0 + n / fps;
             double tval = (tg - t_prev) / (t_cur - t_prev);
             if (fabs(tval - 1.0) < 1e-6) {
-                struct mp_image *out = mp_image_new_ref(cur);
-                if (out) {
-                    out->pts = tg;   // grid PTS (uniform output clock)
-                    out->nominal_fps = p->out_fps;
-                    out->pkt_duration = 1.0 / p->out_fps;
+                struct mp_image *out = rife_make_copy(f, p, cur, tg);
+                if (!out) {
+                    ok = false;
+                    break;
                 }
                 p->queue[p->queue_len++] = out;
                 *grid_emitted_cur = true;
@@ -728,9 +786,6 @@ static void f_process(struct mp_filter *f)
         struct mp_image *out = p->queue[p->queue_pos++];
         if (p->queue_pos == p->queue_len)
             p->queue_len = p->queue_pos = 0;
-        MP_DBG(f, "rife: OUT pts=%.4f src-pts=%.4f %s\n", out->pts,
-               p->prev_pts,
-               fabs(out->pts - p->prev_pts) < 0.001 ? "[copy]" : "[mid]");
         if (++p->status_emit >= RIFE_STATUS_EVERY) {
             p->status_emit = 0;
             rife_status(f, p);
@@ -816,7 +871,12 @@ static void f_process(struct mp_filter *f)
             p->out_fps = 2 * p->src_fps;
         else
             p->out_fps = p->opts->fps;
-        p->frame_budget_ms = 1000.0 / p->src_fps - RIFE_BUDGET_VSR_MS;
+        // 预算 = 每帧时间 − 下游 vsr 估算。大分辨率（>1080p）通常不再
+        // 启用 vsr（4K 上采样无意义）——不扣 vsr，否则 4K 插帧成本
+        // （如 24→48 的 33ms）会超扣减后预算误触发降级。
+        bool big = (cur->w > 1920 || cur->h > 1080);
+        p->frame_budget_ms = 1000.0 / p->src_fps
+                             - (big ? 0 : RIFE_BUDGET_VSR_MS);
         if (p->frame_budget_ms < 5.0)
             p->frame_budget_ms = 5.0;
         MP_INFO(f, "rife: %dx%d src %.2f fps → out %.2f fps (%s)\n",
@@ -1036,6 +1096,9 @@ static void f_reset(struct mp_filter *f)
     p->cur_emitted = false;
     p->t0 = 0;
     p->frame_count = 0;
+    p->status_t0 = 0;        // fps 统计窗重置（frame_count 清零后旧窗
+    p->status_frames = 0;    // 会产生负 delta → 负 fps，如 fps 60→48 切换）
+    p->status_emit = 0;
     p->adapt_warmup_done = false;
     p->pair_count = 0;
     p->adapt_idx = 0;

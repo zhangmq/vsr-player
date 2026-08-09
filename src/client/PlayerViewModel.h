@@ -377,12 +377,13 @@ private:
     std::atomic<int> quality_{3};
     std::atomic<int> denoise_{-1};
     std::atomic<double> scale_{0.0};
-    std::atomic<int> frucFps_{-1};      // -1 off | 30/40/60 target (persisted)
+    std::atomic<int> frucFps_{-1};      // -1 off | 2/3/4 倍率 | 30/40/60 target
+                                        //（倍率=benchmark 强制；帧率=正常模式，
+                                        // 数值自区分，正常/benchmark 共用）
     std::mutex frucStatusMtx_;
     std::string frucStatus_;            // 最新 rife 状态行（OSD 显示）
     std::string vsrStatus_;             // 最新 vsr 状态行（OSD 显示）
     std::mutex  vsrStatusMtx_;
-    std::atomic<int> frucScale_{0};     // benchmark multiplier 2/3/4 (CLI only)
     int loopMode_ = 0;           // 0 none, 1 loop-file, 2 loop-playlist
     PlaylistModel playlistModel_;   // 播放列表镜像（观察器 setSnapshot 增量喂入）
     QString gpuName_;

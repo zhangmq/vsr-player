@@ -33,7 +33,12 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
 
     mpv_set_option_string(mpv_, "vo", "libmpv");
     if (hwaccel)
-        mpv_set_option_string(mpv_, "hwdec", "auto-unsafe");
+        // N 卡专用应用：直接 NVDEC（CUDA 硬解）。auto-unsafe 会先尝试
+        // Vulkan 视频解码（VK_KHR_video_decode_queue）——本驱动探测失败
+        // 后 AV1 不回退 nvdec（"Failed to get pixel format" 播放失败），
+        // HEVC 虽有探测错误但回退成功。显式 nvdec 稳定（CLAUDE.md codec
+        // 规则：av1_nvdec/h264_nvdec/hevc_nvdec）。
+        mpv_set_option_string(mpv_, "hwdec", "nvdec");
     if (vf_opt && *vf_opt)
         mpv_set_option_string(mpv_, "vf", vf_opt);
     for (const auto &kv : passthrough)
@@ -48,7 +53,9 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
         // 基准测量口径：禁用位置恢复（mpv 默认 resume-playback=yes，
         // 会按 watch_later 恢复起始位置 → 时长/吞吐失真）
         mpv_set_option_string(mpv_, "resume-playback", "no");
-        mpv_set_option_string(mpv_, "msg-level", "all=no");
+        // 全静默 + 例外：仅保留 rife 的 status 通道（fruc-status 状态行
+        // → OSD 插帧状态；其余模块 no 保持测量口径）
+        mpv_set_option_string(mpv_, "msg-level", "all=no,rife=status");
     } else {
         // 默认只输出 status 及以上（status=播放状态行——rife 的
         // fruc-status 走该级别；info=状态变更节点，warn/err/fatal 默认
@@ -99,7 +106,9 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
     // benchmark 请求 "no" 全静默（与 all=no 对齐）。不用 log-file——
     // 其过滤级别下限是 MSGL_DEBUG，会绕过 msg-level 把 verbose/debug
     // 全灌进 stderr。
-    mpv_request_log_messages(mpv_, benchmark ? "no" : "status");
+    // benchmark：仍请求 status（rife status 通道已单独开——fruc-status
+    // 供 OSD；其余模块被 all=no 过滤，转发量仅 rife 状态行）
+    mpv_request_log_messages(mpv_, "status");
 
     return true;
 }

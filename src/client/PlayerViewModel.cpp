@@ -475,17 +475,15 @@ void PlayerViewModel::initVsr(const std::string &scale,
 }
 
 void PlayerViewModel::initFruc(const std::string &fruc, bool benchmark) {
-    if (benchmark) {
-        // 倍率语义（能力评估）：2/3/4 硬跑；off/空 → 0。不读持久化。
-        int n = (fruc == "2" || fruc == "3" || fruc == "4") ? atoi(fruc.c_str()) : 0;
-        frucScale_ = n;
+    // 单一字段 frucFps_（-1 off | 2/3/4 倍率 | 30/40/60 目标帧率）——
+    // benchmark 与正常模式共用一套状态（OSD/ vf 构造不分叉）。
+    if (fruc == "2" || fruc == "3" || fruc == "4" ||
+        fruc == "40" || fruc == "48" || fruc == "60") {
+        frucFps_ = atoi(fruc.c_str());
         return;
     }
-    // 目标帧率语义：空 = CLI 未指定 → 持久化；off → -1；非法 → 持久化。
-    if (fruc.empty())              { frucFps_ = persistFruc_; return; }
-    if (fruc == "off")             { frucFps_ = -1; return; }
-    int v = atoi(fruc.c_str());
-    frucFps_ = (v == 30 || v == 40 || v == 60) ? v : persistFruc_;
+    // 空/非法：benchmark = 不插帧（CLI 语义）；正常 = 持久化目标。
+    frucFps_ = benchmark ? -1 : persistFruc_;
 }
 
 bool PlayerViewModel::parseScale(const std::string &s, double *out) {
@@ -763,7 +761,7 @@ void PlayerViewModel::setDenoiseQuality(int d) {
 
 void PlayerViewModel::setFrucFps(int v) {
     if (!mpv_) return;
-    if (v != -1 && v != 30 && v != 40 && v != 60) return;
+    if (v != -1 && v != 40 && v != 48 && v != 60) return;
     if (frucFps_ != v) { frucFps_ = v; emit frucFpsChanged(); }
     saveSettings("frucFps", v);
     pushVf("rife", "fps", v == -1 ? "off" : std::to_string(v));
@@ -1256,15 +1254,15 @@ void PlayerViewModel::screenshot() {
 
 std::string PlayerViewModel::vfOption() const {
     // 链序：decode → rife（插帧，源分辨率）→ vsr（超分）→ VO。
-    // rife：fps（目标帧率，off=-1 时透传）+ scale（benchmark 倍率，优先）
-    //       + adaptive（正常模式成本降级；benchmark 关）。
+    // rife 目标语义（单一字段 frucFps_，数值自区分）：2/3/4 = 倍率
+    //（benchmark 强制，scale+adaptive=no——decide_mode 的 benchmark 分支
+    // 跳过全部直通限制）；30/40/60 = 目标帧率（正常模式，adaptive=yes）。
     std::string vf;
-    int fs = frucScale_.load();
-    int ff = frucFps_.load();
-    if (fs > 0) {
-        vf += "@rife:rife:fps=off:scale=" + std::to_string(fs) + ":adaptive=no,";
-    } else if (ff > 0) {
-        vf += "@rife:rife:fps=" + std::to_string(ff) + ":scale=off:adaptive=yes,";
+    int fruc = frucFps_.load();
+    if (fruc == 2 || fruc == 3 || fruc == 4) {
+        vf += "@rife:rife:fps=off:scale=" + std::to_string(fruc) + ":adaptive=no,";
+    } else if (fruc > 0) {
+        vf += "@rife:rife:fps=" + std::to_string(fruc) + ":scale=off:adaptive=yes,";
     } else {
         vf += "@rife:rife:fps=off:scale=off:adaptive=yes,";
     }
@@ -1486,7 +1484,8 @@ std::string PlayerViewModel::osdTextString() {
         lines << tag("VSR") + (parts.isEmpty() ? tr("off") : parts.join("  "));
 
     // FRUC：插帧实时状态（rife filter 的 MSGL_STATUS 状态行，事件线程
-    // 从 "fruc-status:" 日志行提取；fps=off 时无意义不显示）
+    // 从 "fruc-status:" 日志行提取；off 时无意义不显示。正常/benchmark
+    // 共用同一条件（frucFps_ 单一状态）。
     if (frucFps_.load() != -1) {
         std::lock_guard<std::mutex> lk(frucStatusMtx_);
         if (!frucStatus_.empty())
