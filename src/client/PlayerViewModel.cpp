@@ -774,6 +774,11 @@ void PlayerViewModel::setFrucStatus(const std::string &s) {
     frucStatus_ = s;
 }
 
+void PlayerViewModel::setVsrStatus(const std::string &s) {
+    std::lock_guard<std::mutex> lk(vsrStatusMtx_);
+    vsrStatus_ = s;
+}
+
 // ── Speed / window / OSD ─────────────────────────────────────────────
 
 void PlayerViewModel::setAspect(const QString &v) {
@@ -1486,6 +1491,12 @@ std::string PlayerViewModel::osdTextString() {
         std::lock_guard<std::mutex> lk(frucStatusMtx_);
         if (!frucStatus_.empty())
             lines << tag("FRUC") + QString::fromStdString(frucStatus_);
+    }
+    // VSR 状态行（处理耗时 + 频率）
+    {
+        std::lock_guard<std::mutex> lk(vsrStatusMtx_);
+        if (!vsrStatus_.empty())
+            lines << tag("VSR-ST") + QString::fromStdString(vsrStatus_);
     }
     }
 

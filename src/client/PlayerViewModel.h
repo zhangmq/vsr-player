@@ -224,6 +224,7 @@ public slots:
     void setFrucFps(int v);   // -1 | 30 | 40 | 60（乐观更新 + pushVf + saveSettings）
     // rife 状态行（事件线程从 mpv status 日志提取，"fruc-status:" 前缀）
     void setFrucStatus(const std::string &s);
+    void setVsrStatus(const std::string &s);
     void toggleLoop();
     void setLoopMode(int m);   // 0=none, 1=file, 2=playlist（applyPlaybackSettings/toggleLoop 共用）
     void loadFile(const QString &path);
@@ -379,6 +380,8 @@ private:
     std::atomic<int> frucFps_{-1};      // -1 off | 30/40/60 target (persisted)
     std::mutex frucStatusMtx_;
     std::string frucStatus_;            // 最新 rife 状态行（OSD 显示）
+    std::string vsrStatus_;             // 最新 vsr 状态行（OSD 显示）
+    std::mutex  vsrStatusMtx_;
     std::atomic<int> frucScale_{0};     // benchmark multiplier 2/3/4 (CLI only)
     int loopMode_ = 0;           // 0 none, 1 loop-file, 2 loop-playlist
     PlaylistModel playlistModel_;   // 播放列表镜像（观察器 setSnapshot 增量喂入）

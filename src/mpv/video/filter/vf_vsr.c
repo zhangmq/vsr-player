@@ -40,6 +40,15 @@
 #include "vsr_internal.h"
 #include "cuda_shared.h"
 
+#include <time.h>
+
+static double vsr_now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+
 // ── Options ────────────────────────────────────────────────────────────────
 
 struct vf_vsr_opts {
@@ -250,6 +259,10 @@ struct priv {
     bool passthrough;
     bool warmup_done;
     int  frame_count;
+    // vsr-status（每 30 帧）：处理耗时 + 频率
+    double status_t0;
+    int    status_frames;
+    double status_cost_ms;
 };
 
 // dump-both 命令的帧 dump（输入/输出 RGBA → PNG），VSR_TEST_* 复用
@@ -708,6 +721,7 @@ static void f_process(struct mp_filter *f)
 
     struct mp_image *mpi = frame.data;
     p->frame_count++;
+    double t0 = vsr_now_ms();   // 处理计时起点
 
     // Scale/resolution detection
     int video_w = mpi->w;
@@ -1016,6 +1030,20 @@ static void f_process(struct mp_filter *f)
            p->frame_count, video_w, video_h, vsr_out_w, vsr_out_h, p->effective_scale);
 
     talloc_free(mpi);
+    p->status_cost_ms += vsr_now_ms() - t0;
+    p->status_frames++;
+    if (p->status_frames >= 30) {
+        double el = (vsr_now_ms() - p->status_t0) / 1000.0;
+        if (p->status_t0 == 0)
+            el = 0;
+        if (el > 0)
+            mp_msg(f->log, MSGL_STATUS, "vsr-status: cost=%.1fms fps=%.0f\n",
+                   p->status_cost_ms / p->status_frames,
+                   p->status_frames / el);
+        p->status_t0 = vsr_now_ms();
+        p->status_frames = 0;
+        p->status_cost_ms = 0;
+    }
     mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out));
     cuCtxPopCurrent(NULL);
 }

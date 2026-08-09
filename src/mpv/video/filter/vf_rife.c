@@ -225,6 +225,9 @@ struct priv {
     int     pair_count, adapt_idx;
 
     int frame_count;
+    double status_t0;     // 处理频率统计起点
+    int    status_frames; // 窗内处理帧数
+    int    status_emit;   // 输出计数（每 30 输出触发状态行）
 };
 
 // ── Status line (MSGL_STATUS, ~2Hz) ──────────────────────────────────
@@ -234,6 +237,7 @@ struct priv {
 #define RIFE_STATUS_EVERY 30   // frames between status lines (~0.5s @60fps)
 
 static double adapt_avg(struct priv *p);   // defined below (adaptive section)
+static double now_ms(void);                // defined below (adaptive section)
 
 static void rife_status(struct mp_filter *f, struct priv *p)
 {
@@ -253,6 +257,14 @@ static void rife_status(struct mp_filter *f, struct priv *p)
                      "fruc-status: mode=passthrough reason=%s src=%.2f out=%.2f",
                      p->pt_reason, p->src_fps, p->out_fps);
     }
+    // 处理频率（窗内帧数 / 耗时）
+    double now = now_ms();
+    double el = p->status_t0 > 0 ? (now - p->status_t0) / 1000.0 : 0;
+    int df = p->frame_count - p->status_frames;
+    p->status_t0 = now;
+    p->status_frames = p->frame_count;
+    if (el > 0)
+        n += snprintf(buf + n, sizeof(buf) - n, " fps=%.0f", df / el);
     snprintf(buf + n, sizeof(buf) - n, " frames=%d", p->frame_count);
     mp_msg(f->log, MSGL_STATUS, "%s\n", buf);
 }
@@ -719,6 +731,10 @@ static void f_process(struct mp_filter *f)
         MP_DBG(f, "rife: OUT pts=%.4f src-pts=%.4f %s\n", out->pts,
                p->prev_pts,
                fabs(out->pts - p->prev_pts) < 0.001 ? "[copy]" : "[mid]");
+        if (++p->status_emit >= RIFE_STATUS_EVERY) {
+            p->status_emit = 0;
+            rife_status(f, p);
+        }
         mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out));
         return;
     }
@@ -992,8 +1008,12 @@ static void f_process(struct mp_filter *f)
         }
         mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out));
     }
-    if (p->frame_count % RIFE_STATUS_EVERY == 0)
+    // 输出计数触发（frame_count 在预取循环批量 +N，%30 会跳过——
+    // 预取重构后失效，改用输出计数）
+    if (++p->status_emit >= RIFE_STATUS_EVERY) {
+        p->status_emit = 0;
         rife_status(f, p);
+    }
 }
 
 // ── reset / destroy / command ─────────────────────────────────────────

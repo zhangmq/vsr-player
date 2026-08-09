@@ -230,6 +230,9 @@ int main(int argc, char *argv[]) {
                 // 调试可见性：rife 状态行同步转发 stderr（其余 status 级
                 // 消息（mpv 进度行）默认过滤）。
                 fprintf(stderr, "[mpv status] %s", text);
+            } else if (strncmp(text, "vsr-status:", 11) == 0) {
+                viewModel.setVsrStatus(text + 11);
+                fprintf(stderr, "[mpv status] %s", text);
             }
         });
 
