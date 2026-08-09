@@ -61,13 +61,18 @@ else
 fi
 
 # ── 3.5 RIFE 运行时（vf_rife.c 搜索路径含 ~/.local/lib/vsr-player/）──
-if ls "$PROJECT_ROOT/third_party/rife/"*.engine >/dev/null 2>&1; then
+# lite 引擎（主引擎，tests/fruc/build_rife_lite_engine.sh 生成到
+# build/tests/fruc/）+ 旧实验引擎（third_party/rife/ rife512）全拷贝——
+# 不装引擎则 GUI/CLI 在项目目录外启动报 reason=engine 直通。
+LITE_ENGINES="$PROJECT_ROOT/build/tests/fruc/rife_lite_fp16_"*.engine
+LEGACY_ENGINES="$PROJECT_ROOT/third_party/rife/"*.engine
+if ls $LITE_ENGINES >/dev/null 2>&1 || ls $LEGACY_ENGINES >/dev/null 2>&1; then
     mkdir -p "$LIB_DIR"
-    cp "$PROJECT_ROOT/third_party/rife/"*.engine "$LIB_DIR/"
-    cp "$PROJECT_ROOT/third_party/rife/"*.onnx "$LIB_DIR/" 2>/dev/null || true
+    cp $LITE_ENGINES "$LIB_DIR/" 2>/dev/null || true
+    cp $LEGACY_ENGINES "$LIB_DIR/" 2>/dev/null || true
     echo "  ✅ RIFE engine → $LIB_DIR/"
 else
-    echo "  ⚠ rife512.engine missing (run scripts/build_rife_engine.sh) — rife passthrough"
+    echo "  ⚠ RIFE engine missing (run tests/fruc/build_rife_lite_engine.sh) — rife passthrough"
 fi
 
 # ── 4. 图标字体（main.cpp fallback：<appdir>/../share/vsr-player/fonts/）─
