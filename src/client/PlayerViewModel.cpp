@@ -767,11 +767,16 @@ void PlayerViewModel::setFrucFps(int v) {
     pushVf("rife", "fps", v == -1 ? "off" : std::to_string(v));
 }
 
-// 剥离 mpv 日志消息尾随换行（mpv 的 log text 以 \n 结尾——原样存入
-// 会让 OSD 行内嵌 \n → 行距异常/提前折行，见 osdTextString）
+// 剥离 mpv 日志消息的尾随换行与前导空格（mpv 的 log text 以 \n 结尾——
+// 原样存入会让 OSD 行内嵌 \n → 行距异常/提前折行；"vsr-status:" 前缀后
+// 紧跟空格——提取处 text+N 保留前导空格，拼入 OSD 状态段会与前面
+// 元素（渲染分辨率）产生多余间距，见 osdTextString）
 static void stripEol(std::string &s) {
     while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
         s.pop_back();
+    size_t b = s.find_first_not_of(' ');
+    if (b != std::string::npos && b > 0)
+        s.erase(0, b);
 }
 
 void PlayerViewModel::setFrucStatus(const std::string &s) {
