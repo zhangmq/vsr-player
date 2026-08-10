@@ -65,10 +65,12 @@ PlayerViewModel::PlayerViewModel(QObject *parent) : QObject(parent) {}
 // ── attach: register mpv property observers ────────────────────────────
 //
 // 线程模型（关键，防 untimed 死锁）：
-//  mpv 核心持 core lock 在 flip_page 等 render 消费（200ms 超时）。
-//  若主线程（渲染循环所在线程）调用 mpv_get_property 等 client API，
-//  会与 core lock 互锁 → UpdateRequest 事件饿死 → 渲染循环停止 →
-//  flip_page 超时 drop → 整体 5fps 卡顿。
+//  主线程 = 渲染线程（mpv_render_context_render 只在主线程调用）；
+//  vo_thread 的 flip_page 持 render ctx lock 等 render 消费（200ms
+//  超时，有界）。若主线程同步调用 client API（mpv_get_property 等），
+//  会持 client lock 等 core lock；播放循环（持 core lock）经
+//  vo_thread flip_page 等主线程渲染 → core lock 互等 → 渲染循环
+//  停摆、播放停滞（untimed 实测卡死）。
 //  因此：**属性读取全部在事件线程执行**（阻塞无碍），值随
 //  QMetaObject::invokeMethod 的 lambda 参数传给主线程——主线程状态
 //  更新方法绝不调用 mpv 任何 API。

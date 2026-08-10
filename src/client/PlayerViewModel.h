@@ -278,9 +278,10 @@ signals:
 
 private:
     // ── 主线程状态更新（值由事件线程读好后随 lambda 传入；
-    //    主线程绝不调 mpv client API —— untimed 下 flip_page 持
-    //    core lock 等 render，主线程 get_property 会与其互锁导致
-    //    渲染循环饿死（5fps 卡顿））──────────────────────────────
+    //    主线程绝不调 mpv client API —— untimed 下主线程同步调
+    //    client API 持 client lock 等 core lock，播放循环（持 core
+    //    lock）经 vo_thread flip_page 等主线程渲染 → 互锁死锁
+    //    （实测卡死））────────────────────────────────────────────
     void updatePlaying(bool p);
     void updateTime(int64_t t, int64_t d);
     void updateVolume(double v);
