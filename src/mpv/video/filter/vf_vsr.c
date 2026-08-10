@@ -990,7 +990,11 @@ static void f_process(struct mp_filter *f)
         if (p->status_t0 == 0)
             el = 0;
         if (el > 0)
-            mp_msg(f->log, MSGL_STATUS, "vsr-status: cost=%.1fms fps=%.0f\n",
+            // 实际生效倍率（effective_scale，auto 下动态变化）——OSD 的
+            // "设定|实际"对：设定段显示 UI 设置，状态段显示当前实际
+            mp_msg(f->log, MSGL_STATUS,
+                   "vsr-status: mode=active scale=%.2f cost=%.1fms fps=%.0f\n",
+                   p->effective_scale,
                    p->status_cost_ms / p->status_frames,
                    p->status_frames / el);
         p->status_t0 = vsr_now_ms();
