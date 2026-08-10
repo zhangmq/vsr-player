@@ -567,7 +567,8 @@ void PlayerViewModel::play() {
     if (!fileLoaded_) resumeLastPath();
     playing_ = true;
     emit playingChanged();
-    mpv_->setPropertyFlag("pause", false);
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyFlagAsync("pause", false);
 }
 
 // idle 重播（stop 或正常播完后的再次播放）：
@@ -591,7 +592,8 @@ void PlayerViewModel::pause() {
     if (!mpv_) return;
     playing_ = false;
     emit playingChanged();
-    mpv_->setPropertyFlag("pause", true);
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyFlagAsync("pause", true);
 }
 
 void PlayerViewModel::setPaused(bool p) {
@@ -602,7 +604,8 @@ void PlayerViewModel::setPaused(bool p) {
     }
     playing_ = false;
     emit playingChanged();
-    mpv_->setPropertyFlag("pause", true);
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyFlagAsync("pause", true);
 }
 
 // 无 mute 状态位：m=静音（记音量+置 0）/ 取消=恢复。与 toggleMute
@@ -631,7 +634,8 @@ void PlayerViewModel::togglePlayPause() {
         // 保留列表；loadfile replace 会清空整个列表，不可用）。
         if (lastPath_.isEmpty()) return;
         resumeLastPath();
-        mpv_->setPropertyFlag("pause", false);
+        // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+        mpv_->setPropertyFlagAsync("pause", false);
         playing_ = true;
         emit playingChanged();
         return;
@@ -639,7 +643,8 @@ void PlayerViewModel::togglePlayPause() {
     bool p = !playing_;
     playing_ = p;
     emit playingChanged();
-    mpv_->setPropertyFlag("pause", !p);
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyFlagAsync("pause", !p);
 }
 
 void PlayerViewModel::stop() {
