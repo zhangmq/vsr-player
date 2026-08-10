@@ -721,7 +721,9 @@ void PlayerViewModel::toggleHwaccel() {
     double pos = mpv_->propertyDouble("time-pos");
     if (hwdecInit_.empty())
         hwdecInit_ = mpv_->propertyString("hwdec");
-    mpv_->setPropertyString("hwdec", target ? hwdecInit_ : "no");
+    // async（主线程 UI 操作——同步 set 会等 dispatch 队列清空，
+    // 与 decode DR 分配任务互等死锁，2026-08-10 根因同款）
+    mpv_->setPropertyStringAsync("hwdec", target ? hwdecInit_ : "no");
     char start[64];
     snprintf(start, sizeof(start), "start=+%.3f", pos);
     mpv_->commandV({"loadfile", path.c_str(), "replace", start, nullptr});
@@ -799,7 +801,8 @@ void PlayerViewModel::setAspect(const QString &v) {
     if (!mpv_) return;
     if (aspect_ != v) { aspect_ = v; emit aspectChanged(); }
     saveSettings("aspect", v);
-    mpv_->setPropertyString("video-aspect-override", v.toStdString());
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyStringAsync("video-aspect-override", v.toStdString());
 }
 
 void PlayerViewModel::setSpeed(double speed) {
@@ -808,7 +811,8 @@ void PlayerViewModel::setSpeed(double speed) {
     if (speed > 4.0) speed = 4.0;
     if (speed_.load() != speed) { speed_.store(speed); emit speedChanged(); }
     saveSettings("speed", speed);
-    mpv_->setPropertyDouble("speed", speed);
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyDoubleAsync("speed", speed);
 }
 
 void PlayerViewModel::setFullscreen(bool fs) {
@@ -858,16 +862,17 @@ void PlayerViewModel::setLoopMode(int m) {
     if (!mpv_ || m < 0 || m > 2) return;
     switch (m) {
     case 1:
-        mpv_->setPropertyString("loop-file", "inf");
-        mpv_->setPropertyString("loop-playlist", "no");
+        // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+        mpv_->setPropertyStringAsync("loop-file", "inf");
+        mpv_->setPropertyStringAsync("loop-playlist", "no");
         break;
     case 2:
-        mpv_->setPropertyString("loop-file", "no");
-        mpv_->setPropertyString("loop-playlist", "inf");
+        mpv_->setPropertyStringAsync("loop-file", "no");
+        mpv_->setPropertyStringAsync("loop-playlist", "inf");
         break;
     default:
-        mpv_->setPropertyString("loop-file", "no");
-        mpv_->setPropertyString("loop-playlist", "no");
+        mpv_->setPropertyStringAsync("loop-file", "no");
+        mpv_->setPropertyStringAsync("loop-playlist", "no");
         break;
     }
     if (loopMode_ != m) { loopMode_ = m; emit loopModeChanged(); }
@@ -1137,16 +1142,21 @@ void PlayerViewModel::restoreTrackMemory(const QString &path) {
     order.prepend(path);
     settings_.setValue("trackMemOrder", order);
     settings_.sync();
-    // 轨道选择（FILE_LOADED 后 track-list 已填充，设置 aid/sid/vid 生效）
+    // 轨道选择（FILE_LOADED 后 track-list 已填充，设置 aid/sid/vid 生效）。
+    // 一律 async（2026-08-10 卡死根因）：本函数在主线程（FILE_LOADED
+    // 事件处理）执行——同步 set_property 的 mp_dispatch_lock 会等
+    // dispatch 队列清空，而队列里可能有 decode 的 DR 帧分配任务
+    //（等 GUI 处理）→ 互等死锁（启动即卡，core dump 实证，见
+    // onFileLoadedFromEventThread）。async 投递不阻塞、不拿 core lock。
     if (mem.contains("aid"))
-        mpv_->setPropertyString("aid", std::to_string(mem["aid"].toInt()));
+        mpv_->setPropertyStringAsync("aid", std::to_string(mem["aid"].toInt()));
     if (mem.contains("vid"))
-        mpv_->setPropertyString("vid", std::to_string(mem["vid"].toInt()));
+        mpv_->setPropertyStringAsync("vid", std::to_string(mem["vid"].toInt()));
     if (mem.contains("sid"))
-        mpv_->setPropertyString("sid", std::to_string(mem["sid"].toInt()));
+        mpv_->setPropertyStringAsync("sid", std::to_string(mem["sid"].toInt()));
     // 字幕偏移（可见性无独立记忆——是否显示由 sid 决定）
     if (mem.contains("subDelay"))
-        mpv_->setPropertyDouble("sub-delay", mem["subDelay"].toDouble());
+        mpv_->setPropertyDoubleAsync("sub-delay", mem["subDelay"].toDouble());
     // 外部字幕（external 轨随文件切换被 mpv 清除，须重新 sub-add）
     const QStringList subs = mem["subs"].toStringList();
     const QString sel = mem["sel"].toString();
@@ -1192,7 +1202,7 @@ void PlayerViewModel::autoSelectSubtitle() {
             if (m["lang"].toString().left(2).toLower() == "en") { best = m["id"].toInt(); break; }
         }
     }
-    if (best >= 0) { mpv_->setPropertyString("sid", std::to_string(best)); return; }
+    if (best >= 0) { mpv_->setPropertyStringAsync("sid", std::to_string(best)); return; }
     // 3) 目录匹配字幕文件（只取匹配视频名的 prio ≤ 1）
     for (const QVariant &f : subtitleFiles_) {
         const QVariantMap m = f.toMap();
@@ -1203,7 +1213,7 @@ void PlayerViewModel::autoSelectSubtitle() {
         return;
     }
     // 4) 其他 → 不显示字幕
-    mpv_->setPropertyString("sid", "no");
+    mpv_->setPropertyStringAsync("sid", "no");
 }
 
 void PlayerViewModel::noteExternalSubAdded(const QString &path) {
