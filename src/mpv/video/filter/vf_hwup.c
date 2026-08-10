@@ -33,7 +33,6 @@
 #include <libavutil/hwcontext_cuda.h>
 
 #include <cuda.h>
-#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -42,29 +41,15 @@
 #include "cuda_shared.h"
 
 // ── Filter private state ───────────────────────────────────────────────────
-
-/// CUDA context with reference counting (mirror vf_vsr.c). Output frames hold
-/// a reference (av_buffer opaque); the owned context is destroyed only when
-/// the last reference is released — frames can outlive the filter (pin
-/// teardown frees frames AFTER f_destroy ran).
-struct hwup_cuda_ref {
-    CUcontext ctx;
-    bool      owned;
-    atomic_int refs;  // 1 = filter, +1 per output frame in flight
-};
-
-static void hwup_cuda_ref_unref(struct hwup_cuda_ref *r)
-{
-    if (!r) return;
-    if (atomic_fetch_sub(&r->refs, 1) != 1)
-        return;
-    if (r->owned)
-        cuCtxDestroy(r->ctx);
-    free(r);
-}
+// CUDA context ownership: shared struct (cuda_shared.h). This filter is the
+// CREATOR for SW input (owned=true, self-created context); HW frames pass
+// through without ever touching CUDA. Output frames carry the shared struct
+// as bufs[0] opaque — the context lives as long as any frame references it,
+// so frames that outlive the filter (pin teardown after f_destroy) can still
+// release their buffer on a live context.
 
 struct priv {
-    struct hwup_cuda_ref *cuda_ref;
+    struct mp_cuda_ctx_ref *cuda_ref;
     CUstream  cuda_stream;
     bool      cuda_init_done;
 
@@ -94,7 +79,7 @@ static void mp_image_dtor(void *ptr)
 
 static void free_cuda_buf(void *opaque, uint8_t *data)
 {
-    struct hwup_cuda_ref *r = opaque;
+    struct mp_cuda_ctx_ref *r = opaque;
     if (r && r->ctx) cuCtxPushCurrent(r->ctx);
     // No stream sync — see vf_vsr.c free_cuda_buf for the reasoning: the
     // buffer is only freed after its consumers (rife/vsr's copies on their
@@ -104,7 +89,7 @@ static void free_cuda_buf(void *opaque, uint8_t *data)
     cuMemFree((CUdeviceptr)data);
     if (r && r->ctx) cuCtxPopCurrent(NULL);
     if (r)
-        hwup_cuda_ref_unref(r);
+        mp_cuda_ctx_ref_release(r);
 }
 
 // ── CUDA context setup ─────────────────────────────────────────────────────
@@ -137,6 +122,7 @@ static bool ensure_cuda(struct mp_filter *f, struct priv *p)
     }
 
     p->cuda_ref = calloc(1, sizeof(*p->cuda_ref));
+    p->cuda_ref->magic = MP_CUDA_CTX_REF_MAGIC;
     p->cuda_ref->ctx = ctx;
     p->cuda_ref->owned = true;
     atomic_init(&p->cuda_ref->refs, 1);
@@ -146,7 +132,7 @@ static bool ensure_cuda(struct mp_filter *f, struct priv *p)
     cuCtxPopCurrent(NULL);
     if (cr != CUDA_SUCCESS) {
         MP_ERR(f, "hwup: cuStreamCreate failed (%d)\n", cr);
-        hwup_cuda_ref_unref(p->cuda_ref);
+        mp_cuda_ctx_ref_release(p->cuda_ref);
         p->cuda_ref = NULL;
         return false;
     }
@@ -325,14 +311,15 @@ static void f_process(struct mp_filter *f)
 
     // ── 输出帧 ────────────────────────────────────────────────────────
     // 每帧一个 cuMemAlloc，随帧释放（free_cuda_buf）——与 vf_vsr 相同
-    // 模式。帧持 cuda_ref 引用，可活过 filter。
-    atomic_fetch_add(&p->cuda_ref->refs, 1);
+    // 模式。帧持共享 cuda_ref 引用（bufs[0] opaque），可活过 filter——
+    // ctx 活到最后一帧（下游借者也引用同一结构）。
+    mp_cuda_ctx_ref_acquire(p->cuda_ref);
     struct mp_image *out = talloc_zero(NULL, struct mp_image);
     talloc_set_destructor(out, mp_image_dtor);
     out->bufs[0] = av_buffer_create((uint8_t *)p->out_buf, (int)p->out_buf_size,
                                     free_cuda_buf, p->cuda_ref, 0);
     if (!out->bufs[0]) {
-        hwup_cuda_ref_unref(p->cuda_ref);
+        mp_cuda_ctx_ref_release(p->cuda_ref);
         talloc_free(out);
         cuMemFree(p->out_buf); p->out_buf = 0; p->out_buf_size = 0;
         cuCtxPopCurrent(NULL);
@@ -382,14 +369,6 @@ static void f_destroy(struct mp_filter *f)
         ctx_pushed = (cr == CUDA_SUCCESS);
     }
 
-    if (p->av_hw_frames) {
-        av_buffer_unref(&p->av_hw_frames);
-        p->av_hw_frames = NULL;
-    }
-    if (p->av_hw_device) {
-        av_buffer_unref(&p->av_hw_device);
-        p->av_hw_device = NULL;
-    }
     if (p->out_buf) {
         if (ctx_pushed) cuMemFree(p->out_buf);
         p->out_buf      = 0;
@@ -402,11 +381,23 @@ static void f_destroy(struct mp_filter *f)
     if (ctx_pushed)
         cuCtxPopCurrent(NULL);
 
+    // frames/device 载体释放必须发生在无 push 状态：其 uninit 可能
+    // cuCtxDestroy（FFmpeg 自建的 ctx / hwdec 载体）。current_ctx 模式下
+    // 借的 ctx 不在此销毁——由共享结构 refs 管理。
+    if (p->av_hw_frames) {
+        av_buffer_unref(&p->av_hw_frames);
+        p->av_hw_frames = NULL;
+    }
+    if (p->av_hw_device) {
+        av_buffer_unref(&p->av_hw_device);
+        p->av_hw_device = NULL;
+    }
+
     // Release the filter's context reference. Frames still in flight
     // (pin teardown happens after destroy()) hold their own references;
     // the context is destroyed only when the last one is released.
     if (p->cuda_ref) {
-        hwup_cuda_ref_unref(p->cuda_ref);
+        mp_cuda_ctx_ref_release(p->cuda_ref);
         p->cuda_ref = NULL;
     }
     p->cuda_init_done = false;

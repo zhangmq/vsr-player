@@ -26,7 +26,6 @@
 // found 276 such pairs in 13439).
 
 #include <math.h>
-#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -166,15 +165,13 @@ enum rife_mode {
     RIFE_ACTIVE,
 };
 
-struct rife_cuda_ref {
-    CUcontext ctx;
-    atomic_int refs;   // 1 = filter, +1 per in-flight output frame
-};
-
 struct priv {
     struct vf_rife_opts *opts;
 
-    struct rife_cuda_ref *cuda_ref;
+    // 共享 CUDA context 所有权（cuda_shared.h）：借上游帧的共享结构
+    //（bufs[0] opaque）或 hwdec 帧自建结构（ctx_holder 保持源 frames）。
+    // ctx 活到最后一帧释放——帧 outlive filter 也安全。
+    struct mp_cuda_ctx_ref *cuda_ref;
     CUstream  cuda_stream;
     bool      cuda_init_done;
 
@@ -184,7 +181,6 @@ struct priv {
     enum yuv_matrix yuv_matrix;
     enum yuv_range  yuv_range;
 
-    AVBufferRef *device_ref;   // frames-ctx ref keeping the hwdec ctx alive
     AVBufferRef *av_hw_device;   // CUDA device ctx (wraps cuda_ref->ctx)
     AVBufferRef *av_hw_frames;   // CUDA/RGBA frames ctx（输出帧尺寸）
     CUcontext    av_hw_frames_ctx;  // ctx av_hw_frames was created on
@@ -280,16 +276,12 @@ static void rife_status(struct mp_filter *f, struct priv *p)
 }
 
 // ── CUDA context (mirror vf_vsr.c) ────────────────────────────────────
-// Borrows the hwdec's CUDA context from the frame hwctx (single-context
-// design — see cuda_shared.h). The context is never destroyed here: its
-// lifetime is governed by the frame hwctx refs and the filter's device ref.
-
-static void rife_cuda_ref_unref(struct rife_cuda_ref *r)
-{
-    if (!r) return;
-    if (atomic_fetch_sub(&r->refs, 1) == 1)
-        free(r);   // ctx borrowed from hwdec — never destroy
-}
+// Single-context design (cuda_shared.h): borrow the SHARED struct carried by
+// upstream frames (hwup output / our own output) — refs keep the context
+// alive while any frame anywhere references it. Hardware-decoder frames
+// (opaque not ours) fall back to a borrower struct holding ctx_holder =
+// av_buffer_ref(frame hwctx), released when refs hit zero. The driver
+// context itself is never destroyed here.
 
 static bool ensure_cuda(struct mp_filter *f, struct priv *p,
                         struct mp_image *cur)
@@ -303,16 +295,12 @@ static bool ensure_cuda(struct mp_filter *f, struct priv *p,
         return true;
 
     if (p->cuda_ref) {
-        rife_cuda_ref_unref(p->cuda_ref);
+        mp_cuda_ctx_ref_release(p->cuda_ref);
         p->cuda_ref = NULL;
     }
     if (p->cuda_init_done) {
         cuStreamDestroy(p->cuda_stream);
         p->cuda_stream = NULL;
-    }
-    if (p->device_ref) {
-        av_buffer_unref(&p->device_ref);
-        p->device_ref = NULL;
     }
 
     CUresult res = cuInit(0);
@@ -320,20 +308,37 @@ static bool ensure_cuda(struct mp_filter *f, struct priv *p,
         MP_ERR(f, "rife: cuInit failed (%d)\n", res);
         return false;
     }
-    if (!mp_cuda_ref_device(cur, &p->device_ref)) {
-        MP_ERR(f, "rife: failed to hold hwdec device ref\n");
-        return false;
+
+    struct mp_cuda_ctx_ref *shared = mp_cuda_ctx_ref_from_mpi(cur);
+    if (shared) {
+        // 上游链（hwup/本 filter 输出）的共享结构：acquire 同一结构，
+        // ctx 由所有引用它的帧共同保持
+        mp_cuda_ctx_ref_acquire(shared);
+        p->cuda_ref = shared;
+        MP_VERBOSE(f, "rife: sharing upstream CUDA context\n");
+    } else {
+        // hwdec 帧（opaque 非本链共享结构）：自建借者结构 + ctx_holder
+        p->cuda_ref = calloc(1, sizeof(*p->cuda_ref));
+        p->cuda_ref->magic = MP_CUDA_CTX_REF_MAGIC;
+        p->cuda_ref->ctx = borrow;
+        p->cuda_ref->owned = false;
+        p->cuda_ref->ctx_holder = av_buffer_ref(cur->hwctx);
+        if (!p->cuda_ref->ctx_holder) {
+            MP_ERR(f, "rife: failed to hold hwdec frame ref\n");
+            free(p->cuda_ref);
+            p->cuda_ref = NULL;
+            return false;
+        }
+        atomic_init(&p->cuda_ref->refs, 1);
+        MP_VERBOSE(f, "rife: sharing hwdec CUDA context\n");
     }
 
-    p->cuda_ref = calloc(1, sizeof(*p->cuda_ref));
-    p->cuda_ref->ctx = borrow;
-    atomic_init(&p->cuda_ref->refs, 1);
     cuCtxPushCurrent(borrow);
     bool ok = cuStreamCreate(&p->cuda_stream, CU_STREAM_NON_BLOCKING) == CUDA_SUCCESS;
     cuCtxPopCurrent(NULL);
     if (!ok) {
         MP_ERR(f, "rife: cuStreamCreate failed\n");
-        rife_cuda_ref_unref(p->cuda_ref);
+        mp_cuda_ctx_ref_release(p->cuda_ref);
         p->cuda_ref = NULL;
         return false;
     }
@@ -409,7 +414,7 @@ static void mp_image_dtor(void *ptr)
 
 static void free_cuda_buf(void *opaque, uint8_t *data)
 {
-    struct rife_cuda_ref *r = opaque;
+    struct mp_cuda_ctx_ref *r = opaque;
     if (r && r->ctx) cuCtxPushCurrent(r->ctx);
     // No stream sync — see vf_vsr.c free_cuda_buf for the reasoning: the
     // buffer is only freed after its consumers (vsr's copy on its stream,
@@ -418,7 +423,7 @@ static void free_cuda_buf(void *opaque, uint8_t *data)
     cuMemFree((CUdeviceptr)data);
     if (r && r->ctx) cuCtxPopCurrent(NULL);
     if (r)
-        rife_cuda_ref_unref(r);
+        mp_cuda_ctx_ref_release(r);
 }
 
 static struct mp_image *rife_make_output(struct mp_filter *f, struct priv *p,
@@ -438,7 +443,7 @@ static struct mp_image *rife_make_output(struct mp_filter *f, struct priv *p,
         MP_ERR(f, "rife: CUDA/RGBA hw_frames_ctx failed\n");
         return NULL;
     }
-    atomic_fetch_add(&p->cuda_ref->refs, 1);
+    mp_cuda_ctx_ref_acquire(p->cuda_ref);
     struct mp_image *out = talloc_zero(NULL, struct mp_image);
     talloc_set_destructor(out, mp_image_dtor);
     out->bufs[0] = av_buffer_create((uint8_t *)buf, pitch * h,
@@ -1157,10 +1162,8 @@ static void f_destroy(struct mp_filter *f)
         cuStreamDestroy(p->cuda_stream);
     if (ctx_pushed)
         cuCtxPopCurrent(NULL);
-    if (p->device_ref) {
-        av_buffer_unref(&p->device_ref);
-        p->device_ref = NULL;
-    }
+    // frames/device 载体释放必须发生在无 push 状态（uninit 可能
+    // cuCtxDestroy——current_ctx 模式下借的 ctx 不在此销毁）
     if (p->av_hw_frames) {
         av_buffer_unref(&p->av_hw_frames);
         p->av_hw_frames = NULL;
@@ -1170,7 +1173,7 @@ static void f_destroy(struct mp_filter *f)
         p->av_hw_device = NULL;
     }
     if (p->cuda_ref) {
-        rife_cuda_ref_unref(p->cuda_ref);
+        mp_cuda_ctx_ref_release(p->cuda_ref);
         p->cuda_ref = NULL;
     }
 }

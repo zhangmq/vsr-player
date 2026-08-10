@@ -2,10 +2,12 @@
 #pragma once
 
 #include <cuda.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_cuda.h>
+#include <libavutil/dict.h>
 
 #include "common/msg.h"
 #include "video/mp_image.h"
@@ -32,22 +34,6 @@ static inline CUcontext mp_cuda_ctx_from_mpi(const struct mp_image *mpi)
     return cd ? cd->cuda_ctx : NULL;
 }
 
-// Hold an AVBufferRef on the frames context so the device's CUDA context
-// stays alive for the filter's own lifetime (between frames, f_reset,
-// f_destroy). No-op for software frames. Returns false on alloc failure.
-static inline bool mp_cuda_ref_device(struct mp_image *mpi,
-                                      AVBufferRef **frames_ref_out)
-{
-    if (!mpi->hwctx)
-        return true;   // SW: nothing to hold
-    AVBufferRef *ref = av_buffer_ref(mpi->hwctx);
-    if (!ref)
-        return false;
-    av_buffer_unref(frames_ref_out);
-    *frames_ref_out = ref;
-    return true;
-}
-
 // The stream the hwdec's decoder writes frames on (FFmpeg's CUDA device
 // context stream — nvdec's pool copies). NULL if unavailable. A filter that
 // reads hwdec frame memory with its own kernels must order its reads after
@@ -67,6 +53,71 @@ static inline CUstream mp_cuda_stream_from_mpi(const struct mp_image *mpi)
         return NULL;
     AVCUDADeviceContext *cd = (AVCUDADeviceContext *)dctx->hwctx;
     return cd ? cd->stream : NULL;
+}
+
+// ── Shared CUDA context ownership (single-context design) ─────────────────
+// The CUDA context lives on a reference-counted struct carried as the opaque
+// of each filter output frame's bufs[0] (alongside the CUDA memory itself).
+// The creator (vf_hwup's self-created ctx, or a filter's SW fallback) sets
+// owned=true and destroys the context when refs hit zero. Borrowers (vf_rife,
+// vf_vsr reading upstream frames) acquire the SAME struct — the context stays
+// alive as long as ANY frame anywhere in the chain references it. This fixes
+// the life-cycle overlap where the ctx carrier was only held by the filter
+// (f_destroy → carrier gone → late frame release pushed a destroyed ctx).
+//
+// Borrowed hwdec contexts (frames whose bufs[0] opaque is NOT one of ours —
+// mpv's decoder frames) fall back to a per-borrower struct holding
+// ctx_holder = av_buffer_ref(frame hwctx), released only when refs hit zero.
+// ffmpeg n9.0 adopted-current contexts are NOT destroyed on device uninit, so
+// the holder keeps the driver context valid for the borrower's whole use.
+#define MP_CUDA_CTX_REF_MAGIC 0x43555841  // "CUXA"
+
+struct mp_cuda_ctx_ref {
+    uint32_t    magic;
+    CUcontext   ctx;
+    bool        owned;        // creator destroys on refs==0; borrowers never
+    atomic_int  refs;         // 1 = holder (filter) + 1 per referencing frame
+    AVBufferRef *ctx_holder;  // borrower of a non-shared (hwdec) ctx: keeps
+                              // the source frames ctx alive; NULL for shared
+                              // structs and owned (self-created) contexts
+};
+
+static inline struct mp_cuda_ctx_ref *mp_cuda_ctx_ref_from_mpi(
+    const struct mp_image *mpi)
+{
+    if (!mpi || !mpi->bufs[0])
+        return NULL;
+    // AVBuffer's opaque is only reachable via the API (the struct itself is
+    // opaque). Decoder buffers are av_buffer_alloc'd → opaque NULL → the
+    // magic check keeps foreign buffers out.
+    struct mp_cuda_ctx_ref *r =
+        (struct mp_cuda_ctx_ref *)av_buffer_get_opaque(mpi->bufs[0]);
+    return r && r->magic == MP_CUDA_CTX_REF_MAGIC ? r : NULL;
+}
+
+static inline void mp_cuda_ctx_ref_acquire(struct mp_cuda_ctx_ref *r)
+{
+    atomic_fetch_add(&r->refs, 1);
+}
+
+// Last release: no CUDA driver call must be in flight on this context
+// (free_cuda_buf has already popped; f_destroy pops before releasing).
+// Borrowed contexts are never destroyed — the driver context outlives the
+// struct via its true owner (upstream shared struct / hwdec frames held by
+// ctx_holder). owned contexts are destroyed here.
+static inline void mp_cuda_ctx_ref_release(struct mp_cuda_ctx_ref *r)
+{
+    if (!r)
+        return;
+    if (atomic_fetch_sub(&r->refs, 1) != 1)
+        return;
+    if (r->ctx_holder) {
+        av_buffer_unref(&r->ctx_holder);
+        r->ctx_holder = NULL;
+    }
+    if (r->owned)
+        cuCtxDestroy(r->ctx);
+    free(r);
 }
 
 // Ensure a CUDA frames ctx (format=CUDA, given sw_format) of size w×h on the
@@ -99,18 +150,22 @@ static inline bool mp_cuda_ensure_frames(struct mp_log *log, CUcontext ctx,
         *dev_ref_out = NULL;
     }
 
-    AVBufferRef *dev = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_CUDA);
-    if (!dev) {
-        mp_err(log, "cuda_shared: av_hwdevice_ctx_alloc failed\n");
-        return false;
-    }
-    AVCUDADeviceContext *cuda_dev = (AVCUDADeviceContext *)
-        ((AVHWDeviceContext *)dev->data)->hwctx;
-    cuda_dev->cuda_ctx = ctx;
-
-    if (av_hwdevice_ctx_init(dev) < 0) {
-        mp_err(log, "cuda_shared: av_hwdevice_ctx_init failed\n");
-        av_buffer_unref(&dev);
+    // ffmpeg ≥7's cuda_device_create IGNORES a pre-set AVCUDADeviceContext
+    // .cuda_ctx (cuda_context_init overwrites it: default branch creates a
+    // fresh context and uninit destroys it) — silently breaking the
+    // single-context design (one extra context per self-made device). Pass
+    // current_ctx=1 with `ctx` pushed so the device ADOPTS our context, and
+    // uninit leaves it alone (borrowed context, no cuCtxDestroy).
+    AVBufferRef *dev = NULL;
+    AVDictionary *opts = NULL;
+    av_dict_set(&opts, "current_ctx", "1", 0);
+    cuCtxPushCurrent(ctx);
+    int rc = av_hwdevice_ctx_create(&dev, AV_HWDEVICE_TYPE_CUDA, NULL,
+                                    opts, 0);
+    cuCtxPopCurrent(NULL);
+    av_dict_free(&opts);
+    if (rc < 0 || !dev) {
+        mp_err(log, "cuda_shared: av_hwdevice_ctx_create failed (%d)\n", rc);
         return false;
     }
     *dev_ref_out = dev;
