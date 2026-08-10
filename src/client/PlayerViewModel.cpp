@@ -1505,9 +1505,9 @@ std::string PlayerViewModel::osdTextString() {
                 st << QString::fromStdString(vsrStatus_);
         }
         QString line = tag("VSR") +
-            (parts.isEmpty() ? QStringLiteral("off") : parts.join("  "));
+            (parts.isEmpty() ? QStringLiteral("off") : parts.join(" "));
         if (!st.isEmpty())
-            line += " | " + st.join("  ");
+            line += " | " + st.join(" ");
         lines << line;
     }
 
