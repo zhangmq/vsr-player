@@ -1442,30 +1442,23 @@ std::string PlayerViewModel::osdTextString() {
         return s;
     };
 
-    // 状态行本地化：mode/reason 关键词翻译（src=/out=/cost= 等数值参数
-    // 保留英文缩写——技术参数）。mpv 侧日志英文，显示侧映射（.ts 条目）。
-    auto trStatus = [](QString &s) {
-        static const char *kw[] = {
-            "mode=active", "mode=passthrough",
-            "reason=cost", "reason=src-fps", "reason=off",
-            "reason=sw", "reason=engine", "reason=engine-size",
-            "reason=no-pts",
-        };
-        for (const char *k : kw)
-            s.replace(k, tr(k));
-    };
+    // 除 label 外 OSD 统一不翻译（用户拍板）：状态行（vsr-status /
+    // fruc-status 的 mode=/reason=/数值参数）原样英文显示——翻译会引入
+    // 语义错位（如 mode=active 是 FRUC 的"插帧中"，vsr-status 共用后
+    // 超分行误显示）；设定段（auto/Denoise/off 等）同样保持英文。
+    // label 仍走 tr()。
 
     // Source：源信息（解码尺寸/codec/色深/容器帧率/总帧数）；无视频显示占位
     if (videoWidth_.load() <= 0) {
-        lines << tag("Source") + tr("–");
+        lines << tag("Source") + QStringLiteral("–");
     } else {
         double fps = videoFps_.load();
         QString fpsStr = fps > 0 ? QString::number(fps, 'f', 2)
                                  : QStringLiteral("–");
         int bd = videoBitDepth_.load();
-        QString bdStr = bd > 0 ? tr("%1bit").arg(bd)
+        QString bdStr = bd > 0 ? QStringLiteral("%1bit").arg(bd)
                                : QStringLiteral("–");
-        lines << tag("Source") + tr("%1×%2 %3 %4 %5fps · %6f")
+        lines << tag("Source") + QStringLiteral("%1×%2 %3 %4 %5fps · %6f")
             .arg(videoWidth_.load()).arg(videoHeight_.load())
             .arg(videoCodec_).arg(bdStr).arg(fpsStr).arg(decodedFrames_.load());
     }
@@ -1481,7 +1474,7 @@ std::string PlayerViewModel::osdTextString() {
             renderFps_.store((rendered - fpsPrevRendered_) * 1000.0 / dtMs);
         }
         fpsPrevRendered_ = rendered;
-        lines << tag("Output") + tr("%1×%2 %3fps")
+        lines << tag("Output") + QStringLiteral("%1×%2 %3fps")
             .arg(viewportWidth_.load()).arg(viewportHeight_.load())
             .arg(renderFps_.load(), 0, 'f', 1);
     }
@@ -1494,51 +1487,47 @@ std::string PlayerViewModel::osdTextString() {
         int quality = quality_.load();
         int denoise = denoise_.load();
         if (scale > 1)
-            parts << tr("%1× %2").arg(scaleStr().c_str()).arg(tr(qualityName(quality)));
+            parts << QStringLiteral("%1× %2").arg(scaleStr().c_str())
+                     .arg(qualityName(quality));
         else if (scale == 0)
-            parts << tr("auto %1").arg(tr(qualityName(quality)));
+            parts << QStringLiteral("auto %1").arg(qualityName(quality));
         if (denoise != -1)
-            parts << tr("Denoise %1").arg(tr(denoiseName(denoise)));
+            parts << QStringLiteral("Denoise %1").arg(denoiseName(denoise));
         QStringList st;   // 状态段：输出尺寸 + vsr-status
         int renderW = renderWidth_.load();
         if (renderW > 0)
-            st << tr("%1×%2").arg(renderW).arg(renderHeight_.load());
+            st << QStringLiteral("%1×%2").arg(renderW).arg(renderHeight_.load());
         // vsr 关闭（scale=-1）时不并入 vsr-status——filter 在链中但无
         // 处理，status 是切换瞬间的旧值残留（cost/fps 无意义）
         if (scale > -0.5) {
             std::lock_guard<std::mutex> lk(vsrStatusMtx_);
-            if (!vsrStatus_.empty()) {
-                QString vsrs = QString::fromStdString(vsrStatus_);
-                trStatus(vsrs);   // mode/reason 本地化（数值参数保留）
-                st << vsrs;
-            }
+            if (!vsrStatus_.empty())
+                st << QString::fromStdString(vsrStatus_);
         }
-        QString line = tag("VSR") + (parts.isEmpty() ? tr("off") : parts.join("  "));
+        QString line = tag("VSR") +
+            (parts.isEmpty() ? QStringLiteral("off") : parts.join("  "));
         if (!st.isEmpty())
             line += " | " + st.join("  ");
         lines << line;
     }
 
-    // FRUC：设定（目标帧率/倍率，off 显示"关闭"——整行不删除）|
+    // FRUC：设定（目标帧率/倍率，off 显示"off"——整行不删除）|
     // 实际状态（rife 的 fruc-status 行，事件线程从 "fruc-status:"
     // 日志提取；off 时无状态段）。
     {
         int fruc = frucFps_.load();
         QString target;
         if (fruc == -1)
-            target = tr("off");
+            target = QStringLiteral("off");
         else if (fruc == 2 || fruc == 3 || fruc == 4)
-            target = tr("%1×").arg(fruc);
+            target = QStringLiteral("%1×").arg(fruc);
         else if (fruc > 0)
-            target = tr("%1 fps").arg(fruc);
+            target = QStringLiteral("%1 fps").arg(fruc);
         QString line = tag("FRUC") + target;
         if (fruc != -1) {
             std::lock_guard<std::mutex> lk(frucStatusMtx_);
-            if (!frucStatus_.empty()) {
-                QString frucs = QString::fromStdString(frucStatus_);
-                trStatus(frucs);
-                line += " | " + frucs;
-            }
+            if (!frucStatus_.empty())
+                line += " | " + QString::fromStdString(frucStatus_);
         }
         lines << line;
     }
@@ -1551,30 +1540,30 @@ std::string PlayerViewModel::osdTextString() {
     if (hwDecoding_.load()) {
         QString hd = hwdecName_;
         hd.remove("-copy");   // nvdec-copy → nvdec（copy 模式无信息价值）
-        lines << tag("Decoder") + tr("%1 %2 %3")
-            .arg(decoderName_.isEmpty() ? tr("NVDEC") : decoderName_,
-                 hd.isEmpty() ? tr("NVDEC") : hd,
+        lines << tag("Decoder") + QStringLiteral("%1 %2 %3")
+            .arg(decoderName_.isEmpty() ? QStringLiteral("NVDEC") : decoderName_,
+                 hd.isEmpty() ? QStringLiteral("NVDEC") : hd,
                  hwPixelFormat_.isEmpty() ? decoderPixelFormat_ : hwPixelFormat_);
     } else {
-        lines << tag("Decoder") + tr("%1 %2")
-            .arg(decoderName_.isEmpty() ? tr("Software") : decoderName_,
+        lines << tag("Decoder") + QStringLiteral("%1 %2")
+            .arg(decoderName_.isEmpty() ? QStringLiteral("Software") : decoderName_,
                  hwPixelFormat_.isEmpty() ? decoderPixelFormat_ : hwPixelFormat_);
     }
 
-    lines << tag("Speed") + tr("%1×").arg(speed_.load(), 0, 'f', 2);
+    lines << tag("Speed") + QStringLiteral("%1×").arg(speed_.load(), 0, 'f', 2);
 
-    lines << tag("Time") + tr("%1 / %2")
+    lines << tag("Time") + QStringLiteral("%1 / %2")
         .arg(fmtTime(currentTime_.load())).arg(fmtTime(duration_.load()));
 
     // Frames：段内统计（rendered 客户端计数 / dropped 差值）
-    lines << tag("Frames") + tr("rendered %1  dropped %2")
+    lines << tag("Frames") + QStringLiteral("rendered %1  dropped %2")
         .arg(renderedFrames_.load()).arg(droppedFrames());
 
     if (!gpuName_.isEmpty())
         lines << tag("GPU") + gpuName_;
 
     if (audioSampleRate_.load() > 0)
-        lines << tag("Audio") + tr("%1Hz %2ch")
+        lines << tag("Audio") + QStringLiteral("%1Hz %2ch")
             .arg(audioSampleRate_.load()).arg(audioChannels_.load());
 
     return lines.join('\n').toStdString();
