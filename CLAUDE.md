@@ -231,50 +231,46 @@ This is the **authoritative scheduling model** for the Qt Quick frontend (Video/
 
 ### Core insight
 
-mpv's `mpv_render_context_set_update_callback` is a **heartbeat**, NOT a per-frame notification. It fires approximately every 200ms while mpv is active (playing). A gap >500ms means mpv is silent (paused, ended, or starved).
+mpv's `mpv_render_context_set_update_callback` is a **per-frame notification**: while playing, it fires **stably at the video frame rate** (frequency = vo draw_frame frequency); when there is no activity (paused, ended, seek-settled), it is **completely silent** — it is NOT a periodic heartbeat.
 
-### Model (libmpv API terms)
+### Model (request-driven, current implementation)
 
 ```
-// ── Heartbeat ────────────────────────────────────────────
-// Callback fires ~200ms when mpv active. Only job: record timestamp.
-var lastCallbackTimestamp = <absolute monotonic time in ms>
-
+// ── Update callback（核心线程）────────────────────────────
+// 播放中每帧推送（帧率）；无活动完全静默。只负责通知 + 唤醒。
 mpv_render_context_set_update_callback(ctx, () => {
-    lastCallbackTimestamp = now_ms()
+    renderRequested_.store(true, release)
+    QMetaObject::invokeMethod(video, "requestRender", QueuedConnection)
 })
 
-// ── Liveness predicate ───────────────────────────────────
-// HEARTBEAT_TIMEOUT must be > callback period, typically 500ms.
-fn isAlive():
-    return now_ms() - lastCallbackTimestamp < HEARTBEAT_TIMEOUT
+// ── GUI 线程：requestRender（条件投递）───────────────────
+fn requestRender():
+    if !mpv_->update() > 0 && !renderRequested_.load():   // VO 无 pending
+        return                                            // 零渲染零空转
+    update()                              // 标记 dirty → sync 时 updatePaintNode
+    postEvent(window, UpdateRequest)      // Wayland QPA requestUpdate 丢弃兜底
 
-// ── Render loop ──────────────────────────────────────────
-fn renderLoop():
-    handlePlatformEvents()                // GLFW: PollEvents; Qt: processEvents
-    checkResizeAndRecreateSwapchain()     // if needed
-
-    if isAlive():
-        mpv_render_context_render(ctx, params)   // renders current frame to target
-        presentToScreen()                        // platform-specific present
-        mpv_render_context_report_swap(ctx)      // informs mpv of display time
-        requestAnimationFrame(renderLoop)        // schedule next iteration
-    // else: stop calling renderLoop — no more frames scheduled
-
-// ── Bootstrap ────────────────────────────────────────────
-requestAnimationFrame(renderLoop)
+// ── 场景图同步阶段：updatePaintNode（每次渲染请求一次）──
+fn updatePaintNode():
+    uf = mpv_->update()
+    if uf > 0 || renderRequested_.exchange(false):
+        mpv_render_context_render(ctx, params)   // 消费 VO 帧队列
+        mpv_render_context_report_swap(ctx)
+        vkQueueWaitIdle(queue_)                  // 排空 GPU（rtImage 引用安全）
 ```
+
+**纯请求驱动**：每次 callback → 渲染一次。无自主循环、无 isAlive、无停滞检测。渲染频率 = callback 频率 = 帧率。
 
 ### Qt Quick implementation（现行，Video/CompositeRenderNode）
 
-`requestAnimationFrame` 的 Qt 实现：`afterAnimating` 信号 + `postEvent(UpdateRequest)`（Qt scene-graph 驱动），渲染循环由 QQuickView basic 渲染循环承载（`QSG_RENDER_LOOP=basic`，main.cpp 设置——threaded 模式与 untimed 渲染不兼容，曾致双 vblank 30fps）。mpv 渲染走 `mpv_render_context_render` 到共享 VkImage，`report_swap` 告知显示时刻，FIFO present 提供隐式帧节拍。
+渲染循环由 QQuickView basic 渲染循环承载（`QSG_RENDER_LOOP=basic`，main.cpp 设置——threaded 模式与 untimed 渲染不兼容，曾致双 vblank 30fps；threaded 下每帧渲染使 GUI 事件饿死，EVT 400-1350ms）。mpv 渲染走 `mpv_render_context_render` 到共享 VkImage，`report_swap` 告知显示时刻，FIFO present 提供隐式帧节拍。
 
 ### Key properties
 
 - **No hardcoded timeouts.** Frame pacing comes from the present/swap mechanism or compositor callback, never from `sleep(n)` or `WaitEventsTimeout(n)`.
-- **No busy-polling when idle.** When `isAlive()` is false, no frames are scheduled — the scene graph goes idle, waiting for the heartbeat callback to restart.
-- **mpv callback does NOT trigger rendering.** It only updates the timestamp. `renderLoop` checks `isAlive()` independently.
-- **Retained frame semantics.** mpv's render target (VkImage / FBO) inherently retains the last rendered frame. When `isAlive()` is false, the last frame stays on screen without any extra work.
+- **No busy-polling when idle.** No rendering request (VO pending) → no render scheduled — the scene graph goes idle, waiting for the next callback.
+- **Never unconditionally `update()`/`postEvent`.** Unconditional posting creates a render-event storm that starves the event loop (EVT 400-1350ms, measured). 15a6f15's `aboutToBlock` fallback violated this and regressed UI latency — conditional requestRender only.
+- **Retained frame semantics.** mpv's render target (VkImage / FBO) inherently retains the last rendered frame. When no new frame arrives, the last frame stays on screen without any extra work.
 
 ## Performance Baseline
 

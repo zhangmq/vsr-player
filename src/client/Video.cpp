@@ -323,9 +323,10 @@ QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
     // ── pass to render node ──────────────────────────────────────────
     node->curDs = compDs_;
     node->srcImage = rtImage_;
-    // dirty 由 onAboutToBlock（GUI 线程、事件处理完成后）条件设置——
-    // 这里绝不无条件 update()/postEvent（那会制造渲染事件风暴抢占
-    // 事件循环，实测 EVT 400-1350ms 饿死输入）。
+    // dirty 由 requestRender（mpv update callback invokeMethod 驱动）
+    // 条件设置——这里绝不无条件 update()/postEvent（那会制造渲染
+    // 事件风暴抢占事件循环，实测 EVT 400-1350ms 饿死输入；15a6f15
+    // 的 aboutToBlock 无条件投递曾致 UI 卡顿回归，已删除）。
 
     return node;
 }
