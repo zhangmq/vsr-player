@@ -639,7 +639,10 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
 
     // scene change detection (mean |prev-cur| on the staging pair; syncs the
     // stream for the host read — that sync doubles as this pair's early
-    // boundary: the staging convert is complete before any emit below)
+    // boundary: the staging convert is complete before any emit below).
+    // NaN engine outputs (lite model numerical boundary on some pairs) are
+    // handled in the convert kernel — it copies the prev pixel instead of
+    // emitting black, so no per-pair still detection is needed here.
     bool scene = rife_scene_change(&p->eng, p->cuda_stream, RIFE_SC_MAE);
     if (scene)
         MP_DBG(f, "rife: scene change (MAE > %.0f) — pass-through\n", RIFE_SC_MAE);
@@ -695,10 +698,11 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
                     break;
                 }
                 bool ok_run = scene
-                    // minterpolate scene-change semantics: duplicate the
+                    // scene/still pass-through semantics: duplicate the
                     // temporally nearer endpoint (alpha > 0.5 → next, else
                     // previous) — copying the far frame would show content
-                    // from the wrong side of the cut.
+                    // from the wrong side of the cut (still frames: both
+                    // endpoints are identical, either copy is correct)
                     ? rife_pass_through(&p->eng, p->cuda_stream, tval > 0.5,
                                         out_buf, p->eng.rgba_pitch)
                     : rife_interpolate(&p->eng, p->cuda_stream, tval,
@@ -938,16 +942,10 @@ static void f_process(struct mp_filter *f)
             return;
         }
         cuCtxPushCurrent(p->cuda_ref->ctx);
-        // engine shape: lite = input size padded to 128 multiples (model
-        // alignment, mirrors build_rife_lite_engine.sh; one fixed-shape engine
-        // per size); full = video size as-is (dynamic-shape engine)
-        int ph, pw;
-        if (p->opts->variant == 1) {
-            ph = cur->h; pw = cur->w;
-        } else {
-            ph = (cur->h + 127) / 128 * 128;
-            pw = (cur->w + 127) / 128 * 128;
-        }
+        // engine shape = video size as-is — both variants are dynamic-shape
+        // single engines (official 7ch models handle any resolution internally)
+        int ph = cur->h;
+        int pw = cur->w;
         p->engine_ok = rife_init(&p->eng, p->cuda_ref->ctx, p->cuda_stream,
                                  ph, pw, p->opts->variant, f->log);
         if (p->engine_ok)
@@ -976,33 +974,11 @@ static void f_process(struct mp_filter *f)
         p->video_w = cur->w;   // size change block above skipped; stage now
         p->video_h = cur->h;
     } else if (cur->w != p->video_w || cur->h != p->video_h) {
-        // size change after init: reallocate staging; reload the engine if
-        // the padded shape changed (one fixed-shape engine per size). The
-        // full variant keeps one dynamic engine — set_shape in reconfig.
-        int ph, pw;
-        if (p->opts->variant == 1) {
-            ph = cur->h; pw = cur->w;
-        } else {
-            ph = (cur->h + 127) / 128 * 128;
-            pw = (cur->w + 127) / 128 * 128;
-        }
+        // size change after init: reallocate staging + set_shape the dynamic
+        // engine (same engine reused — no reload; over max → reconfig fails
+        // → passthrough)
         cuCtxPushCurrent(p->cuda_ref->ctx);
-        bool ok = true;
-        if (p->opts->variant == 0 &&
-            (ph != p->eng.ph || pw != p->eng.pw)) {
-            rife_destroy(&p->eng);
-            ok = rife_init(&p->eng, p->cuda_ref->ctx, p->cuda_stream,
-                           ph, pw, 0, f->log);
-            if (!ok && p->opts->scale == 0) {
-                p->mode = RIFE_PASSTHROUGH;
-                snprintf(p->pt_reason, sizeof(p->pt_reason), "engine-size");
-                MP_WARN(f, "rife: engine for %dx%d (pad %dx%d) not found — "
-                        "passthrough\n", cur->w, cur->h, ph, pw);
-                rife_discard_prefetch(p);
-            }
-        }
-        if (ok)
-            ok = rife_reconfig(&p->eng, cur->w, cur->h, p->cuda_stream);
+        bool ok = rife_reconfig(&p->eng, cur->w, cur->h, p->cuda_stream);
         cuCtxPopCurrent(NULL);
         if (!ok) {
             if (p->opts->scale > 0 || p->mode != RIFE_PASSTHROUGH) {
@@ -1034,6 +1010,25 @@ static void f_process(struct mp_filter *f)
             }
             mp_pin_in_write(f->ppins[1], frame);
             return;
+        }
+        // Stage the first frame into rgba_a: the first pair's mid frame
+        // reads prev from staging, which starts zeroed — without this the
+        // first interpolated frame(s) are black (startup flicker)
+        if (p->engine_ok) {
+            cuCtxPushCurrent(p->cuda_ref->ctx);
+            struct mp_imgfmt_desc desc = mp_imgfmt_get_desc(cur->params.hw_subfmt);
+            int bd = desc.bpp[0];
+            enum yuv_matrix mx = matrix_from_repr(&cur->params);
+            enum yuv_range rn = range_from_levels(cur->params.repr.levels);
+            if (!ensure_yuv_converter(f, p, bd, mx, rn) ||
+                !yuv_to_rgba_convert(&p->yuv_conv,
+                                     cur->planes[0], cur->stride[0],
+                                     cur->planes[1], cur->stride[1],
+                                     p->video_w, p->video_h,
+                                     (void *)p->eng.rgba_a, p->eng.rgba_pitch,
+                                     p->cuda_stream))
+                MP_WARN(f, "rife: first-frame staging convert failed\n");
+            cuCtxPopCurrent(NULL);
         }
         p->t0 = cur->pts;
         p->have_prev = true;

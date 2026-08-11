@@ -39,10 +39,9 @@ struct rife_context {
     // padded engine dims (PH/PW, multiples of 128 — lite alignment)
     int ph, pw;
 
-    // model variant: 0=lite (11ch: RGB×2 + t + grid×4), 1=full (7ch:
-    // RGB×2 + t, grid generated inside the model). Selects the engine
-    // filename prefix (rife_lite_fp16_/rife_full_fp16_) and the assemble
-    // kernel grid-channel section (RIFE_FULL nvrtc define).
+    // model variant: 0=lite, 1=full. Both are dynamic-shape single engines
+    // (7ch input: RGB×2 + t — grid generated inside the models). Selects the
+    // engine filename (rife_lite_fp16.engine / rife_full_fp16.engine).
     int variant;
 
     bool configured;
@@ -51,8 +50,7 @@ struct rife_context {
 };
 
 // ctx must be current; loads engine (searches RIFE_LIBDIR etc), compiles kernels.
-// ph/pw = engine input dims: lite = video size padded to 128 multiples
-// (fixed-shape engine); full = video size as-is (dynamic engine set_shape).
+// ph/pw = video size as-is (both variants: dynamic engine set_shape).
 bool rife_init(struct rife_context *c, CUcontext ctx, CUstream stream,
                int ph, int pw, int variant, struct mp_log *log);
 void rife_destroy(struct rife_context *c);
