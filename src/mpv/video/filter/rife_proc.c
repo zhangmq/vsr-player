@@ -1,7 +1,10 @@
 // rife_proc.c — RIFE inference plumbing: engine file location, full-frame
-// kernels (nvrtc), per-frame interpolation. Model: rife_v4.25 lite (11ch,
-// vs-mlrt external-models conversion), fixed-shape FP16 TRT engine
-// ([1,11,PH,PW] in / [1,3,PH,PW] out, PH/PW multiples of 128).
+// kernels (nvrtc), per-frame interpolation. Models: rife_v4.25 lite (11ch,
+// vs-mlrt external-models conversion) and full (7ch: RGB×2 + t — grid is
+// generated inside the full model), fixed-shape FP16 TRT engines
+// ([1,11|7,PH,PW] in / [1,3,PH,PW] out, PH/PW multiples of 128).
+// Variant (lite|full) is selected by vf_rife options; the assemble kernel
+// is compiled with -D RIFE_FULL=1 for the full model (grid section omitted).
 //
 // Zero-copy path:
 //   rife_assemble (nvrtc):  rgba_a/rgba_b full frame → 11ch engine input
@@ -29,13 +32,21 @@
 
 // ── Engine file search ──────────────────────────────────────────────────
 
-// Probe each candidate dir for rife_lite_fp16_{ph}x{pw}.engine; first hit
-// wins. Order: RIFE_LIBDIR → installed (~/.local/lib/vsr-player) → dev
+// Probe each candidate dir for rife_{lite,full}_fp16*.engine; first hit wins.
+// Order: RIFE_LIBDIR → installed (~/.local/lib/vsr-player) → dev
 // (third_party/rife) → build tree (build/tests/fruc).
-static bool rife_locate_engine(char *path, size_t bufsz, int ph, int pw)
+// lite: one fixed-shape engine per 128-aligned size (rife_lite_fp16_{ph}x{pw}).
+// full: single engine (rife_full_fp16.engine, no size suffix) — its shape is
+// read from the engine file; videos ≤ that size are padded to it, larger
+// videos pass through (checked in rife_reconfig).
+static bool rife_locate_engine(char *path, size_t bufsz, int ph, int pw,
+                               int variant)
 {
     char name[64];
-    snprintf(name, sizeof(name), "rife_lite_fp16_%dx%d.engine", ph, pw);
+    if (variant == 1)
+        snprintf(name, sizeof(name), "rife_full_fp16.engine");
+    else
+        snprintf(name, sizeof(name), "rife_lite_fp16_%dx%d.engine", ph, pw);
     const char *env = getenv("RIFE_LIBDIR");
     if (env && *env) {
         snprintf(path, bufsz, "%s/%s", env, name);
@@ -77,7 +88,7 @@ static const char *kKernelSrc =
 "extern \"C\" __global__ void rife_assemble(\n"
 "    const unsigned char* __restrict__ rgba_a, int a_pitch,\n"
 "    const unsigned char* __restrict__ rgba_b, int b_pitch,\n"
-"    unsigned short* __restrict__ in11,\n"
+"    unsigned short* __restrict__ in,\n"
 "    int frame_w, int frame_h, int PW, int PH, float tval)\n"
 "{\n"
 "    int idx = blockIdx.x * blockDim.x + threadIdx.x;\n"
@@ -91,7 +102,7 @@ static const char *kKernelSrc =
 "    const unsigned char* pa = rgba_a + sy * a_pitch + sx * 4;\n"
 "    const unsigned char* pb = rgba_b + sy * b_pitch + sx * 4;\n"
 "    size_t plane = (size_t)PW * PH;\n"
-"    unsigned short* d = in11 + idx;\n"
+"    unsigned short* d = in + idx;\n"
 "    float inv = 1.0f / 255.0f;\n"
 "    d[0]            = rife_f2h(pa[0] * inv);\n"
 "    d[plane]        = rife_f2h(pa[1] * inv);\n"
@@ -100,10 +111,13 @@ static const char *kKernelSrc =
 "    d[4*plane]      = rife_f2h(pb[1] * inv);\n"
 "    d[5*plane]      = rife_f2h(pb[2] * inv);\n"
 "    d[6*plane]      = rife_f2h(tval);\n"
+"    // full model generates the grid inside the network — no grid channels\n"
+"#ifndef RIFE_FULL\n"
 "    d[7*plane]      = rife_f2h(2.0f * x / (PW - 1) - 1.0f);\n"
 "    d[8*plane]      = rife_f2h(2.0f * y / (PH - 1) - 1.0f);\n"
 "    d[9*plane]      = rife_f2h(2.0f / (PW - 1));\n"
 "    d[10*plane]     = rife_f2h(2.0f / (PH - 1));\n"
+"#endif\n"
 "}\n"
 "extern \"C\" __global__ void rife_convert(\n"
 "    const unsigned short* __restrict__ out3,\n"
@@ -175,8 +189,11 @@ static bool rife_compile_kernels(struct rife_context *c, CUcontext ctx)
 
     char arch[32];
     snprintf(arch, sizeof(arch), "--gpu-architecture=compute_%d%d", major, minor);
-    const char *opts[] = {arch, "--use_fast_math"};
-    res = nvrtcCompileProgram(prog, 2, opts);
+    // full variant: omit the grid channels (RIFE_FULL) — the full model
+    // generates the grid inside the network (7ch input vs lite's 11ch)
+    const char *defs = c->variant == 1 ? "-DRIFE_FULL=1" : NULL;
+    const char *opts[] = {arch, "--use_fast_math", defs};
+    res = nvrtcCompileProgram(prog, c->variant == 1 ? 3 : 2, opts);
     if (res != NVRTC_SUCCESS) {
         size_t log_size;
         nvrtcGetProgramLogSize(prog, &log_size);
@@ -214,19 +231,21 @@ static bool rife_compile_kernels(struct rife_context *c, CUcontext ctx)
 // ── Lifecycle ──────────────────────────────────────────────────────────
 
 bool rife_init(struct rife_context *c, CUcontext ctx, CUstream stream,
-               int ph, int pw, struct mp_log *log)
+               int ph, int pw, int variant, struct mp_log *log)
 {
     memset(c, 0, sizeof(*c));
     c->log = log;
     c->ph = ph;
     c->pw = pw;
+    c->variant = variant;
 
     // engine file (data artifact, shipped alongside the app)
     char path[1024];
-    if (!rife_locate_engine(path, sizeof(path), ph, pw)) {
-        mp_warn(c->log, "rife: engine rife_lite_fp16_%dx%d.engine not found "
+    if (!rife_locate_engine(path, sizeof(path), ph, pw, variant)) {
+        mp_warn(c->log, "rife: engine rife_%s_fp16_%dx%d.engine not found "
                 "(RIFE_LIBDIR / ~/.local/lib/vsr-player / third_party/rife / "
-                "build/tests/fruc) — passthrough\n", ph, pw);
+                "build/tests/fruc) — passthrough\n",
+                variant == 1 ? "full" : "lite", ph, pw);
         return false;
     }
     (void)stream;
@@ -241,7 +260,29 @@ bool rife_init(struct rife_context *c, CUcontext ctx, CUstream stream,
     if (!c->engine)
         return false;
 
-    if (rife_engine_height(c->engine) != ph || rife_engine_width(c->engine) != pw) {
+    if (variant == 1) {
+        // full 动态引擎：ph/pw = 调用方视频尺寸（无 pad），引擎 set_shape
+        // 到该尺寸；超 profile max 拒绝 → passthrough
+        if (ph > rife_engine_max_height(c->engine) ||
+            pw > rife_engine_max_width(c->engine)) {
+            mp_err(c->log, "rife: full engine max %dx%d < video %dx%d — passthrough\n",
+                   rife_engine_max_width(c->engine), rife_engine_max_height(c->engine),
+                   pw, ph);
+            rife_engine_destroy(c->engine);
+            c->engine = NULL;
+            return false;
+        }
+        c->ph = ph;
+        c->pw = pw;
+        if (!rife_engine_set_shape(c->engine, ph, pw)) {
+            mp_err(c->log, "rife: full engine set_shape %dx%d failed — passthrough\n",
+                   pw, ph);
+            rife_engine_destroy(c->engine);
+            c->engine = NULL;
+            return false;
+        }
+    } else if (rife_engine_height(c->engine) != ph ||
+               rife_engine_width(c->engine) != pw) {
         mp_err(c->log, "rife: engine dims %dx%d != requested %dx%d — passthrough\n",
                rife_engine_height(c->engine), rife_engine_width(c->engine), ph, pw);
         rife_engine_destroy(c->engine);
@@ -282,6 +323,19 @@ bool rife_reconfig(struct rife_context *c, int w, int h, CUstream stream)
         return true;
     if (!c->engine)
         return false;
+    // full 动态引擎：尺寸变化 → set_shape（同一引擎复用；超 profile max
+    // 由 set_shape 拒绝 → 调用方降级 passthrough）
+    if (c->variant == 1) {
+        if (!rife_engine_set_shape(c->engine, h, w)) {
+            mp_warn(c->log, "rife: full engine set_shape %dx%d failed (max "
+                    "%dx%d) — passthrough\n", w, h,
+                    rife_engine_max_width(c->engine),
+                    rife_engine_max_height(c->engine));
+            return false;
+        }
+        c->ph = h;
+        c->pw = w;
+    }
 
     if (c->rgba_a) cuMemFree(c->rgba_a);
     if (c->rgba_b) cuMemFree(c->rgba_b);

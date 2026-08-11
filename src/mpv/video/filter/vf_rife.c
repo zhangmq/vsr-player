@@ -50,6 +50,7 @@ struct vf_rife_opts {
     int  fps;       // -1=off, 0=auto (2×src), [1,120] target fps
     int  scale;     // benchmark multiplier: 0=off, 2/3/4 (overrides fps)
     bool adaptive;  // normal-mode cost-based passthrough
+    int  variant;   // model: 0=lite (default, 11ch), 1=full (7ch)
 };
 
 #define OPT_BASE_STRUCT struct vf_rife_opts
@@ -138,11 +139,12 @@ static const struct m_option vf_opts_fields[] = {
     {"scale",    OPT_CHOICE(scale, {"off", 0}, {"2", 2}, {"3", 3}, {"4", 4}),
                  M_RANGE(0, 4)},
     {"adaptive", OPT_BOOL(adaptive)},
+    {"variant",  OPT_CHOICE(variant, {"lite", 0}, {"full", 1})},
     {0}
 };
 
 static const struct vf_rife_opts vf_rife_opts_def = {
-    .fps = -1, .scale = 0, .adaptive = true,
+    .fps = -1, .scale = 0, .adaptive = true, .variant = 0,   // lite
 };
 
 // ── priv ───────────────────────────────────────────────────────────────
@@ -936,12 +938,18 @@ static void f_process(struct mp_filter *f)
             return;
         }
         cuCtxPushCurrent(p->cuda_ref->ctx);
-        // engine shape = input size padded to 128 multiples (lite alignment,
-        // mirrors build_rife_lite_engine.sh); one fixed-shape engine per size
-        int ph = (cur->h + 127) / 128 * 128;
-        int pw = (cur->w + 127) / 128 * 128;
+        // engine shape: lite = input size padded to 128 multiples (model
+        // alignment, mirrors build_rife_lite_engine.sh; one fixed-shape engine
+        // per size); full = video size as-is (dynamic-shape engine)
+        int ph, pw;
+        if (p->opts->variant == 1) {
+            ph = cur->h; pw = cur->w;
+        } else {
+            ph = (cur->h + 127) / 128 * 128;
+            pw = (cur->w + 127) / 128 * 128;
+        }
         p->engine_ok = rife_init(&p->eng, p->cuda_ref->ctx, p->cuda_stream,
-                                 ph, pw, f->log);
+                                 ph, pw, p->opts->variant, f->log);
         if (p->engine_ok)
             p->engine_ok = rife_reconfig(&p->eng, cur->w, cur->h, p->cuda_stream);
         cuCtxPopCurrent(NULL);
@@ -969,15 +977,22 @@ static void f_process(struct mp_filter *f)
         p->video_h = cur->h;
     } else if (cur->w != p->video_w || cur->h != p->video_h) {
         // size change after init: reallocate staging; reload the engine if
-        // the padded shape changed (one fixed-shape engine per size)
-        int ph = (cur->h + 127) / 128 * 128;
-        int pw = (cur->w + 127) / 128 * 128;
+        // the padded shape changed (one fixed-shape engine per size). The
+        // full variant keeps one dynamic engine — set_shape in reconfig.
+        int ph, pw;
+        if (p->opts->variant == 1) {
+            ph = cur->h; pw = cur->w;
+        } else {
+            ph = (cur->h + 127) / 128 * 128;
+            pw = (cur->w + 127) / 128 * 128;
+        }
         cuCtxPushCurrent(p->cuda_ref->ctx);
         bool ok = true;
-        if (ph != p->eng.ph || pw != p->eng.pw) {
+        if (p->opts->variant == 0 &&
+            (ph != p->eng.ph || pw != p->eng.pw)) {
             rife_destroy(&p->eng);
             ok = rife_init(&p->eng, p->cuda_ref->ctx, p->cuda_stream,
-                           ph, pw, f->log);
+                           ph, pw, 0, f->log);
             if (!ok && p->opts->scale == 0) {
                 p->mode = RIFE_PASSTHROUGH;
                 snprintf(p->pt_reason, sizeof(p->pt_reason), "engine-size");

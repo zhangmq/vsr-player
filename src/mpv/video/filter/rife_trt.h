@@ -39,11 +39,23 @@ bool rife_engine_run(struct rife_engine *e, void *stream);
 void *rife_engine_input(struct rife_engine *e);
 void *rife_engine_output(struct rife_engine *e);
 
-// Engine spatial dims (the fixed padded size: video W/H rounded up to 128).
+// Engine spatial dims. Fixed-shape engine: the built padded size (video W/H
+// rounded up to 128). Dynamic-shape engine (full variant): the current input
+// shape (set via rife_engine_set_shape, initial = profile opt).
 int rife_engine_height(struct rife_engine *e);   // PH
 int rife_engine_width(struct rife_engine *e);    // PW
 
-// FP16 engine? (all lite engines are; used to pick the input element size)
+// Profile maximum dims (dynamic engine: max profile; fixed: built dims).
+// Videos larger than this must be rejected (passthrough).
+int rife_engine_max_height(struct rife_engine *e);
+int rife_engine_max_width(struct rife_engine *e);
+
+// Set the input shape for dynamic-shape engines (full variant). Buffers are
+// allocated at profile max at load time, so no reallocation happens here.
+// Returns false when h/w exceed the profile max (caller degrades).
+bool rife_engine_set_shape(struct rife_engine *e, int h, int w);
+
+// FP16 engine? (all rife engines are; used to pick the input element size)
 bool rife_engine_half(struct rife_engine *e);
 
 void rife_engine_destroy(struct rife_engine *e);

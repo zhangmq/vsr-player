@@ -108,6 +108,7 @@ int main(int argc, char *argv[]) {
         viewModel.loadSettings();
     viewModel.initVsr(opts.scale, opts.quality, opts.denoise);
     viewModel.initFruc(opts.fruc, opts.benchmark);
+    viewModel.initRifeModel(opts.rife_model);
     std::string vf = viewModel.vfOption();
 
     // ── mpv ─────────────────────────────────────────────────────────────

@@ -45,9 +45,11 @@ struct rife_engine {
     std::unique_ptr<nvinfer1::IExecutionContext> ctx;
     void *d_in = nullptr;
     void *d_out = nullptr;
-    int ph = 0, pw = 0;      // input spatial dims (padded)
-    int in_elems = 0;        // 11*PH*PW (input channel count from engine)
-    int out_elems = 0;       // 3*PH*PW
+    int ph = 0, pw = 0;      // current input spatial dims
+    int max_ph = 0, max_pw = 0;  // profile max (dynamic) / built dims (fixed)
+    int in_c = 0;            // input channel count (engine)
+    int in_elems = 0;        // in_c*max_ph*max_pw (buffers sized at max)
+    int out_elems = 0;       // 3*max_ph*max_pw
     bool half = false;       // input dtype FP16?
 };
 
@@ -114,22 +116,42 @@ struct rife_engine *rife_engine_load(const char *path, rife_log_fn log)
         return nullptr;
     }
 
-    // Fixed-shape engine: read dims/dtype from the plan itself.
+    // Read dims/dtype from the plan. Dynamic-shape engines (full variant,
+    // built with min<max profile) report -1 — use the profile max for buffers.
     nvinfer1::Dims d_in = e->engine->getTensorShape("input");
     nvinfer1::Dims d_out = e->engine->getTensorShape("output");
     if (d_in.nbDims != 4 || d_out.nbDims != 4 ||
-        d_in.d[2] != d_out.d[2] || d_in.d[3] != d_out.d[3] ||
         d_in.d[0] != 1 || d_out.d[0] != 1 || d_out.d[1] != 3) {
         if (log) log(2, "rife_trt: unexpected engine shape (want [1,C,PH,PW]/[1,3,PH,PW])");
         dlclose(e->dl);
         delete e;
         return nullptr;
     }
-    e->ph = d_in.d[2];
-    e->pw = d_in.d[3];
-    e->in_elems = d_in.d[1] * e->ph * e->pw;
-    e->out_elems = 3 * e->ph * e->pw;
+    e->in_c = d_in.d[1];
     e->half = e->engine->getTensorDataType("input") == nvinfer1::DataType::kHALF;
+    if (d_in.d[2] == -1) {
+        // dynamic: buffers sized at profile max; current shape starts at opt
+        nvinfer1::Dims mx = e->engine->getProfileShape(
+            "input", 0, nvinfer1::OptProfileSelector::kMAX);
+        nvinfer1::Dims op = e->engine->getProfileShape(
+            "input", 0, nvinfer1::OptProfileSelector::kOPT);
+        e->max_ph = mx.d[2];
+        e->max_pw = mx.d[3];
+        e->ph = op.d[2];
+        e->pw = op.d[3];
+    } else {
+        // fixed-shape engine (lite matrix): dims are both current and max
+        if (d_in.d[2] != d_out.d[2] || d_in.d[3] != d_out.d[3]) {
+            if (log) log(2, "rife_trt: unexpected engine shape (want [1,C,PH,PW]/[1,3,PH,PW])");
+            dlclose(e->dl);
+            delete e;
+            return nullptr;
+        }
+        e->max_ph = e->ph = d_in.d[2];
+        e->max_pw = e->pw = d_in.d[3];
+    }
+    e->in_elems = e->in_c * e->max_ph * e->max_pw;
+    e->out_elems = 3 * e->max_ph * e->max_pw;
     size_t in_bytes = e->in_elems * (e->half ? 2 : 4);
     size_t out_bytes = e->out_elems * (e->half ? 2 : 4);
 
@@ -171,6 +193,36 @@ int rife_engine_height(struct rife_engine *e)
 int rife_engine_width(struct rife_engine *e)
 {
     return e ? e->pw : 0;
+}
+
+int rife_engine_max_height(struct rife_engine *e)
+{
+    return e ? e->max_ph : 0;
+}
+
+int rife_engine_max_width(struct rife_engine *e)
+{
+    return e ? e->max_pw : 0;
+}
+
+bool rife_engine_set_shape(struct rife_engine *e, int h, int w)
+{
+    if (!e) return false;
+    if (h == e->ph && w == e->pw)
+        return true;
+    if (h <= 0 || w <= 0 || h > e->max_ph || w > e->max_pw)
+        return false;
+    nvinfer1::Dims d;
+    d.nbDims = 4;
+    d.d[0] = 1;
+    d.d[1] = e->in_c;
+    d.d[2] = h;
+    d.d[3] = w;
+    if (!e->ctx->setInputShape("input", d))
+        return false;
+    e->ph = h;
+    e->pw = w;
+    return true;
 }
 
 bool rife_engine_half(struct rife_engine *e)
