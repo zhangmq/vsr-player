@@ -24,6 +24,12 @@ NVIDIA Video Effects SDK 提供了相同的底层 AI 模型，也有 Linux 版�
 - **播放列表与播放控制** — 目录加载、循环模式、倍速、音视频同步（mpv 承载）
 - **远程控制** — Unix socket JSON IPC；独立 `mpv-vsr` CLI 与包装脚本
 
+## 测试现状
+
+本项目在有限的硬件条件下开发——单一 GPU 世代、少量测试样本，无法覆盖所有 GPU/驱动/媒体组合。请对边角问题有预期：你可能会遇到这里从未见过的崩溃、画质异常或卡死。
+
+遇到问题时，一个高效路径是让 AI 编码代理协助排查。本项目本身就是用 AI 代理（Claude Code）开发的：代码、mpv 补丁覆盖层、`docs/` 与提交历史里的设计记录一应俱全，代理可以快速理解管线并定位修复。也欢迎提交 issue 和 PR。
+
 ## 截图
 
 ![播放器界面](docs/images/player-screenshot.jpg)
@@ -65,13 +71,26 @@ demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt
 
 第三方 SDK（NvVFX 头文件/运行时、MDI 图标字体、mpv 源码）**不随仓库分发**——按 [docs/third-party-setup.md](docs/third-party-setup.md) 准备 `third_party/`。
 
-## 构建
+## 手工构建
+
+1. **准备 `third_party/`** — NvVFX SDK 头文件/运行时、MDI 图标字体、mpv 源码、CUDA 12 存档、RIFE ONNX 资产：按 [docs/third-party-setup.md](docs/third-party-setup.md) 操作。
+2. **构建并运行：**
 
 ```bash
-./scripts/build_mpv.sh          # 合并 src/mpv 覆盖层到 third_party/mpv 并构建 libmpv + vf_vsr
+./scripts/build_mpv.sh          # 合并 src/mpv 覆盖层 → third_party/mpv，构建 libmpv + 滤镜
 ninja -C build                  # 构建 Qt 客户端
 ./build/src/client/vsr-player <视频或目录>
 ```
+
+**注意事项（都是踩过的坑）：**
+
+- **mpv patch 方案**：`third_party/mpv` 是纯净基座；`src/mpv/` 是覆盖层（镜像 mpv 树，只含修改文件）。改完 `src/mpv/` 下任何文件后**必须重跑 `./scripts/build_mpv.sh`**——`build/mpv` 是合并副本，单独对其增量 `ninja` 会静默沿用旧副本掩盖修改（完整重建才会暴露，实测教训）。
+- **`build_mpv.sh` 输出经 grep 过滤**——编译失败可能看不到；确认构建真正完成要检查最后一行 "Done"。
+- **别 `cd build` 后再用 `./build/...`**——相对路径会失效；留在仓库根或用绝对路径。
+- **系统库升级后**（FFmpeg、Qt、TensorRT——pacman/apt）需全量重建（`./scripts/build_mpv.sh` + `ninja -C build`）：旧二进制链接旧 soname，会直接启动失败。
+- **RIFE 引擎**：用系统 `trtexec` 构建（`bash tests/fruc/build_rife_full_engine.sh`，动态 shape FP16；分发用 `--hardware-compat on` 跨架构）。需要 `third_party/rife/` 下的 RIFE ONNX 资产。
+- **开发安装**：仓库内直接跑 `./scripts/install.sh` 即可（dev 模式，自动识别构建树，无需 tarball）。
+- **分发构建**：`./scripts/build_release.sh`——release + `$ORIGIN` 相对 RPATH + 依赖收集 + tarball。`build_mpv.sh`/client 构建接受 `MPV_BUILD_DIR`、`BUILDTYPE`、`DIST_RPATH` 环境变量覆盖（发布脚本使用）。
 
 ## 分发（release tarball）
 
@@ -84,6 +103,42 @@ tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
 - 捆绑：libmpv + ffmpeg×7 + CUDA runtime + TensorRT 11 + RIFE 引擎（ampere+，30/40/50 系通用一份）+ 字体/翻译/许可
 - **不捆绑**：VFX SDK（~1.1 GB）——NVIDIA SLA 限制再分发；install.sh 可代从 PyPI 官方 `nvidia-vfx` wheel 下载提取（curl 纯下载，不调 pip、不改系统），或手动放置到 `~/.local/lib/vsr-player/`
 - GUI 运行时依赖系统 Qt ≥ 6.11；唯一强制外部依赖为 NVIDIA 驱动（`libcuda.so.1`）
+
+## 版本兼容性
+
+| 组件 | 绑定关系 | 不匹配时 |
+|------|----------|----------|
+| **VFX SDK ↔ 驱动** | PyPI 最新 wheel 可能要求更新的驱动；旧驱动 + 新 VFX → VSR 加载失败 | 升级驱动，或锁定旧版 VFX（见下） |
+| **RIFE 引擎 ↔ TensorRT** | 引擎文件内嵌构建时的 TRT 精确版本——版本不匹配时反序列化直接拒绝（双向均实测） | 用当前系统 TRT 重建引擎（`bash tests/fruc/build_rife_full_engine.sh`），或装匹配版本 TRT。tarball 用户：引擎与捆绑 TRT 一起分发，自洽。VFX 自带的 TRT 10 与 RIFE 的 TRT 11 同进程共存（RTLD_LOCAL 隔离），无需处理 |
+| **Qt** | 硬性要求 ≥ 6.11（用到的 QML/QuickControls 特性） | 无降级选项——升级系统 Qt |
+| **GPU** | VSR 需 RTX 20+；插帧需 Ampere+（FP16 Tensor Cores） | 旧 GPU：VSR 可用，插帧退化为直通 |
+| **驱动** | VFX 需 570+；Wayland 需 `nvidia_drm.modeset=1` | 升级驱动，或锁定旧版 VFX wheel |
+
+**锁定 VFX SDK 版本**——install.sh 总是从 PyPI 拉取**最新** `nvidia-vfx` wheel。如果默认版本在你的环境不工作（如驱动太旧），不必被迫使用它：
+
+```bash
+# 1. 查看可用版本
+pip index versions nvidia-vfx        # 或浏览器: pypi.org/project/nvidia-vfx/#files
+
+# 2. 下载指定版本 wheel（pip download 只取文件，不安装）
+pip download nvidia-vfx==<版本> --no-deps -d /tmp/vfx
+
+# 3. 解压其库文件到应用库目录
+unzip -o /tmp/vfx/nvidia_vfx-<版本>*.whl "nvvfx/libs/*" -d /tmp/vfx
+cp /tmp/vfx/nvvfx/libs/*.so* ~/.local/lib/vsr-player/
+```
+
+注意：`vsr_proc.c` 以**无版本名** dlopen（`libnppc.so`、`libcudnn.so`、`libnvidia-ngx-vsr.so` 等），而 wheel 只含带版本名文件（`.so.12`、`.so.9`……）。install.sh 的自动下载路径会补无版本软链；**手动放置时需自行补齐**，否则 VFX 加载链断裂（超分静默直通）：
+
+```bash
+cd ~/.local/lib/vsr-player/
+for t in libnppc libnppial libnppicc libnppidei libnppig libnppif \
+         libnppim libnppist libnppitc libcudnn libnvidia-ngx-vsr; do
+  for s in "$t".so.*; do [ -e "$s" ] && ln -sf "$s" "$t.so" && break; done
+done
+```
+
+install.sh 从不把任何版本强加给你的系统——一切都在 `~/.local/lib/vsr-player/` 内，替换该目录下的 VFX 文件即是官方支持的切换方式。
 
 ## 使用
 

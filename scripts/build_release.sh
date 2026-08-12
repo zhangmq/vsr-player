@@ -140,6 +140,20 @@ engines/rife_full_fp16.engine 为 ampere+ 跨架构构建（Ampere 30 系及以�
 RTX 20 系（Turing）及更早不支持 → 插帧自动直通（VSR 不受影响）。
 插帧需 GPU 支持 FP16 Tensor Cores。
 
+## 测试现状
+项目在有限硬件条件下开发，无法覆盖所有 GPU/驱动/媒体组合——你可能遇到
+未发现的问题。遇到问题可让 AI 编码代理协助排查（本项目即 AI 协作开发，
+代码与设计记录齐全），也欢迎提交 issue/PR。
+
+## 版本兼容（不匹配时）
+- 驱动过旧导致 VSR 加载失败：升级驱动，或锁定旧版 VFX——
+  `pip download nvidia-vfx==<版本> --no-deps` 后解压 nvvfx/libs/*.so*
+  到 ~/.local/lib/vsr-player/。手动放置时需自行补齐无版本软链
+  （vsr_proc 以无版本名 dlopen：libnppc.so/libcudnn.so/...，缺软链
+  VFX 加载链断裂 → 超分静默直通；install.sh 自动下载路径会补）
+- RIFE 引擎与 TensorRT 版本绑定（本 tarball 内自洽）；手工重建引擎见
+  仓库 tests/fruc/build_rife_full_engine.sh（需 trtexec + ONNX 资产）
+
 ## 运行
 ```
 vsr-player [视频或目录]      # GUI

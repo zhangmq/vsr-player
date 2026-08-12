@@ -24,6 +24,12 @@ This project calls the Video Effects SDK C API directly from a player. This is n
 - **Playlist & Playback** — directory loading, loop modes, speed control, A/V sync handled by mpv
 - **Remote Control** — JSON IPC over Unix socket; standalone `mpv-vsr` CLI and wrapper script
 
+## Testing Status
+
+This project is developed on limited hardware — a single GPU generation and a small set of test files. Not every GPU / driver / container combination can be covered, so expect rough edges: you may hit crashes, visual artifacts, or hangs that have never been seen here.
+
+If something breaks, an effective path is to let an AI coding agent help you debug. This project itself is developed with AI agents (Claude Code): the code, the mpv patch overlay, and the design records in `docs/` and commit history are all in place for an agent to understand the pipeline and locate issues quickly. Bug reports and pull requests are welcome either way.
+
 ## Screenshots
 
 ![Player UI](docs/images/player-screenshot.jpg)
@@ -65,13 +71,26 @@ demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt
 
 Third-party SDKs (NvVFX headers/runtime, MDI icon font, mpv source) are **not** bundled in the repo — see [docs/third-party-setup.md](docs/third-party-setup.md) to prepare `third_party/`.
 
-## Building
+## Building from Source
+
+1. **Prepare `third_party/`** — NvVFX SDK headers/runtime, MDI icon font, mpv source, CUDA 12 archive, RIFE ONNX asset: follow [docs/third-party-setup.md](docs/third-party-setup.md).
+2. **Build and run:**
 
 ```bash
-./scripts/build_mpv.sh          # merge src/mpv overlay into third_party/mpv and build libmpv + vf_vsr
+./scripts/build_mpv.sh          # merge src/mpv overlay → third_party/mpv, build libmpv + filters
 ninja -C build                  # build the Qt client
 ./build/src/client/vsr-player <video-or-directory>
 ```
+
+**Notes / gotchas:**
+
+- **mpv patch scheme**: `third_party/mpv` is the pristine base; `src/mpv/` is the overlay (mirrors the mpv tree, only modified files). After editing anything under `src/mpv/`, you **must** re-run `./scripts/build_mpv.sh` — `build/mpv` is a *merged copy*, and running `ninja` on it alone silently keeps the stale copy (a known footgun; a full rebuild surfaces it).
+- **`build_mpv.sh` output is grep-filtered** — a failed compile can be hidden. Confirm the build finished by checking for the final "Done" line.
+- **Don't `cd build` and then use `./build/...`** — relative paths break. Stay at the repo root or use absolute paths.
+- **After system library upgrades** (FFmpeg, Qt, TensorRT — pacman/apt), rebuild everything (`./scripts/build_mpv.sh` + `ninja -C build`): stale binaries link the old sonames and fail to start.
+- **RIFE engine**: built with the system `trtexec` via `bash tests/fruc/build_rife_full_engine.sh` (dynamic-shape FP16, `--hardware-compat on` for cross-architecture). Requires the RIFE ONNX asset in `third_party/rife/`.
+- **Development install**: `./scripts/install.sh` works from a repo checkout too (dev mode — picks up the build tree automatically, no tarball needed).
+- **Distributable build**: `./scripts/build_release.sh` — release build + `$ORIGIN`-relative RPATH + dependency collection + tarball. `build_mpv.sh`/client builds accept `MPV_BUILD_DIR`, `BUILDTYPE`, `DIST_RPATH` env overrides (used by the release scripts).
 
 ## Distribution (release tarball)
 
@@ -84,6 +103,42 @@ tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
 - Bundled: libmpv + ffmpeg ×7 + CUDA runtime + TensorRT 11 + RIFE engine (ampere+, one engine for 30/40/50-series GPUs) + fonts/translations/licenses
 - **Not bundled**: VFX SDK (~1.1 GB) — NVIDIA SLA restricts redistribution; `install.sh` offers to fetch it from the official PyPI `nvidia-vfx` wheel (curl download + extract, no pip install, no system changes), or you can place it in `~/.local/lib/vsr-player/` manually
 - GUI runtime needs Qt ≥ 6.11 from the system; the only hard external dependency is the NVIDIA driver (`libcuda.so.1`)
+
+## Version Compatibility
+
+| Component | Binding | If mismatched |
+|-----------|---------|---------------|
+| **VFX SDK ↔ driver** | The latest PyPI wheel may require a newer driver; an old driver + new VFX → VSR fails to load | Upgrade the driver, or pin an older VFX version (below) |
+| **RIFE engine ↔ TensorRT** | Engine files embed the exact TRT version that built them — deserialization fails on version mismatch (verified in both directions) | Rebuild the engine with your system TRT (`bash tests/fruc/build_rife_full_engine.sh`), or install a matching TRT. Tarball users: engine + bundled TRT ship together and are self-consistent. The VFX SDK's own TRT 10 libs coexist with RIFE's TRT 11 in one process (RTLD_LOCAL isolation) — nothing to do |
+| **Qt** | Hard requirement ≥ 6.11 (QML/QuickControls features used) | No fallback — upgrade the system Qt |
+| **GPU** | VSR needs RTX 20+; FRUC needs Ampere+ (FP16 Tensor Cores) | Older GPUs: VSR works, interpolation degrades to passthrough |
+| **Driver** | 570+ for VFX; `nvidia_drm.modeset=1` for Wayland | Upgrade, or pin an older VFX wheel |
+
+**Pinning a VFX SDK version** — `install.sh` always fetches the **latest** `nvidia-vfx` wheel from PyPI. If the default doesn't work with your setup (e.g. driver too old), you are not forced to use it:
+
+```bash
+# 1. list available versions
+pip index versions nvidia-vfx        # or: pypi.org/project/nvidia-vfx/#files
+
+# 2. download a specific version's wheel (pip download only fetches; no install)
+pip download nvidia-vfx==<version> --no-deps -d /tmp/vfx
+
+# 3. extract its libs into the app's lib dir
+unzip -o /tmp/vfx/nvidia_vfx-<version>*.whl "nvvfx/libs/*" -d /tmp/vfx
+cp /tmp/vfx/nvvfx/libs/*.so* ~/.local/lib/vsr-player/
+```
+
+Note: `vsr_proc.c` dlopens the VFX libs by their **unversioned** names (`libnppc.so`, `libcudnn.so`, `libnvidia-ngx-vsr.so`, …), but the wheel only ships versioned files (`.so.12`, `.so.9`, …). The automatic download path in `install.sh` creates the missing unversioned symlinks; if you placed the files manually, create them yourself or the VFX load chain breaks (VSR silently passes through):
+
+```bash
+cd ~/.local/lib/vsr-player/
+for t in libnppc libnppial libnppicc libnppidei libnppig libnppif \
+         libnppim libnppist libnppitc libcudnn libnvidia-ngx-vsr; do
+  for s in "$t".so.*; do [ -e "$s" ] && ln -sf "$s" "$t.so" && break; done
+done
+```
+
+`install.sh` never forces a version onto your system — everything lives in `~/.local/lib/vsr-player/`, and replacing the VFX files there is the supported way to switch.
 
 ## Usage
 
