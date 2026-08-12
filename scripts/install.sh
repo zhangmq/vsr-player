@@ -60,6 +60,18 @@ else
     exit 1
 fi
 
+# ── 3.5 RIFE 运行时（vf_rife.c 搜索路径含 ~/.local/lib/vsr-player/）──
+# 动态固定名引擎（full 唯一引擎，lite 已拆除）——不装引擎则 GUI/CLI
+# 在项目目录外启动报 reason=engine 直通。
+FULL_ENGINES="$PROJECT_ROOT/build/tests/fruc/rife_full_fp16.engine"
+if ls $FULL_ENGINES >/dev/null 2>&1; then
+    mkdir -p "$LIB_DIR"
+    cp $FULL_ENGINES "$LIB_DIR/" 2>/dev/null || true
+    echo "  ✅ RIFE engine → $LIB_DIR/"
+else
+    echo "  ⚠ RIFE engine missing (run tests/fruc/build_rife_full_engine.sh) — rife passthrough"
+fi
+
 # ── 4. 图标字体（main.cpp fallback：<appdir>/../share/vsr-player/fonts/）─
 if [ -f "$PROJECT_ROOT/third_party/material-icons/materialdesignicons-webfont.ttf" ]; then
     mkdir -p "$FONT_DIR"

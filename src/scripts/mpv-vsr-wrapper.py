@@ -131,7 +131,7 @@ def mpv_base_args() -> list:
         "--hwdec=auto-safe",
         "--script-opts=ytdl_hook-ytdl_path=yt-dlp",
         "--demuxer-lavf-analyzeduration=2",
-        "--vf=vsr:scale=auto:denoise=off:quality=high",
+        "--vf=hwup,vsr:scale=auto:denoise=off:quality=high",
         f"--ytdl-raw-options=cookies={COOKIE_FILE},no-playlist=",
     ]
 

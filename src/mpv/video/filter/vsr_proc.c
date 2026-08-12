@@ -106,13 +106,29 @@ static bool load_nvvfx_libraries(void) {
         return false;
     }
 
+    // VFX 捆绑的 TensorRT 10 链（onnxparser → nvinfer → plugin）：RTLD_LOCAL
+    // 预加载，必须在 libVideoFXLocal.so 之前（其 NEEDED libnvonnxparser.so.10
+    // 靠 SONAME 匹配复用）。RTLD_GLOBAL 会把 TRT 10 符号注入全局命名空间 →
+    // 系统 TRT 11（vf_rife 链接）符号绑错 → ABI 崩溃；LOCAL 仍满足 NEEDED。
+    {
+        const char *trt10[] = {
+            "libnvinfer.so.10", "libnvinfer_plugin.so.10", "libnvonnxparser.so.10",
+        };
+        for (int i = 0; i < 3; i++) {
+            char path[1024];
+            snprintf(path, sizeof(path), "%s%s", nvvfx_dir, trt10[i]);
+            void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+            if (!h)
+                fprintf(stderr, "VSR: dlopen(%s): %s\n", trt10[i], dlerror());
+        }
+    }
+
     // Load all nvvfx .so files (order matters for deps)
     // Topological order: deps before dependents
     const char *libs[] = {
         "libnppc.so", "libnppial.so", "libnppicc.so", "libnppidei.so",
         "libnppig.so", "libnppif.so", "libnppim.so", "libnppist.so",
         "libnppitc.so", "libcudnn.so",
-        "libnvinfer.so", "libnvinfer_plugin.so", "libnvonnxparser.so",
         "libNVCVImage.so",    // before libnvngxruntime which needs it
         "libnvngxruntime.so", "libnvidia-ngx-vsr.so",
         "libVideoFXLocal.so", "libVideoFX.so",

@@ -368,6 +368,22 @@
         <source>Force denoise (active when scale=1)</source>
         <translation>Force denoise (active when scale=1)</translation>
     </message>
+    <message>
+        <source>Frame interpolation</source>
+        <translation>Frame interpolation</translation>
+    </message>
+    <message>
+        <source>30 fps</source>
+        <translation>30 fps</translation>
+    </message>
+    <message>
+        <source>40 fps</source>
+        <translation>40 fps</translation>
+    </message>
+    <message>
+        <source>60 fps</source>
+        <translation>60 fps</translation>
+    </message>
 </context>
 <context>
     <name>SpeedPopup</name>

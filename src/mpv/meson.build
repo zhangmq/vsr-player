@@ -1,5 +1,5 @@
 project('mpv',
-        'c',
+        'c', 'cpp',
         license: ['GPL2+', 'LGPL2.1+'],
         license_files: ['LICENSE.GPL', 'LICENSE.LGPL', 'Copyright'],
         version: files('./MPV_VERSION'),
@@ -424,7 +424,7 @@ add_project_arguments(flags_c, language: ['c', 'objc'])
 add_project_link_arguments(link_flags, language: ['c', 'cpp', 'objc'])
 
 # CUDA include path (before any targets)
-add_project_arguments('-I/opt/cuda/include', language: 'c')
+add_project_arguments('-I/opt/cuda/include', language: ['c', 'cpp'])
 
 # osdep
 if darwin
@@ -1769,6 +1769,16 @@ conf_data = configuration_data()
 conf_data.set_quoted('CONFIGURATION', meson.build_options().strip().replace('\\', '\\\\'))
 conf_data.set_quoted('DEFAULT_OPTICAL_DEVICE', optical_device)
 
+# RIFE filter (TensorRT engine) — optional; without TRT the filter builds but
+# degrades to passthrough at runtime (rife_proc.c guards on HAVE_TRT).
+# MUST be before the features loop below (config.h generation).
+trt_h = cc.has_header('NvInfer.h')
+# libnvinfer is dlopen'd at runtime (RTLD_LOCAL — isolates TRT 11 from VFX's
+# bundled TRT 10; linking globally cross-binds symbols and crashes).
+cudart_lib = cc.find_library('cudart', dirs: '/opt/cuda/lib64', required: false)
+has_trt = trt_h and cudart_lib.found()
+features += {'trt': has_trt}
+
 # Loop over all features in the build, create a define and add them to config.h
 feature_keys = []
 foreach feature, allowed: features
@@ -1842,10 +1852,21 @@ if features['vsr']
     sources += files(
         'video/filter/yuv_to_rgba.c',
         'video/filter/vsr_proc.c',
+        'video/filter/vf_rife.c',
+        'video/filter/rife_proc.c',
+        'video/filter/vf_hwup.c',
     )
     message('VSR filter: enabled')
 else
     message('VSR filter: disabled (CUDA toolkit not found)')
+endif
+
+if features['trt'] and features['vsr']
+    dependencies += [cudart_lib]
+    sources += files('video/filter/rife_trt.cpp')
+    message('RIFE filter: TensorRT enabled')
+else
+    message('RIFE filter: TensorRT disabled (passthrough)')
 endif
 
 libmpv = library('mpv', sources, dependencies: dependencies, gnu_symbol_visibility: 'hidden',
@@ -1969,6 +1990,7 @@ summary({'cocoa': features['cocoa'] and features['swift'],
          'opengl': features['gl'],
          'vulkan': features['vulkan'],
          'vsr': features['vsr'],
+         'trt': features['trt'],
          'wayland': features['wayland'],
          'x11': features['x11']},
          bool_yn: true)

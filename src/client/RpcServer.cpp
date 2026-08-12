@@ -273,6 +273,25 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             response = formatResponse("missing parameter");
         else
             response = handleGetVsr(args[0]);
+    } else if (cmd == "set-fruc") {
+        // 插帧目标帧率（viewModel 单一来源，与 UI 同路径——vf-command
+        // 直改 filter 会绕过 frucFps_，重播后状态丢失/被重放覆盖）
+        if (args.empty()) {
+            response = formatResponse("missing value");
+        } else if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            char *end = nullptr;
+            long v = strtol(args[0].c_str(), &end, 10);
+            if (end == args[0].c_str() || *end != '\0' ||
+                (v != -1 && v != 40 && v != 48 && v != 60)) {
+                response = formatResponse("invalid value (-1|40|48|60)");
+            } else {
+                QMetaObject::invokeMethod(vm, "setFrucFps", Qt::QueuedConnection,
+                                          Q_ARG(int, (int)v));
+                response = formatResponse("success");
+            }
+        }
     } else if (cmd == "dump-vsr") {
         // VSR-specific screenshot: one frame, input (original) + output (Nx).
         // Paths auto-generated as [videoname]_[frameno]_[original|Nx].png

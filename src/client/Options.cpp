@@ -54,6 +54,10 @@ bool Options::parse(int argc, char *argv[], Options *out) {
             o.quality = argv[++i];
         } else if (strncmp(argv[i], "--quality=", 10) == 0) {
             o.quality = argv[i] + 10;
+        } else if (strcmp(argv[i], "--fruc") == 0 && i + 1 < argc) {
+            o.fruc = argv[++i];
+        } else if (strncmp(argv[i], "--fruc=", 7) == 0) {
+            o.fruc = argv[i] + 7;
         } else if (strcmp(argv[i], "--lang") == 0 && i + 1 < argc) {
             o.lang = argv[++i];
         } else if (strncmp(argv[i], "--lang=", 7) == 0) {
@@ -80,6 +84,7 @@ bool Options::parse(int argc, char *argv[], Options *out) {
                 "[--no-rpc] [--rpc-socket <path>] "
                 "[--scale off|auto|2|3|4] [--denoise off|low|medium|high|ultra] "
                 "[--quality low|medium|high|ultra] "
+                "[--fruc off|30|40|60|2|3|4] "
                 "[--lang <locale>] [--screenshot-dir <dir>] [-- mpv-opt ...] <video>\n",
                 argv[0]);
             return false;

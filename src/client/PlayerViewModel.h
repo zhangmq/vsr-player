@@ -10,6 +10,7 @@
 #include <QVariantList>
 
 #include <atomic>
+#include <mutex>
 #include <cstdint>
 #include <string>
 
@@ -44,6 +45,8 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(bool vsrActive READ vsrActive NOTIFY vsrActiveChanged)
     Q_PROPERTY(double scale READ scale NOTIFY scaleChanged)
     Q_PROPERTY(int denoiseQuality READ denoiseQuality NOTIFY denoiseQualityChanged)
+    // Frame interpolation (RIFE): -1=off | 30/40/60 target fps (UI presets)
+    Q_PROPERTY(int frucFps READ frucFps NOTIFY frucFpsChanged)
     // Speed
     Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
     // Aspect ratio（mpv video-aspect-override：-1=auto, no=不覆盖, 或 16:9 等）
@@ -103,6 +106,10 @@ public:
     /// ("off"/"auto"/"2"/"3"/"4", "low"/"medium"/"high"/"ultra").
     void initVsr(const std::string &scale, const std::string &quality,
                  const std::string &denoise);
+    /// Initialize frame interpolation from CLI string. benchmark=true: value is
+    /// a hard multiplier ("2"/"3"/"4", 0=off) — no passthrough, no persistence.
+    /// Normal mode: "off" | "30" | "40" | "60" (target fps, persists fallback).
+    void initFruc(const std::string &fruc, bool benchmark);
 
     void setGpuName(const QString &name);
     /// 持久化：启动时读（须在 initVsr 前调用——scale/quality/denoise
@@ -136,6 +143,7 @@ public:
     bool vsrActive() const      { return scale_.load() != -1 || denoise_.load() != -1; }
     double scale() const        { return scale_.load(); }
     int denoiseQuality() const  { return denoise_.load(); }
+    int frucFps() const         { return frucFps_.load(); }
     double speed() const        { return speed_.load(); }
     QString aspect() const      { return aspect_; }
     bool hwDecoding() const     { return hwDecoding_.load(); }
@@ -193,6 +201,9 @@ public slots:
     /// 渲染新帧计数（Video uf>0 分支调用，主线程）——段内 rendered 统计。
     void notifyFrameRendered();
     void togglePlayPause();
+    /// 单帧步进（调试插帧/闪回用）：dir>0 前进 1 帧（frame-step，
+    /// 暂停态推进 1 帧后保持暂停）；dir<0 回退 1 帧（frame-back-step）。
+    void frameStep(int dir);
     void stop();
     void seekAbsolute(int64_t ms);
     void seekRelative(int64_t offsetMs);
@@ -210,6 +221,10 @@ public slots:
     void setScale(double s);
     void setQuality(int q);
     void setDenoiseQuality(int d);
+    void setFrucFps(int v);   // -1 | 30 | 40 | 60（乐观更新 + pushVf + saveSettings）
+    // rife 状态行（事件线程从 mpv status 日志提取，"fruc-status:" 前缀）
+    void setFrucStatus(const std::string &s);
+    void setVsrStatus(const std::string &s);
     void toggleLoop();
     void setLoopMode(int m);   // 0=none, 1=file, 2=playlist（applyPlaybackSettings/toggleLoop 共用）
     void loadFile(const QString &path);
@@ -247,6 +262,7 @@ signals:
     void vsrActiveChanged();
     void scaleChanged();
     void denoiseQualityChanged();
+    void frucFpsChanged();
     void speedChanged();
     void aspectChanged();
     void hwDecodingChanged();
@@ -262,9 +278,10 @@ signals:
 
 private:
     // ── 主线程状态更新（值由事件线程读好后随 lambda 传入；
-    //    主线程绝不调 mpv client API —— untimed 下 flip_page 持
-    //    core lock 等 render，主线程 get_property 会与其互锁导致
-    //    渲染循环饿死（5fps 卡顿））──────────────────────────────
+    //    主线程绝不调 mpv client API —— untimed 下主线程同步调
+    //    client API 持 client lock 等 core lock，播放循环（持 core
+    //    lock）经 vo_thread flip_page 等主线程渲染 → 互锁死锁
+    //    （实测卡死））────────────────────────────────────────────
     void updatePlaying(bool p);
     void updateTime(int64_t t, int64_t d);
     void updateVolume(double v);
@@ -306,7 +323,14 @@ private:
     /// 不重建 filter 链——vf_vsr 的 vsr_command 更新私有选项，f_process
     /// 下一帧自动重配（scale→effective_scale 重算 / quality→ensure_vsr
     /// 检测 / denoise→passthrough 判定）。参数调用时同步复制，无需保活。
-    void pushVf(const char *param, const std::string &value);
+    void pushVf(const char *filter, const char *param, const std::string &value);
+    /// 运行时 vf 参数重放（FILE_LOADED 后，主线程）：vf-command 只改
+    /// filter 实例 opts，mpv 的 vf 选项本体不变——stop（terminate_playback
+    /// 销毁链）后重播重建 filter 时状态回到 vfOption 初始值 → UI 修改
+    /// 丢失（插帧"关不掉"：关闭后重播自动恢复开启）。FILE_LOADED 时
+    /// 链已就绪，重放当前 UI 状态使新链与 UI 一致（filter 常驻 +
+    /// 直通切换语义不变，不重建链；判等 no-op 防冗余）。
+    void syncVfOptions();
     std::string scaleStr() const;
     std::string qualityStr() const;
     std::string denoiseStr() const;
@@ -361,6 +385,13 @@ private:
     std::atomic<int> quality_{3};
     std::atomic<int> denoise_{-1};
     std::atomic<double> scale_{0.0};
+    std::atomic<int> frucFps_{-1};      // -1 off | 2/3/4 倍率 | 30/40/60 target
+                                        //（倍率=benchmark 强制；帧率=正常模式，
+                                        // 数值自区分，正常/benchmark 共用）
+    std::mutex frucStatusMtx_;
+    std::string frucStatus_;            // 最新 rife 状态行（OSD 显示）
+    std::string vsrStatus_;             // 最新 vsr 状态行（OSD 显示）
+    std::mutex  vsrStatusMtx_;
     int loopMode_ = 0;           // 0 none, 1 loop-file, 2 loop-playlist
     PlaylistModel playlistModel_;   // 播放列表镜像（观察器 setSnapshot 增量喂入）
     QString gpuName_;
@@ -390,4 +421,5 @@ private:
     double persistScale_ = 0.0;   // 持久化 VSR 参数（initVsr 用，CLI 未显式时生效）
     int persistQuality_ = 3;
     int persistDenoise_ = -1;
+    int persistFruc_ = -1;        // 持久化插帧目标 fps（initFruc 用）
 };

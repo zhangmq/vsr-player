@@ -287,6 +287,108 @@
         <source>%1Hz %2ch</source>
         <translation>%1Hz %2ch</translation>
     </message>
+    <!-- OSD 标签（osdTextString）——中英混排修复 -->
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1419"/>
+        <source>Source</source>
+        <translation>源</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1419"/>
+        <source>Output</source>
+        <translation>输出</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1419"/>
+        <source>Render</source>
+        <translation>渲染</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1419"/>
+        <source>VSR</source>
+        <translation>超分</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1419"/>
+        <source>FRUC</source>
+        <translation>插帧</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1419"/>
+        <source>Decoder</source>
+        <translation>解码器</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1419"/>
+        <source>Speed</source>
+        <translation>速度</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1419"/>
+        <source>Time</source>
+        <translation>时间</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1419"/>
+        <source>Frames</source>
+        <translation>帧数</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1419"/>
+        <source>GPU</source>
+        <translation>显卡</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1419"/>
+        <source>Audio</source>
+        <translation>音频</translation>
+    </message>
+    <!-- 状态行关键词（trStatus 映射，mpv 侧英文→显示侧中文） -->
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1443"/>
+        <source>mode=active</source>
+        <translation>插帧中</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1443"/>
+        <source>mode=passthrough</source>
+        <translation>直通</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1443"/>
+        <source>reason=cost</source>
+        <translation>成本超限</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1443"/>
+        <source>reason=src-fps</source>
+        <translation>源帧率接近</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1443"/>
+        <source>reason=off</source>
+        <translation>已关闭</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1443"/>
+        <source>reason=sw</source>
+        <translation>软解输入</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1443"/>
+        <source>reason=engine</source>
+        <translation>引擎缺失</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1443"/>
+        <source>reason=engine-size</source>
+        <translation>引擎尺寸不符</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="1443"/>
+        <source>reason=no-pts</source>
+        <translation>无时间戳</translation>
+    </message>
 </context>
 <context>
     <name>PlaylistPanel</name>
@@ -367,6 +469,31 @@
         <location filename="../ui/QualityPopup.qml" line="82"/>
         <source>Force denoise (active when scale=1)</source>
         <translation>强制降噪（scale=1时生效）</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="101"/>
+        <source>Frame interpolation</source>
+        <translation>帧插值</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="104"/>
+        <source>30 fps</source>
+        <translation>30 fps</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="105"/>
+        <source>40 fps</source>
+        <translation>40 fps</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="106"/>
+        <source>48 fps</source>
+        <translation>48 fps</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="106"/>
+        <source>60 fps</source>
+        <translation>60 fps</translation>
     </message>
 </context>
 <context>

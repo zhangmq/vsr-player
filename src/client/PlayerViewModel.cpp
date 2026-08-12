@@ -65,10 +65,12 @@ PlayerViewModel::PlayerViewModel(QObject *parent) : QObject(parent) {}
 // ── attach: register mpv property observers ────────────────────────────
 //
 // 线程模型（关键，防 untimed 死锁）：
-//  mpv 核心持 core lock 在 flip_page 等 render 消费（200ms 超时）。
-//  若主线程（渲染循环所在线程）调用 mpv_get_property 等 client API，
-//  会与 core lock 互锁 → UpdateRequest 事件饿死 → 渲染循环停止 →
-//  flip_page 超时 drop → 整体 5fps 卡顿。
+//  主线程 = 渲染线程（mpv_render_context_render 只在主线程调用）；
+//  vo_thread 的 flip_page 持 render ctx lock 等 render 消费（200ms
+//  超时，有界）。若主线程同步调用 client API（mpv_get_property 等），
+//  会持 client lock 等 core lock；播放循环（持 core lock）经
+//  vo_thread flip_page 等主线程渲染 → core lock 互等 → 渲染循环
+//  停摆、播放停滞（untimed 实测卡死）。
 //  因此：**属性读取全部在事件线程执行**（阻塞无碍），值随
 //  QMetaObject::invokeMethod 的 lambda 参数传给主线程——主线程状态
 //  更新方法绝不调用 mpv 任何 API。
@@ -474,6 +476,25 @@ void PlayerViewModel::initVsr(const std::string &scale,
     denoise_ = d;
 }
 
+void PlayerViewModel::initFruc(const std::string &fruc, bool benchmark) {
+    // 单一字段 frucFps_（-1 off | 2/3/4 倍率 | 30/40/60 目标帧率）——
+    // benchmark 与正常模式共用一套状态（OSD/ vf 构造不分叉）。
+    if (fruc == "2" || fruc == "3" || fruc == "4" ||
+        fruc == "40" || fruc == "48" || fruc == "60") {
+        frucFps_ = atoi(fruc.c_str());
+        return;
+    }
+    // CLI 显式 off：本次播放关闭（不落持久化——persistFruc_ 是 UI 上次
+    // 值，下次启动恢复）。修复：此前 "off" 落入 persistFruc_ 分支，
+    // 持久化 40/60 时 --fruc off 无效（插帧照常开启，实测 2026-08-12）。
+    if (fruc == "off") {
+        frucFps_ = -1;
+        return;
+    }
+    // 空/非法：benchmark = 不插帧（CLI 语义）；正常 = 持久化目标。
+    frucFps_ = benchmark ? -1 : persistFruc_;
+}
+
 bool PlayerViewModel::parseScale(const std::string &s, double *out) {
     if (s == "off")      { *out = -1.0; return true; }
     if (s == "auto" || s.empty()) { *out = 0.0; return true; }
@@ -518,6 +539,9 @@ void PlayerViewModel::loadSettings() {
         persistScale_ = 0.0;   // 非法值（手改配置）→ auto
     persistQuality_ = settings_.value("quality", 3).toInt();
     persistDenoise_ = settings_.value("denoiseQuality", -1).toInt();
+    persistFruc_ = settings_.value("frucFps", -1).toInt();
+    if (persistFruc_ != -1 && persistFruc_ != 30 && persistFruc_ != 40 && persistFruc_ != 60)
+        persistFruc_ = -1;   // 非法值（手改配置）→ off
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -550,7 +574,8 @@ void PlayerViewModel::play() {
     if (!fileLoaded_) resumeLastPath();
     playing_ = true;
     emit playingChanged();
-    mpv_->setPropertyFlag("pause", false);
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyFlagAsync("pause", false);
 }
 
 // idle 重播（stop 或正常播完后的再次播放）：
@@ -574,7 +599,8 @@ void PlayerViewModel::pause() {
     if (!mpv_) return;
     playing_ = false;
     emit playingChanged();
-    mpv_->setPropertyFlag("pause", true);
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyFlagAsync("pause", true);
 }
 
 void PlayerViewModel::setPaused(bool p) {
@@ -585,7 +611,8 @@ void PlayerViewModel::setPaused(bool p) {
     }
     playing_ = false;
     emit playingChanged();
-    mpv_->setPropertyFlag("pause", true);
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyFlagAsync("pause", true);
 }
 
 // 无 mute 状态位：m=静音（记音量+置 0）/ 取消=恢复。与 toggleMute
@@ -596,6 +623,17 @@ void PlayerViewModel::setMuted(bool m) {
     toggleMute();
 }
 
+void PlayerViewModel::frameStep(int dir) {
+    if (!mpv_) return;
+    // frame-step 在暂停态推进 1 帧后保持暂停；frame-back-step 回退 1 帧
+    // （mpv 0.38+，内部 seek 到前一帧）。参数必须分解传递（commandAsync
+    // 不做整行解析）。
+    if (dir > 0)
+        mpv_->commandAsync({"frame-step", nullptr});
+    else
+        mpv_->commandAsync({"frame-back-step", nullptr});
+}
+
 void PlayerViewModel::togglePlayPause() {
     if (!mpv_) return;
     if (!fileLoaded_) {
@@ -603,7 +641,8 @@ void PlayerViewModel::togglePlayPause() {
         // 保留列表；loadfile replace 会清空整个列表，不可用）。
         if (lastPath_.isEmpty()) return;
         resumeLastPath();
-        mpv_->setPropertyFlag("pause", false);
+        // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+        mpv_->setPropertyFlagAsync("pause", false);
         playing_ = true;
         emit playingChanged();
         return;
@@ -611,7 +650,8 @@ void PlayerViewModel::togglePlayPause() {
     bool p = !playing_;
     playing_ = p;
     emit playingChanged();
-    mpv_->setPropertyFlag("pause", !p);
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyFlagAsync("pause", !p);
 }
 
 void PlayerViewModel::stop() {
@@ -693,7 +733,9 @@ void PlayerViewModel::toggleHwaccel() {
     double pos = mpv_->propertyDouble("time-pos");
     if (hwdecInit_.empty())
         hwdecInit_ = mpv_->propertyString("hwdec");
-    mpv_->setPropertyString("hwdec", target ? hwdecInit_ : "no");
+    // async（主线程 UI 操作——同步 set 会等 dispatch 队列清空，
+    // 与 decode DR 分配任务互等死锁，2026-08-10 根因同款）
+    mpv_->setPropertyStringAsync("hwdec", target ? hwdecInit_ : "no");
     char start[64];
     snprintf(start, sizeof(start), "start=+%.3f", pos);
     mpv_->commandV({"loadfile", path.c_str(), "replace", start, nullptr});
@@ -709,7 +751,7 @@ void PlayerViewModel::setScale(double s) {
     bool wasActive = vsrActive();
     if (fabs(scale_ - s) > 0.001) { scale_ = s; emit scaleChanged(); }
     saveSettings("scale", s);
-    pushVf("scale", scaleStr());  // 热更新，不重建 filter 链
+    pushVf("vsr", "scale", scaleStr());  // 热更新，不重建 filter 链
     bool nowActive = vsrActive();
     if (wasActive != nowActive) emit vsrActiveChanged();
 }
@@ -719,7 +761,7 @@ void PlayerViewModel::setQuality(int q) {
     if (q < 1 || q > 4) return;
     if (quality_ != q) { quality_ = q; emit qualityChanged(); }
     saveSettings("quality", q);
-    pushVf("quality", qualityStr());
+    pushVf("vsr", "quality", qualityStr());
 }
 
 void PlayerViewModel::setDenoiseQuality(int d) {
@@ -728,9 +770,41 @@ void PlayerViewModel::setDenoiseQuality(int d) {
     bool wasActive = vsrActive();
     if (denoise_ != d) { denoise_ = d; emit denoiseQualityChanged(); }
     saveSettings("denoiseQuality", d);
-    pushVf("denoise", denoiseStr());
+    pushVf("vsr", "denoise", denoiseStr());
     bool nowActive = vsrActive();
     if (wasActive != nowActive) emit vsrActiveChanged();
+}
+
+void PlayerViewModel::setFrucFps(int v) {
+    if (!mpv_) return;
+    if (v != -1 && v != 40 && v != 48 && v != 60) return;
+    if (frucFps_ != v) { frucFps_ = v; emit frucFpsChanged(); }
+    saveSettings("frucFps", v);
+    pushVf("rife", "fps", v == -1 ? "off" : std::to_string(v));
+}
+
+// 剥离 mpv 日志消息的尾随换行与前导空格（mpv 的 log text 以 \n 结尾——
+// 原样存入会让 OSD 行内嵌 \n → 行距异常/提前折行；"vsr-status:" 前缀后
+// 紧跟空格——提取处 text+N 保留前导空格，拼入 OSD 状态段会与前面
+// 元素（渲染分辨率）产生多余间距，见 osdTextString）
+static void stripEol(std::string &s) {
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
+        s.pop_back();
+    size_t b = s.find_first_not_of(' ');
+    if (b != std::string::npos && b > 0)
+        s.erase(0, b);
+}
+
+void PlayerViewModel::setFrucStatus(const std::string &s) {
+    std::lock_guard<std::mutex> lk(frucStatusMtx_);
+    frucStatus_ = s;
+    stripEol(frucStatus_);
+}
+
+void PlayerViewModel::setVsrStatus(const std::string &s) {
+    std::lock_guard<std::mutex> lk(vsrStatusMtx_);
+    vsrStatus_ = s;
+    stripEol(vsrStatus_);
 }
 
 // ── Speed / window / OSD ─────────────────────────────────────────────
@@ -739,7 +813,8 @@ void PlayerViewModel::setAspect(const QString &v) {
     if (!mpv_) return;
     if (aspect_ != v) { aspect_ = v; emit aspectChanged(); }
     saveSettings("aspect", v);
-    mpv_->setPropertyString("video-aspect-override", v.toStdString());
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyStringAsync("video-aspect-override", v.toStdString());
 }
 
 void PlayerViewModel::setSpeed(double speed) {
@@ -748,7 +823,8 @@ void PlayerViewModel::setSpeed(double speed) {
     if (speed > 4.0) speed = 4.0;
     if (speed_.load() != speed) { speed_.store(speed); emit speedChanged(); }
     saveSettings("speed", speed);
-    mpv_->setPropertyDouble("speed", speed);
+    // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+    mpv_->setPropertyDoubleAsync("speed", speed);
 }
 
 void PlayerViewModel::setFullscreen(bool fs) {
@@ -798,16 +874,17 @@ void PlayerViewModel::setLoopMode(int m) {
     if (!mpv_ || m < 0 || m > 2) return;
     switch (m) {
     case 1:
-        mpv_->setPropertyString("loop-file", "inf");
-        mpv_->setPropertyString("loop-playlist", "no");
+        // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
+        mpv_->setPropertyStringAsync("loop-file", "inf");
+        mpv_->setPropertyStringAsync("loop-playlist", "no");
         break;
     case 2:
-        mpv_->setPropertyString("loop-file", "no");
-        mpv_->setPropertyString("loop-playlist", "inf");
+        mpv_->setPropertyStringAsync("loop-file", "no");
+        mpv_->setPropertyStringAsync("loop-playlist", "inf");
         break;
     default:
-        mpv_->setPropertyString("loop-file", "no");
-        mpv_->setPropertyString("loop-playlist", "no");
+        mpv_->setPropertyStringAsync("loop-file", "no");
+        mpv_->setPropertyStringAsync("loop-playlist", "no");
         break;
     }
     if (loopMode_ != m) { loopMode_ = m; emit loopModeChanged(); }
@@ -1077,16 +1154,21 @@ void PlayerViewModel::restoreTrackMemory(const QString &path) {
     order.prepend(path);
     settings_.setValue("trackMemOrder", order);
     settings_.sync();
-    // 轨道选择（FILE_LOADED 后 track-list 已填充，设置 aid/sid/vid 生效）
+    // 轨道选择（FILE_LOADED 后 track-list 已填充，设置 aid/sid/vid 生效）。
+    // 一律 async（2026-08-10 卡死根因）：本函数在主线程（FILE_LOADED
+    // 事件处理）执行——同步 set_property 的 mp_dispatch_lock 会等
+    // dispatch 队列清空，而队列里可能有 decode 的 DR 帧分配任务
+    //（等 GUI 处理）→ 互等死锁（启动即卡，core dump 实证，见
+    // onFileLoadedFromEventThread）。async 投递不阻塞、不拿 core lock。
     if (mem.contains("aid"))
-        mpv_->setPropertyString("aid", std::to_string(mem["aid"].toInt()));
+        mpv_->setPropertyStringAsync("aid", std::to_string(mem["aid"].toInt()));
     if (mem.contains("vid"))
-        mpv_->setPropertyString("vid", std::to_string(mem["vid"].toInt()));
+        mpv_->setPropertyStringAsync("vid", std::to_string(mem["vid"].toInt()));
     if (mem.contains("sid"))
-        mpv_->setPropertyString("sid", std::to_string(mem["sid"].toInt()));
+        mpv_->setPropertyStringAsync("sid", std::to_string(mem["sid"].toInt()));
     // 字幕偏移（可见性无独立记忆——是否显示由 sid 决定）
     if (mem.contains("subDelay"))
-        mpv_->setPropertyDouble("sub-delay", mem["subDelay"].toDouble());
+        mpv_->setPropertyDoubleAsync("sub-delay", mem["subDelay"].toDouble());
     // 外部字幕（external 轨随文件切换被 mpv 清除，须重新 sub-add）
     const QStringList subs = mem["subs"].toStringList();
     const QString sel = mem["sel"].toString();
@@ -1132,7 +1214,7 @@ void PlayerViewModel::autoSelectSubtitle() {
             if (m["lang"].toString().left(2).toLower() == "en") { best = m["id"].toInt(); break; }
         }
     }
-    if (best >= 0) { mpv_->setPropertyString("sid", std::to_string(best)); return; }
+    if (best >= 0) { mpv_->setPropertyStringAsync("sid", std::to_string(best)); return; }
     // 3) 目录匹配字幕文件（只取匹配视频名的 prio ≤ 1）
     for (const QVariant &f : subtitleFiles_) {
         const QVariantMap m = f.toMap();
@@ -1143,7 +1225,7 @@ void PlayerViewModel::autoSelectSubtitle() {
         return;
     }
     // 4) 其他 → 不显示字幕
-    mpv_->setPropertyString("sid", "no");
+    mpv_->setPropertyStringAsync("sid", "no");
 }
 
 void PlayerViewModel::noteExternalSubAdded(const QString &path) {
@@ -1209,6 +1291,23 @@ void PlayerViewModel::screenshot() {
 // ── vf string ────────────────────────────────────────────────────────
 
 std::string PlayerViewModel::vfOption() const {
+    // 链序：decode → hwup（SW→HW 一致化）→ rife（插帧，源分辨率）→
+    // vsr（超分）→ VO。hwup 使 rife/vsr 只处理 CUDA 帧（软解输入
+    // 也走 HW 路径）。rife 目标语义（单一字段 frucFps_，数值自区分）：
+    // 2/3/4 = 倍率（benchmark 强制，scale+adaptive=no——decide_mode 的
+    // benchmark 分支跳过全部直通限制）；30/40/60 = 目标帧率（正常模式，
+    // adaptive=yes）。
+    std::string vf = "@hwup:hwup,";
+    int fruc = frucFps_.load();
+    if (fruc == 2 || fruc == 3 || fruc == 4) {
+        vf += "@rife:rife:fps=off:scale=" + std::to_string(fruc) +
+              ":adaptive=no,";
+    } else if (fruc > 0) {
+        vf += "@rife:rife:fps=" + std::to_string(fruc) +
+              ":scale=off:adaptive=yes,";
+    } else {
+        vf += "@rife:rife:fps=off:scale=off:adaptive=yes,";
+    }
     // scale: OPT_FLOAT 仅 strtod——"auto"/"off"/"4/3" 必须换算为数字
     double s = scale_.load();
     std::string scaleOpt;
@@ -1216,7 +1315,7 @@ std::string PlayerViewModel::vfOption() const {
     else if (s == 0)     scaleOpt = "0";
     else if (fabs(s - 4.0 / 3.0) < 0.01) scaleOpt = "1.3333";
     else { char buf[16]; snprintf(buf, sizeof buf, "%g", s); scaleOpt = buf; }
-    std::string vf = "@vsr:vsr:scale=" + scaleOpt;
+    vf += "@vsr:vsr:scale=" + scaleOpt;
     vf += ":denoise=" + denoiseString();
     vf += ":quality=" + qualityString();
     return vf;
@@ -1256,12 +1355,24 @@ std::string PlayerViewModel::denoiseStr() const {
     }
 }
 
-void PlayerViewModel::pushVf(const char *param, const std::string &value) {
+void PlayerViewModel::pushVf(const char *filter, const char *param,
+                             const std::string &value) {
     if (!mpv_) return;
-    // label 用 "vsr"（无 @）——mpv 的 filter label 匹配不含 @ 前缀
-    //（实测 "@vsr" 不匹配；RpcServer 的 vf-command 同用法）。
-    // 命令在调用时同步复制，无需保活。
-    mpv_->commandAsync({"vf-command", "vsr", param, value.c_str(), nullptr});
+    // label 无 @ 前缀——mpv 的 filter label 匹配不含 @（实测 "@vsr" 不
+    // 匹配；RpcServer 的 vf-command 同用法）。命令在调用时同步复制，
+    // 无需保活。
+    mpv_->commandAsync({"vf-command", filter, param, value.c_str(), nullptr});
+}
+
+void PlayerViewModel::syncVfOptions() {
+    if (!mpv_) return;
+    int fruc = frucFps_.load();
+    // rife 倍率模式（CLI 2/3/4）只经 vfOption 配置（scale 参数），此处
+    // 重放 fps 值即可（benchmark 分支忽略 fps，无破坏）。
+    pushVf("rife", "fps", fruc == -1 ? "off" : std::to_string(fruc));
+    pushVf("vsr", "scale", scaleStr());
+    pushVf("vsr", "quality", qualityStr());
+    pushVf("vsr", "denoise", denoiseStr());
 }
 
 // ── 主线程状态更新（值由事件线程传入，不调 mpv API）─────────────────
@@ -1341,6 +1452,7 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
         resetSegmentCounters(drops);   // 新文件 → 段统计归零
         scanSubtitleFiles(lastPath_);  // 新文件 → 扫描其目录的字幕
         restoreTrackMemory(lastPath_); // 按文件恢复轨道/字幕记忆（再次打开对应文件才恢复）
+        syncVfOptions();               // 链重建后重放运行时 vf 状态（fps/vsr 防 UI 修改丢失）
     }, Qt::QueuedConnection);
 }
 
@@ -1368,17 +1480,23 @@ std::string PlayerViewModel::osdTextString() {
         return s;
     };
 
+    // 除 label 外 OSD 统一不翻译（用户拍板）：状态行（vsr-status /
+    // fruc-status 的 mode=/reason=/数值参数）原样英文显示——翻译会引入
+    // 语义错位（如 mode=active 是 FRUC 的"插帧中"，vsr-status 共用后
+    // 超分行误显示）；设定段（auto/Denoise/off 等）同样保持英文。
+    // label 仍走 tr()。
+
     // Source：源信息（解码尺寸/codec/色深/容器帧率/总帧数）；无视频显示占位
     if (videoWidth_.load() <= 0) {
-        lines << tag("Source") + tr("–");
+        lines << tag("Source") + QStringLiteral("–");
     } else {
         double fps = videoFps_.load();
         QString fpsStr = fps > 0 ? QString::number(fps, 'f', 2)
                                  : QStringLiteral("–");
         int bd = videoBitDepth_.load();
-        QString bdStr = bd > 0 ? tr("%1bit").arg(bd)
+        QString bdStr = bd > 0 ? QStringLiteral("%1bit").arg(bd)
                                : QStringLiteral("–");
-        lines << tag("Source") + tr("%1×%2 %3 %4 %5fps · %6f")
+        lines << tag("Source") + QStringLiteral("%1×%2 %3 %4 %5fps · %6f")
             .arg(videoWidth_.load()).arg(videoHeight_.load())
             .arg(videoCodec_).arg(bdStr).arg(fpsStr).arg(decodedFrames_.load());
     }
@@ -1394,36 +1512,62 @@ std::string PlayerViewModel::osdTextString() {
             renderFps_.store((rendered - fpsPrevRendered_) * 1000.0 / dtMs);
         }
         fpsPrevRendered_ = rendered;
-        lines << tag("Output") + tr("%1×%2 %3fps")
+        lines << tag("Output") + QStringLiteral("%1×%2 %3fps")
             .arg(viewportWidth_.load()).arg(viewportHeight_.load())
             .arg(renderFps_.load(), 0, 'f', 1);
     }
 
-    // Render：filter 输出帧尺寸 + 实际生效倍率（renderWidth/videoWidth）
-    int renderW = renderWidth_.load();
-    if (renderW <= 0) {
-        lines << tag("Render") + tr("–");
-    } else {
-        int videoW = videoWidth_.load();
-        double eff = videoW > 0 ? (double)renderW / videoW : 1.0;
-        lines << tag("Render") + tr("%1×%2 (%3×)")
-            .arg(renderW).arg(renderHeight_.load())
-            .arg(eff, 0, 'f', 2);
-    }
-
-    // VSR：配置状态（auto 也显示 quality；实际倍率由 Render 行显示）
+    // VSR：设定 | 状态（原 Render 行合并：输出帧尺寸——倍率由设定段
+    // 已表达，移除重复显示；vsr-status 并入同一状态段）。
     {
         QStringList parts;
         double scale = scale_.load();
         int quality = quality_.load();
         int denoise = denoise_.load();
         if (scale > 1)
-            parts << tr("%1× %2").arg(scaleStr().c_str()).arg(tr(qualityName(quality)));
+            parts << QStringLiteral("%1× %2").arg(scaleStr().c_str())
+                     .arg(qualityName(quality));
         else if (scale == 0)
-            parts << tr("auto %1").arg(tr(qualityName(quality)));
+            parts << QStringLiteral("auto %1").arg(qualityName(quality));
         if (denoise != -1)
-            parts << tr("Denoise %1").arg(tr(denoiseName(denoise)));
-        lines << tag("VSR") + (parts.isEmpty() ? tr("off") : parts.join("  "));
+            parts << QStringLiteral("Denoise %1").arg(denoiseName(denoise));
+        QStringList st;   // 状态段：输出尺寸 + vsr-status
+        int renderW = renderWidth_.load();
+        if (renderW > 0)
+            st << QStringLiteral("%1×%2").arg(renderW).arg(renderHeight_.load());
+        // vsr 关闭（scale=-1）时不并入 vsr-status——filter 在链中但无
+        // 处理，status 是切换瞬间的旧值残留（cost/fps 无意义）
+        if (scale > -0.5) {
+            std::lock_guard<std::mutex> lk(vsrStatusMtx_);
+            if (!vsrStatus_.empty())
+                st << QString::fromStdString(vsrStatus_);
+        }
+        QString line = tag("VSR") +
+            (parts.isEmpty() ? QStringLiteral("off") : parts.join(" "));
+        if (!st.isEmpty())
+            line += " | " + st.join(" ");
+        lines << line;
+    }
+
+    // FRUC：设定（目标帧率/倍率，off 显示"off"——整行不删除）|
+    // 实际状态（rife 的 fruc-status 行，事件线程从 "fruc-status:"
+    // 日志提取；off 时无状态段）。
+    {
+        int fruc = frucFps_.load();
+        QString target;
+        if (fruc == -1)
+            target = QStringLiteral("off");
+        else if (fruc == 2 || fruc == 3 || fruc == 4)
+            target = QStringLiteral("%1×").arg(fruc);
+        else if (fruc > 0)
+            target = QStringLiteral("%1 fps").arg(fruc);
+        QString line = tag("FRUC") + target;
+        if (fruc != -1) {
+            std::lock_guard<std::mutex> lk(frucStatusMtx_);
+            if (!frucStatus_.empty())
+                line += " | " + QString::fromStdString(frucStatus_);
+        }
+        lines << line;
     }
 
     // 硬解显示实际格式（hw-pixelformat，如 p010/nv12）——pixelformat
@@ -1434,30 +1578,30 @@ std::string PlayerViewModel::osdTextString() {
     if (hwDecoding_.load()) {
         QString hd = hwdecName_;
         hd.remove("-copy");   // nvdec-copy → nvdec（copy 模式无信息价值）
-        lines << tag("Decoder") + tr("%1 %2 %3")
-            .arg(decoderName_.isEmpty() ? tr("NVDEC") : decoderName_,
-                 hd.isEmpty() ? tr("NVDEC") : hd,
+        lines << tag("Decoder") + QStringLiteral("%1 %2 %3")
+            .arg(decoderName_.isEmpty() ? QStringLiteral("NVDEC") : decoderName_,
+                 hd.isEmpty() ? QStringLiteral("NVDEC") : hd,
                  hwPixelFormat_.isEmpty() ? decoderPixelFormat_ : hwPixelFormat_);
     } else {
-        lines << tag("Decoder") + tr("%1 %2")
-            .arg(decoderName_.isEmpty() ? tr("Software") : decoderName_,
+        lines << tag("Decoder") + QStringLiteral("%1 %2")
+            .arg(decoderName_.isEmpty() ? QStringLiteral("Software") : decoderName_,
                  hwPixelFormat_.isEmpty() ? decoderPixelFormat_ : hwPixelFormat_);
     }
 
-    lines << tag("Speed") + tr("%1×").arg(speed_.load(), 0, 'f', 2);
+    lines << tag("Speed") + QStringLiteral("%1×").arg(speed_.load(), 0, 'f', 2);
 
-    lines << tag("Time") + tr("%1 / %2")
+    lines << tag("Time") + QStringLiteral("%1 / %2")
         .arg(fmtTime(currentTime_.load())).arg(fmtTime(duration_.load()));
 
     // Frames：段内统计（rendered 客户端计数 / dropped 差值）
-    lines << tag("Frames") + tr("rendered %1  dropped %2")
+    lines << tag("Frames") + QStringLiteral("rendered %1  dropped %2")
         .arg(renderedFrames_.load()).arg(droppedFrames());
 
     if (!gpuName_.isEmpty())
         lines << tag("GPU") + gpuName_;
 
     if (audioSampleRate_.load() > 0)
-        lines << tag("Audio") + tr("%1Hz %2ch")
+        lines << tag("Audio") + QStringLiteral("%1Hz %2ch")
             .arg(audioSampleRate_.load()).arg(audioChannels_.load());
 
     return lines.join('\n').toStdString();

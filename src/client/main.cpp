@@ -107,6 +107,7 @@ int main(int argc, char *argv[]) {
     if (!opts.benchmark)
         viewModel.loadSettings();
     viewModel.initVsr(opts.scale, opts.quality, opts.denoise);
+    viewModel.initFruc(opts.fruc, opts.benchmark);
     std::string vf = viewModel.vfOption();
 
     // ── mpv ─────────────────────────────────────────────────────────────
@@ -219,6 +220,21 @@ int main(int argc, char *argv[]) {
         MLOG_INFO("update_callback set");
 
         MLOG_INFO("Video wired");
+
+        // ── rife 状态行 → OSD ────────────────────────────────────────
+        // rife filter 每 ~0.5s 输出 MSGL_STATUS 状态行（"fruc-status:"
+        // 前缀），事件线程提取后存入 viewModel，osdTextString 拼入 OSD。
+        mpv.setLogMessageCallback([&viewModel](const char *text) {
+            if (strncmp(text, "fruc-status:", 12) == 0) {
+                viewModel.setFrucStatus(text + 12);
+                // 调试可见性：rife 状态行同步转发 stderr（其余 status 级
+                // 消息（mpv 进度行）默认过滤）。
+                fprintf(stderr, "[mpv status] %s", text);
+            } else if (strncmp(text, "vsr-status:", 11) == 0) {
+                viewModel.setVsrStatus(text + 11);
+                fprintf(stderr, "[mpv status] %s", text);
+            }
+        });
 
         // ── 事件线程 ─────────────────────────────────────────────────
         // benchmark：END_FILE（EOF/error）→ 命令行 summary → 退出。

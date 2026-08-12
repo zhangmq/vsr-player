@@ -7,9 +7,11 @@ PopupBase {
     property int scal: 0
     property int quality: 3
     property int denoiseQuality: -1
+    property int frucFps: -1
     signal scalPicked(int v)
     signal qualityPicked(int v)
     signal denoiseQualityPicked(int v)
+    signal frucFpsPicked(int v)
 
     width: 360
 
@@ -32,6 +34,12 @@ PopupBase {
         {label: qsTr("Medium"), value: 9},
         {label: qsTr("High"), value: 10},
         {label: qsTr("Ultra"), value: 11}
+    ]
+    readonly property var frucModel: [
+        {label: qsTr("Off"), value: -1},
+        {label: qsTr("40 fps"), value: 40},
+        {label: qsTr("48 fps"), value: 48},
+        {label: qsTr("60 fps"), value: 60}
     ]
 
     Column {
@@ -94,6 +102,27 @@ PopupBase {
                     MouseArea { id: dHover; anchors.fill: parent; hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: { root.denoiseQualityPicked(modelData.value); } }
+                }
+            }
+        }
+
+        Rectangle { width: parent.width; height: 1; color: "#0fffffff" }
+
+        Text { text: qsTr("Frame interpolation"); color: "#b0b0b0"; font.pixelSize: 13 }
+        Row { spacing: 6; anchors { left: parent.left; right: parent.right }
+            Repeater {
+                model: root.frucModel
+                delegate: Rectangle {
+                    width: 64; height: 32; radius: 4
+                    color: fHover.containsMouse ? "#33ffffff"
+                         : (root.frucFps === modelData.value ? "#33ffcc00" : "transparent")
+                    Text { anchors.centerIn: parent
+                        text: modelData.label
+                        color: root.frucFps === modelData.value ? "#ffcc00" : "#e0e0e0"
+                        font.pixelSize: 13 }
+                    MouseArea { id: fHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: { root.frucFpsPicked(modelData.value); } }
                 }
             }
         }
