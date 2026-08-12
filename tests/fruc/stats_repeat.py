@@ -21,7 +21,7 @@ W, H = int(sys.argv[2]) if len(sys.argv) > 2 else 854, \
        int(sys.argv[3]) if len(sys.argv) > 3 else 480
 FR = W * H * 3
 TH = 0.8  # mean abs diff 阈值（0-255 尺度）——压缩噪声 <0.5，复制帧 <0.2
-SC_MAE = 20.0  # 场景切换阈值（与 run_rife_trt_video.py 一致）——内容跳变 > 正常运动
+SC_MAE = 20.0  # 场景切换阈值——内容跳变 > 正常运动
 
 proc = subprocess.Popen(
     ["ffmpeg", "-v", "error", "-i", V, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
