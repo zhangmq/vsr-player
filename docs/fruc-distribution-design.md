@@ -20,7 +20,7 @@ vsr-player 当前分发靠 `scripts/install.sh`（dev 机 → ~/.local），存�
 | 绑定链 | 严格度 | 分发策略 |
 |---|---|---|
 | RIFE engine ↔ TensorRT 11 | 二进制级（deserialize 校验库版本） | engine 与捆绑 libnvinfer.so.11 同版本（11.2.1.2），RPATH 优先命中 |
-| RIFE engine ↔ GPU 架构 | 硬件级（engine 单架构，当前 sm_120f） | 多 engine（sm_86/89/120），install.sh 按 GPU 检测选择 |
+| RIFE engine ↔ GPU 架构 | 硬件级（engine 单架构，当前 sm_120f） | 单 engine：`--hardwareCompatibilityLevel=ampere+`（实测转正，见 §2） |
 | libmpv ↔ ffmpeg | SONAME 级（62→63 已实测破坏） | 捆绑构建时 major 的 7 个库 |
 | libmpv ↔ CUDA runtime | SONAME 级（nvrtc/cudart.so.13） | 捆绑 libnvrtc.so.13 + builtins + libcudart.so.13 |
 | TRT 11 ↔ cudnn/cublas | 无（实测 RIFE 图零加载 cudnn/cublas） | **不捆绑**（省 ~800MB） |
@@ -50,9 +50,7 @@ vsr-player-0.1.0/
 │   ├── libnvrtc.so.13  libnvrtc-builtins.so.13  libcudart.so.13   # CUDA runtime
 │   └── libnvinfer.so.11  libnvinfer_plugin.so.11   # TRT 11.2.1.2（+ 软链 libnvinfer.so.11.2.1）
 ├── engines/
-│   ├── rife_full_fp16.sm86.engine    # Ampere 30 系（CC 8.6）
-│   ├── rife_full_fp16.sm89.engine    # Ada 40 系（CC 8.9）
-│   └── rife_full_fp16.sm120.engine   # Blackwell 50 系（CC 12.0，现有 engine）
+│   └── rife_full_fp16.engine         # ampere+ 跨架构兼容（30/40/50 系通用，~91MB）
 ├── fonts/materialdesignicons-webfont.ttf
 ├── translations/*.qm
 ├── licenses/                # SLA 2025.05.05、Qt LGPL、ffmpeg LGPL/GPL、vs-mlrt GPL-3.0
@@ -72,12 +70,15 @@ vsr-player-0.1.0/
   - VFX 的 dlopen 走 vsr_proc.c 现成搜索路径 `~/.local/lib/vsr-player/`（零代码改动）
 - 用户机器零配置：无环境变量、无 wrapper、无 shell 修改
 
-### engine 多架构
+### engine 架构策略（单 engine ampere+，2026-08-12 实测转正）
 
-- `tests/fruc/build_rife_full_engine.sh` 参数化 `--arch sm_86|sm_89|sm_120`（trtexec cross-build；备选 python API `platform_architecture`）
-- install.sh 用 `nvidia-smi --query-gpu=compute_cap` 检测（8.6→sm86、8.9→sm89、12.0→sm120），选配后统一命名 `rife_full_fp16.engine`
-- rife_proc.c 固定名搜索，**零 C 代码改动**；不支持的 GPU → 现有 `reason=engine` 直通 + OSD 提示（已有）
-- 备选：trtexec `--hardwareCompatibilityLevel=ampere+` 单 engine（实现阶段实测，损失 <5% 则替代）
+- `build_rife_full_engine.sh` 默认加 `--hardwareCompatibilityLevel=ampere+` 构建（单 engine 覆盖 Ampere+ 全系：sm_80/86/89/90/120——30/40/50 系及 Hopper）
+- **实测**（sm_120 本机）：ampere+ engine 加载 + 推理正常（0% NaN），benchmark 231.7 vs native 234.3 fps（-1.1%，测量噪声内）；体积 91MB vs 3×54MB 多引擎方案
+- 兼容机制：engine 保留 PTX，运行时按目标 GPU JIT；构建时 shared memory 上限略降（TRT 自动处理）
+- 边界：Turing（RTX 20 系，sm_75）及更早不在 ampere+ 内 → 现有 `reason=engine` 直通 + OSD 提示（已有）
+- `--hardware-compat off` 保留原生构建（本机 benchmark 用，性能最优）
+- rife_proc.c 固定名搜索，**零 C 代码改动**；install.sh 检测 GPU 仅作信息显示（型号 + 插帧可用性判定）
+- 注：sm_86/sm_89 目标机的真实加载待对应硬件验证（TRT 官方保证的 forward compatibility 机制）
 
 ### VFX 获取（环境纯净版）
 
@@ -94,9 +95,9 @@ vsr-player-0.1.0/
 > **不含** mpv-vsr-wrapper.py（开发者本地 Chrome 插件配套，非分发物）——
 > install_mpv_local.sh（开发者本地脚本）保持现状。
 
-1. 依赖检查：`libcuda.so.1`（缺→退出）、Qt ≥6.11（缺→警告继续）、GPU CC 检测
+1. 依赖检查：`libcuda.so.1`（缺→退出）、Qt ≥6.11（缺→警告继续）、GPU 型号检测（信息显示 + Ampere 以下提示直通）
 2. 复制二进制 + lib/ + 字体 + 翻译 → `~/.local/bin` + `~/.local/lib/vsr-player/`
-3. engine 按 GPU CC 选配复制；不匹配 → 提示 rife 直通
+3. engine 复制（单 ampere+ engine 通用，无选择逻辑）
 4. VFX 缺失 → curl 下载引导（上述）
 5. 验证 + 摘要：GPU/engine 匹配、VFX 状态、rife 预期可用性
 
@@ -104,8 +105,8 @@ vsr-player-0.1.0/
 
 ## 开发者侧脚本
 
-- 新增 `scripts/build_release.sh`：build_mpv → ninja client → 依赖库收集（从 /usr/lib + /opt/cuda/lib64，校验 SONAME 与 NEEDED）→ patchelf RPATH → 3×engine 构建 → tarball 打包
-- `build_rife_full_engine.sh` 参数化 `--arch`（默认本机架构）
+- 新增 `scripts/build_release.sh`：build_mpv → ninja client → 依赖库收集（从 /usr/lib + /opt/cuda/lib64，校验 SONAME 与 NEEDED）→ patchelf RPATH → engine 构建（ampere+）→ tarball 打包
+- `build_rife_full_engine.sh` 加 `--hardware-compat on|off`（默认 on=ampere+；off=原生本机架构）
 - `install.sh` engine 逻辑重写为 GPU 检测选择
 
 ## 清理清单
@@ -123,7 +124,8 @@ vsr-player-0.1.0/
 
 ## 待验证项（实现阶段实测）
 
-1. cross-arch engine 构建（trtexec `--runtimePlatform` / python API `platform_architecture`，无目标 GPU 机器）
+1. ~~cross-arch engine 构建~~ ✅ **已实测转正**：ampere+ 单 engine 方案（加载/推理/性能全部通过，见 §2）
 2. patchelf 后 dlopen 顺序与 VFX 全链加载（开发机 + 干净环境模拟）
 3. PyPI JSON API 下载流程（wheel URL 解析、curl 下载、unzip 提取）
-4. `--hardwareCompatibilityLevel=ampere+` 单 engine 备选的性能/兼容性
+4. ~~`--hardwareCompatibilityLevel=ampere+` 性能~~ ✅ 231.7 vs 234.3 fps（-1.1%）
+5. sm_86/sm_89 目标机加载（待有对应硬件；TRT 官方 forward compatibility 机制）
