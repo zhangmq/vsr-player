@@ -12,10 +12,12 @@ libplacebo_dep = dependency('libplacebo')
 
 # MPV_BUILD_DIR（env）：dist 构建指向独立 mpv 构建树（build_release.sh 用
 # build/mpv-dist/_build）；默认 dev 构建树 build/mpv/_build
-# MPV_BUILD_DIR（env）：dist 构建指向独立 mpv 构建树（build_release.sh 用
-# build/mpv-dist/_build）；默认 dev 构建树 build/mpv/_build
-mpv_build_dir = meson.getenv('MPV_BUILD_DIR',
-    meson.project_source_root() / 'build/mpv/_build')
+# mpv-build-dir option：dist 构建指向独立 mpv 构建树（build_release.sh 用
+# -Dmpv-build-dir=build/mpv-dist/_build）；默认 dev 构建树 build/mpv/_build
+mpv_build_dir = get_option('mpv-build-dir')
+if mpv_build_dir == ''
+    mpv_build_dir = meson.project_source_root() / 'build/mpv/_build'
+endif
 # dist-rpath option：发布打包时 libmpv/依赖库走 $ORIGIN 相对捆绑目录
 # （build_release.sh 传 -Ddist-rpath='$ORIGIN/../lib/vsr-player'）；空 = 开发默认
 # （build 树 libmpv）
