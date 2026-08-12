@@ -28,7 +28,7 @@ This project calls the Video Effects SDK C API directly from a player. This is n
 
 This project is developed on limited hardware — a single GPU generation and a small set of test files. Not every GPU / driver / container combination can be covered, so expect rough edges: you may hit crashes, visual artifacts, or hangs that have never been seen here.
 
-If something breaks, an effective path is to let an AI coding agent help you debug. This project itself is developed with AI agents (Claude Code): the code, the mpv patch overlay, and the design records in `docs/` and commit history are all in place for an agent to understand the pipeline and locate issues quickly. Bug reports and pull requests are welcome either way.
+If something breaks, an effective path is to let an AI coding agent help you debug. This project itself is developed with AI agents — Claude Code running a DeepSeek model (a low-cost setup, nothing to be afraid of). The code, the mpv patch overlay, and the design records in `docs/` and commit history are all in place for an agent to understand the pipeline and locate issues quickly. Bug reports and pull requests are welcome either way.
 
 ## Screenshots
 
