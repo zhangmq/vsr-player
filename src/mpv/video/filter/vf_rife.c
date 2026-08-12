@@ -860,28 +860,6 @@ static void f_process(struct mp_filter *f)
         return;
     }
 
-    // 非 YUV 输入（hw_subfmt 非 NV12/P010）passthrough——rife 的 yuv_to_rgba
-    // 只懂 YUV420 8/10bit。RGBA 帧（如 vf 顺序错误：rife 在 vsr 之后收到
-    // VSR 输出）被当 YUV 处理 → CUDA 非法内存访问 → 解码链崩溃 + mpv abort。
-    // 防御：格式白名单，其余直通（不破坏 CUDA 状态）。
-    if (cur->params.hw_subfmt != IMGFMT_NV12 &&
-        cur->params.hw_subfmt != IMGFMT_P010) {
-        if (!p->sw_warned) {
-            MP_WARN(f, "rife: non-YUV HW input (hw_subfmt=%s, bpp=%d) — "
-                       "passthrough (vf 顺序应为 rife 在 vsr 之前)\n",
-                    mp_imgfmt_to_name(cur->params.hw_subfmt),
-                    mp_imgfmt_get_desc(cur->params.hw_subfmt).bpp[0]);
-            p->sw_warned = true;
-        }
-        p->mode = RIFE_PASSTHROUGH;
-        snprintf(p->pt_reason, sizeof(p->pt_reason), "fmt");
-        if (p->frame_count % RIFE_STATUS_EVERY == 0)
-            rife_status(f, p);
-        rife_discard_prefetch(p);
-        mp_pin_in_write(f->ppins[1], frame);
-        return;
-    }
-
     // size change → recompute output fps / adaptive budget
     // (engine staging reconfig happens after engine ensure below)
     if (cur->w != p->in_w || cur->h != p->in_h) {
