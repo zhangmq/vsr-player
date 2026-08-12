@@ -146,6 +146,15 @@ else
         if [ -n "$WHEEL_URL" ] && curl -fL "$WHEEL_URL" -o "$TMPVFX/nvidia_vfx.whl"; then
             unzip -o -q "$TMPVFX/nvidia_vfx.whl" "nvvfx/libs/*" -d "$TMPVFX"
             cp "$TMPVFX"/nvvfx/libs/*.so* "$LIB_DIR/" 2>/dev/null || true
+            # vsr_proc.c dlopen 无版本名（libnppc.so/libcudnn.so/...），wheel 只有
+            # 带版本名（.so.12/.so.9/.so.1.8.2）——缺软链则 NEEDED 链断 → VFX 全灭
+            for target in libnppc libnppial libnppicc libnppidei libnppig \
+                          libnppif libnppim libnppist libnppitc libcudnn \
+                          libnvidia-ngx-vsr; do
+                src=""
+                for s in "$LIB_DIR/${target}.so."*; do [ -e "$s" ] && src="$s" && break; done
+                [ -n "$src" ] && ln -sf "$(basename "$src")" "$LIB_DIR/$target.so"
+            done
             COUNT="$(ls "$LIB_DIR"/*.so 2>/dev/null | wc -l)"
             rm -rf "$TMPVFX"
             if [ "$COUNT" -ge 10 ]; then
