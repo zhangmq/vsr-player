@@ -39,6 +39,12 @@ pip install nvidia-vfx
 
 从 [NVIDIA NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/maxine/collections/maxine_linux_vfx_sdk_collection_ea) 下载 Linux VFX SDK。
 
+> **用户端分发（非开发机）**：发布 tarball **不含 VFX**（SLA 8.5 禁止被许可人向
+> 第三方分发，EA 评估许可）。`scripts/install.sh`（用户端）检测缺失时自动从
+> PyPI 官方 `nvidia-vfx` wheel curl 下载提取到 `~/.local/lib/vsr-player/`
+> （环境纯净：不调 pip 安装、不 sudo）；wheel 库为带版本名，脚本补无版本软链
+> （vsr_proc.c 按无版本名 dlopen）。
+
 ### 安装位置
 
 将头文件和 .so 文件放到 `third_party/nvvfx/`（不上传 git）：

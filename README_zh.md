@@ -16,7 +16,8 @@ NVIDIA Video Effects SDK 提供了相同的底层 AI 模型，也有 Linux 版�
 
 - **AI 超分辨率** — Tensor Cores 实时 2×/3×/4× 超分（mpv 视频滤镜 `vf_vsr`）
 - **AI 降噪** — 可配置降噪强度（低至超高），scale=1 时单独生效
-- **NVDEC 硬解码** — AV1、H.264、HEVC GPU 解码（含软解回退）
+- **AI 插帧（FRUC）** — RIFE 运动插帧至 30/40/60 fps 或任意目标（mpv 视频滤镜 `vf_rife`，TensorRT，在超分之前以源分辨率运行）
+- **NVDEC 硬解码** — AV1、H.264、HEVC GPU 解码（含软解回退；软解帧经 `vf_hwup` 自动上传为 CUDA 帧）
 - **Vulkan 渲染** — CUDA-Vulkan 共享设备，mpv 渲染进 Qt 场景图
 - **QML 叠加 UI** — 底部悬停区域驱动的自动隐藏控件、虚拟化播放列表、OSD 信息面板
 - **自适应缩放** — 按视口尺寸自动选择超分倍率
@@ -40,12 +41,14 @@ NVIDIA Video Effects SDK 提供了相同的底层 AI 模型，也有 Linux 版�
 ## 架构
 
 ```
-demux → decode → [vf_vsr] → VO (libmpv) → Qt 场景图
-                   ↑
-              VFX SDK + CUDA
+demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt 场景图
+                ↑            ↑               ↑
+           SW→CUDA 上传    RIFE (TRT)    VFX SDK + CUDA
 ```
 
 - mpv 承担：解封装、解码、音视频同步、时序、seek、VO
+- `vf_hwup`：软解帧上传为 CUDA 帧，使下游滤镜永远只处理硬件帧
+- `vf_rife`（覆盖层 `src/mpv/video/filter/vf_rife.c`）：RIFE 插帧（TensorRT），在超分之前以源分辨率运行
 - `vf_vsr`（覆盖层 `src/mpv/video/filter/vf_vsr.c`）：接收 `mp_image`，CUDA+VFX SDK 超分，输出超分 `mp_image`
 - 前端：Qt 6 + QML（`src/client/`）——MpvController（libmpv 封装）、PlayerViewModel（UI 状态单一事实源）、Vulkan 共享设备
 - mpv patch 方案：`third_party/mpv`（纯净 0.41）+ `src/mpv` 覆盖层，`scripts/build_mpv.sh` 合并构建
@@ -54,11 +57,11 @@ demux → decode → [vf_vsr] → VO (libmpv) → Qt 场景图
 
 | 组件 | 要求 |
 |------|------|
-| GPU | NVIDIA RTX 20 系或更新 |
+| GPU | NVIDIA RTX 20 系或更新（插帧需 Ampere+ 且支持 FP16 Tensor Cores） |
 | 驱动 | 570+（含 CUDA；Wayland 需 `nvidia_drm.modeset=1`） |
-| Qt | 6.8+（Quick、QuickControls、Vulkan） |
+| Qt | 6.11+（Quick、QuickControls、Vulkan） |
 | 编译器 | GCC 13+（C++20） |
-| 构建 | meson、ninja、CUDA Toolkit（`/opt/cuda`） |
+| 构建 | meson、ninja、CUDA Toolkit（`/opt/cuda`）、TensorRT（系统 `trtexec`，构建引擎用） |
 
 第三方 SDK（NvVFX 头文件/运行时、MDI 图标字体、mpv 源码）**不随仓库分发**——按 [docs/third-party-setup.md](docs/third-party-setup.md) 准备 `third_party/`。
 
@@ -69,6 +72,18 @@ demux → decode → [vf_vsr] → VO (libmpv) → Qt 场景图
 ninja -C build                  # 构建 Qt 客户端
 ./build/src/client/vsr-player <视频或目录>
 ```
+
+## 分发（release tarball）
+
+```bash
+./scripts/build_release.sh      # → build/vsr-player-<ver>-linux-x86_64.tar.xz（~316 MB）
+tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
+./install.sh                    # 安装到 ~/.local（bin + lib/vsr-player），无需 sudo
+```
+
+- 捆绑：libmpv + ffmpeg×7 + CUDA runtime + TensorRT 11 + RIFE 引擎（ampere+，30/40/50 系通用一份）+ 字体/翻译/许可
+- **不捆绑**：VFX SDK（~1.1 GB）——NVIDIA SLA 限制再分发；install.sh 可代从 PyPI 官方 `nvidia-vfx` wheel 下载提取（curl 纯下载，不调 pip、不改系统），或手动放置到 `~/.local/lib/vsr-player/`
+- GUI 运行时依赖系统 Qt ≥ 6.11；唯一强制外部依赖为 NVIDIA 驱动（`libcuda.so.1`）
 
 ## 使用
 
@@ -84,6 +99,7 @@ ninja -C build                  # 构建 Qt 客户端
 | `--scale` | `off`、`auto`、`2`、`3`、`4` | `auto` | 超分倍率 |
 | `--quality` | `low`、`medium`、`high`、`ultra` | `high` | 超分质量 |
 | `--denoise` | `off`、`low`、`medium`、`high`、`ultra` | `off` | 降噪强度（scale=1 时生效） |
+| `--fruc` | `off`、`30`、`40`、`60`、`2`、`3`、`4` | 持久化 | 插帧：目标帧率（30/40/60）或倍率（2/3/4，benchmark 模式） |
 | `--no-hwaccel` | — | — | 关闭 NVDEC，使用软解 |
 | `--lang` | 如 `en`、`zh_CN` | 系统 locale | 界面语言 |
 | `--benchmark` | — | — | 无 UI 吞吐测量（`all=no` 日志） |
@@ -117,22 +133,26 @@ printf '{"command":["play"]}\n' | socat - UNIX-CONNECT:/tmp/vsr-player.sock
 
 ## 独立版 mpv-vsr CLI
 
-带 `vf_vsr` 滤镜的 patched mpv 也独立构建分发，可作普通 mpv 替代：
+带 `vf_vsr` + `vf_rife` + `vf_hwup` 滤镜的 patched mpv 也独立构建分发，可作普通 mpv 替代：
 
 ```bash
-./scripts/install_mpv_local.sh     # → ~/.local/bin/mpv-vsr + VFX 库在 ~/.local/lib/vsr-player/
-mpv-vsr --vf=vsr:scale=2 video.mkv
+mpv-vsr --hwdec=auto --vf=hwup,rife:fps=60,vsr:scale=2 video.mkv
 ```
+
+滤镜链（从左到右）：`hwup`（SW→CUDA 上传，软解路径可用）→ `rife`（插帧，源分辨率）→ `vsr`（超分）。硬解（`--hwdec=nvdec`）时 `hwup` 为纯直通可省略。
 
 滤镜选项：
 
 | 选项 | 取值 | 说明 |
 |------|------|------|
-| `scale` | `off`、`auto`、`2`、`3`、`4`、比例（如 `4/3`） | 超分倍率；`auto` 按视口选择 |
-| `quality` | `low`、`medium`、`high`、`ultra` | VSR 推理质量 |
-| `denoise` | `off`、`low`、`medium`、`high`、`ultra` | 降噪（scale=1 时单独生效） |
+| `scale`（vsr） | `off`、`auto`、`2`、`3`、`4`、比例（如 `4/3`） | 超分倍率；`auto` 按视口选择 |
+| `quality`（vsr） | `low`、`medium`、`high`、`ultra` | VSR 推理质量 |
+| `denoise`（vsr） | `off`、`low`、`medium`、`high`、`ultra` | 降噪（scale=1 时单独生效） |
+| `fps`（rife） | `off`、`auto`、整数 1..120 | 插帧目标帧率；`auto` = 2×源 |
+| `scale`（rife） | `off`、`2`、`3`、`4` | benchmark 倍率（无自适应直通） |
+| `adaptive`（rife） | `yes`、`no` | 插帧过慢时按成本直通 |
 
-示例：`mpv-vsr --vf=vsr:scale=auto,quality=ultra --hwdec=auto video.mkv`
+示例：`mpv-vsr --hwdec=nvdec --vf=rife:fps=60,vsr:scale=auto,quality=ultra video.mkv`
 
 `mpv-vsr-wrapper.py`（浏览器集成，ff2mpv 风格）：导出 Chrome cookie、yt-dlp 提取播放列表（YouTube/Bilibili/Niconico）、拉起 mpv-vsr。
 
