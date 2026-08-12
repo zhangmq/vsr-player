@@ -19,6 +19,9 @@
 #   ~/.local/bin/translations/              # 翻译（main.cpp fallback）
 set -euo pipefail
 
+NO_VFX=0
+[ "${1:-}" = "--no-vfx" ] && NO_VFX=1
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
 LIB_DIR="$HOME/.local/lib/vsr-player"
@@ -132,7 +135,9 @@ else
     echo "    许可：NVIDIA Software License Agreement 2025.05.05 ——"
     echo "    下载即与 NVIDIA 直接建立许可关系；本脚本仅代为下载文件，"
     echo "    不安装到 Python 环境，不向第三方分发）"
-    if command -v curl >/dev/null && command -v unzip >/dev/null; then
+    if [ "$NO_VFX" -eq 1 ]; then
+        echo "    （--no-vfx：跳过自动下载。手动方式见下方说明，下载后重跑本脚本即可）"
+    elif command -v curl >/dev/null && command -v unzip >/dev/null; then
         echo "    正在从 PyPI 下载（~1.1GB，请耐心等待；Ctrl-C 可中断）..."
         TMPVFX="$(mktemp -d)"
         WHEEL_URL="$(curl -fsSL https://pypi.org/pypi/nvidia-vfx/json 2>/dev/null \

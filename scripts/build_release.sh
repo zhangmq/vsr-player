@@ -21,7 +21,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-VERSION="$(grep -oP "version: '\K[^']+" meson.build)"
+VERSION="$(grep -oP "version: '\K[^']+" meson.build | head -1)"
 DIST_RPATH='$ORIGIN/../lib/vsr-player'
 MPV_DIST="$PROJECT_ROOT/build/mpv-dist"
 CLIENT_DIST="$PROJECT_ROOT/build/client-dist"
@@ -55,30 +55,36 @@ cp -L "$MPV_DIST/_build/libmpv.so.2" "$STAGE/lib/vsr-player/libmpv.so.2"
 # ── 4. 依赖库收集（ldd 解析路径；校验 SONAME 文件名）────────────────
 echo "--- [4/6] bundled libs ---"
 BIN_REF="$MPV_DIST/_build/mpv"
-collect() {  # collect <libdir> <soname-glob> [extra-path]
-    local dir="$1" pat="$2" extra="${3:-}"
+collect() {  # collect <soname> <search-dirs...>（SONAME 即目标文件名）
+    local soname="$1"; shift
     local found=""
-    if [ -n "$extra" ] && [ -d "$extra" ]; then
-        found="$(find "$extra" -name "$pat" -type f | head -1)"
+    for d in "$@"; do
+        [ -n "$d" ] || continue
+        # -L：跟随目录软链（/opt/cuda/lib64 → targets/x86_64-linux/lib）；
+        # 软链文件也可（cp -L 解引用）；名称精确或带 minor 后缀（如 .13.3）
+        found="$(find -L "$d" -maxdepth 1 \( -name "$soname" -o -name "$soname.*" \) 2>/dev/null | head -1)"
+        [ -n "$found" ] && break
+    done
+    if [ -z "$found" ]; then
+        found="$(ldd "$BIN_REF" | awk -v p="$soname" '$1==p {print $3}' | head -1)"
     fi
-    [ -z "$found" ] && found="$(ldd "$BIN_REF" | awk -v p="$pat" '$1==p {print $3}' | head -1)"
-    if [ -z "$found" ] || [ ! -f "$found" ]; then
-        echo "  ❌ $pat not found" >&2; return 1
+    if [ -z "$found" ] || [ ! -e "$found" ]; then
+        echo "  ❌ $soname not found" >&2; return 1
     fi
     # 复制为 SONAME 文件名（解引用软链——单一文件即可满足加载器按名查找）
-    cp -L "$found" "$dir/$pat"
-    echo "  ✓ $pat ($(basename "$found"))"
+    cp -L "$found" "$LIB/$soname"
+    echo "  ✓ $soname ($(basename "$found"))"
 }
 LIB="$STAGE/lib/vsr-player"
 for f in libavcodec.so.63 libavformat.so.63 libavutil.so.61 libavfilter.so.12 \
          libswscale.so.10 libswresample.so.7 libavdevice.so.63; do
-    collect "$LIB" "$f"
+    collect "$f" /usr/lib
 done
-collect "$LIB" libnvrtc.so.13 "" /opt/cuda/lib64
-collect "$LIB" libnvrtc-builtins.so.13 "" /opt/cuda/lib64
-collect "$LIB" libcudart.so.13 "" /opt/cuda/lib64
-collect "$LIB" libnvinfer.so.11
-collect "$LIB" libnvinfer_plugin.so.11 || echo "  ⚠ plugin missing（RIFE 图无 plugin 算子，可缺）"
+collect libnvrtc.so.13 /opt/cuda/lib64
+collect libnvrtc-builtins.so.13.3 /opt/cuda/lib64
+collect libcudart.so.13 /opt/cuda/lib64
+collect libnvinfer.so.11 /usr/lib
+collect libnvinfer_plugin.so.11 /usr/lib || echo "  ⚠ plugin missing（RIFE 图无 plugin 算子，可缺）"
 
 # ── 5. engine + 资产 ────────────────────────────────────────────────
 echo "--- [5/6] engine + assets ---"
@@ -93,13 +99,18 @@ echo "--- [6/6] licenses + tarball ---"
 #（PyPI 官方包）。本地 pip 缓存缺失时跳过（README 引用官方 URL）。
 WHEEL="$(find "$HOME/.cache/pip" -name "nvidia_vfx*.whl" 2>/dev/null | head -1)"
 if [ -n "$WHEEL" ]; then
-    unzip -o -q "$WHEEL" \
-        "nvidia_vfx-*/dist-info/licenses/packaging/*" -d "$STAGE/licenses/" \
-        2>/dev/null || true
-    # 扁平化（去掉 dist-info 前缀目录）
-    find "$STAGE/licenses" -mindepth 2 -type f -exec mv {} "$STAGE/licenses/" \;
-    find "$STAGE/licenses" -type d -empty -delete
-    echo "  ✓ NVIDIA SLA (from nvidia-vfx wheel)"
+    # 流式提取许可文件（unzip -l 列名 + -p 提取；不解压 1.1GB wheel 本体）
+    mkdir -p "$STAGE/licenses"
+    unzip -l "$WHEEL" | awk '/licenses\/packaging\/.*\.(pdf|md|txt)$/ {print $4}' | while read -r f; do
+        [ -n "$f" ] || continue
+        unzip -p "$WHEEL" "$f" > "$STAGE/licenses/$(basename "$f")"
+    done
+    if [ "$(ls "$STAGE/licenses" | wc -l)" -gt 0 ]; then
+        echo "  ✓ NVIDIA SLA (from nvidia-vfx wheel)"
+    else
+        rmdir "$STAGE/licenses"
+        echo "  ⚠ wheel 中未找到许可文件"
+    fi
 else
     echo "  ⚠ nvidia-vfx wheel not in pip cache — licenses/ 缺 SLA 文本（README 有链接）"
 fi
