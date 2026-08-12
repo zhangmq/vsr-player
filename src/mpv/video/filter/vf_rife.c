@@ -50,7 +50,7 @@ struct vf_rife_opts {
     int  fps;       // -1=off, 0=auto (2×src), [1,120] target fps
     int  scale;     // benchmark multiplier: 0=off, 2/3/4 (overrides fps)
     bool adaptive;  // normal-mode cost-based passthrough
-    int  variant;   // model: 0=lite (default, 11ch), 1=full (7ch)
+    int  variant;   // model: 0=lite (7ch, FP16 连续推理退化——退役), 1=full (7ch)
 };
 
 #define OPT_BASE_STRUCT struct vf_rife_opts
@@ -144,7 +144,9 @@ static const struct m_option vf_opts_fields[] = {
 };
 
 static const struct vf_rife_opts vf_rife_opts_def = {
-    .fps = -1, .scale = 0, .adaptive = true, .variant = 0,   // lite
+    .fps = -1, .scale = 0, .adaptive = true, .variant = 1,   // full 默认
+                              //（lite FP16 连续推理 ~6 次后输出 NaN/错误值——
+                              // 2026-08-12 实证：与输入/路径无关，full 无此问题）
 };
 
 // ── priv ───────────────────────────────────────────────────────────────

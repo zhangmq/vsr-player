@@ -484,15 +484,23 @@ void PlayerViewModel::initFruc(const std::string &fruc, bool benchmark) {
         frucFps_ = atoi(fruc.c_str());
         return;
     }
+    // CLI 显式 off：本次播放关闭（不落持久化——persistFruc_ 是 UI 上次
+    // 值，下次启动恢复）。修复：此前 "off" 落入 persistFruc_ 分支，
+    // 持久化 40/60 时 --fruc off 无效（插帧照常开启，实测 2026-08-12）。
+    if (fruc == "off") {
+        frucFps_ = -1;
+        return;
+    }
     // 空/非法：benchmark = 不插帧（CLI 语义）；正常 = 持久化目标。
     frucFps_ = benchmark ? -1 : persistFruc_;
 }
 
 void PlayerViewModel::initRifeModel(const std::string &model) {
-    // 启动时固定的引擎变体：""|"lite" = 默认 lite；"full" = RIFE 4.25 full。
+    // 启动时固定的引擎变体：""|"full" = 默认 full（统一主引擎——lite 的
+    // FP16 连续推理退化实证 2026-08-12，退役）；"lite" 显式选择才用。
     // 只影响 vfOption() 的 rife variant 参数——vf 链在播放首文件前已定，
     // 运行时不可切换（用户明确：命令行启动时选择）。
-    rifeModel_ = (model == "full") ? "full" : "lite";
+    rifeModel_ = (model == "lite") ? "lite" : "full";
 }
 
 bool PlayerViewModel::parseScale(const std::string &s, double *out) {
@@ -1365,6 +1373,17 @@ void PlayerViewModel::pushVf(const char *filter, const char *param,
     mpv_->commandAsync({"vf-command", filter, param, value.c_str(), nullptr});
 }
 
+void PlayerViewModel::syncVfOptions() {
+    if (!mpv_) return;
+    int fruc = frucFps_.load();
+    // rife 倍率模式（CLI 2/3/4）只经 vfOption 配置（scale 参数），此处
+    // 重放 fps 值即可（benchmark 分支忽略 fps，无破坏）。
+    pushVf("rife", "fps", fruc == -1 ? "off" : std::to_string(fruc));
+    pushVf("vsr", "scale", scaleStr());
+    pushVf("vsr", "quality", qualityStr());
+    pushVf("vsr", "denoise", denoiseStr());
+}
+
 // ── 主线程状态更新（值由事件线程传入，不调 mpv API）─────────────────
 
 void PlayerViewModel::updatePlaying(bool p) {
@@ -1442,6 +1461,7 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
         resetSegmentCounters(drops);   // 新文件 → 段统计归零
         scanSubtitleFiles(lastPath_);  // 新文件 → 扫描其目录的字幕
         restoreTrackMemory(lastPath_); // 按文件恢复轨道/字幕记忆（再次打开对应文件才恢复）
+        syncVfOptions();               // 链重建后重放运行时 vf 状态（fps/vsr 防 UI 修改丢失）
     }, Qt::QueuedConnection);
 }
 

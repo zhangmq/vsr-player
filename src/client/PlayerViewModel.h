@@ -327,6 +327,13 @@ private:
     /// 下一帧自动重配（scale→effective_scale 重算 / quality→ensure_vsr
     /// 检测 / denoise→passthrough 判定）。参数调用时同步复制，无需保活。
     void pushVf(const char *filter, const char *param, const std::string &value);
+    /// 运行时 vf 参数重放（FILE_LOADED 后，主线程）：vf-command 只改
+    /// filter 实例 opts，mpv 的 vf 选项本体不变——stop（terminate_playback
+    /// 销毁链）后重播重建 filter 时状态回到 vfOption 初始值 → UI 修改
+    /// 丢失（插帧"关不掉"：关闭后重播自动恢复开启）。FILE_LOADED 时
+    /// 链已就绪，重放当前 UI 状态使新链与 UI 一致（filter 常驻 +
+    /// 直通切换语义不变，不重建链；判等 no-op 防冗余）。
+    void syncVfOptions();
     std::string scaleStr() const;
     std::string qualityStr() const;
     std::string denoiseStr() const;

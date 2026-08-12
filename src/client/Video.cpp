@@ -16,6 +16,12 @@ void vkCmdDraw(VkCommandBuffer, uint32_t, uint32_t, uint32_t, uint32_t);
 void vkCmdSetViewport(VkCommandBuffer, uint32_t, uint32_t, const VkViewport*);
 void vkCmdSetScissor(VkCommandBuffer, uint32_t, uint32_t, const VkRect2D*);
 VkResult vkQueueWaitIdle(VkQueue);
+VkResult vkBeginCommandBuffer(VkCommandBuffer, const VkCommandBufferBeginInfo*);
+VkResult vkEndCommandBuffer(VkCommandBuffer);
+VkResult vkAllocateCommandBuffers(VkDevice, const VkCommandBufferAllocateInfo*, VkCommandBuffer*);
+void vkFreeCommandBuffers(VkDevice, VkCommandPool, uint32_t, const VkCommandBuffer*);
+VkResult vkQueueSubmit(VkQueue, uint32_t, const VkSubmitInfo*, VkFence);
+void vkCmdClearColorImage(VkCommandBuffer, VkImage, VkImageLayout, const VkClearColorValue*, uint32_t, const VkImageSubresourceRange*);
 }
 
 static double now() {
@@ -212,6 +218,48 @@ bool Video::ensureRenderTarget(int w, int h) {
     mai.memoryTypeIndex = memTypeIdx;
     vkAllocateMemory(dev_, &mai, nullptr, &rtMem_);
     vkBindImageMemory(dev_, rtImage_, rtMem_, 0);
+
+    // 首帧前清黑：新分配 image 内容未定义——引擎加载（rife/vsr init
+    // 秒级）阻塞 mpv 首帧输出期间，场景图已采样 rtImage（VO 无帧），
+    // 未初始化 GPU 内存上屏 = 噪点（冷启动/重启续播实证 2026-08-12，
+    // 480p 明显 720p 无感——引擎加载窗口差异）。清黑后该窗口为黑屏。
+    // mpv 首帧渲染以 UNDEFINED 转换（丢弃内容）重绘全帧，无冲突。
+    VkCommandBufferAllocateInfo cbai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    cbai.commandPool = cmdPool_; cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cbai.commandBufferCount = 1;
+    VkCommandBuffer cb;
+    if (vkAllocateCommandBuffers(dev_, &cbai, &cb) == VK_SUCCESS) {
+        VkCommandBufferBeginInfo cbbi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+        if (vkBeginCommandBuffer(cb, &cbbi) == VK_SUCCESS) {
+            VkImageMemoryBarrier b1 = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+            b1.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            b1.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            b1.image = rtImage_;
+            b1.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            b1.subresourceRange.levelCount = b1.subresourceRange.layerCount = 1;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                 0, nullptr, 0, nullptr, 1, &b1);
+            VkClearColorValue cc = {{0, 0, 0, 1}};
+            VkImageSubresourceRange range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            vkCmdClearColorImage(cb, rtImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                 &cc, 1, &range);
+            VkImageMemoryBarrier b2 = b1;
+            b2.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            b2.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            b2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            b2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                                 0, nullptr, 0, nullptr, 1, &b2);
+            vkEndCommandBuffer(cb);
+            VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+            si.commandBufferCount = 1; si.pCommandBuffers = &cb;
+            vkQueueSubmit(queue_, 1, &si, VK_NULL_HANDLE);
+            vkQueueWaitIdle(queue_);
+        }
+        vkFreeCommandBuffers(dev_, cmdPool_, 1, &cb);
+    }
 
     VkImageViewCreateInfo ivci = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
     ivci.image    = rtImage_;

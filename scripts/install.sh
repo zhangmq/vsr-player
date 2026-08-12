@@ -61,18 +61,21 @@ else
 fi
 
 # ── 3.5 RIFE 运行时（vf_rife.c 搜索路径含 ~/.local/lib/vsr-player/）──
-# lite 引擎（主引擎，tests/fruc/build_rife_lite_engine.sh 生成到
-# build/tests/fruc/）+ 旧实验引擎（third_party/rife/ rife512）全拷贝——
-# 不装引擎则 GUI/CLI 在项目目录外启动报 reason=engine 直通。
-LITE_ENGINES="$PROJECT_ROOT/build/tests/fruc/rife_lite_fp16_"*.engine
+# 动态固定名引擎（full 默认主引擎 + lite 退役保留）+ 旧实验引擎
+#（third_party/rife/ rife512）全拷贝——不装引擎则 GUI/CLI 在项目目录外
+# 启动报 reason=engine 直通。
+FULL_ENGINES="$PROJECT_ROOT/build/tests/fruc/rife_full_fp16.engine"
+LITE_ENGINES="$PROJECT_ROOT/build/tests/fruc/rife_lite_fp16.engine"
 LEGACY_ENGINES="$PROJECT_ROOT/third_party/rife/"*.engine
-if ls $LITE_ENGINES >/dev/null 2>&1 || ls $LEGACY_ENGINES >/dev/null 2>&1; then
+if ls $FULL_ENGINES >/dev/null 2>&1 || ls $LITE_ENGINES >/dev/null 2>&1 \
+   || ls $LEGACY_ENGINES >/dev/null 2>&1; then
     mkdir -p "$LIB_DIR"
+    cp $FULL_ENGINES "$LIB_DIR/" 2>/dev/null || true
     cp $LITE_ENGINES "$LIB_DIR/" 2>/dev/null || true
     cp $LEGACY_ENGINES "$LIB_DIR/" 2>/dev/null || true
     echo "  ✅ RIFE engine → $LIB_DIR/"
 else
-    echo "  ⚠ RIFE engine missing (run tests/fruc/build_rife_lite_engine.sh) — rife passthrough"
+    echo "  ⚠ RIFE engine missing (run tests/fruc/build_rife_full_engine.sh) — rife passthrough"
 fi
 
 # ── 4. 图标字体（main.cpp fallback：<appdir>/../share/vsr-player/fonts/）─
