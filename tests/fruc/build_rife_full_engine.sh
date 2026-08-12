@@ -13,20 +13,47 @@
 #   - 播放器按视频原尺寸 set_shape 推理（无 pad）；超 max 降级 passthrough
 #   - 4.26 vs 4.25：质量全档胜出（合成 GT PSNR +1~4.6dB，中位移优势最大）、
 #     性能持平（±5% 测量噪声）——2026-08-12 实测切换
+#   - --hardware-compat on（默认）：+ --hardwareCompatibilityLevel=ampere+
+#     跨架构兼容（Ampere+ 全系：sm_80/86/89/90/120）——分发用单引擎；
+#     实测（sm_120）231.7 vs native 234.3 fps（-1.1%）无实质损失
+#   - --hardware-compat off：原生本机架构构建（开发者 benchmark 用）
 #
-# 用法: bash build_rife_full_engine.sh [out.engine]
+# 用法: bash build_rife_full_engine.sh [--hardware-compat on|off] [out.engine]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-OUT=${1:-"$HERE/../../build/tests/fruc/rife_full_fp16.engine"}
 ONNX="$HERE/../../build/tests/fruc/rife_full_fp16_all.onnx"
+OUT="$HERE/../../build/tests/fruc/rife_full_fp16.engine"
+HWCOMPAT=on
+POS=()
+until [ $# -eq 0 ]; do
+    case "$1" in
+        --hardware-compat=*) HWCOMPAT="${1#*=}" ;;
+        --hardware-compat)   HWCOMPAT="${2:-on}"; shift ;;
+        -*)                  echo "unknown option: $1" >&2; exit 1 ;;
+        *)                   POS+=("$1") ;;
+    esac
+    shift
+done
+[ "${#POS[@]}" -gt 0 ] && OUT="${POS[0]}"
+case "$HWCOMPAT" in
+    on|off) ;;
+    *) echo "invalid --hardware-compat: $HWCOMPAT (on|off)" >&2; exit 1 ;;
+esac
 
 echo "=== building full dynamic engine (min 128x128 / opt 1152x1920 / max 2176x3840) ==="
+echo "    hardware-compat: $HWCOMPAT (on = ampere+ cross-arch, off = native)"
+
+COMPAT_ARGS=()
+if [ "$HWCOMPAT" = "on" ]; then
+    COMPAT_ARGS=(--hardwareCompatibilityLevel=ampere+)
+fi
 
 trtexec --onnx="$ONNX" \
     "--minShapes=input:1x7x128x128" \
     "--optShapes=input:1x7x1152x1920" \
     "--maxShapes=input:1x7x2176x3840" \
+    "${COMPAT_ARGS[@]}" \
     --saveEngine="$OUT" 2>&1 | grep -E "\[E\]|FAILED|Total Host Walltime" || true
 
 if [ -f "$OUT" ]; then
