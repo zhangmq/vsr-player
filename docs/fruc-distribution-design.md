@@ -41,7 +41,8 @@ vsr-player 当前分发靠 `scripts/install.sh`（dev 机 → ~/.local），存�
 ```
 vsr-player-0.1.0/
 ├── vsr-player                # GUI 二进制
-├── mpv-vsr                   # CLI 二进制
+├── mpv-vsr                   # CLI 二进制（无 wrapper——mpv-vsr-wrapper.py 是
+│                             #   开发者本地 Chrome 插件配套，不进分发）
 ├── lib/
 │   ├── libmpv.so.2
 │   ├── libavcodec.so.63  libavformat.so.63  libavutil.so.61   # ffmpeg 7 ×7
@@ -88,6 +89,10 @@ vsr-player-0.1.0/
 - 下载失败 → 跳过并保留提示（用户可手动下载后重跑）；支持 `--vfx-dir <path>` 指向已解压目录
 
 ### 用户端 install.sh 流程
+
+> 范围：vsr-player（GUI）+ mpv-vsr（CLI）二进制、lib/、engines/、字体、翻译。
+> **不含** mpv-vsr-wrapper.py（开发者本地 Chrome 插件配套，非分发物）——
+> install_mpv_local.sh（开发者本地脚本）保持现状。
 
 1. 依赖检查：`libcuda.so.1`（缺→退出）、Qt ≥6.11（缺→警告继续）、GPU CC 检测
 2. 复制二进制 + lib/ + 字体 + 翻译 → `~/.local/bin` + `~/.local/lib/vsr-player/`
