@@ -64,7 +64,7 @@ demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt
 | 组件 | 要求 |
 |------|------|
 | GPU | NVIDIA RTX 20 系或更新（插帧需 Ampere+ 且支持 FP16 Tensor Cores） |
-| 驱动 | 570+（含 CUDA；Wayland 需 `nvidia_drm.modeset=1`） |
+| 驱动 | 570+（含 CUDA；Wayland 开箱即用——现代驱动默认启用 DRM modeset，无需内核参数） |
 | Qt | 6.11+（Quick、QuickControls、Vulkan） |
 | 编译器 | GCC 13+（C++20） |
 | 构建 | meson、ninja、CUDA Toolkit（`/opt/cuda`）、TensorRT（系统 `trtexec`，构建引擎用） |
@@ -112,7 +112,7 @@ tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
 | **RIFE 引擎 ↔ TensorRT** | 引擎文件内嵌构建时的 TRT 精确版本——版本不匹配时反序列化直接拒绝（双向均实测） | 用当前系统 TRT 重建引擎（`bash tests/fruc/build_rife_full_engine.sh`），或装匹配版本 TRT。tarball 用户：引擎与捆绑 TRT 一起分发，自洽。VFX 自带的 TRT 10 与 RIFE 的 TRT 11 同进程共存（RTLD_LOCAL 隔离），无需处理 |
 | **Qt** | 硬性要求 ≥ 6.11（用到的 QML/QuickControls 特性） | 无降级选项——升级系统 Qt |
 | **GPU** | VSR 需 RTX 20+；插帧需 Ampere+（FP16 Tensor Cores） | 旧 GPU：VSR 可用，插帧退化为直通 |
-| **驱动** | VFX 需 570+；Wayland 需 `nvidia_drm.modeset=1` | 升级驱动，或锁定旧版 VFX wheel |
+| **驱动** | VFX 需 570+；Wayland 在现代驱动上无需内核参数（modeset 默认开启） | 升级驱动，或锁定旧版 VFX wheel |
 
 **锁定 VFX SDK 版本**——install.sh 总是从 PyPI 拉取**最新** `nvidia-vfx` wheel。如果默认版本在你的环境不工作（如驱动太旧），不必被迫使用它：
 

@@ -192,13 +192,7 @@ avcodec_open2(codec_ctx, codec, nullptr);
 
 ### NVIDIA Vulkan + Wayland
 
-NVIDIA driver supports `VK_KHR_wayland_surface` **if** `nvidia_drm.modeset=1` (kernel cmdline). Check:
-
-```bash
-sudo cat /sys/module/nvidia_drm/parameters/modeset  # must be Y
-```
-
-Without modesetting, `vkGetPhysicalDeviceSurfaceSupportKHR` returns `VK_FALSE`.
+实测（610.57.04，CachyOS）：**无需任何内核参数**。cmdline 与 modprobe.d 均无 `nvidia_drm.modeset` 配置，`VK_KHR_wayland_surface` 正常可用（revision 6）——现代 NVIDIA 驱动（555+ 世代）默认启用 DRM modeset。旧断言"必须 cmdline modeset=1 / 否则 `VK_FALSE`"为过时信息（老驱动默认 modeset=0 时的情形），已修正。
 
 ### Wayland embedding
 

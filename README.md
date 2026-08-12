@@ -64,7 +64,7 @@ demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt
 | Component | Requirement |
 |-----------|-------------|
 | GPU | NVIDIA RTX 20-series or newer (FRUC needs Ampere+ with FP16 Tensor Cores) |
-| Driver | 570+ (with CUDA; `nvidia_drm.modeset=1` for Wayland) |
+| Driver | 570+ (with CUDA; Wayland works out of the box — DRM modeset is enabled by default on modern drivers) |
 | Qt | 6.11+ (Quick, QuickControls, Vulkan) |
 | C++ Compiler | GCC 13+ (C++20) |
 | Build | meson, ninja, CUDA Toolkit (`/opt/cuda`), TensorRT (system `trtexec`, for engine builds) |
@@ -112,7 +112,7 @@ tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
 | **RIFE engine ↔ TensorRT** | Engine files embed the exact TRT version that built them — deserialization fails on version mismatch (verified in both directions) | Rebuild the engine with your system TRT (`bash tests/fruc/build_rife_full_engine.sh`), or install a matching TRT. Tarball users: engine + bundled TRT ship together and are self-consistent. The VFX SDK's own TRT 10 libs coexist with RIFE's TRT 11 in one process (RTLD_LOCAL isolation) — nothing to do |
 | **Qt** | Hard requirement ≥ 6.11 (QML/QuickControls features used) | No fallback — upgrade the system Qt |
 | **GPU** | VSR needs RTX 20+; FRUC needs Ampere+ (FP16 Tensor Cores) | Older GPUs: VSR works, interpolation degrades to passthrough |
-| **Driver** | 570+ for VFX; `nvidia_drm.modeset=1` for Wayland | Upgrade, or pin an older VFX wheel |
+| **Driver** | 570+ for VFX; Wayland needs no kernel parameters on modern drivers (modeset on by default) | Upgrade, or pin an older VFX wheel |
 
 **Pinning a VFX SDK version** — `install.sh` always fetches the **latest** `nvidia-vfx` wheel from PyPI. If the default doesn't work with your setup (e.g. driver too old), you are not forced to use it:
 
