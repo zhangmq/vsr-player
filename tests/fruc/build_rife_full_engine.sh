@@ -22,7 +22,18 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ONNX="$HERE/../../build/tests/fruc/rife_full_fp16_all.onnx"
+# 源 ONNX：third_party/rife/（资产目录，GPL-3.0 vs-mlrt 来源）；缺失时
+# 回退 build 树（旧布局）或提示先转换（tests/fruc/convert_rife_onnx_fp16.py）
+ONNX="${RIFE_ONNX:-$HERE/../../third_party/rife/rife_v4.26_v2_fp16_all.onnx}"
+if [ ! -f "$ONNX" ]; then
+    ONNX="$HERE/../../build/tests/fruc/rife_full_fp16_all.onnx"
+fi
+if [ ! -f "$ONNX" ]; then
+    echo "✗ ONNX 缺失：$ONNX" >&2
+    echo "  获取 rife_v4.26 v2 变体（vs-mlrt external-models rife_v4.26.7z），" >&2
+    echo "  转换: tests/fruc/convert_rife_onnx_fp16.py <src> rife_v4.26_v2_fp16_all.onnx all" >&2
+    exit 1
+fi
 OUT="$HERE/../../build/tests/fruc/rife_full_fp16.engine"
 HWCOMPAT=on
 POS=()
