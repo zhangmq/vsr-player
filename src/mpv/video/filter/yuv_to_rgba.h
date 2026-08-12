@@ -3,8 +3,8 @@
 
 #include <cuda.h>
 #include <stdbool.h>
-#include "mp_image.h"    // struct mp_image_params
-#include "csputils.h"    // pl_color_system / pl_color_levels / mp_csp_guess_colorspace
+#include "video/mp_image.h"    // struct mp_image_params
+#include "video/csputils.h"    // pl_color_system / pl_color_levels / mp_csp_guess_colorspace
 
 enum yuv_matrix {
     YUV_MATRIX_BT601,
