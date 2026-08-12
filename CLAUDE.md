@@ -194,12 +194,14 @@ avcodec_open2(codec_ctx, codec, nullptr);
 
 实测（610.57.04，CachyOS）：**无需任何内核参数**。cmdline 与 modprobe.d 均无 `nvidia_drm.modeset` 配置，`VK_KHR_wayland_surface` 正常可用（revision 6）——现代 NVIDIA 驱动（555+ 世代）默认启用 DRM modeset。旧断言"必须 cmdline modeset=1 / 否则 `VK_FALSE`"为过时信息（老驱动默认 modeset=0 时的情形），已修正。
 
-### Wayland embedding
+### 渲染/嵌入（vo=libmpv，无 Wayland VO 嵌入）
 
-mpv `--wid` only works on X11. For native Wayland embedding, we patch mpv's
-Wayland VO to accept an external `wl_surface*` from Qt, creating a subsurface
-instead of a toplevel `xdg_surface`. mpv renders its video/OSD surfaces as
-subsurfaces of Qt's main surface — single atomic commit, no tearing.
+播放器以 `vo=libmpv` 运行：`mpv_render_context_render` 渲染到 Qt 侧共享
+Vulkan VkImage（CUDA-Vulkan 共享 device），Qt 场景图合成呈现。**不涉及**
+Wayland VO / subsurface 嵌入——曾记录"patch Wayland VO 接受外部
+wl_surface、做 subsurface 嵌入"，经查证为幻觉：仓库无 wl_surface 传递
+代码（wayland_common.c 为上游文件），client 全走 libmpv render API，
+纯 Wayland 环境（无 X11）实测正常。
 
 ### VSRProcessor — Full Dependency Chain
 
