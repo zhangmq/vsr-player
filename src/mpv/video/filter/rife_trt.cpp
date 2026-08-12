@@ -11,8 +11,8 @@
 // dlsym is needed. NvInfer.h is used at compile time for types/vtable layout.
 //
 // Engines are dynamic-shape full builds ([1,7,PH,PW] in, [1,3,PH,PW] out,
-// FP16) — shapes and dtype are read from the engine file itself. Legacy
-// fixed-shape engines are still accepted.
+// FP16) — shapes and dtype are read from the engine file itself. Fixed-shape
+// engines (legacy lite/512 builds) are rejected at load.
 #include <cstdio>
 #include <dlfcn.h>
 #include <fstream>
@@ -130,27 +130,22 @@ struct rife_engine *rife_engine_load(const char *path, rife_log_fn log)
     }
     e->in_c = d_in.d[1];
     e->half = e->engine->getTensorDataType("input") == nvinfer1::DataType::kHALF;
-    if (d_in.d[2] == -1) {
-        // dynamic: buffers sized at profile max; current shape starts at opt
-        nvinfer1::Dims mx = e->engine->getProfileShape(
-            "input", 0, nvinfer1::OptProfileSelector::kMAX);
-        nvinfer1::Dims op = e->engine->getProfileShape(
-            "input", 0, nvinfer1::OptProfileSelector::kOPT);
-        e->max_ph = mx.d[2];
-        e->max_pw = mx.d[3];
-        e->ph = op.d[2];
-        e->pw = op.d[3];
-    } else {
-        // fixed-shape engine (legacy builds): dims are both current and max
-        if (d_in.d[2] != d_out.d[2] || d_in.d[3] != d_out.d[3]) {
-            if (log) log(2, "rife_trt: unexpected engine shape (want [1,C,PH,PW]/[1,3,PH,PW])");
-            dlclose(e->dl);
-            delete e;
-            return nullptr;
-        }
-        e->max_ph = e->ph = d_in.d[2];
-        e->max_pw = e->pw = d_in.d[3];
+    if (d_in.d[2] != -1) {
+        if (log) log(2, "rife_trt: fixed-shape engine not supported "
+                        "(want dynamic [1,C,-1,-1])");
+        dlclose(e->dl);
+        delete e;
+        return nullptr;
     }
+    // dynamic: buffers sized at profile max; current shape starts at opt
+    nvinfer1::Dims mx = e->engine->getProfileShape(
+        "input", 0, nvinfer1::OptProfileSelector::kMAX);
+    nvinfer1::Dims op = e->engine->getProfileShape(
+        "input", 0, nvinfer1::OptProfileSelector::kOPT);
+    e->max_ph = mx.d[2];
+    e->max_pw = mx.d[3];
+    e->ph = op.d[2];
+    e->pw = op.d[3];
     e->in_elems = e->in_c * e->max_ph * e->max_pw;
     e->out_elems = 3 * e->max_ph * e->max_pw;
     size_t in_bytes = e->in_elems * (e->half ? 2 : 4);

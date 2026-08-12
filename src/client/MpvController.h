@@ -50,8 +50,8 @@ public:
     bool propertyFlag(const char *name);
     std::string propertyString(const char *name);
     bool setPropertyString(const char *name, const std::string &value);
-    bool setPropertyDouble(const char *name, double value);
-    bool setPropertyFlag(const char *name, bool value);
+    // 注意：FLAG/DOUBLE 同步 set（setPropertyFlag/setPropertyDouble）已删——
+    // 405e7fb 起一律走下方 Async 版本（主线程同步 set 会与解码 DR 分配互等死锁）
 
     // ── Async property set / command (no core-lock blocking) ──────────
     /// 主线程安全、立即返回：请求投递到 mpv 核心队列异步执行。

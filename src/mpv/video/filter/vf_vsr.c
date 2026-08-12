@@ -585,33 +585,8 @@ static bool ensure_yuv_converter(struct mp_filter *f, struct priv *p,
     return true;
 }
 
-// ── Color matrix helpers ───────────────────────────────────────────────────
-
-static enum yuv_matrix matrix_from_repr(struct mp_image_params *p)
-{
-    if (p->repr.sys == PL_COLOR_SYSTEM_UNKNOWN) {
-        enum pl_color_system guessed = mp_csp_guess_colorspace(p->w, p->h);
-        switch (guessed) {
-        case PL_COLOR_SYSTEM_BT_709:     return YUV_MATRIX_BT709;
-        case PL_COLOR_SYSTEM_BT_2020_NC:
-        case PL_COLOR_SYSTEM_BT_2020_C:  return YUV_MATRIX_BT2020;
-        default:                         return YUV_MATRIX_BT601;
-        }
-    }
-    switch (p->repr.sys) {
-    case PL_COLOR_SYSTEM_BT_709:     return YUV_MATRIX_BT709;
-    case PL_COLOR_SYSTEM_BT_2020_NC:
-    case PL_COLOR_SYSTEM_BT_2020_C:
-    case PL_COLOR_SYSTEM_BT_2100_PQ:
-    case PL_COLOR_SYSTEM_BT_2100_HLG: return YUV_MATRIX_BT2020;
-    default:                          return YUV_MATRIX_BT601;
-    }
-}
-
-static enum yuv_range range_from_levels(enum pl_color_levels levels)
-{
-    return (levels == PL_COLOR_LEVELS_FULL) ? YUV_RANGE_FULL : YUV_RANGE_LIMITED;
-}
+// ── Color matrix helpers（matrix_from_repr/range_from_levels 共享实现
+//    在 yuv_to_rgba.h——单一事实源）──────────────────────────────────
 
 // ── f_process ──────────────────────────────────────────────────────────────
 
