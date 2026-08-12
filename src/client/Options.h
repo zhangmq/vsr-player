@@ -18,8 +18,6 @@ struct Options {
     // 插帧：正常模式 "off"|"30"|"40"|"60"（目标 fps）；benchmark 模式
     // "2"|"3"|"4"（倍率硬跑，测设备能力）。同一选项，语义随模式。
     std::string fruc;
-    // 插帧模型：""|"lite"（默认）|"full"（RIFE 4.25 full，启动时固定选择）
-    std::string rife_model;
     std::vector<std::pair<std::string, std::string>> passthrough;  // (key, value) from `--`
     std::string video_file;
     std::string lang;           // UI language override (e.g. "zh_CN", "en"); empty = system locale

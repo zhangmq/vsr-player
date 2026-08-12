@@ -10,8 +10,9 @@
 // (IRuntime/ICudaEngine/IExecutionContext) is vtable-based, so no further
 // dlsym is needed. NvInfer.h is used at compile time for types/vtable layout.
 //
-// Engines are fixed-shape RIFE lite builds ([1,11,PH,PW] in, [1,3,PH,PW] out,
-// FP16) — shapes and dtype are read from the engine file itself.
+// Engines are dynamic-shape full builds ([1,7,PH,PW] in, [1,3,PH,PW] out,
+// FP16) — shapes and dtype are read from the engine file itself. Legacy
+// fixed-shape engines are still accepted.
 #include <cstdio>
 #include <dlfcn.h>
 #include <fstream>
@@ -116,8 +117,8 @@ struct rife_engine *rife_engine_load(const char *path, rife_log_fn log)
         return nullptr;
     }
 
-    // Read dims/dtype from the plan. Dynamic-shape engines (full variant,
-    // built with min<max profile) report -1 — use the profile max for buffers.
+    // Read dims/dtype from the plan. Dynamic-shape engines (built with
+    // min<max profile) report -1 — use the profile max for buffers.
     nvinfer1::Dims d_in = e->engine->getTensorShape("input");
     nvinfer1::Dims d_out = e->engine->getTensorShape("output");
     if (d_in.nbDims != 4 || d_out.nbDims != 4 ||
@@ -140,7 +141,7 @@ struct rife_engine *rife_engine_load(const char *path, rife_log_fn log)
         e->ph = op.d[2];
         e->pw = op.d[3];
     } else {
-        // fixed-shape engine (lite matrix): dims are both current and max
+        // fixed-shape engine (legacy builds): dims are both current and max
         if (d_in.d[2] != d_out.d[2] || d_in.d[3] != d_out.d[3]) {
             if (log) log(2, "rife_trt: unexpected engine shape (want [1,C,PH,PW]/[1,3,PH,PW])");
             dlclose(e->dl);

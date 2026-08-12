@@ -18,7 +18,7 @@ struct rife_context {
 
     // full-frame kernels (nvrtc)
     CUmodule   module;
-    CUfunction assemble_fn;    // rgba staging pair → 11ch FP16 engine input
+    CUfunction assemble_fn;    // rgba staging pair → 7ch FP16 engine input
                                //   (reflect pad + grid channels + normalize)
     CUfunction convert_fn;     // 3ch FP16 engine output → RGBA u8
     CUfunction copy_fn;        // rgba_a → out (scene-change pass-through)
@@ -36,13 +36,9 @@ struct rife_context {
     CUdeviceptr mae_partial;   // 256 floats, scene-change block sums
     bool        mae_partial_alloc;
 
-    // padded engine dims (PH/PW, multiples of 128 — lite alignment)
+    // engine dims (PH/PW = video size as-is; dynamic single engine, 7ch
+    // input: RGB×2 + t — grid generated inside the model)
     int ph, pw;
-
-    // model variant: 0=lite, 1=full. Both are dynamic-shape single engines
-    // (7ch input: RGB×2 + t — grid generated inside the models). Selects the
-    // engine filename (rife_lite_fp16.engine / rife_full_fp16.engine).
-    int variant;
 
     bool configured;
 
@@ -50,9 +46,9 @@ struct rife_context {
 };
 
 // ctx must be current; loads engine (searches RIFE_LIBDIR etc), compiles kernels.
-// ph/pw = video size as-is (both variants: dynamic engine set_shape).
+// ph/pw = video size as-is (dynamic engine set_shape).
 bool rife_init(struct rife_context *c, CUcontext ctx, CUstream stream,
-               int ph, int pw, int variant, struct mp_log *log);
+               int ph, int pw, struct mp_log *log);
 void rife_destroy(struct rife_context *c);
 
 // Reallocate staging buffers on frame-size change (engine dims unchanged —

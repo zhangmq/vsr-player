@@ -5,7 +5,7 @@
 // filter degrades to passthrough.
 //
 // Zero-copy design: the engine owns device buffers (d_in/d_out); the
-// assemble kernel in rife_proc.c writes the 11-channel full-frame input
+// assemble kernel in rife_proc.c writes the 7-channel full-frame input
 // directly into rife_engine_input() and the convert kernel reads the output
 // from rife_engine_output() — no H2D/D2H per frame.
 #ifndef RIFE_TRT_H
@@ -23,10 +23,11 @@ struct rife_engine;
 typedef void (*rife_log_fn)(int severity, const char *msg);
 
 // Load engine from `path` (serialized plan file). Returns NULL on failure.
-// Input/output shapes and dtypes are read from the engine itself (fixed
-// shape engines built by build_rife_lite_engine.sh: [1,11,PH,PW] in /
-// [1,3,PH,PW] out, FP16). Device buffers are allocated on the CUDA context
-// current at load time — the caller must push its context before calling.
+// Input/output shapes and dtypes are read from the engine itself (dynamic
+// [1,7,PH,PW] in / [1,3,PH,PW] out, FP16 — built by
+// build_rife_full_engine.sh). Device buffers are allocated on the CUDA
+// context current at load time — the caller must push its context before
+// calling.
 struct rife_engine *rife_engine_load(const char *path, rife_log_fn log);
 
 // Run inference on the current input buffer contents. `stream` must belong
@@ -35,13 +36,13 @@ struct rife_engine *rife_engine_load(const char *path, rife_log_fn log);
 bool rife_engine_run(struct rife_engine *e, void *stream);
 
 // Device buffer access (for assemble/convert kernels). Ownership stays with
-// the engine. Input is 11×PH×PW, output 3×PH×PW (FP16 elements).
+// the engine. Input is 7×PH×PW, output 3×PH×PW (FP16 elements).
 void *rife_engine_input(struct rife_engine *e);
 void *rife_engine_output(struct rife_engine *e);
 
-// Engine spatial dims. Fixed-shape engine: the built padded size (video W/H
-// rounded up to 128). Dynamic-shape engine (full variant): the current input
-// shape (set via rife_engine_set_shape, initial = profile opt).
+// Engine spatial dims. Dynamic-shape engine: the current input shape (set
+// via rife_engine_set_shape, initial = profile opt). Legacy fixed-shape
+// engines report their built dims.
 int rife_engine_height(struct rife_engine *e);   // PH
 int rife_engine_width(struct rife_engine *e);    // PW
 
@@ -50,9 +51,9 @@ int rife_engine_width(struct rife_engine *e);    // PW
 int rife_engine_max_height(struct rife_engine *e);
 int rife_engine_max_width(struct rife_engine *e);
 
-// Set the input shape for dynamic-shape engines (full variant). Buffers are
-// allocated at profile max at load time, so no reallocation happens here.
-// Returns false when h/w exceed the profile max (caller degrades).
+// Set the input shape for dynamic-shape engines. Buffers are allocated at
+// profile max at load time, so no reallocation happens here. Returns false
+// when h/w exceed the profile max (caller degrades).
 bool rife_engine_set_shape(struct rife_engine *e, int h, int w);
 
 // FP16 engine? (all rife engines are; used to pick the input element size)

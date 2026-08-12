@@ -110,9 +110,6 @@ public:
     /// a hard multiplier ("2"/"3"/"4", 0=off) — no passthrough, no persistence.
     /// Normal mode: "off" | "30" | "40" | "60" (target fps, persists fallback).
     void initFruc(const std::string &fruc, bool benchmark);
-    /// 插帧模型（启动时固定）：""|"lite" 默认 |"full"（RIFE 4.25 full）。
-    /// 只影响 vfOption() 里 rife 段的 variant 参数——启动后不可切换。
-    void initRifeModel(const std::string &model);
 
     void setGpuName(const QString &name);
     /// 持久化：启动时读（须在 initVsr 前调用——scale/quality/denoise
@@ -389,7 +386,6 @@ private:
     std::atomic<int> denoise_{-1};
     std::atomic<double> scale_{0.0};
     std::atomic<int> frucFps_{-1};      // -1 off | 2/3/4 倍率 | 30/40/60 target
-    std::string rifeModel_;             // ""|"lite"|"full"（vf 链 variant 参数）
                                         //（倍率=benchmark 强制；帧率=正常模式，
                                         // 数值自区分，正常/benchmark 共用）
     std::mutex frucStatusMtx_;

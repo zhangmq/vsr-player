@@ -495,14 +495,6 @@ void PlayerViewModel::initFruc(const std::string &fruc, bool benchmark) {
     frucFps_ = benchmark ? -1 : persistFruc_;
 }
 
-void PlayerViewModel::initRifeModel(const std::string &model) {
-    // 启动时固定的引擎变体：""|"full" = 默认 full（统一主引擎——lite 的
-    // FP16 连续推理退化实证 2026-08-12，退役）；"lite" 显式选择才用。
-    // 只影响 vfOption() 的 rife variant 参数——vf 链在播放首文件前已定，
-    // 运行时不可切换（用户明确：命令行启动时选择）。
-    rifeModel_ = (model == "lite") ? "lite" : "full";
-}
-
 bool PlayerViewModel::parseScale(const std::string &s, double *out) {
     if (s == "off")      { *out = -1.0; return true; }
     if (s == "auto" || s.empty()) { *out = 0.0; return true; }
@@ -1307,15 +1299,14 @@ std::string PlayerViewModel::vfOption() const {
     // adaptive=yes）。
     std::string vf = "@hwup:hwup,";
     int fruc = frucFps_.load();
-    std::string variant = (rifeModel_ == "full") ? ":variant=full" : "";
     if (fruc == 2 || fruc == 3 || fruc == 4) {
         vf += "@rife:rife:fps=off:scale=" + std::to_string(fruc) +
-              ":adaptive=no" + variant + ",";
+              ":adaptive=no,";
     } else if (fruc > 0) {
         vf += "@rife:rife:fps=" + std::to_string(fruc) +
-              ":scale=off:adaptive=yes" + variant + ",";
+              ":scale=off:adaptive=yes,";
     } else {
-        vf += "@rife:rife:fps=off:scale=off:adaptive=yes" + variant + ",";
+        vf += "@rife:rife:fps=off:scale=off:adaptive=yes,";
     }
     // scale: OPT_FLOAT 仅 strtod——"auto"/"off"/"4/3" 必须换算为数字
     double s = scale_.load();

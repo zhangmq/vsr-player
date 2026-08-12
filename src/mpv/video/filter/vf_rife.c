@@ -16,9 +16,9 @@
 // passthrough once (MP_WARN), until reset/option change. Benchmark mode
 // (scale > 0) never passes through — it measures the device ceiling.
 //
-// The engine (rife_lite_fp16_{PH}x{PW}.engine, fixed full-frame FP16 shape
-// padded to 128 multiples) is loaded once and kept across seeks — TRT
-// execution contexts are stateless between enqueues.
+// The engine (rife_full_fp16.engine, dynamic full-frame FP16 shape) is
+// loaded once and kept across seeks — TRT execution contexts are stateless
+// between enqueues.
 //
 // Scene changes (frame-pair MAE > RIFE_SC_MAE) pass the previous frame
 // through instead of interpolating — vs-mlrt SceneChangeNext convention
@@ -50,7 +50,6 @@ struct vf_rife_opts {
     int  fps;       // -1=off, 0=auto (2×src), [1,120] target fps
     int  scale;     // benchmark multiplier: 0=off, 2/3/4 (overrides fps)
     bool adaptive;  // normal-mode cost-based passthrough
-    int  variant;   // model: 0=lite (7ch, FP16 连续推理退化——退役), 1=full (7ch)
 };
 
 #define OPT_BASE_STRUCT struct vf_rife_opts
@@ -139,14 +138,11 @@ static const struct m_option vf_opts_fields[] = {
     {"scale",    OPT_CHOICE(scale, {"off", 0}, {"2", 2}, {"3", 3}, {"4", 4}),
                  M_RANGE(0, 4)},
     {"adaptive", OPT_BOOL(adaptive)},
-    {"variant",  OPT_CHOICE(variant, {"lite", 0}, {"full", 1})},
     {0}
 };
 
 static const struct vf_rife_opts vf_rife_opts_def = {
-    .fps = -1, .scale = 0, .adaptive = true, .variant = 1,   // full 默认
-                              //（lite FP16 连续推理 ~6 次后输出 NaN/错误值——
-                              // 2026-08-12 实证：与输入/路径无关，full 无此问题）
+    .fps = -1, .scale = 0, .adaptive = true,
 };
 
 // ── priv ───────────────────────────────────────────────────────────────
@@ -642,7 +638,7 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
     // scene change detection (mean |prev-cur| on the staging pair; syncs the
     // stream for the host read — that sync doubles as this pair's early
     // boundary: the staging convert is complete before any emit below).
-    // NaN engine outputs (lite model numerical boundary on some pairs) are
+    // NaN engine outputs (model numerical boundary on some pairs) are
     // handled in the convert kernel — it copies the prev pixel instead of
     // emitting black, so no per-pair still detection is needed here.
     bool scene = rife_scene_change(&p->eng, p->cuda_stream, RIFE_SC_MAE);
@@ -944,12 +940,12 @@ static void f_process(struct mp_filter *f)
             return;
         }
         cuCtxPushCurrent(p->cuda_ref->ctx);
-        // engine shape = video size as-is — both variants are dynamic-shape
-        // single engines (official 7ch models handle any resolution internally)
+        // engine shape = video size as-is — dynamic-shape single engine
+        // (official 7ch model handles any resolution internally)
         int ph = cur->h;
         int pw = cur->w;
         p->engine_ok = rife_init(&p->eng, p->cuda_ref->ctx, p->cuda_stream,
-                                 ph, pw, p->opts->variant, f->log);
+                                 ph, pw, f->log);
         if (p->engine_ok)
             p->engine_ok = rife_reconfig(&p->eng, cur->w, cur->h, p->cuda_stream);
         cuCtxPopCurrent(NULL);
