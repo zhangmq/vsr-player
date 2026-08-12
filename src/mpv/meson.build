@@ -354,8 +354,15 @@ link_flags += cc.get_supported_link_arguments(['-Wl,--nxcompat,--no-seh,--dynami
                                                '-Wl,-z,noexecstack'])
 
 # RPATH for VFX SDK shared libraries (dlopen transitive deps)
-link_flags += ['-Wl,--disable-new-dtags',
-               '-Wl,-rpath,$ORIGIN/../../../third_party/nvvfx/lib']
+# dist-rpath option：发布打包时用 $ORIGIN 相对路径指向捆绑 lib（build_release.sh
+# 传 -Ddist-rpath='$ORIGIN/../lib/vsr-player'）；空 = 开发默认（build 树 VFX 路径）
+dist_rpath = get_option('dist-rpath')
+if dist_rpath != ''
+    link_flags += ['-Wl,--disable-new-dtags', '-Wl,-rpath,' + dist_rpath]
+else
+    link_flags += ['-Wl,--disable-new-dtags',
+                   '-Wl,-rpath,$ORIGIN/../../../third_party/nvvfx/lib']
+endif
 
 features += {'build-date': get_option('build-date')}
 if not features['build-date']

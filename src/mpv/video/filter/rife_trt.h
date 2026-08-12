@@ -41,8 +41,7 @@ void *rife_engine_input(struct rife_engine *e);
 void *rife_engine_output(struct rife_engine *e);
 
 // Engine spatial dims. Dynamic-shape engine: the current input shape (set
-// via rife_engine_set_shape, initial = profile opt). Legacy fixed-shape
-// engines report their built dims.
+// via rife_engine_set_shape, initial = profile opt).
 int rife_engine_height(struct rife_engine *e);   // PH
 int rife_engine_width(struct rife_engine *e);    // PW
 

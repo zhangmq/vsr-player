@@ -221,15 +221,6 @@ bool MpvController::setPropertyString(const char *name, const std::string &value
     return mpv_set_property_string(mpv_, name, value.c_str()) >= 0;
 }
 
-bool MpvController::setPropertyDouble(const char *name, double value) {
-    return mpv_set_property(mpv_, name, MPV_FORMAT_DOUBLE, &value) >= 0;
-}
-
-bool MpvController::setPropertyFlag(const char *name, bool value) {
-    int v = value ? 1 : 0;
-    return mpv_set_property(mpv_, name, MPV_FORMAT_FLAG, &v) >= 0;
-}
-
 // ── Async property set / command ───────────────────────────────────────
 // 主线程调用不阻塞：请求投递到 mpv 核心队列异步执行。参数在调用时
 // 同步复制（mpv_set_property_async → m_option_copy；mpv_command_async

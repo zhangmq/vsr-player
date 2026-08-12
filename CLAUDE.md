@@ -92,17 +92,19 @@ A Linux desktop video player that applies real-time AI super-resolution to video
 ├────────────────────────────────────────────────┤
 │  mpv internal pipeline                         │
 │                                                │
-│  demux → decode → [vf_vsr] → VO (libmpv)      │
-│                 ↑                              │
-│            VFX SDK + CUDA                      │
-│                                                │
-│  mpv manages: A/V sync, timing, seek, VO       │
-└────────────────────────────────────────────────┘
+│  demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv)      │
+│                ↑            ↑              ↑                          │
+│           SW→CUDA upload   RIFE (TRT)    VFX SDK + CUDA               │
+│                                                                       │
+│  mpv manages: A/V sync, timing, seek, VO                              │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
+- vf_hwup: SW 帧（软解）上传 CUDA，下游滤镜只处理硬件帧
+- vf_rife: RIFE 插帧（TensorRT），超分之前以源分辨率运行（fps/scale/adaptive 选项）
 - vf_vsr: custom mpv video filter, receives `mp_image`, upscales via CUDA+VFX SDK, outputs upscaled `mp_image`
 - Frontend reuses existing QML UI components where possible
-- VFX SDK bundles ~1.1GB of .so files, shipped alongside the application
+- VFX SDK bundles ~1.1GB of .so files；**不随发布 tarball 分发**（SLA 限制再分发，install.sh 引导从 PyPI 官方 nvidia-vfx wheel 获取）
 
 ## Repository Structure
 
@@ -111,7 +113,8 @@ A Linux desktop video player that applies real-time AI super-resolution to video
 ```
 src/
 ├── mpv/                  # mpv patch 覆盖层（镜像 mpv 树，只含修改文件）
-│   ├── video/filter/     #    vf_vsr.c、vsr_proc.c、yuv_to_rgba.c（新增）
+│   ├── video/filter/     #    vf_vsr.c、vsr_proc.c、yuv_to_rgba.c、vf_hwup.c、
+│   │                     #    vf_rife.c、rife_proc.c、rife_trt.cpp（新增）
 │   ├── video/out/        #    vo_libmpv/wayland/x11/vulkan 补丁 + libmpv_vk.c
 │   ├── filters/ options/ #    上游文件补丁（user_filters、f_output_chain…）
 │   └── meson.build       #    上游 meson.build 补丁（vf_vsr 注册等）
@@ -142,14 +145,21 @@ docs/
 
 scripts/
 ├── build_mpv.sh              # 合并构建：cp third_party/mpv → build/mpv，覆盖 src/mpv，meson 构建
+│                             #   （MPV_BUILD_DIR/DIST_RPATH/BUILDTYPE 环境变量可覆盖——dist 构建用）
+├── build_release.sh          # 发布构建：mpv/client dist（release + $ORIGIN RPATH）→ 依赖库收集
+│                             #   → ampere+ engine → tarball（build/vsr-player-<ver>-*.tar.xz）
 ├── check-deps.sh             # 依赖检查（third_party + 构建工具）
-├── install.sh                # GUI 客户端安装到 ~/.local（二进制 + VFX libs + 字体 + 翻译）
-├── install_mpv_local.sh      # 独立 mpv-vsr CLI 安装到 ~/.local
-└── mpv-vsr-wrapper.py        # CLI 包装脚本（src/scripts/）
+├── install.sh                # 用户端安装（tarball/dev 双场景自适应）：二进制 + 捆绑库 + engine
+│                             #   + 字体 + 翻译 → ~/.local；VFX 缺失时 curl 从 PyPI 官方
+│                             #   nvidia-vfx wheel 纯下载提取（环境纯净：不调 pip 不 sudo 不改配置）
+├── install_mpv_local.sh      # 独立 mpv-vsr CLI 安装到 ~/.local（开发者本地用；wrapper 配套）
+└── mpv-vsr-wrapper.py        # CLI 包装脚本（src/scripts/，开发者本地 Chrome 插件配套，不进分发）
 
 tests/
 ├── verify_frames.sh          # 视觉问题数值化验证（baseline/test 两阶段 PSNR）
-└── fruc/                     # FRUC 离线实验（official/ 官方 OF SDK 5.0.7 源码只读 + fruc_of_flow/fruc_of_interp 官方模式引擎 + run_*.py 管线）
+└── fruc/                     # FRUC 实验与引擎构建（build_rife_full_engine.sh 用系统 trtexec 构建
+                              #   动态 shape ampere+ 引擎；convert_rife_onnx_fp16.py 4.26 ONNX 转换；
+                              #   run_rife.py ORT 真值对比；official/ OF SDK 调研源码只读）
 ```
 
 ## Key Findings

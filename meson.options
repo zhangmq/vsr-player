@@ -1,0 +1,8 @@
+# vsr-player client options
+# dist-rpath：发布打包时 libmpv/依赖库走 $ORIGIN 相对捆绑目录
+# （build_release.sh 传 -Ddist-rpath='$ORIGIN/../lib/vsr-player'）；空 = 开发默认
+# （build 树 libmpv，见 src/client/meson.build）
+option('dist-rpath', type: 'string', value: '',
+       description: 'Distribution RPATH for bundled libs ($ORIGIN-relative; empty = dev default)')
+option('mpv-build-dir', type: 'string', value: '',
+       description: 'mpv build tree for libmpv linking; empty = build/mpv/_build')

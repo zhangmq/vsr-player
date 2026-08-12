@@ -1,5 +1,5 @@
 // rife_proc.c — RIFE inference plumbing: engine file location, full-frame
-// kernels (nvrtc), per-frame interpolation. Model: rife_v4.25 full
+// kernels (nvrtc), per-frame interpolation. Model: rife_v4.26 v2
 // (7ch: RGB×2 + t — grid generated inside the model), dynamic-shape FP16
 // TRT engine ([1,7,PH,PW] in / [1,3,PH,PW] out).
 //

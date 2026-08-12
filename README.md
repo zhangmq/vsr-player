@@ -16,7 +16,8 @@ This project calls the Video Effects SDK C API directly from a player. This is n
 
 - **AI Super-Resolution** — real-time 2×/3×/4× upscaling via Tensor Cores (mpv video filter `vf_vsr`)
 - **AI Denoising** — configurable denoise pass (Low to Ultra), works standalone at scale=1
-- **NVDEC Hardware Decode** — AV1, H.264, HEVC GPU decoding (software fallback)
+- **AI Frame Interpolation (FRUC)** — RIFE-based motion interpolation to 30/40/60 fps or any target (mpv video filter `vf_rife`, TensorRT, runs before VSR at source resolution)
+- **NVDEC Hardware Decode** — AV1, H.264, HEVC GPU decoding (software fallback; SW frames auto-uploaded via `vf_hwup`)
 - **Vulkan Rendering** — CUDA-Vulkan shared device, mpv renders into the Qt scene graph
 - **QML Overlay UI** — auto-hide controls (bottom hover zone driven), playlist with virtualized list, OSD info panel
 - **Adaptive Scale** — auto-selects upscale factor based on viewport size
@@ -40,12 +41,14 @@ This project calls the Video Effects SDK C API directly from a player. This is n
 ## Architecture
 
 ```
-demux → decode → [vf_vsr] → VO (libmpv) → Qt scene graph
-                   ↑
-              VFX SDK + CUDA
+demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt scene graph
+                ↑            ↑               ↑
+           SW→CUDA upload   RIFE (TRT)    VFX SDK + CUDA
 ```
 
 - mpv manages: demux, decode, A/V sync, timing, seek, VO
+- `vf_hwup`: SW frames (software decode) uploaded to CUDA so downstream filters always see hardware frames
+- `vf_rife` (patch overlay `src/mpv/video/filter/vf_rife.c`): RIFE frame interpolation (TensorRT), runs at source resolution before upscaling
 - `vf_vsr` (patch overlay `src/mpv/video/filter/vf_vsr.c`): receives `mp_image`, upscales via CUDA+VFX SDK, outputs upscaled `mp_image`
 - Frontend: Qt 6 + QML (`src/client/`) — MpvController (libmpv wrapper), PlayerViewModel (single source of truth), Vulkan shared device
 - mpv patch scheme: `third_party/mpv` (pristine 0.41) + `src/mpv` overlay, merged by `scripts/build_mpv.sh`
@@ -54,11 +57,11 @@ demux → decode → [vf_vsr] → VO (libmpv) → Qt scene graph
 
 | Component | Requirement |
 |-----------|-------------|
-| GPU | NVIDIA RTX 20-series or newer |
+| GPU | NVIDIA RTX 20-series or newer (FRUC needs Ampere+ with FP16 Tensor Cores) |
 | Driver | 570+ (with CUDA; `nvidia_drm.modeset=1` for Wayland) |
-| Qt | 6.8+ (Quick, QuickControls, Vulkan) |
+| Qt | 6.11+ (Quick, QuickControls, Vulkan) |
 | C++ Compiler | GCC 13+ (C++20) |
-| Build | meson, ninja, CUDA Toolkit (`/opt/cuda`) |
+| Build | meson, ninja, CUDA Toolkit (`/opt/cuda`), TensorRT (system `trtexec`, for engine builds) |
 
 Third-party SDKs (NvVFX headers/runtime, MDI icon font, mpv source) are **not** bundled in the repo — see [docs/third-party-setup.md](docs/third-party-setup.md) to prepare `third_party/`.
 
@@ -69,6 +72,18 @@ Third-party SDKs (NvVFX headers/runtime, MDI icon font, mpv source) are **not** 
 ninja -C build                  # build the Qt client
 ./build/src/client/vsr-player <video-or-directory>
 ```
+
+## Distribution (release tarball)
+
+```bash
+./scripts/build_release.sh      # → build/vsr-player-<ver>-linux-x86_64.tar.xz (~316 MB)
+tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
+./install.sh                    # installs to ~/.local (bin + lib/vsr-player), no sudo
+```
+
+- Bundled: libmpv + ffmpeg ×7 + CUDA runtime + TensorRT 11 + RIFE engine (ampere+, one engine for 30/40/50-series GPUs) + fonts/translations/licenses
+- **Not bundled**: VFX SDK (~1.1 GB) — NVIDIA SLA restricts redistribution; `install.sh` offers to fetch it from the official PyPI `nvidia-vfx` wheel (curl download + extract, no pip install, no system changes), or you can place it in `~/.local/lib/vsr-player/` manually
+- GUI runtime needs Qt ≥ 6.11 from the system; the only hard external dependency is the NVIDIA driver (`libcuda.so.1`)
 
 ## Usage
 
@@ -84,6 +99,7 @@ ninja -C build                  # build the Qt client
 | `--scale` | `off`, `auto`, `2`, `3`, `4` | `auto` | Super-resolution scale |
 | `--quality` | `low`, `medium`, `high`, `ultra` | `high` | Upscale quality |
 | `--denoise` | `off`, `low`, `medium`, `high`, `ultra` | `off` | Denoise quality (applied at scale=1) |
+| `--fruc` | `off`, `30`, `40`, `60`, `2`, `3`, `4` | persisted | Frame interpolation: target fps (30/40/60) or ×multiplier (2/3/4, benchmark mode) |
 | `--no-hwaccel` | — | — | Disable NVDEC, use software decode |
 | `--lang` | e.g. `en`, `zh_CN` | system locale | UI language |
 | `--benchmark` | — | — | Headless throughput measurement (no UI, `all=no` logging) |
@@ -117,23 +133,27 @@ Commands: `play`, `pause`, `stop`, `seek`, `loadfile`, `set-vsr`, `get-vsr`, `qu
 
 ## Standalone mpv-vsr CLI
 
-The patched mpv binary (with the `vf_vsr` filter) is also built and shipped standalone,
+The patched mpv binary (with `vf_vsr` + `vf_rife` + `vf_hwup` filters) is also built and shipped standalone,
 usable as a plain mpv replacement:
 
 ```bash
-./scripts/install_mpv_local.sh     # → ~/.local/bin/mpv-vsr + VFX libs in ~/.local/lib/vsr-player/
-mpv-vsr --vf=vsr:scale=2 video.mkv
+mpv-vsr --hwdec=auto --vf=hwup,rife:fps=60,vsr:scale=2 video.mkv
 ```
+
+Filter chain (left to right): `hwup` (SW→CUDA upload, enables soft-decode path) → `rife` (interpolation, source resolution) → `vsr` (upscaling). Use `--hwdec=nvdec` for hardware decode (then `hwup` is a no-op passthrough).
 
 Filter options:
 
 | Option | Values | Description |
 |--------|--------|-------------|
-| `scale` | `off`, `auto`, `2`, `3`, `4`, ratio (e.g. `4/3`) | Upscale factor; `auto` picks by viewport |
-| `quality` | `low`, `medium`, `high`, `ultra` | VSR inference quality |
-| `denoise` | `off`, `low`, `medium`, `high`, `ultra` | Denoise pass (works at scale=1) |
+| `scale` (vsr) | `off`, `auto`, `2`, `3`, `4`, ratio (e.g. `4/3`) | Upscale factor; `auto` picks by viewport |
+| `quality` (vsr) | `low`, `medium`, `high`, `ultra` | VSR inference quality |
+| `denoise` (vsr) | `off`, `low`, `medium`, `high`, `ultra` | Denoise pass (works at scale=1) |
+| `fps` (rife) | `off`, `auto`, integer 1..120 | Interpolation target fps; `auto` = 2×source |
+| `scale` (rife) | `off`, `2`, `3`, `4` | Benchmark multiplier (no adaptive passthrough) |
+| `adaptive` (rife) | `yes`, `no` | Cost-based passthrough when interpolation is too slow |
 
-Example: `mpv-vsr --vf=vsr:scale=auto,quality=ultra --hwdec=auto video.mkv`
+Example: `mpv-vsr --hwdec=nvdec --vf=rife:fps=60,vsr:scale=auto,quality=ultra video.mkv`
 
 `mpv-vsr-wrapper.py` (browser integration, ff2mpv-style): exports Chrome cookies,
 extracts playlists via yt-dlp (YouTube/Bilibili/Niconico), and launches mpv-vsr.

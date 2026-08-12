@@ -25,10 +25,9 @@ check_cmd() {
     fi
 }
 
-echo "=== third_party/nvvfx/ (VFX SDK headers + runtime, 自行准备) ==="
-check_file "nvvfx/include/nvCVImage.h"
-check_file "nvvfx/include/nvCVStatus.h"
-check_file "nvvfx/include/nvVideoEffects.h"
+# 注：VFX 头文件不需要——vsr_proc.c 用 C 兼容重定义（nvCVImage/nvVideoEffects
+# 结构布局 + dlsym，见 vsr_internal.h）——只需运行时 .so（dlopen）。
+echo "=== third_party/nvvfx/lib (VFX SDK runtime, 自行准备) ==="
 check_file "nvvfx/lib/libnvVFXVideoSuperRes.so"
 check_file "nvvfx/lib/libVideoFX.so"
 check_file "nvvfx/lib/libNVCVImage.so"
@@ -57,9 +56,24 @@ else
 fi
 
 echo ""
+echo "=== RIFE / TensorRT（引擎构建与插帧） ==="
+if command -v trtexec >/dev/null 2>&1; then
+    echo "  ✅ trtexec ($(trtexec --version 2>/dev/null | head -1 | grep -oE 'v[0-9.]+' | head -1))"
+else
+    echo "  ❌ trtexec — MISSING (TensorRT；RIFE 引擎构建用，插帧不可用)"
+    MISSING=1
+fi
+if [ -f /usr/lib/libnvinfer.so.11 ] || ls /usr/lib/libnvinfer.so.11* >/dev/null 2>&1; then
+    echo "  ✅ libnvinfer.so.11 (TensorRT runtime)"
+else
+    echo "  ⚠ libnvinfer.so.11 — 系统 TRT 未检测到（分发 tarball 自带捆绑版，dev 运行需系统 TRT）"
+fi
+
+echo ""
 if [ "$MISSING" -eq 0 ]; then
     echo "All dependencies present."
     echo "Build: ./scripts/build_mpv.sh && ninja -C build"
+    echo "Release: ./scripts/build_release.sh"
 else
     echo ""
     echo "Missing dependencies. See docs/third-party-setup.md for setup instructions."
