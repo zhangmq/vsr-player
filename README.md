@@ -22,7 +22,7 @@ This project calls the Video Effects SDK C API directly from a player. This is n
 - **QML Overlay UI** — auto-hide controls (bottom hover zone driven), playlist with virtualized list, OSD info panel
 - **Adaptive Scale** — auto-selects upscale factor based on viewport size
 - **Playlist & Playback** — directory loading, loop modes, speed control, A/V sync handled by mpv
-- **Remote Control** — JSON IPC over Unix socket; standalone `mpv-vsr` CLI and wrapper script
+- **Remote Control** — JSON IPC over Unix socket; standalone `mpv-vsr` CLI
 
 ## Testing Status
 
@@ -212,6 +212,8 @@ Example: `mpv-vsr --hwdec=nvdec --vf=rife:fps=60,vsr:scale=auto,quality=ultra vi
 
 `mpv-vsr-wrapper.py` (browser integration, ff2mpv-style): exports Chrome cookies,
 extracts playlists via yt-dlp (YouTube/Bilibili/Niconico), and launches mpv-vsr.
+Personal-use tool, not shipped in the release tarball — interested readers are
+welcome to study it on their own.
 
 ## License
 
