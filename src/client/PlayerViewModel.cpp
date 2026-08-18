@@ -477,7 +477,7 @@ void PlayerViewModel::initVsr(const std::string &scale,
 }
 
 void PlayerViewModel::initFruc(const std::string &fruc, bool benchmark) {
-    // 单一字段 frucFps_（-1 off | 2/3/4 倍率 | 30/40/60 目标帧率）——
+    // 单一字段 frucFps_（-1 off | 2/3/4 倍率 | 40/48/60 目标帧率）——
     // benchmark 与正常模式共用一套状态（OSD/ vf 构造不分叉）。
     if (fruc == "2" || fruc == "3" || fruc == "4" ||
         fruc == "40" || fruc == "48" || fruc == "60") {

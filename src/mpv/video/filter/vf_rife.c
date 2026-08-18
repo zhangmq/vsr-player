@@ -4,7 +4,7 @@
 // (interpolates at source resolution). Input: IMGFMT_CUDA frames (NV12/P010);
 // SW frames pass through untouched.
 //
-// Scheduling: a target output frame rate (UI: off/30/40/60, CLI: [1,120],
+// Scheduling: a target output frame rate (UI: off/40/48/60, CLI: [1,120],
 // auto = 2×src) defines an absolute-time output grid. Each source-frame pair
 // (t_prev, t_cur) produces all grid points in (t_prev, t_cur]; grid points that
 // coincide with the source frame emit it as-is, others are interpolated with

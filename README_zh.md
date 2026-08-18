@@ -16,7 +16,7 @@ NVIDIA Video Effects SDK 提供了相同的底层 AI 模型，也有 Linux 版�
 
 - **AI 超分辨率** — Tensor Cores 实时 2×/3×/4× 超分（mpv 视频滤镜 `vf_vsr`）
 - **AI 降噪** — 可配置降噪强度（低至超高），scale=1 时单独生效
-- **AI 插帧（FRUC）** — RIFE 运动插帧至 30/40/60 fps 或任意目标（mpv 视频滤镜 `vf_rife`，TensorRT，在超分之前以源分辨率运行）
+- **AI 插帧（FRUC）** — RIFE 运动插帧至 40/48/60 fps 或任意目标（mpv 视频滤镜 `vf_rife`，TensorRT，在超分之前以源分辨率运行）
 - **NVDEC 硬解码** — AV1、H.264、HEVC GPU 解码（含软解回退；软解帧经 `vf_hwup` 自动上传为 CUDA 帧）
 - **Vulkan 渲染** — CUDA-Vulkan 共享设备，mpv 渲染进 Qt 场景图
 - **QML 叠加 UI** — 底部悬停区域驱动的自动隐藏控件、虚拟化播放列表、OSD 信息面板
@@ -154,7 +154,7 @@ install.sh 从不把任何版本强加给你的系统——一切都在 `~/.loca
 | `--scale` | `off`、`auto`、`2`、`3`、`4` | `auto` | 超分倍率 |
 | `--quality` | `low`、`medium`、`high`、`ultra` | `high` | 超分质量 |
 | `--denoise` | `off`、`low`、`medium`、`high`、`ultra` | `off` | 降噪强度（scale=1 时生效） |
-| `--fruc` | `off`、`30`、`40`、`60`、`2`、`3`、`4` | 持久化 | 插帧：目标帧率（30/40/60）或倍率（2/3/4，benchmark 模式） |
+| `--fruc` | `off`、`40`、`48`、`60`、`2`、`3`、`4` | 持久化 | 插帧：目标帧率（40/48/60）或倍率（2/3/4，benchmark 模式） |
 | `--no-hwaccel` | — | — | 关闭 NVDEC，使用软解 |
 | `--lang` | 如 `en`、`zh_CN` | 系统 locale | 界面语言 |
 | `--benchmark` | — | — | 无 UI 吞吐测量（`all=no` 日志） |

@@ -16,7 +16,7 @@ This project calls the Video Effects SDK C API directly from a player. This is n
 
 - **AI Super-Resolution** — real-time 2×/3×/4× upscaling via Tensor Cores (mpv video filter `vf_vsr`)
 - **AI Denoising** — configurable denoise pass (Low to Ultra), works standalone at scale=1
-- **AI Frame Interpolation (FRUC)** — RIFE-based motion interpolation to 30/40/60 fps or any target (mpv video filter `vf_rife`, TensorRT, runs before VSR at source resolution)
+- **AI Frame Interpolation (FRUC)** — RIFE-based motion interpolation to 40/48/60 fps or any target (mpv video filter `vf_rife`, TensorRT, runs before VSR at source resolution)
 - **NVDEC Hardware Decode** — AV1, H.264, HEVC GPU decoding (software fallback; SW frames auto-uploaded via `vf_hwup`)
 - **Vulkan Rendering** — CUDA-Vulkan shared device, mpv renders into the Qt scene graph
 - **QML Overlay UI** — auto-hide controls (bottom hover zone driven), playlist with virtualized list, OSD info panel
@@ -154,7 +154,7 @@ done
 | `--scale` | `off`, `auto`, `2`, `3`, `4` | `auto` | Super-resolution scale |
 | `--quality` | `low`, `medium`, `high`, `ultra` | `high` | Upscale quality |
 | `--denoise` | `off`, `low`, `medium`, `high`, `ultra` | `off` | Denoise quality (applied at scale=1) |
-| `--fruc` | `off`, `30`, `40`, `60`, `2`, `3`, `4` | persisted | Frame interpolation: target fps (30/40/60) or ×multiplier (2/3/4, benchmark mode) |
+| `--fruc` | `off`, `40`, `48`, `60`, `2`, `3`, `4` | persisted | Frame interpolation: target fps (40/48/60) or ×multiplier (2/3/4, benchmark mode) |
 | `--no-hwaccel` | — | — | Disable NVDEC, use software decode |
 | `--lang` | e.g. `en`, `zh_CN` | system locale | UI language |
 | `--benchmark` | — | — | Headless throughput measurement (no UI, `all=no` logging) |

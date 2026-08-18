@@ -47,7 +47,7 @@
 | `MpvController.cpp` | `mpv_render_context_create`（Vulkan + ADVANCED_CONTROL） | 共享 Qt VkDevice（`VulkanContext.cpp`） |
 | `MpvController.cpp` | `mpv_observe_property` / `mpv_get_property` | 事件线程读属性 → post 主线程更新 viewModel |
 | `MpvController.cpp` | `mpv_set_property_async` / `mpv_command_async` | 主线程异步投递，零阻塞 |
-| `Video.cpp` | `mpv_render_context_render` / `report_swap` / `set_update_callback` | Qt 场景图驱动渲染循环（见 CLAUDE.md Render Loop 模型） |
+| `Video.cpp` | `mpv_render_context_render` / `report_swap` / `set_update_callback` | Qt 场景图驱动渲染循环（请求驱动模型，见 AGENTS.md） |
 | `PlayerViewModel.cpp` | 属性观察器 | video-params / playlist / volume / speed / hwdec-current / path / loop-* 等 |
 | `RpcServer.cpp` | `mpv_command` | JSON IPC（Unix socket）透传命令 |
 

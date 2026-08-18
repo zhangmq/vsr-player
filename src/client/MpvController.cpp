@@ -36,7 +36,7 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
         // N 卡专用应用：直接 NVDEC（CUDA 硬解）。auto-unsafe 会先尝试
         // Vulkan 视频解码（VK_KHR_video_decode_queue）——本驱动探测失败
         // 后 AV1 不回退 nvdec（"Failed to get pixel format" 播放失败），
-        // HEVC 虽有探测错误但回退成功。显式 nvdec 稳定（CLAUDE.md codec
+        // HEVC 虽有探测错误但回退成功。显式 nvdec 稳定（AGENTS.md codec
         // 规则：av1_nvdec/h264_nvdec/hevc_nvdec）。
         mpv_set_option_string(mpv_, "hwdec", "nvdec");
     if (vf_opt && *vf_opt)
