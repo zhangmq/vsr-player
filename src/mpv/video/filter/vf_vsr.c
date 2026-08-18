@@ -222,21 +222,6 @@ struct priv {
     size_t      out_buf_size;
     int         out_w, out_h, out_pitch;
 
-    // ── VSR_TEST_* 帧号 dump 测试（vsr_set_output 质量验证）─────────
-    // 输入不变时，尺寸变化走"重建引擎"或"SetImage 热更新"两种路径，
-    // 按帧号 dump 输入/输出帧——同视频两次运行（VSR_TEST_REBUILD=1/0）
-    // 产出对照图组：验证分辨率 + 同帧性（AI），质量人工对比。
-    // VSR_TEST_SWITCH_AT=<帧号> 该帧起强制切换到 VSR_TEST_SWITCH_SCALE
-    // 倍率；dump 到 VSR_TEST_DUMP_DIR（默认 logs/testdump）。
-    int          test_switch_at;      // 0=禁用
-    float        test_switch_scale;
-    bool         test_rebuild;        // true=尺寸变化强制重建（对照）
-    bool         test_input_dump;     // true=输入尺寸变化时 dump（独立于帧号切换）
-    const char  *test_dump_dir;
-    int          test_pending_dumps;  // 输入尺寸变化后待 dump 帧数
-    int          test_last_in_w, test_last_in_h;   // 上次引擎输入尺寸
-
-
     int video_w, video_h;
     float effective_scale;
 
@@ -249,10 +234,6 @@ struct priv {
     double status_cost_ms;
     int    status_emit;        // passthrough 分支输出计数（每 30 帧）
 };
-
-// dump-both 命令的帧 dump（输入/输出 RGBA → PNG），VSR_TEST_* 复用
-static bool vsr_dump_frame(struct mp_filter *f, struct priv *p,
-                           const char *path, bool output);
 
 // ── compute_adaptive_scale ─────────────────────────────────────────────────
 
@@ -453,19 +434,15 @@ static bool ensure_vsr(struct mp_filter *f, struct priv *p,
             return true;
         }
         if (in_same) {
-            if (p->test_rebuild) {
-                // VSR_TEST_REBUILD=1 对照：仅输出变化也强制重建引擎
-                vsr_destroy(&p->vsr);
-                p->vsr_configured = false;
-            } else {
-                if (!vsr_set_output(&p->vsr, out_w, out_h))
+            // 仅输出尺寸变化：SetImage 换输出缓冲热更新（免重建，
+            // vsr_set_output 质量验证结论——PSNR 999dB 逐字节一致）。
+            if (!vsr_set_output(&p->vsr, out_w, out_h))
+                return false;
+            if (p->vsr.quality != quality) {
+                if (!vsr_set_quality(&p->vsr, quality))
                     return false;
-                if (p->vsr.quality != quality) {
-                    if (!vsr_set_quality(&p->vsr, quality))
-                        return false;
-                }
-                return true;
             }
+            return true;
         } else {
             vsr_destroy(&p->vsr);
             p->vsr_configured = false;
@@ -590,48 +567,6 @@ static bool ensure_yuv_converter(struct mp_filter *f, struct priv *p,
 
 // ── f_process ──────────────────────────────────────────────────────────────
 
-#ifdef VSR_DEBUG
-static void dump_gpu(const char *label, CUdeviceptr src, int pitch, int w, int h) {
-    system("mkdir -p logs/dumps");
-    size_t row = (size_t)w * 4, sz = row * h;
-    void *buf = malloc(sz);
-    if (!buf) return;
-    CUDA_MEMCPY2D d = {0};
-    d.srcMemoryType = CU_MEMORYTYPE_DEVICE; d.srcDevice = src;
-    d.srcPitch = (size_t)pitch;
-    d.dstMemoryType = CU_MEMORYTYPE_HOST; d.dstHost = buf;
-    d.dstPitch = row; d.WidthInBytes = row; d.Height = (size_t)h;
-    cuMemcpy2D(&d);
-    char path[256];
-    snprintf(path, sizeof(path), "logs/dumps/%s_%dx%d.rgba", label, w, h);
-    FILE *fp = fopen(path, "wb");
-    if (fp) { fwrite(buf, 1, sz, fp); fclose(fp); }
-    free(buf);
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "ffmpeg -y -f rawvideo -pixel_format rgba -video_size %dx%d -i %s -frames:v 1 logs/dumps/%s_%dx%d.png 2>/dev/null",
-             w, h, path, label, w, h);
-    system(cmd);
-    fprintf(stderr, "VSR_DUMP: %s %dx%d pitch=%d\n", label, w, h, pitch);
-}
-static void dump_host(const char *label, const void *src, int stride, int w, int h) {
-    system("mkdir -p logs/dumps");
-    size_t row = (size_t)w * 4;
-    char path[256];
-    snprintf(path, sizeof(path), "logs/dumps/%s_%dx%d.rgba", label, w, h);
-    FILE *fp = fopen(path, "wb");
-    if (fp) {
-        for (int y = 0; y < h; y++)
-            fwrite((const uint8_t*)src + y * stride, 1, row, fp);
-        fclose(fp);
-    }
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "ffmpeg -y -f rawvideo -pixel_format rgba -video_size %dx%d -i %s -frames:v 1 logs/dumps/%s_%dx%d.png 2>/dev/null",
-             w, h, path, label, w, h);
-    system(cmd);
-    fprintf(stderr, "VSR_DUMP: %s %dx%d stride=%d\n", label, w, h, stride);
-}
-#endif
-
 static void f_process(struct mp_filter *f)
 {
     struct priv *p = f->priv;
@@ -661,18 +596,9 @@ static void f_process(struct mp_filter *f)
     int video_w = mpi->w;
     int video_h = mpi->h;
     if (video_w != p->video_w || video_h != p->video_h) {
-        if (p->test_input_dump)
-            MP_INFO(f, "vsr: TEST video size %dx%d -> %dx%d (vsr_in=%dx%d cfg=%d)\n",
-                    p->video_w, p->video_h, video_w, video_h,
-                    p->vsr.in_w, p->vsr.in_h, (int)p->vsr_configured);
         p->video_w = video_w;
         p->video_h = video_h;
         p->warmup_done = false;
-        // VSR_TEST 输入变化事件：视频尺寸变化（换文件）——标记切换后
-        // 3 帧 dump（输入+输出）。真实播放器换文件 = mpv filter 链重建
-        //（引擎必然重建 + warmup）——dump 用于人工检查重建后输出质量。
-        if (p->test_input_dump)
-            p->test_pending_dumps = 3;
     }
     float new_scale = resolve_scale(f, p, video_w, video_h);
     float eff = new_scale;
@@ -688,38 +614,6 @@ static void f_process(struct mp_filter *f)
         p->effective_scale = eff;
         // 尺寸变化由 ensure_vsr 重建引擎（SDK 实验：SetImage 换尺寸
         // 输出错乱，tile 切分与 Load 时尺寸绑定）。
-    }
-
-    // ── VSR_TEST_*：帧号驱动的倍率切换 + dump（质量验证）────────────
-    if (p->test_switch_at > 0) {
-        char in_path[512], out_path[512];
-        if (p->frame_count == p->test_switch_at - 1) {
-            // 切换前最后帧：dump 输入（同帧性验证）+ 输出（旧尺寸基线）
-            snprintf(in_path, sizeof(in_path), "%s/in_%d.png",
-                     p->test_dump_dir, p->frame_count);
-            snprintf(out_path, sizeof(out_path), "%s/out_%d.png",
-                     p->test_dump_dir, p->frame_count);
-            vsr_dump_frame(f, p, in_path, false);
-            vsr_dump_frame(f, p, out_path, true);
-            MP_INFO(f, "vsr: TEST dumped pre-switch frame %d\n", p->frame_count);
-        }
-        if (p->frame_count == p->test_switch_at) {
-            // 切换帧：强制倍率变化（输入不变、仅输出变）
-            float new_scale = p->test_switch_scale;
-            MP_INFO(f, "vsr: TEST forcing scale %.2f -> %.2f at frame %d\n",
-                    p->effective_scale, new_scale, p->frame_count);
-            eff = new_scale;
-            p->effective_scale = new_scale;
-            out_w = lrintf(video_w * eff);
-            out_h = lrintf(video_h * eff);
-        }
-        if (p->frame_count == p->test_switch_at + 1) {
-            // 切换后第一帧：dump 输出（新尺寸）
-            snprintf(out_path, sizeof(out_path), "%s/out_%d.png",
-                     p->test_dump_dir, p->frame_count);
-            vsr_dump_frame(f, p, out_path, true);
-            MP_INFO(f, "vsr: TEST dumped post-switch frame %d\n", p->frame_count);
-        }
     }
 
     // ── Passthrough — re-evaluated per-frame (dynamic effective_scale) ──
@@ -831,9 +725,6 @@ static void f_process(struct mp_filter *f)
             cuMemcpy2DAsync(&copy, p->cuda_stream);
         }
         if (rgba != mpi) {
-#ifdef VSR_DEBUG
-            if (p->frame_count == 1) dump_host("00_mpi_sws_rgba", rgba->planes[0], rgba->stride[0], video_w, video_h);
-#endif
             talloc_free(rgba);
         }
     } else {
@@ -851,24 +742,6 @@ static void f_process(struct mp_filter *f)
             mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
         }
     }
-
-
-    // ── VSR_TEST 输入变化 dump：切换后帧（输入+输出，验证引擎适配）──
-    // 位置在输入写入 in_pixels 之后、vsr_process 之前——dump 的输入即
-    // 本帧内容，输出为上一帧引擎输出（等价：适配已生效的引擎状态）
-    if (p->test_pending_dumps > 0) {
-        char p1[512], p2[512];
-        snprintf(p1, sizeof(p1), "%s/in_%d_%dx%d.png", p->test_dump_dir,
-                 p->frame_count, video_w, video_h);
-        snprintf(p2, sizeof(p2), "%s/out_%d.png", p->test_dump_dir,
-                 p->frame_count);
-        vsr_dump_frame(f, p, p1, false);
-        vsr_dump_frame(f, p, p2, true);
-        MP_INFO(f, "vsr: TEST dumped switch frame %d (%dx%d)\n",
-                p->frame_count, video_w, video_h);
-        p->test_pending_dumps--;
-    }
-
 
     // ── VSR process ──────────────────────────────────────────────────────
     void *vsr_out_ptr = NULL;
@@ -898,14 +771,6 @@ static void f_process(struct mp_filter *f)
         }
         cuStreamSynchronize(p->cuda_stream);
     }
-
-    // ── DEBUG: per-node dumps (frame 1 only) ─────────────────────────────
-#ifdef VSR_DEBUG
-    if (p->frame_count == 1) {
-        dump_gpu("01_vsr_input", (CUdeviceptr)p->vsr.in_pixels, p->vsr.in_pitch, video_w, video_h);
-        dump_gpu("02_vsr_output", p->out_buf, vsr_out_pitch, vsr_out_w, vsr_out_h);
-    }
-#endif
 
     // ── Output ───────────────────────────────────────────────────────────
     // Each output frame takes a reference on the CUDA context: the frame
@@ -1142,14 +1007,10 @@ static void f_reset(struct mp_filter *f)
 {
     struct priv *p = f->priv;
 
-    if (p->test_rebuild || !(p->test_switch_at > 0 || p->test_input_dump)) {
-        // 常规路径（及 VSR_TEST_REBUILD 对照）：销毁引擎重建
-        if (p->cuda_ref && p->cuda_ref->ctx) cuCtxPushCurrent(p->cuda_ref->ctx);
-        vsr_destroy(&p->vsr);
-        if (p->cuda_ref && p->cuda_ref->ctx) cuCtxPopCurrent(NULL);
-        p->vsr_configured = false;
-    }
-    // hotswap 测试：引擎保留，下一帧 ensure_vsr 走输入变化 SetImage 路径
+    if (p->cuda_ref && p->cuda_ref->ctx) cuCtxPushCurrent(p->cuda_ref->ctx);
+    vsr_destroy(&p->vsr);
+    if (p->cuda_ref && p->cuda_ref->ctx) cuCtxPopCurrent(NULL);
+    p->vsr_configured = false;
     p->frame_count = 0;
     MP_INFO(f, "vsr: reset (%s)\n",
             p->vsr_configured ? "engine kept" : "engine destroyed");
@@ -1246,38 +1107,6 @@ static struct mp_filter *vf_vsr_create(struct mp_filter *parent, void *options)
                       && p->opts->denoise == -1);
     p->warmup_done = false;
     p->effective_scale = 1;
-
-    // VSR_TEST_*：帧号 dump 测试（vsr_set_output 质量验证）
-    p->test_switch_at = 0;
-    p->test_switch_scale = 3.0f;
-    p->test_rebuild = false;
-    p->test_input_dump = false;
-    p->test_dump_dir = getenv("VSR_TEST_DUMP_DIR");
-    if (!p->test_dump_dir || !p->test_dump_dir[0])
-        p->test_dump_dir = "logs/testdump";
-    const char *ta = getenv("VSR_TEST_SWITCH_AT");
-    bool test_enabled = false;
-    if (ta && atoi(ta) > 0) {
-        p->test_switch_at = atoi(ta);
-        const char *ts = getenv("VSR_TEST_SWITCH_SCALE");
-        if (ts && atof(ts) > 1.0f) p->test_switch_scale = atof(ts);
-        test_enabled = true;
-    }
-    const char *tid = getenv("VSR_TEST_INPUT_DUMP");
-    if (tid && atoi(tid) > 0) {
-        p->test_input_dump = true;
-        test_enabled = true;
-    }
-    if (test_enabled) {
-        const char *tb = getenv("VSR_TEST_REBUILD");
-        p->test_rebuild = tb && atoi(tb);
-        MP_INFO(f, "vsr: TEST mode switch@%d inputdump=%d dump=%s (%s)\n",
-                p->test_switch_at, (int)p->test_input_dump, p->test_dump_dir,
-                p->test_rebuild ? "rebuild" : "hotswap");
-        char mk[512];
-        snprintf(mk, sizeof(mk), "mkdir -p %s", p->test_dump_dir);
-        system(mk);
-    }
 
     if (p->passthrough) {
         MP_VERBOSE(f, "vsr: passthrough mode (scale=%.2f, denoise=%d)\n",
