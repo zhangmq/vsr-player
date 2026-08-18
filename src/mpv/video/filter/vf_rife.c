@@ -639,20 +639,25 @@ static bool process_pair(struct mp_filter *f, struct priv *p,
     if (integer_factor) {
         // [mid(1/k), mid(2/k), ..., cur] — source frame always emitted.
         // CONTENT time is the relative midpoint (tval = i/k, vs-mlrt
-        // Interleave semantics — no extreme tval on VFR sources). PTS is
-        // stamped on the absolute output grid (t0 + n/out_fps), matching
-        // minterpolate's `out_pts++` counter / vf_vapoursynth's uniform
-        // accumulation: a PTS sequence that follows the input (33.0/34.0ms
-        // alternating on goose) makes display_sync accumulate ±0.3ms
-        // vsync rounding errors and periodically repeat/drop frames —
-        // the offline pipeline has no PTS, hence no stutter (verified).
-        // Each pair emits k frames ending at cur's nearest grid point
-        // (round, not floor — floor would re-emit the previous pair's
-        // last grid point on short VFR intervals).
-        long long n_cur = llround((t_cur - p->t0) * p->out_fps);
+        // Interleave semantics — no extreme tval on VFR sources). PTS =
+        // the frame's CONTENT time (mid at t_prev + tval·(t_cur−t_prev),
+        // cur at t_cur): strictly monotonic and gap-free for ANY source
+        // rate, so each frame displays at its true time (video interval
+        // = source interval / k exactly — zero drift vs the audio clock
+        // in audio-sync playback).
+        // The previous absolute-grid anchoring (tg = t0 + n/out_fps via
+        // llround n_cur, exactly k frames per pair) broke on sources not
+        // exactly k× the grid — e.g. 29.97→60 (ratio 2.002): the round
+        // boundary crossing made n_cur advance by +1/+3, emitting
+        // duplicate (same PTS twice) and gapped grid points → mpv
+        // "Invalid video timestamp" + desync + continuous frame drops
+        // (test.wmv playback speed anomaly). Content-time PTS has no
+        // grid to misalign.
         for (long long i = 0; i < k; i++) {
             double tval = (double)(i + 1) / k;
-            double tg = p->t0 + (n_cur - (k - 1) + i) / p->out_fps;
+            double tg = (i == k - 1)
+                ? t_cur
+                : t_prev + (t_cur - t_prev) * tval;
             if (i == k - 1) {
                 struct mp_image *out = rife_make_copy(f, p, cur, tg);
                 if (!out) {
@@ -792,6 +797,9 @@ static void f_process(struct mp_filter *f)
             p->status_emit = 0;
             rife_status(f, p);
         }
+        MP_DBG(f, "rife: OUT pts=%.4f src-pts=%.4f %s\n", out->pts,
+               p->prev_pts,
+               fabs(out->pts - p->prev_pts) < 0.001 ? "[copy]" : "[mid]");
         mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out));
         return;
     }
