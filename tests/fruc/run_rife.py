@@ -13,7 +13,8 @@ import subprocess, numpy as np, sys, time, os, re
 
 V = sys.argv[1]; W = int(sys.argv[2]); H = int(sys.argv[3]); N = int(sys.argv[4])
 FR = W * H * 3
-ONNX = "/home/zmq/projects/vsr-player/third_party/rife/rife_v4.25.onnx"
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ONNX = os.path.join(ROOT, "third_party", "rife", "rife_v4.25.onnx")
 
 import onnxruntime as ort
 s = ort.InferenceSession(ONNX, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])

@@ -8,8 +8,9 @@ import subprocess, numpy as np, sys, os, threading, time
 V = sys.argv[1]; W = int(sys.argv[2]); H = int(sys.argv[3])
 N = int(sys.argv[4]); OUTDIR = sys.argv[5]
 FR = W * H * 3
-BIN = "/home/zmq/projects/vsr-player/build/tests/fruc/fruc_of_sm120"
-C12 = "/home/zmq/projects/vsr-player/third_party/cuda12/cuda_cudart-linux-x86_64-12.9.79-archive/lib"
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BIN = os.path.join(ROOT, "build", "tests", "fruc", "fruc_of_sm120")
+C12 = os.path.join(ROOT, "third_party", "cuda12", "cuda_cudart-linux-x86_64-12.9.79-archive", "lib")
 env = dict(os.environ, LD_LIBRARY_PATH=C12)
 os.makedirs(OUTDIR, exist_ok=True)
 
