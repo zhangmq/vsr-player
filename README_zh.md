@@ -22,7 +22,7 @@ NVIDIA Video Effects SDK 提供了相同的底层 AI 模型，也有 Linux 版�
 - **QML 叠加 UI** — 底部悬停区域驱动的自动隐藏控件、虚拟化播放列表、OSD 信息面板
 - **自适应缩放** — 按视口尺寸自动选择超分倍率
 - **播放列表与播放控制** — 目录加载、循环模式、倍速、音视频同步（mpv 承载）
-- **远程控制** — Unix socket JSON IPC；独立 `mpv-vsr` CLI 与包装脚本
+- **远程控制** — Unix socket JSON IPC；独立 `mpv-vsr` CLI
 
 ## 测试现状
 
@@ -209,7 +209,7 @@ mpv-vsr --hwdec=auto --vf=hwup,rife:fps=60,vsr:scale=2 video.mkv
 
 示例：`mpv-vsr --hwdec=nvdec --vf=rife:fps=60,vsr:scale=auto,quality=ultra video.mkv`
 
-`mpv-vsr-wrapper.py`（浏览器集成，ff2mpv 风格）：导出 Chrome cookie、yt-dlp 提取播放列表（YouTube/Bilibili/Niconico）、拉起 mpv-vsr。
+`mpv-vsr-wrapper.py`（浏览器集成，ff2mpv 风格）：导出 Chrome cookie、yt-dlp 提取播放列表（YouTube/Bilibili/Niconico）、拉起 mpv-vsr。个人自用工具，不随发布包分发——有兴趣可自行研究。
 
 ## 开源协议
 
