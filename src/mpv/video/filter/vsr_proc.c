@@ -84,14 +84,33 @@ static bool load_nvvfx_libraries(void) {
     if (home) {
         snprintf(homedir_path, sizeof(homedir_path), "%s/.local/lib/vsr-player/", home);
     }
+    // dev 路径按**可执行文件目录**推导，且仅当可执行文件位于构建树（路径含
+    // "/build/"）时启用——不用 CWD 相对路径：分发包在任意目录（例如视频所在
+    // 目录）运行时，CWD 里的 libNVCVImage.so 会被加载，构成库劫持面。
+    // dev 布局：<repo>/build/src/client/vsr-player → ../../../third_party/…
+    char dev_vfx[1024] = "", dev_build_lib[1024] = "";
+    {
+        char exe[1024];
+        ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+        if (n > 0) {
+            exe[n] = '\0';
+            char *slash = strrchr(exe, '/');
+            if (slash && strstr(exe, "/build/")) {
+                *slash = '\0';
+                snprintf(dev_vfx, sizeof(dev_vfx),
+                         "%s/../../../third_party/nvvfx/lib/", exe);
+                snprintf(dev_build_lib, sizeof(dev_build_lib),
+                         "%s/../../../build/lib/", exe);
+            }
+        }
+    }
     const char *search[] = {
 #ifdef VSR_INSTALL_LIBDIR
         VSR_INSTALL_LIBDIR,           // compile-time override (packaging)
 #endif
         homedir_path,                  // user-local default
-        "third_party/nvvfx/lib/",      // dev: run from project root
-        "build/lib/",
-        "",
+        dev_vfx,                       // dev only（构建树内运行时）
+        dev_build_lib,                 // dev only
     };
     const char *nvvfx_dir = NULL;
     int n_search = sizeof(search) / sizeof(search[0]);

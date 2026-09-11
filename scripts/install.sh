@@ -4,7 +4,7 @@
 # 环境纯净原则：
 #   - 只复制文件到应用自属目录（~/.local/bin + ~/.local/lib/vsr-player/）
 #   - 系统依赖（Qt/driver）只检测提示，绝不自动安装
-#   - VFX 获取：curl 从 PyPI 官方 wheel 纯下载 + 解压（不调用 pip 安装器，
+#   - VFX 获取：curl 从 NVIDIA 官方索引（pypi.nvidia.com）wheel 纯下载 + 解压（不调用 pip 安装器，
 #     不碰 Python 环境）；失败则保留提示，可手动下载后重跑
 #   - PATH 只提示，不修改 shell 配置
 #
@@ -67,17 +67,29 @@ else
     echo "  ❌ libcuda.so.1 — NVIDIA 驱动缺失（必需，无法安装）"
     OK=0
 fi
-QT_MAJOR="$(pkg-config --modversion Qt6Quick 2>/dev/null | cut -d. -f1)"
-QT_MINOR="$(pkg-config --modversion Qt6Quick 2>/dev/null | cut -d. -f2)"
-if [ "${QT_MAJOR:-0}" -ge 6 ] && [ "${QT_MINOR:-0}" -ge 11 ]; then
-    echo "  ✅ Qt $(pkg-config --modversion Qt6Quick) (≥6.11)"
+# 注意：`set -e` + `pipefail` 下，探测类命令失败必须显式兜底（`|| true`），
+# 否则"未检测到"会变成"安装中止"——例如全依赖版的目标系统本就没有 Qt，
+# 或无 GPU/驱动不可访问时 nvidia-smi 返回非 0（实测 exit 9）。
+QT_VER="$(pkg-config --modversion Qt6Quick 2>/dev/null || true)"
+QT_MAJOR="${QT_VER%%.*}"
+QT_MINOR="$(printf '%s' "$QT_VER" | cut -d. -f2)"
+if [ -d "$SRC/lib/qt6" ]; then
+    echo "  ✅ 捆绑 Qt 已随包（全依赖版）——无需系统 Qt"
+elif [ -n "$QT_VER" ] && [ "${QT_MAJOR:-0}" -ge 6 ] && [ "${QT_MINOR:-0}" -ge 11 ]; then
+    echo "  ✅ Qt $QT_VER (≥6.11)"
 else
     echo "  ⚠ Qt 未检测到或 <6.11（需要 Qt ≥6.11；GUI 可能无法启动）"
+    echo "     → 或改用全依赖版 tarball（*-full.tar.xz，自带 Qt）"
 fi
-GPU_INFO="$(nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader 2>/dev/null | head -1)"
+GPU_INFO="$(nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader 2>/dev/null | head -1 || true)"
+# nvidia-smi 失败时把错误文本打到 stdout（非 stderr），只接受正常 CSV（含逗号）
+case "$GPU_INFO" in
+    *,*) ;;
+    *) GPU_INFO="" ;;
+esac
 if [ -n "$GPU_INFO" ]; then
     CC="${GPU_INFO##*, }"
-    if [ "$(echo "$CC" | cut -d. -f1)" -ge 8 ]; then
+    if [ -n "$CC" ] && [ "${CC%%.*}" -ge 8 ] 2>/dev/null; then
         echo "  ✅ GPU: $GPU_INFO（Ampere+ → 插帧可用）"
     else
         echo "  ⚠ GPU: $GPU_INFO（Turing 及更早 → 插帧直通，VSR 不受影响）"
@@ -102,6 +114,20 @@ fi
 if [ -d "$LIB_SRC" ]; then
     cp -L "$LIB_SRC"/* "$LIB_DIR/"   # -L：跟随软链（VFX 的 ngx-vsr 软链等）
     echo "  ✅ 捆绑库（ffmpeg/CUDA/TRT/libmpv）→ $LIB_DIR/"
+fi
+# 全依赖版：捆绑的 Qt（库在 lib/，插件/QML 在 lib/qt6/）——镜像发行版布局，
+# 使 Qt 插件自带的相对 RUNPATH（$ORIGIN/../../../）能解析到 <prefix>/lib。
+QT_SRC="$SRC/lib/qt6"
+if [ -d "$QT_SRC" ]; then
+    PREFIX_DIR="$(dirname "$LIB_DIR")"          # ~/.local/lib
+    mkdir -p "$PREFIX_DIR/qt6"
+    cp -a "$QT_SRC/." "$PREFIX_DIR/qt6/"
+    libs=0
+    for so in "$SRC"/lib/libQt6*.so.*; do
+        [ -e "$so" ] || continue
+        cp -L "$so" "$PREFIX_DIR/" && libs=$((libs+1))
+    done
+    echo "  ✅ 捆绑 Qt（$libs 个库 + 插件/QML）→ $PREFIX_DIR/（无需系统 Qt）"
 fi
 
 # ── 3. engine + 字体 + 翻译 ─────────────────────────────────────────
@@ -131,18 +157,32 @@ if [ -f "$LIB_DIR/libNVCVImage.so" ]; then
     echo "  ✅ VFX SDK 已就位（$LIB_DIR/）"
 else
     echo "  ⚠ VFX SDK 缺失 — 超分将直通（视频照常播放）"
-    echo "    获取：NVIDIA 官方 PyPI 包 nvidia-vfx（wheel 内含 VFX 运行时，"
+    echo "    获取：NVIDIA 官方索引 nvidia-vfx wheel（内含 VFX 运行时，"
     echo "    许可：NVIDIA Software License Agreement 2025.05.05 ——"
     echo "    下载即与 NVIDIA 直接建立许可关系；本脚本仅代为下载文件，"
     echo "    不安装到 Python 环境，不向第三方分发）"
     if [ "$NO_VFX" -eq 1 ]; then
         echo "    （--no-vfx：跳过自动下载。手动方式见下方说明，下载后重跑本脚本即可）"
     elif command -v curl >/dev/null && command -v unzip >/dev/null; then
-        echo "    正在从 PyPI 下载（~1.1GB，请耐心等待；Ctrl-C 可中断）..."
+        echo "    正在从 NVIDIA 官方索引下载（约 0.6 GB，请耐心等待；Ctrl-C 可中断）..."
         TMPVFX="$(mktemp -d)"
-        WHEEL_URL="$(curl -fsSL https://pypi.org/pypi/nvidia-vfx/json 2>/dev/null \
-            | grep -oE '"url": *"[^"]*manylinux[^"]*\.whl"' | head -1 \
-            | sed -E 's/"url": *"([^"]*)"/\1/')"
+        # wheel 来源：NVIDIA 官方索引 pypi.nvidia.com（PEP 503 简单索引，相对链接
+        # 带 #sha256 片段）。⚠ pypi.org 上 nvidia-vfx 只有数 KB 的 sdist 占位、
+        # 没有 manylinux wheel（2026-09 实测）——查 pypi.org 必然拿不到 URL。
+        # 探测命令一律带 `|| true`：`set -e` + pipefail 下失败必须走到下面的提示
+        # 分支；历史 bug 是静默中止，用户只看到"安装失败"，看不到手动方式。
+        VFX_INDEX="https://pypi.nvidia.com/nvidia-vfx/"
+        WHEEL_FILE="$(curl -fsSL "$VFX_INDEX" 2>/dev/null \
+            | grep -oE 'href="[^"]*"' | sed 's/^href="//; s/"$//; s/#.*$//' \
+            | grep -E 'manylinux.*x86_64\.whl$' | sort -V | tail -1 || true)"
+        WHEEL_URL=""
+        [ -n "$WHEEL_FILE" ] && WHEEL_URL="${VFX_INDEX}${WHEEL_FILE}"
+        if [ -z "$WHEEL_URL" ]; then   # 兜底：上游若改回在 pypi.org 发布 wheel
+            WHEEL_URL="$(curl -fsSL https://pypi.org/pypi/nvidia-vfx/json 2>/dev/null \
+                | grep -oE '"url": *"[^"]*manylinux[^"]*\.whl"' | head -1 \
+                | sed -E 's/"url": *"([^"]*)"/\1/' || true)"
+        fi
+        echo "    来源: ${WHEEL_URL:-（未找到可用 wheel）}"
         if [ -n "$WHEEL_URL" ] && curl -fL "$WHEEL_URL" -o "$TMPVFX/nvidia_vfx.whl"; then
             unzip -o -q "$TMPVFX/nvidia_vfx.whl" "nvvfx/libs/*" -d "$TMPVFX"
             cp "$TMPVFX"/nvvfx/libs/*.so* "$LIB_DIR/" 2>/dev/null || true
@@ -164,9 +204,9 @@ else
             fi
         else
             rm -rf "$TMPVFX"
-            echo "  ❌ PyPI 下载失败（网络/代理？）。手动方式："
-            echo "     curl -LO https://pypi.org/project/nvidia-vfx/ 或浏览器下载 wheel，"
-            echo "     解压 nvvfx/libs/* 到 $LIB_DIR/ 后重跑本脚本"
+            echo "  ❌ 下载失败（网络/代理？）。手动方式："
+            echo "     官方索引: https://pypi.nvidia.com/nvidia-vfx/（选 manylinux x86_64 wheel）"
+            echo "     解压其中 nvvfx/libs/* 到 $LIB_DIR/ 后重跑本脚本"
         fi
     else
         echo "  （需要 curl + unzip 才能自动下载；手动下载 wheel 解压到 $LIB_DIR/ 亦可）"

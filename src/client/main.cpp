@@ -14,7 +14,9 @@
 #include <QSurfaceFormat>
 #include <QTranslator>
 #include <QLocale>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QFontDatabase>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -68,6 +70,32 @@ int main(int argc, char *argv[]) {
     VulkanContext vk;
     if (!vk.init()) return 1;
     MLOG_INFO("shared VkDevice ready (qfi=%u)", vk.queueFamilyIndex());
+
+    // ── 全依赖版：捆绑 Qt 的插件/QML 路径（标准版无此目录 → 无副作用）──
+    // 布局镜像发行版：<prefix>/lib/qt6/{plugins,qml}，Qt 库在 <prefix>/lib/。
+    // Qt 插件/QML 模块自带相对 RUNPATH（$ORIGIN/../../../ 等），镜像布局下
+    // 无需 patchelf 即可解析。必须在 QGuiApplication 构造前设置——平台插件
+    // 在构造函数内加载。
+    {
+        QString exeDir = QCoreApplication::applicationDirPath();
+        if (exeDir.isEmpty()) {
+            const QString exe = QFile::symLinkTarget(QStringLiteral("/proc/self/exe"));
+            if (!exe.isEmpty()) exeDir = QFileInfo(exe).absolutePath();
+        }
+        if (!exeDir.isEmpty()) {
+            const QString prefix = exeDir + QStringLiteral("/..");
+            const QString qtPlugins = QDir(prefix + QStringLiteral("/lib/qt6/plugins")).absolutePath();
+            const QString qtQml     = QDir(prefix + QStringLiteral("/lib/qt6/qml")).absolutePath();
+            if (QDir(qtPlugins).exists()) {
+                qputenv("QT_PLUGIN_PATH", qtPlugins.toLocal8Bit());
+                MLOG_INFO("bundled Qt plugins: %s", qtPlugins.toUtf8().constData());
+            }
+            if (QDir(qtQml).exists()) {
+                qputenv("QML2_IMPORT_PATH", qtQml.toLocal8Bit());
+                MLOG_INFO("bundled Qt QML: %s", qtQml.toUtf8().constData());
+            }
+        }
+    }
 
     // ── Qt ──────────────────────────────────────────────────────────────
     // 原生文件/文件夹对话框：XDG desktop portal（系统文件管理器）。
