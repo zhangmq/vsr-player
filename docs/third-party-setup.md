@@ -32,7 +32,9 @@ cp nvidia-maxine-vfx/nvvfx/include/nvVideoEffects.h  third_party/nvvfx/include/
 **方式 A — pip（推荐）：**
 
 ```bash
-pip install nvidia-vfx
+# manylinux wheel 只在 NVIDIA 官方索引；pypi.org 上 nvidia-vfx 只有数 KB 的
+# sdist 占位、没有 wheel（2026-09 实测）
+pip install nvidia-vfx --extra-index-url https://pypi.nvidia.com
 ```
 
 **方式 B — NGC（需 NVIDIA 账号）：**
@@ -41,7 +43,8 @@ pip install nvidia-vfx
 
 > **用户端分发（非开发机）**：发布 tarball **不含 VFX**（SLA 8.5 禁止被许可人向
 > 第三方分发，EA 评估许可）。`scripts/install.sh`（用户端）检测缺失时自动从
-> PyPI 官方 `nvidia-vfx` wheel curl 下载提取到 `~/.local/lib/vsr-player/`
+> **NVIDIA 官方索引 `https://pypi.nvidia.com/nvidia-vfx/`** 选最新 manylinux
+> x86_64 wheel，curl 下载并提取 `nvvfx/libs/*` 到 `~/.local/lib/vsr-player/`
 > （环境纯净：不调 pip 安装、不 sudo）；wheel 库为带版本名，脚本补无版本软链
 > （vsr_proc.c 按无版本名 dlopen）。
 

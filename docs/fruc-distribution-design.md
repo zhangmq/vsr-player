@@ -30,7 +30,7 @@ vsr-player 当前分发靠 `scripts/install.sh`（dev 机 → ~/.local），存�
 ## 法律查证结论（决定 VFX 分发方式）
 
 - **VFX SDK（third_party/nvvfx）**：NGC EA 版受 Evaluation License 约束；正式 SLA 2025.05.05 §8.5 禁止被许可人"copy, transfer, distribute"，**点名公开软件仓库**。Customer Product 分发授权（PST §1.1.3）仅限 AI Enterprise 付费订阅 → **tarball 不含 VFX**。
-- **nvidia-vfx pip 包**：NVIDIA 官方发布（PyPI 维护者 nvidia），wheel 捆绑全部 33 个 .so + SLA 文本。用户 pip 安装 = 与 NVIDIA 直接建立许可关系（合法获取）；但提取再分发仍违反 8.5。
+- **nvidia-vfx pip 包**：NVIDIA 官方发布（wheel 在 NVIDIA 官方索引 `pypi.nvidia.com`；pypi.org 现仅有占位 sdist，2026-09 实测），wheel 捆绑全部 33 个 .so + SLA 文本。用户 pip 安装 = 与 NVIDIA 直接建立许可关系（合法获取）；但提取再分发仍违反 8.5。
 - **TensorRT runtime**：SLA 明确 "Distributable portions: only the runtime files (.so)" —— 随应用分发允许。
 - **CUDA runtime**：redistributable components，随应用分发 OK。
 - **RIFE ONNX 权重**：来源 vs-mlrt（GPL-3.0）—— 随包附来源 + GPL-3.0 文本。
@@ -126,6 +126,6 @@ vsr-player-0.1.0/
 
 1. ~~cross-arch engine 构建~~ ✅ **已实测转正**：ampere+ 单 engine 方案（加载/推理/性能全部通过，见 §2）
 2. patchelf 后 dlopen 顺序与 VFX 全链加载（开发机 + 干净环境模拟）
-3. PyPI JSON API 下载流程（wheel URL 解析、curl 下载、unzip 提取）
+3. VFX wheel 下载流程（NVIDIA 索引 PEP 503 解析 → curl 下载 → unzip 提取 → 无版本软链）
 4. ~~`--hardwareCompatibilityLevel=ampere+` 性能~~ ✅ 231.7 vs 234.3 fps（-1.1%）
 5. sm_86/sm_89 目标机加载（待有对应硬件；TRT 官方 forward compatibility 机制）
