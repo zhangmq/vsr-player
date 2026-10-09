@@ -187,3 +187,79 @@ void IdleInhibitor::release()
     m_backend = Backend::None;
 }
 
+// ── CursorAutoHide ─────────────────────────────────────────────────────
+
+CursorAutoHide::CursorAutoHide(QWindow *window, QObject *parent)
+    : QObject(parent), m_window(window)
+{
+    if (m_window)
+        m_window->installEventFilter(this);
+    m_timer = new QTimer(this);
+    m_timer->setSingleShot(true);
+    m_timer->setInterval(IDLE_MS);
+    connect(m_timer, &QTimer::timeout, this, [this] { maybeHide(); });
+}
+
+bool CursorAutoHide::eventFilter(QObject *watched, QEvent *event)
+{
+    switch (event->type()) {
+    case QEvent::MouseMove:
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::MouseButtonDblClick:
+    case QEvent::Wheel:
+    case QEvent::HoverMove:
+    case QEvent::Enter:
+    case QEvent::TouchBegin:
+    case QEvent::TouchUpdate:
+        show();
+        break;
+    default:
+        break;
+    }
+    return QObject::eventFilter(watched, event);   // 只观察，不消费事件
+}
+
+void CursorAutoHide::setEnabled(bool enabled)
+{
+    if (m_enabled == enabled)
+        return;
+    m_enabled = enabled;
+    if (enabled)
+        m_timer->start();   // 开始播放：重新计时
+    else
+        show();             // 暂停/停止：立即恢复指针
+}
+
+void CursorAutoHide::setSuspended(bool suspended)
+{
+    if (m_suspended == suspended)
+        return;
+    m_suspended = suspended;
+    if (suspended)
+        show();             // UI 出现：恢复指针（与 mpv OSC 可见时一致）
+    else
+        m_timer->start();
+}
+
+void CursorAutoHide::show()
+{
+    if (m_hidden) {
+        if (m_window)
+            m_window->unsetCursor();
+        m_hidden = false;
+        MLOG_INFO("cursor shown");
+    }
+    m_timer->start();
+}
+
+void CursorAutoHide::maybeHide()
+{
+    if (!m_enabled || m_suspended || m_hidden || !m_window)
+        return;
+    if (!m_window->isVisible())
+        return;
+    m_window->setCursor(Qt::BlankCursor);
+    m_hidden = true;
+    MLOG_INFO("cursor hidden (idle %d ms while playing)", IDLE_MS);
+}
