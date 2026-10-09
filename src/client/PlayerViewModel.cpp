@@ -1,5 +1,6 @@
 #include "PlayerViewModel.h"
 #include "MpvController.h"
+#include "Log.h"
 
 #include <QMetaObject>
 #include <QVariantMap>
@@ -582,6 +583,37 @@ QString PlayerViewModel::restoredCurrentFile() const {
     int cur = 0;
     const QStringList files = restoredFiles(&cur);
     return files.isEmpty() ? QString() : files[cur];
+}
+
+void PlayerViewModel::noteLiveSeekFailure()
+{
+    QMetaObject::invokeMethod(this, [this] { markLiveSource("cannot seek"); },
+                              Qt::QueuedConnection);
+}
+
+bool PlayerViewModel::isLiveSource() const
+{
+    if (liveSourcePending_)
+        return true;
+    return !liveSourcePath_.isEmpty() && liveSourcePath_ == lastPath_;
+}
+
+void PlayerViewModel::markLiveSource(const char *why)
+{
+    if (isLiveSource())
+        return;
+    if (lastPath_.isEmpty())
+        liveSourcePending_ = true;   // 检测早于 FILE_LOADED：记 pending，加载完成时归属
+    else
+        liveSourcePath_ = lastPath_;
+    MLOG_INFO("live/linear source (%s) — no resume: playing live edge, dropping saved position", why);
+    if (mpv_) {
+        mpv_->commandAsync({"delete-watch-later-config", nullptr});   // async：主线程不阻塞
+        // mpv 的 quit 命令自身会按 save-position-on-quit 写位置——对直播流必须关掉，
+        // 否则我们刚删掉的陈旧 start 会在退出时被重新写回（实测）。
+        mpv_->setPropertyFlagAsync("save-position-on-quit", false);
+    }
+    emit liveSourceDetected();
 }
 
 bool PlayerViewModel::hasResumeState(const QString &path) {
@@ -1474,7 +1506,10 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
     std::string p = mpv_->propertyString("path");
     bool paused = mpv_->propertyFlag("pause");
     int64_t drops = mpv_->propertyInt64("frame-drop-count");
-    QMetaObject::invokeMethod(this, [this, p, paused, drops] {
+    // 直播/线性流：不可 seek 或仅部分可 seek → resume 无意义（见 isLiveSource）
+    const bool linear = !mpv_->propertyFlag("seekable")
+                     || mpv_->propertyFlag("partially-seekable");
+    QMetaObject::invokeMethod(this, [this, p, paused, drops, linear] {
         fileLoaded_ = true;
         // 按文件记忆：即时落盘保证旧文件状态已随动作写盘，无需在此保存。
         // external 轨随文件切换被 mpv 清除——pending 待确认列表作废
@@ -1488,6 +1523,14 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
         updatePlaying(!paused);
         resetSegmentCounters(drops);   // 新文件 → 段统计归零
         scanSubtitleFiles(lastPath_);  // 新文件 → 扫描其目录的字幕
+        if (liveSourcePending_) {      // 检测早于本次加载 → 此刻归属到该文件
+            liveSourcePath_ = lastPath_;
+            liveSourcePending_ = false;
+        }
+        if (linear)
+            markLiveSource("not seekable");
+        else if (mpv_)
+            mpv_->setPropertyFlagAsync("save-position-on-quit", true);   // 普通文件恢复位置记忆
         restoreTrackMemory(lastPath_); // 按文件恢复轨道/字幕记忆（再次打开对应文件才恢复）
         syncVfOptions();               // 链重建后重放运行时 vf 状态（fps/vsr 防 UI 修改丢失）
     }, Qt::QueuedConnection);

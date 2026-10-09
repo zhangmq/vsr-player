@@ -145,11 +145,19 @@ public:
     void saveTrackMemory();
     void restoreTrackMemory(const QString &path);
     void setFullscreen(bool fs);   // Q_PROPERTY WRITE（QML 窗口同步回写）
+    /// mpv 报告 seek 失败（"Cannot seek ..."）→ 事件线程调用，转主线程标记直播。
+    void noteLiveSeekFailure();
 
     bool playing() const        { return playing_; }
     /// 有活动文件（未加载/停止/播完 → false）。playing_ 在文件装载前可能
     /// 因 mpv pause 属性初值短暂为 true——"是否真的在播"需与本标志合取。
     bool hasFile() const        { return fileLoaded_; }
+    /// 当前文件是直播/线性流（不可 seek 或仅部分可 seek）。判定来源：加载后
+    /// 的 seekable/partially-seekable 属性，或 mpv 的 "Cannot seek..." 报错
+    ///（HLS 直播的滑动窗口：属性说可 seek，但上次保存的位置已滑出窗口）。
+    /// 命中即：撤销本次自动暂停（跟最新）、删掉该文件 watch_later 条目
+    ///（否则每次启动都重演 seek 风暴）、退出时不写位置。
+    bool isLiveSource() const;
     int64_t currentTime() const { return currentTime_.load(); }
     int64_t duration() const    { return duration_.load(); }
     bool overlaysVisible() const { return overlaysVisible_; }
@@ -273,6 +281,8 @@ signals:
     void currentTimeChanged();
     void durationChanged();
     void overlaysVisibleChanged();
+    /// 直播/线性流被识别（主线程发出）：main.cpp 据此撤销"因历史进度而暂停"。
+    void liveSourceDetected();
     void volumeChanged();
     void qualityChanged();
     void vsrActiveChanged();
@@ -317,6 +327,8 @@ private:
     QStringList restoredFiles(int *cur) const;
     /// 段内统计重置（停止/暂停翻转/seek 完成/新文件）。主线程调用。
     void resetSegmentCounters(int64_t dropBase);
+    /// 标记当前文件为直播/线性流（幂等）；why 仅用于日志。
+    void markLiveSource(const char *why);
     /// 事件线程：读 loop-file/loop-playlist 并回写 loopMode。
     void updateLoopModeFromEventThread();
     /// 扫描视频同目录字幕文件（主线程，文件 IO 低频）：排除已加载的
@@ -421,6 +433,10 @@ private:
     // 有活动文件；为空（停止/播完/未加载）→ fileLoaded_=false，
     // 播放按钮复位，togglePlayPause 检测后从 lastPath_ 重新加载。
     bool fileLoaded_ = false;
+    // 直播/线性流标记按**路径**记（同一文件被 mpv 重新加载时不清除；
+    // 换文件后 lastPath_ 变化即自然失效）。
+    QString liveSourcePath_;
+    bool    liveSourcePending_ = false;
     QString lastPath_;
 
     // ── 音量节流（setVolume 合并投递）──────────────────────────────
