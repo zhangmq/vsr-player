@@ -288,9 +288,16 @@ int main(int argc, char *argv[]) {
                              &app, syncSessionIdle);
             QObject::connect(&viewModel, &PlayerViewModel::overlaysVisibleChanged,
                              &app, syncSessionIdle);
+            // 直播/线性流：resume 不适用 → 撤销启动时的自动暂停，直接跟最新
+            QObject::connect(&viewModel, &PlayerViewModel::liveSourceDetected,
+                             &app, [&viewModel, startPaused]() {
+                if (startPaused && !viewModel.playing()) {
+                    MLOG_INFO("live source: cancelling start-paused, following live edge");
+                    viewModel.setPaused(false);
+                }
+            });
             syncSessionIdle();   // 初始状态（恢复播放时 mpv 可能已 pause）
         }
-
 
         // ── rife 状态行 → OSD ────────────────────────────────────────
         // rife filter 每 ~0.5s 输出 MSGL_STATUS 状态行（"fruc-status:"
@@ -304,6 +311,11 @@ int main(int argc, char *argv[]) {
             } else if (strncmp(text, "vsr-status:", 11) == 0) {
                 viewModel.setVsrStatus(text + 11);
                 fprintf(stderr, "[mpv status] %s", text);
+            } else if (strstr(text, "Cannot seek")) {
+                // 直播/线性流：mpv 拿上次保存的位置去 seek 广播流的滑动窗口
+                //（stream.c "Cannot seek backward in linear streams!" /
+                // demux.c "Cannot seek in this file."）→ 按直播处理。
+                viewModel.noteLiveSeekFailure();
             }
         });
 
@@ -408,7 +420,14 @@ int main(int argc, char *argv[]) {
         // 同步命令与事件线程的 mpv API 调用由 core lock 串行化，安全；
         // 防挂死兜底 = vo_libmpv flip_page 的 200ms 超时（等待 render/
         // report_swap 有界，core 不会无限持锁）。
-        mpv.commandStr("quit-watch-later");
+        if (viewModel.isLiveSource()) {
+            // 直播/线性流不写位置——否则下次启动会再拿陈旧 start 去 seek
+            //（每次启动重演一轮 "Cannot seek backward in linear streams!"）
+            mpv.commandStr("delete-watch-later-config");
+            mpv.commandStr("quit");
+        } else {
+            mpv.commandStr("quit-watch-later");
+        }
         // 按文件轨道记忆不参与退出落盘：即时落盘已随每个轨道设置动作
         // 写盘（2026-08-06：关闭落盘/启动加载生命周期排除基于文件的设置）
 
