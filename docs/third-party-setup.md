@@ -72,6 +72,21 @@ third_party/nvvfx/
     └── libnpp*.so.12 (9 个)
 ```
 
+### nvidia_vfx.libs/（wheel 0.2.0.0 起必需）
+
+wheel 里的 `libcudart-<hash>.so.12.9.79` **不在** `nvvfx/libs/` 下，而在同级的
+`nvidia_vfx.libs/`。VFX 库的 RPATH 为 `$ORIGIN/../../nvidia_vfx.libs`，所以这个目录
+必须与 `nvvfx/` 保持同级；扁平复制进 `nvvfx/lib/` 解析不到。
+
+```bash
+# wheel 解压后
+mkdir -p third_party/nvidia_vfx.libs
+cp nvidia_vfx.libs/*.so* third_party/nvidia_vfx.libs/
+```
+
+缺失时 `libVideoFXLocal.so` 加载失败 → `VSR: core libs failed`，VSR 静默直通（画面
+照常播放，但没有超分）。
+
 ### 符号链接
 
 复制 .so 后创建无版本号链接：
