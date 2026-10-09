@@ -186,6 +186,25 @@ else
         if [ -n "$WHEEL_URL" ] && curl -fL "$WHEEL_URL" -o "$TMPVFX/nvidia_vfx.whl"; then
             unzip -o -q "$TMPVFX/nvidia_vfx.whl" "nvvfx/libs/*" -d "$TMPVFX"
             cp "$TMPVFX"/nvvfx/libs/*.so* "$LIB_DIR/" 2>/dev/null || true
+            # libcudart-<hash>.so.* lives in nvidia_vfx.libs/, a sibling of nvvfx/ in the
+            # wheel, not under nvvfx/libs/. The VFX libs carry RPATH
+            # $ORIGIN/../../nvidia_vfx.libs, so from $LIB_DIR the only path that resolves is
+            # <parent of LIB_DIR's parent>/nvidia_vfx.libs. Copying it next to the other VFX
+            # libs does not work; without it libVideoFXLocal.so fails to load and VSR
+            # silently passes through.
+            VFX_SIBLING="$(dirname "$(dirname "$LIB_DIR")")/nvidia_vfx.libs"
+            # unzip exits 11 when a pattern matches nothing, and `set -e` would abort the whole
+            # install on wheels that predate nvidia_vfx.libs/, so check the archive first.
+            WHEEL_MEMBERS="$(unzip -Z1 "$TMPVFX/nvidia_vfx.whl" 2>/dev/null || true)"
+            case "$WHEEL_MEMBERS" in
+                *nvidia_vfx.libs/*)
+                    unzip -o -q "$TMPVFX/nvidia_vfx.whl" "nvidia_vfx.libs/*" -d "$TMPVFX"
+                    mkdir -p "$VFX_SIBLING"
+                    cp "$TMPVFX"/nvidia_vfx.libs/*.so* "$VFX_SIBLING/" 2>/dev/null || true
+                    ;;
+                *nvvfx/libs/*) ;;   # 旧版 wheel（<0.2.0.0）：本来就没有 nvidia_vfx.libs/，跳过
+                *) echo "  ⚠ wheel 目录清单读取异常，nvidia_vfx.libs 提取已跳过（若库不齐 VSR 将静默直通）" >&2 ;;
+            esac
             # vsr_proc.c dlopen 无版本名（libnppc.so/libcudnn.so/...），wheel 只有
             # 带版本名（.so.12/.so.9/.so.1.8.2）——缺软链则 NEEDED 链断 → VFX 全灭
             for target in libnppc libnppial libnppicc libnppidei libnppig \
@@ -206,7 +225,9 @@ else
             rm -rf "$TMPVFX"
             echo "  ❌ 下载失败（网络/代理？）。手动方式："
             echo "     官方索引: https://pypi.nvidia.com/nvidia-vfx/（选 manylinux x86_64 wheel）"
-            echo "     解压其中 nvvfx/libs/* 到 $LIB_DIR/ 后重跑本脚本"
+            echo "     解压其中 nvvfx/libs/* 到 $LIB_DIR/、nvidia_vfx.libs/* 到"
+            echo "     ~/.local/nvidia_vfx.libs/ 后重跑本脚本（0.2.0.0 起的 wheel 把"
+            echo "     cudart 放在 nvidia_vfx.libs/，漏掉则 VSR 静默直通）"
         fi
     else
         echo "  （需要 curl + unzip 才能自动下载；手动下载 wheel 解压到 $LIB_DIR/ 亦可）"

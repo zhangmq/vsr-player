@@ -47,6 +47,7 @@ until [ $# -eq 0 ]; do
     shift
 done
 [ "${#POS[@]}" -gt 0 ] && OUT="${POS[0]}"
+mkdir -p "$(dirname "$OUT")"    # trtexec 不会创建输出目录；缺失时报 "Cannot write to FileStreamWriter"
 case "$HWCOMPAT" in
     on|off) ;;
     *) echo "invalid --hardware-compat: $HWCOMPAT (on|off)" >&2; exit 1 ;;

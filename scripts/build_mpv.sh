@@ -14,6 +14,7 @@ BUILD_DIR="${MPV_BUILD_DIR:-$PROJECT_ROOT/build/mpv}"
 
 echo "=== Preparing mpv build tree ==="
 rm -rf "$BUILD_DIR"
+mkdir -p "$(dirname "$BUILD_DIR")"
 cp -a "$MPV_REF" "$BUILD_DIR"
 cp -a "$OVERLAY"/* "$BUILD_DIR"
 

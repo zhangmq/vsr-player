@@ -289,7 +289,9 @@ RTX 20 系（Turing）及更早不支持 → 插帧自动直通（VSR 不受影�
 ## 版本兼容（不匹配时）
 - 驱动过旧导致 VSR 加载失败：升级驱动，或锁定旧版 VFX——
   `pip download nvidia-vfx==<版本> --no-deps` 后解压 nvvfx/libs/*.so*
-  到 ~/.local/lib/vsr-player/。手动放置时需自行补齐无版本软链
+  到 ~/.local/lib/vsr-player/、nvidia_vfx.libs/* 到 ~/.local/nvidia_vfx.libs/
+  （0.2.0.0 起的 wheel 把 cudart 放在 nvidia_vfx.libs/，漏掉则 VSR 静默直通）。
+  手动放置时需自行补齐无版本软链
   （vsr_proc 以无版本名 dlopen：libnppc.so/libcudnn.so/...，缺软链
   VFX 加载链断裂 → 超分静默直通；install.sh 自动下载路径会补）
 - RIFE 引擎与 TensorRT 版本绑定（本 tarball 内自洽）；手工重建引擎见
