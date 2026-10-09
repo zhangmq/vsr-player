@@ -269,17 +269,24 @@ int main(int argc, char *argv[]) {
 
         MLOG_INFO("Video wired");
 
-        // ── 播放期会话行为：防息屏 ────────────────────────────────
-        // 只在"确实在播放"时生效（playing && hasFile——mpv 的 pause 属性初值
-        // 会让 playing 在装载文件前短暂为 true）。
+        // ── 播放期会话行为：防息屏 + 指针自动隐藏 ────────────────────
+        // 两者都只在"确实在播放"时生效（playing && hasFile——mpv 的 pause
+        // 属性初值会让 playing 在装载文件前短暂为 true）；UI 覆盖层可见
+        //（底部/顶部热区、弹窗——QML 已写回 viewModel.overlaysVisible）期间
+        // 不隐藏指针，与 mpv --cursor-autohide 的 OSC 语义一致。
         // benchmark 不参与（测量口径）。
         IdleInhibitor idleInhibitor(&view);
+        CursorAutoHide cursorAutoHide(&view);
         if (!opts.benchmark) {
             auto syncSessionIdle = [&]() {
                 const bool playing = viewModel.playing() && viewModel.hasFile();
                 idleInhibitor.setActive(playing);
+                cursorAutoHide.setEnabled(playing);
+                cursorAutoHide.setSuspended(viewModel.overlaysVisible());
             };
             QObject::connect(&viewModel, &PlayerViewModel::playingChanged,
+                             &app, syncSessionIdle);
+            QObject::connect(&viewModel, &PlayerViewModel::overlaysVisibleChanged,
                              &app, syncSessionIdle);
             syncSessionIdle();   // 初始状态（恢复播放时 mpv 可能已 pause）
         }
