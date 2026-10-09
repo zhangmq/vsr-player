@@ -139,11 +139,30 @@ int main(int argc, char *argv[]) {
     std::string vf = viewModel.vfOption();
 
     // ── mpv ─────────────────────────────────────────────────────────────
+    // 启动目标的历史进度判定必须在 mpv 初始化之前：有历史进度 → 以暂停态
+    // 起步（mpv 仍恢复位置，但不自动播放）。判定用的路径字符串与随后
+    // loadfile 的完全一致（watch_later 条目名是路径的 MD5，见
+    // PlayerViewModel::hasResumeState）。用户经 `-- --pause=...` 显式指定时
+    // 以命令行优先（mpv 语义：命令行 > 配置）。
+    bool startPaused = false;
+    if (!opts.benchmark) {
+        bool explicitPause = false;
+        for (const auto &kv : opts.passthrough)
+            if (kv.first == "pause") explicitPause = true;
+        const QString target = !opts.video_file.empty()
+            ? QString::fromLocal8Bit(opts.video_file.c_str())
+            : viewModel.restoredCurrentFile();
+        if (!explicitPause && !target.isEmpty() && PlayerViewModel::hasResumeState(target)) {
+            startPaused = true;
+            MLOG_INFO("resume state found → start paused: %s", target.toUtf8().constData());
+        }
+    }
+
     MpvController mpv;
     int num_dev_exts = 0;
     const char *const *dev_exts = vk.deviceExtensions(&num_dev_exts);
     if (!mpv.init(vk.instance(), vk.physicalDevice(), vk.device(),
-                  vk.queueFamilyIndex(), opts.benchmark, opts.hwaccel,
+                  vk.queueFamilyIndex(), opts.benchmark, opts.hwaccel, startPaused,
                   vf.c_str(), opts.passthrough, vk.features(),
                   dev_exts, num_dev_exts))
         return 1;
