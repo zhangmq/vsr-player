@@ -34,12 +34,16 @@ Item {
     signal loopClicked()
     signal seeked(real ms)
 
-    /// 自动隐藏保持条件：热区/进度条/bottombar 任一 hover 或拖动中。
-    /// 拖动进度条时鼠标在滑块上（不在热区内）——pressed 单独保护。
-    /// 宿主（main.qml）用此状态驱动 overlaysVisible（showUi 绑定）。
-    readonly property bool mouseInRegion: hotZone.containsMouse
-                                          || progress.hovered || progress.pressed
-                                          || barHover.hovered
+    /// 自动隐藏保持条件：整个 UI 区域（热区 40 + 进度条 14 + bottombar 48）
+    /// 视作**一个连续区域**——单个 HoverHandler 挂在 root 上（implicitHeight
+    /// 即该区域高度）。
+    /// 反面教训（2026-10-09 用户实测）：此前用"热区 containsMouse || 进度条
+    /// hovered || bottombar hovered"三段判定，进度条 band 高 14 而内部 Slider
+    /// 只有 6/8，段间余下 6~8px 无任何 hover 源——鼠标自上而下穿过时 UI
+    /// "可见→消失→可见"。
+    /// progress.pressed 单独保留：拖动中指针可能移出本区域（滑块跟随），
+    /// 但拖动状态必须保持 UI 可见。
+    readonly property bool mouseInRegion: barHover.hovered || progress.pressed
 
     // Popup 定位锚点（PopupBase.anchorTarget）
     property alias volumeBtn: volBtn
@@ -51,13 +55,10 @@ Item {
     // bottombar(48) + 进度条(14) + 热区(40) 一体
     implicitHeight: 48 + 14 + 40
 
-    // ── 热区（进度条上方——鼠标靠近进度条即显示/保持 UI）─────────
-    MouseArea {
-        id: hotZone
-        anchors { left: parent.left; right: parent.right; bottom: progress.top }
-        height: 40
-        hoverEnabled: true
-    }
+    /// 覆盖整个 UI 区域（40+14+48）的 hover 源——见 mouseInRegion 注释。
+    /// 用 HoverHandler 而非 MouseArea：只观察 hover，不吞鼠标事件
+    ///（MouseArea 会吃掉右键，导致该区域内右键菜单失效）。
+    HoverHandler { id: barHover }
 
     // ── 进度条（贴 bottombar 上沿，拖动中 hovered/pressed 保持 UI）─
     ProgressSlider {
@@ -80,8 +81,6 @@ Item {
         }
         opacity: root.overlaysVisible ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
-
-        HoverHandler { id: barHover }
 
         Row {
             anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 12 }
