@@ -29,6 +29,7 @@
 #include "MpvController.h"
 #include "PlayerViewModel.h"
 #include "RpcServer.h"
+#include "SessionIdle.h"
 
 extern "C" {
 VkResult vkDeviceWaitIdle(VkDevice);
@@ -267,6 +268,22 @@ int main(int argc, char *argv[]) {
         MLOG_INFO("update_callback set");
 
         MLOG_INFO("Video wired");
+
+        // ── 播放期会话行为：防息屏 ────────────────────────────────
+        // 只在"确实在播放"时生效（playing && hasFile——mpv 的 pause 属性初值
+        // 会让 playing 在装载文件前短暂为 true）。
+        // benchmark 不参与（测量口径）。
+        IdleInhibitor idleInhibitor(&view);
+        if (!opts.benchmark) {
+            auto syncSessionIdle = [&]() {
+                const bool playing = viewModel.playing() && viewModel.hasFile();
+                idleInhibitor.setActive(playing);
+            };
+            QObject::connect(&viewModel, &PlayerViewModel::playingChanged,
+                             &app, syncSessionIdle);
+            syncSessionIdle();   // 初始状态（恢复播放时 mpv 可能已 pause）
+        }
+
 
         // ── rife 状态行 → OSD ────────────────────────────────────────
         // rife filter 每 ~0.5s 输出 MSGL_STATUS 状态行（"fruc-status:"
