@@ -126,6 +126,13 @@ if [ "$MODE" = dev ] && [ -d "$SRC/third_party/nvidia_vfx.libs" ]; then
     cp -L "$SRC"/third_party/nvidia_vfx.libs/*.so* "$VFX_SIBLING/" 2>/dev/null || true
     echo "  ✅ VFX cudart sibling（third_party/nvidia_vfx.libs）→ $VFX_SIBLING/"
 fi
+# Wayland 空闲抑制模块（可选，主程序运行时 dlopen；缺失时回退 D-Bus）。
+# dev 树里在 build/src/client/；tarball 里已随 lib/vsr-player/ 一起拷过（LIB_SRC）。
+IDLE_MOD="$SRC/build/src/client/libvsr-idle-wayland.so"
+if [ -f "$IDLE_MOD" ]; then
+    cp "$IDLE_MOD" "$LIB_DIR/"
+    echo "  ✅ wayland idle-inhibit 模块 → $LIB_DIR/"
+fi
 # 全依赖版：捆绑的 Qt（库在 lib/，插件/QML 在 lib/qt6/）——镜像发行版布局，
 # 使 Qt 插件自带的相对 RUNPATH（$ORIGIN/../../../）能解析到 <prefix>/lib。
 QT_SRC="$SRC/lib/qt6"

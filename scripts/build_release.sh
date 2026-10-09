@@ -88,6 +88,13 @@ mkdir -p "$STAGE/lib/vsr-player" "$STAGE/engines" "$STAGE/fonts" \
 cp "$CLIENT_DIST/src/client/vsr-player" "$STAGE/vsr-player"
 cp "$MPV_DIST/_build/mpv" "$STAGE/mpv-vsr"
 cp -L "$MPV_DIST/_build/libmpv.so.2" "$STAGE/lib/vsr-player/libmpv.so.2"
+# Wayland 空闲抑制模块（可选）：主程序 dlopen；目标机无 QtWaylandClient 时
+# 加载失败 → 回退 org.freedesktop.ScreenSaver（不会导致启动失败）。
+IDLE_MOD="$CLIENT_DIST/src/client/libvsr-idle-wayland.so"
+if [ -f "$IDLE_MOD" ]; then
+    cp "$IDLE_MOD" "$STAGE/lib/vsr-player/"
+    echo "  ✓ wayland idle-inhibit 模块"
+fi
 
 # ── 4. 依赖库收集（显式核心集 + 媒体栈动态发现 + full 变体 Qt）────────
 echo "--- [4/6] bundled libs ---"

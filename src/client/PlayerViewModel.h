@@ -147,6 +147,9 @@ public:
     void setFullscreen(bool fs);   // Q_PROPERTY WRITE（QML 窗口同步回写）
 
     bool playing() const        { return playing_; }
+    /// 有活动文件（未加载/停止/播完 → false）。playing_ 在文件装载前可能
+    /// 因 mpv pause 属性初值短暂为 true——"是否真的在播"需与本标志合取。
+    bool hasFile() const        { return fileLoaded_; }
     int64_t currentTime() const { return currentTime_.load(); }
     int64_t duration() const    { return duration_.load(); }
     bool overlaysVisible() const { return overlaysVisible_; }
