@@ -3,6 +3,7 @@
 
 #include <QMetaObject>
 #include <QVariantMap>
+#include <QCryptographicHash>
 #include <QFileInfo>
 #include <QDir>
 #include <QSet>
@@ -554,10 +555,9 @@ void PlayerViewModel::applyPlaybackSettings() {
 
 void PlayerViewModel::restorePlaylist() {
     if (!mpv_) return;
-    QStringList files = settings_.value("playlist").toStringList();
-    int cur = settings_.value("playlistCurrent", -1).toInt();
+    int cur = 0;
+    QStringList files = restoredFiles(&cur);
     if (files.isEmpty()) return;
-    if (cur < 0 || cur >= files.size()) cur = 0;
     // 首条 replace 开始播放，其余 append 排队；最后定位上次条目。
     // loadfile 全部同步命令（mpv 启动阶段无 core-lock 竞争）。
     mpv_->commandV({"loadfile", files[0].toUtf8().constData(), nullptr});
@@ -565,6 +565,43 @@ void PlayerViewModel::restorePlaylist() {
         mpv_->commandV({"loadfile", files[i].toUtf8().constData(), "append", nullptr});
     if (cur != 0)
         mpv_->commandV({"playlist-play-index", std::to_string(cur).c_str(), nullptr});
+}
+
+// 恢复列表的持久化来源 + 合法化当前索引：restoredCurrentFile()（启动暂停
+// 判定）与 restorePlaylist()（实际装载）共用同一规则，避免两处分叉。
+QStringList PlayerViewModel::restoredFiles(int *cur) const {
+    const QStringList files = settings_.value("playlist").toStringList();
+    int c = settings_.value("playlistCurrent", -1).toInt();
+    if (!files.isEmpty() && (c < 0 || c >= files.size()))
+        c = 0;
+    if (cur) *cur = c;
+    return files;
+}
+
+QString PlayerViewModel::restoredCurrentFile() const {
+    int cur = 0;
+    const QStringList files = restoredFiles(&cur);
+    return files.isEmpty() ? QString() : files[cur];
+}
+
+bool PlayerViewModel::hasResumeState(const QString &path) {
+    if (path.isEmpty()) return false;
+    const std::string dir = MpvController::watchLaterDir();
+    if (dir.empty()) return false;
+    // 条目名 = MD5(路径字符串) 大写十六进制——mpv 用 libavutil hash 逐字节
+    // 摘要 `path`（misc/hash.c 按 "%02X" 输出），不做路径规范化。
+    const QByteArray digest = QCryptographicHash::hash(
+        path.toUtf8(), QCryptographicHash::Md5).toHex().toUpper();
+    const QString entry = QString::fromStdString(dir) + QLatin1Char('/')
+                        + QString::fromLatin1(digest);
+    QFile f(entry);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return false;
+    while (!f.atEnd()) {
+        if (f.readLine().startsWith("start="))
+            return true;   // 只有带位置才算"有历史进度"
+    }
+    return false;
 }
 
 // ── Playback（乐观更新：本地状态立即反映，mpv 回写校正）──────────────

@@ -9,8 +9,16 @@ static double now() {
     return duration<double>(steady_clock::now().time_since_epoch()).count();
 }
 
+std::string MpvController::watchLaterDir() {
+    const char *home = getenv("HOME");
+    if (!home || !*home)
+        return std::string();
+    // 独立目录：不污染系统 mpv 配置（~/.config/mpv）
+    return std::string(home) + "/.config/vsr-player/watch_later";
+}
+
 bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
-                         uint32_t qfi, bool benchmark, bool hwaccel,
+                         uint32_t qfi, bool benchmark, bool hwaccel, bool start_paused,
                          const char *vf_opt,
                          const std::vector<std::pair<std::string, std::string>> &passthrough,
                          const VkPhysicalDeviceFeatures2 *features,
@@ -68,14 +76,18 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
         mpv_set_option_string(mpv_, "osd-level", "0");
         // ── 播放器完整性：位置记忆 + 字幕自动加载 ──────────────
         // watch-later 用独立目录（不污染系统 mpv 配置 ~/.config/mpv）。
-        const char *home = getenv("HOME");
-        if (home && *home) {
-            char wl[1024];
-            snprintf(wl, sizeof(wl), "%s/.config/vsr-player/watch_later", home);
-            mpv_set_option_string(mpv_, "watch-later-directory", wl);
-        }
+        // 目录来源 = watchLaterDir()——与 PlayerViewModel::hasResumeState()
+        // 查找条目同一事实源（改路径等于同时改"有无历史进度"的判定）。
+        std::string wl = watchLaterDir();
+        if (!wl.empty())
+            mpv_set_option_string(mpv_, "watch-later-directory", wl.c_str());
         mpv_set_option_string(mpv_, "save-position-on-quit", "yes");
         mpv_set_option_string(mpv_, "resume-playback", "yes");
+        // 有历史进度 → 以暂停态起步：mpv 照常应用 watch_later 的 start
+        // （恢复位置），但不自动播放。pause 不在 watch_later_options 默认
+        // 表内（options.c .watch_later_options），不会被配置覆盖。
+        if (start_paused)
+            mpv_set_option_string(mpv_, "pause", "yes");
         // 同名字幕自动加载（exact：同名精确，fuzzy 易误配）
         mpv_set_option_string(mpv_, "sub-auto", "exact");
         mpv_set_option_string(mpv_, "autoload-files", "yes");

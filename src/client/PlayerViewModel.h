@@ -120,6 +120,19 @@ public:
     /// 恢复上次播放列表（无 CLI 文件时调用）：首条 replace 开始播放，
     /// 其余 append，最后定位上次条目。
     void restorePlaylist();
+    /// 无参数启动将播放的条目（= settings playlist[playlistCurrent]，
+    /// 越界回退首条；无列表则空）。与 restorePlaylist 同一来源——供
+    /// main.cpp 在 mpv 初始化前判定"是否以暂停态启动"。
+    QString restoredCurrentFile() const;
+    /// 该路径是否存在历史播放状态（mpv watch_later 条目存在）。
+    /// 条目名 = MD5(路径) 大写十六进制（对照 third_party/mpv
+    /// player/configfiles.c 的 mp_get_playback_resume_config_filename +
+    /// misc/hash.c 的 "%02X" 输出），位于 MpvController::watchLaterDir()。
+    /// 路径必须与交给 mpv 的字符串逐字节一致（在 loadfile 前用同一个
+    /// QString 调用）——mpv 不做本地路径规范化。
+    /// 条目必须含 `start=` 才算"有可恢复位置"——mpv 对不可 seek 的源只写
+    /// 音量/轨道等（无 start），此时不该判为有历史。
+    static bool hasResumeState(const QString &path);
     /// 轨道记忆（按文件，QSettings trackMem map：path →
     /// {aid,sid,vid,subs,sel,subDelay}；trackMemOrder 记录
     /// LRU 访问序，上限 10 个文件，超限淘汰最久未用）。
@@ -295,6 +308,10 @@ private:
     /// 不用 loadfile replace——cmd_loadfile 的 REPLACE 先 playlist_clear
     /// 清空整个列表（play()/togglePlayPause 共用，勿再引入 replace）。
     void resumeLastPath();
+    /// 恢复列表的持久化来源 + 合法化当前索引（越界/缺失 → 0）：
+    /// restoredCurrentFile()（启动暂停判定）与 restorePlaylist()（实际装载）
+    /// 共用——避免"哪一条会被播放"的规则分叉。
+    QStringList restoredFiles(int *cur) const;
     /// 段内统计重置（停止/暂停翻转/seek 完成/新文件）。主线程调用。
     void resetSegmentCounters(int64_t dropBase);
     /// 事件线程：读 loop-file/loop-playlist 并回写 loopMode。

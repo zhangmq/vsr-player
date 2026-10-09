@@ -25,13 +25,21 @@ public:
     /// @param dev_exts     device extensions enabled on `dev` (required for
     ///                     pl_vulkan_import: FD export/import fns stay NULL
     ///                     otherwise → SIGSEGV in cuda_vk interop)
+    /// @param start_paused 以暂停态起步（启动目标存在历史进度时由调用方判定）
+    ///                     ——mpv 仍应用 watch_later 的 start（恢复位置），
+    ///                     只是不自动播放。
     bool init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
-              uint32_t qfi, bool benchmark, bool hwaccel,
+              uint32_t qfi, bool benchmark, bool hwaccel, bool start_paused,
               const char *vf_opt,
               const std::vector<std::pair<std::string, std::string>> &passthrough,
               const VkPhysicalDeviceFeatures2 *features,
               const char *const *dev_exts, int num_dev_exts);
     void destroy();
+
+    /// watch-later 目录（`~/.config/vsr-player/watch_later`，HOME 不可用则空）。
+    /// 单一事实源：init() 用它配 mpv 的 watch-later-directory，
+    /// PlayerViewModel::hasResumeState() 用它定位条目文件。
+    static std::string watchLaterDir();
 
     uint64_t update();  // → MPV_RENDER_UPDATE_FRAME
     void render(VkImage img, VkFormat fmt, int w, int h);
