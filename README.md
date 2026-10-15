@@ -154,10 +154,17 @@ pip index versions nvidia-vfx --extra-index-url https://pypi.nvidia.com
 # 2. download a specific version's wheel (pip download only fetches; no install)
 pip download nvidia-vfx==<version> --no-deps --extra-index-url https://pypi.nvidia.com -d /tmp/vfx
 
-# 3. extract its libs into the app's lib dir
+# 3. extract into the app's lib dir + the sibling dir the VFX libs' RPATH expects
 unzip -o /tmp/vfx/nvidia_vfx-<version>*.whl "nvvfx/libs/*" -d /tmp/vfx
 cp /tmp/vfx/nvvfx/libs/*.so* ~/.local/lib/vsr-player/
+# wheel >= 0.2.0.0 also ships nvidia_vfx.libs/ (libcudart-<hash>.so.*); the VFX libs
+# carry RPATH $ORIGIN/../../nvidia_vfx.libs, so it must land next to that app dir:
+unzip -o /tmp/vfx/nvidia_vfx-<version>*.whl "nvidia_vfx.libs/*" -d /tmp/vfx
+mkdir -p ~/.local/nvidia_vfx.libs
+cp /tmp/vfx/nvidia_vfx.libs/*.so* ~/.local/nvidia_vfx.libs/ 2>/dev/null || true
 ```
+
+Note: wheels before 0.2.0.0 have no `nvidia_vfx.libs/` (unzip prints "filename not matched" — harmless). On 0.2.0.0+ missing it makes `libVideoFXLocal.so` fail to load, i.e. **VSR silently passes through**.
 
 Note: `vsr_proc.c` dlopens the VFX libs by their **unversioned** names (`libnppc.so`, `libcudnn.so`, `libnvidia-ngx-vsr.so`, …), but the wheel only ships versioned files (`.so.12`, `.so.9`, …). The automatic download path in `install.sh` creates the missing unversioned symlinks; if you placed the files manually, create them yourself or the VFX load chain breaks (VSR silently passes through):
 

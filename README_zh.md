@@ -154,10 +154,17 @@ pip index versions nvidia-vfx --extra-index-url https://pypi.nvidia.com
 # 2. 下载指定版本 wheel（pip download 只取文件，不安装）
 pip download nvidia-vfx==<版本> --no-deps --extra-index-url https://pypi.nvidia.com -d /tmp/vfx
 
-# 3. 解压其库文件到应用库目录
+# 3. 解压到应用库目录 + VFX 库 RPATH 期望的兄弟目录
 unzip -o /tmp/vfx/nvidia_vfx-<版本>*.whl "nvvfx/libs/*" -d /tmp/vfx
 cp /tmp/vfx/nvvfx/libs/*.so* ~/.local/lib/vsr-player/
+# wheel ≥ 0.2.0.0 另有 nvidia_vfx.libs/（libcudart-<hash>.so.*）；VFX 库 RPATH 是
+# $ORIGIN/../../nvidia_vfx.libs，必须落到应用库目录的兄弟位置：
+unzip -o /tmp/vfx/nvidia_vfx-<版本>*.whl "nvidia_vfx.libs/*" -d /tmp/vfx
+mkdir -p ~/.local/nvidia_vfx.libs
+cp /tmp/vfx/nvidia_vfx.libs/*.so* ~/.local/nvidia_vfx.libs/ 2>/dev/null || true
 ```
+
+注：0.2.0.0 之前的 wheel 没有 `nvidia_vfx.libs/`（unzip 会提示 filename not matched，可忽略）；0.2.0.0 起漏掉它会让 `libVideoFXLocal.so` 加载失败 → **VSR 静默直通**。
 
 注意：`vsr_proc.c` 以**无版本名** dlopen（`libnppc.so`、`libcudnn.so`、`libnvidia-ngx-vsr.so` 等），而 wheel 只含带版本名文件（`.so.12`、`.so.9`……）。install.sh 的自动下载路径会补无版本软链；**手动放置时需自行补齐**，否则 VFX 加载链断裂（超分静默直通）：
 

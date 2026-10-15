@@ -25,6 +25,10 @@ NO_VFX=0
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
 LIB_DIR="$HOME/.local/lib/vsr-player"
+# VFX wheel ≥0.2.0.0 把 libcudart-<hash>.so.* 放在 nvidia_vfx.libs/（nvvfx/ 的兄弟
+# 目录）；VFX 库的 RPATH 是 $ORIGIN/../../nvidia_vfx.libs，从 $LIB_DIR 出发唯一能
+# 解析的位置就是 <$LIB_DIR 的父目录的父目录>/nvidia_vfx.libs（多处共用，单一事实源）。
+VFX_SIBLING="$(dirname "$(dirname "$LIB_DIR")")/nvidia_vfx.libs"
 FONT_DIR="$HOME/.local/share/vsr-player/fonts"
 
 # ── 源定位：tarball 场景（旁边有 vsr-player）优先，否则 dev 构建树 ──
@@ -115,6 +119,13 @@ if [ -d "$LIB_SRC" ]; then
     cp -L "$LIB_SRC"/* "$LIB_DIR/"   # -L：跟随软链（VFX 的 ngx-vsr 软链等）
     echo "  ✅ 捆绑库（ffmpeg/CUDA/TRT/libmpv）→ $LIB_DIR/"
 fi
+# dev 模式：按 docs 把 wheel 的 nvidia_vfx.libs 放在 third_party/nvidia_vfx.libs，
+# 安装时必须落到上面 RPATH 期望的位置——否则装出来的库加载失败 → VSR 静默直通。
+if [ "$MODE" = dev ] && [ -d "$SRC/third_party/nvidia_vfx.libs" ]; then
+    mkdir -p "$VFX_SIBLING"
+    cp -L "$SRC"/third_party/nvidia_vfx.libs/*.so* "$VFX_SIBLING/" 2>/dev/null || true
+    echo "  ✅ VFX cudart sibling（third_party/nvidia_vfx.libs）→ $VFX_SIBLING/"
+fi
 # 全依赖版：捆绑的 Qt（库在 lib/，插件/QML 在 lib/qt6/）——镜像发行版布局，
 # 使 Qt 插件自带的相对 RUNPATH（$ORIGIN/../../../）能解析到 <prefix>/lib。
 QT_SRC="$SRC/lib/qt6"
@@ -153,9 +164,19 @@ fi
 
 # ── 4. VFX SDK（NVIDIA 官方 wheel，纯下载）──────────────────────────
 echo "--- [4/5] VFX SDK check ---"
+VFX_READY=0
 if [ -f "$LIB_DIR/libNVCVImage.so" ]; then
-    echo "  ✅ VFX SDK 已就位（$LIB_DIR/）"
-else
+    if ls "$VFX_SIBLING"/libcudart-*.so.* >/dev/null 2>&1; then
+        VFX_READY=1
+        echo "  ✅ VFX SDK 已就位（$LIB_DIR/ + $VFX_SIBLING/）"
+    else
+        # 老安装/手动放置：库在但 sibling 缺 → libVideoFXLocal.so 加载失败（VSR 静默直通）
+        echo "  ⚠ VFX SDK 在 $LIB_DIR/ 但缺 $VFX_SIBLING/libcudart-*.so.*"
+        echo "    （0.2.0.0 起的 wheel 把 cudart 放在该兄弟目录，VFX 库 RPATH 指向它）"
+        echo "    → 重新下载 wheel 补齐（约 0.44 GB）"
+    fi
+fi
+if [ "$VFX_READY" -eq 0 ]; then
     echo "  ⚠ VFX SDK 缺失 — 超分将直通（视频照常播放）"
     echo "    获取：NVIDIA 官方索引 nvidia-vfx wheel（内含 VFX 运行时，"
     echo "    许可：NVIDIA Software License Agreement 2025.05.05 ——"
@@ -192,7 +213,7 @@ else
             # <parent of LIB_DIR's parent>/nvidia_vfx.libs. Copying it next to the other VFX
             # libs does not work; without it libVideoFXLocal.so fails to load and VSR
             # silently passes through.
-            VFX_SIBLING="$(dirname "$(dirname "$LIB_DIR")")/nvidia_vfx.libs"
+            # VFX_SIBLING 在脚本顶部（LIB_DIR 旁）定义——单一事实源
             # unzip exits 11 when a pattern matches nothing, and `set -e` would abort the whole
             # install on wheels that predate nvidia_vfx.libs/, so check the archive first.
             WHEEL_MEMBERS="$(unzip -Z1 "$TMPVFX/nvidia_vfx.whl" 2>/dev/null || true)"
@@ -230,7 +251,8 @@ else
             echo "     cudart 放在 nvidia_vfx.libs/，漏掉则 VSR 静默直通）"
         fi
     else
-        echo "  （需要 curl + unzip 才能自动下载；手动下载 wheel 解压到 $LIB_DIR/ 亦可）"
+        echo "  （需要 curl + unzip 才能自动下载；手动下载 wheel：nvvfx/libs/* → $LIB_DIR/、"
+        echo "   nvidia_vfx.libs/* → $VFX_SIBLING/ 亦可）"
     fi
 fi
 
@@ -241,7 +263,8 @@ if [ -n "$LDD_MISSING" ]; then
     echo "  ⚠ vsr-player 依赖缺失:"; echo "$LDD_MISSING"
 fi
 [ -f "$LIB_DIR/libnvinfer.so.11" ] && RIFE_TRT="✅" || RIFE_TRT="❌"
-[ -f "$LIB_DIR/libNVCVImage.so" ] && VFX_ST="✅" || VFX_ST="❌"
+{ [ -f "$LIB_DIR/libNVCVImage.so" ] && ls "$VFX_SIBLING"/libcudart-*.so.* >/dev/null 2>&1; } \
+    && VFX_ST="✅" || VFX_ST="❌"
 echo ""
 echo "=== Done ==="
 echo "  GUI:  $BIN_DIR/vsr-player        [VFX:$VFX_ST TRT:$RIFE_TRT]"
