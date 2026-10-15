@@ -13,9 +13,11 @@
 | 插帧引擎 | "rife lite = 主引擎" | **full FP16 唯一引擎**（lite 已拆） |
 | aboutToBlock | "应删除/待验证" | **已删除** |
 | FRUC 档位 | 30/40/60 | **[Off, 40, 48, 60]**（`--fruc 30` 已不接受） |
+| 插帧性能降级 | "分级降级 60→48→40→30 超预算自动降档" | **已移除**（判据节点内自测不可靠；统一方案待设计，见 `fruc-auto-degrade-removal.md`） |
 
 ## 保留文件（知识/经验类）
 
+- `fruc-auto-degrade-removal.md` — **插帧性能自动降级移除记录（2026-10-15，搁置）**：判据为何不可靠（节点内自测 vs 下游 VSR/呈现通路）、上屏率实测对照、vf 节点能力边界查证、统一跨节点方案待定问题
 - `mpv-render-context-create-18.md` — mpv_render_context_create -18 根因（libplacebo features 要求）与修复清单
 - `nano-investigation-status.md` — Nano（Open-Frame-gen）调查最终结论：发布权重=帧平均器（flow 恒零实证）；TRT 图级 bug 发现
 - `vfx-no-trt10-needed.md` — VFX SDK 对 TRT 零符号调用（readelf/nm 实证），VFX/TRT 打包决策依据
