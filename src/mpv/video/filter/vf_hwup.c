@@ -94,7 +94,7 @@ static void free_cuda_buf(void *opaque, uint8_t *data)
 
 // ── CUDA context setup ─────────────────────────────────────────────────────
 // SW frames have no hwctx to borrow from — the filter creates its own context
-// (mirror vf_vsr.c's SW branch). Once created it lives for the filter's whole
+// (vf_vsr 的软解路径已按契约移除：SW→HW 只在本节点做). Once created it lives for the filter's whole
 // lifetime: decode output is either all-HW or all-SW (no per-frame switching),
 // and HW frames pass through without touching CUDA at all.
 

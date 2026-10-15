@@ -1,10 +1,12 @@
 /*
  * vf_vsr.c -- Video Super Resolution filter via NVIDIA VFX SDK
  *
- * Manual format normalization:
- * SW (any YUV): mp_sws→RGBA → cuMemcpyHtoD → CUDA staging
- * HW CUDA/RGBA: passthrough
- * HW CUDA/YUV: yuv_to_rgba D2D
+ * 输入约定：只处理 CUDA 帧（SW→HW 一致化由链上的 vf_hwup 负责，见其头注释
+ * "rife/vsr 不再需要各自的 SW 支持"）。非 CUDA 帧一律直通——早期自带的软解
+ * 上传分支已移除（issue #12 缺陷 6：它每帧重建 CUDA context，导致 VSR 引擎的
+ * in_pixels 失效 → 第二帧段错误）。
+ * HW CUDA/RGBA: D2D 拷入引擎输入缓冲
+ * HW CUDA/YUV:  yuv_to_rgba D2D
  *
  * Filter options:
  *   scale:   off | auto | 2 | 3 | 4            (default: auto)
@@ -233,6 +235,7 @@ struct priv {
     int    status_frames;
     double status_cost_ms;
     int    status_emit;        // passthrough 分支输出计数（每 30 帧）
+    bool   sw_warned;          // 软解输入直通只警告一次（同 vf_rife.sw_warned）
 };
 
 // ── compute_adaptive_scale ─────────────────────────────────────────────────
@@ -354,25 +357,11 @@ static bool ensure_cuda(struct mp_filter *f, struct priv *p,
         atomic_init(&p->cuda_ref->refs, 1);
         MP_VERBOSE(f, "vsr: sharing hwdec CUDA context\n");
     } else {
-        // SW 输入：自建 context（owned）
-        CUdevice dev;
-        cr = cuDeviceGet(&dev, 0);
-        if (cr != CUDA_SUCCESS) {
-            MP_ERR(f, "cuDeviceGet(0) failed (%d)\n", cr);
-            return false;
-        }
-        CUcontext cuda_ctx;
-        cr = cuCtxCreate(&cuda_ctx, CU_CTX_SCHED_AUTO, dev, 0);
-        if (cr != CUDA_SUCCESS) {
-            MP_ERR(f, "cuCtxCreate failed (%d)\n", cr);
-            return false;
-        }
-        p->cuda_ref = calloc(1, sizeof(*p->cuda_ref));
-        p->cuda_ref->magic = MP_CUDA_CTX_REF_MAGIC;
-        p->cuda_ref->ctx = cuda_ctx;
-        p->cuda_ref->owned = true;
-        atomic_init(&p->cuda_ref->refs, 1);
-        MP_VERBOSE(f, "vsr: created CUDA context on device 0 (SW input)\n");
+        // 软解帧已在 f_process 直通（契约：SW→HW 由 vf_hwup 负责），走到这里说明
+        // 上游状态异常——不再自建 context（旧实现每帧重建 → 引擎 in_pixels 失效，
+        // issue #12 缺陷 6）。
+        MP_ERR(f, "vsr: no CUDA context from input (software frame past passthrough)\n");
+        return false;
     }
 
     cuCtxPushCurrent(p->cuda_ref->ctx);
@@ -619,7 +608,19 @@ static void f_process(struct mp_filter *f)
     // ── Passthrough — re-evaluated per-frame (dynamic effective_scale) ──
     // scale=-1 时 resolve_scale 返回 1（降噪专用 1:1）——effective_scale==1
     // 已覆盖；denoise 开启时不得 passthrough（1:1 降噪模式仍要跑 VSR）。
-    p->passthrough = (fabsf(p->effective_scale - 1.0f) < 0.001f && p->opts->denoise == -1);
+    // 非 CUDA 帧（没有 hwup 的软解输入）同样直通——契约见 vf_hwup.c 头注释：
+    // "使下游 rife/vsr 只处理 HW 路径（rife/vsr 不再需要各自的 SW 支持）"。
+    // vf_vsr 早期自带的软解上传分支是那次重构的遗留：它在 ensure_cuda 里每帧重建
+    // context，而 VSR 引擎的 in_pixels 仍指向旧 context 的显存 → 第二帧即段错误
+    //（issue #12 缺陷 6：实测 exit 139，SEGV 落在 cuMemcpy2DAsync）。按契约与
+    // vf_rife 同款处理：一次性 WARN + 直通，不初始化引擎、不碰 CUDA。
+    const bool sw_input = (mpi->imgfmt != IMGFMT_CUDA);
+    if (sw_input && !p->sw_warned) {
+        MP_WARN(f, "vsr: software frames — passthrough (prepend @hwup for VSR)\n");
+        p->sw_warned = true;
+    }
+    p->passthrough = sw_input
+                  || (fabsf(p->effective_scale - 1.0f) < 0.001f && p->opts->denoise == -1);
     if (p->passthrough) {
         if (p->vsr_configured) {
             cuCtxPushCurrent(p->cuda_ref->ctx);
@@ -691,41 +692,6 @@ static void f_process(struct mp_filter *f)
                                   p->cuda_stream)) {
             MP_ERR(f, "vsr: yuv_to_rgba_convert failed\n");
             mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
-        }
-    } else if (!is_hw) {
-        // SW: swscale→RGBA → upload directly to vsr.in_pixels
-        struct mp_image *rgba = mpi;
-        if (mpi->imgfmt != IMGFMT_RGBA) {
-            struct mp_sws_context *sws = mp_sws_alloc(f);
-            if (!sws) {
-                mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
-            }
-            sws->force_scaler = MP_SWS_AUTO;
-            rgba = mp_image_alloc(IMGFMT_RGBA, video_w, video_h);
-            if (!rgba) {
-                talloc_free(sws); mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
-            }
-            mp_image_copy_attributes(rgba, mpi);
-            if (mp_sws_scale(sws, rgba, mpi) < 0) {
-                MP_ERR(f, "vsr: sws_scale failed\n");
-                talloc_free(sws); talloc_free(rgba); mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
-            }
-            talloc_free(sws);
-        }
-        {
-            CUDA_MEMCPY2D copy = {0};
-            copy.srcMemoryType = CU_MEMORYTYPE_HOST;
-            copy.srcHost       = rgba->planes[0];
-            copy.srcPitch      = (size_t)rgba->stride[0];
-            copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-            copy.dstDevice     = (CUdeviceptr)p->vsr.in_pixels;
-            copy.dstPitch      = (size_t)p->vsr.in_pitch;
-            copy.WidthInBytes  = (size_t)video_w * 4;
-            copy.Height        = (size_t)video_h;
-            cuMemcpy2DAsync(&copy, p->cuda_stream);
-        }
-        if (rgba != mpi) {
-            talloc_free(rgba);
         }
     } else {
         // HW CUDA/RGBA: copy D2D to vsr.in_pixels (different stride possible)
