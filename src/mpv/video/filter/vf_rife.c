@@ -11,10 +11,22 @@
 // t = (t_grid - t_prev)/(t_cur - t_prev). Fractional factors (24→60 = 2.5)
 // fall out naturally.
 //
-// Adaptive passthrough (normal mode): if measured per-pair interpolation cost
-// exceeds the per-frame budget (1/src_fps − VSR estimate), degrade to
-// passthrough once (MP_WARN), until reset/option change. Benchmark mode
-// (scale > 0) never passes through — it measures the device ceiling.
+// No performance auto-degradation (removed 2026-10-15): the user's target
+// frame rate is honored as set. The old ladder (60→48→40→30→passthrough on
+// measured per-pair cost vs. a budget) was removed because the criterion is
+// node-local: it can only see RIFE's own GPU time, while the actual
+// shortfall is usually downstream of this filter (VSR runs once per OUTPUT
+// frame, i.e. k=out/src times per pair, plus the VO/render path). Measured
+// on RTX 5060 Ti — full record: docs/memory/fruc-auto-degrade-removal.md
+// (raw local logs: build/fruc-probe/, gitignored). 1080p29.97 + fps=60 +
+// scale=auto collapsed to 17.5 fps presented while the criterion reported
+// cost 16.0ms < budget 21.4ms and stayed silent; the same setup reached
+// exactly 60.0 fps when the source was light enough (480p). A reliable
+// scheme has to span every node (rife/vsr/VFX interpolation) and judge the
+// achieved presentation rate, not one node's cost — tracked separately.
+// The per-pair cost/window measurement below is kept for the OSD status
+// line and as raw evidence for that work; benchmark mode (scale > 0)
+// measures the device ceiling as before.
 //
 // The engine (rife_full_fp16.engine, dynamic full-frame FP16 shape) is
 // loaded once and kept across seeks — TRT execution contexts are stateless
@@ -49,7 +61,6 @@
 struct vf_rife_opts {
     int  fps;       // -1=off, 0=auto (2×src), [1,120] target fps
     int  scale;     // benchmark multiplier: 0=off, 2/3/4 (overrides fps)
-    bool adaptive;  // normal-mode cost-based passthrough
 };
 
 #define OPT_BASE_STRUCT struct vf_rife_opts
@@ -137,25 +148,24 @@ static const struct m_option vf_opts_fields[] = {
     {"fps",      OPT_RIFE_FPS(fps)},
     {"scale",    OPT_CHOICE(scale, {"off", 0}, {"2", 2}, {"3", 3}, {"4", 4}),
                  M_RANGE(0, 4)},
-    {"adaptive", OPT_BOOL(adaptive)},
     {0}
 };
 
 static const struct vf_rife_opts vf_rife_opts_def = {
-    .fps = -1, .scale = 0, .adaptive = true,
+    .fps = -1, .scale = 0,
 };
 
 // ── priv ───────────────────────────────────────────────────────────────
 
+// 每对帧耗时测量窗口（仅用于 OSD cost= 显示与后续统一方案的原始证据，
+// 不参与任何自动降级决策——2026-10-15 移除）
 #define RIFE_ADAPT_WIN     10
-#define RIFE_ADAPT_WARMUP  30     // pairs measured before decision
 #define RIFE_ADAPT_SKIP    4      // first pairs (cold start) not recorded
 #define RIFE_MAX_PER_PAIR  64     // pathological small-delta cap
 #define RIFE_PREFETCH_PAIRS 8     // 预取输入对数——帧生成提前量 = 对数×源帧
                                   // 间隔（8×33ms≈267ms），吸收下游（VSR+
                                   // 渲染）耗时（vf_vapoursynth buffered 模型）
 #define RIFE_PREFETCH_MAX_FRAMES 32  // 输出预生成缓冲上限（时间上限）
-#define RIFE_BUDGET_VSR_MS 12.0   // downstream VSR cost estimate for budget
 #define RIFE_SC_MAE        20.0   // scene-change threshold (mean abs diff,
                                   // 0-255 scale — matches stats_repeat.py /
                                   // run_rife_trt_video.py offline runs)
@@ -198,7 +208,6 @@ struct priv {
                               // engine never inits, so video_w/h stay 0)
     double src_fps;           // nominal_fps or measured
     double out_fps;           // output grid spacing
-    double frame_budget_ms;   // adaptive budget: 1/src_fps − VSR estimate
     double t0;                // pts of first frame (grid origin)
     bool   have_prev;
     double prev_pts;          // pair left endpoint (pts only — the frame
@@ -219,8 +228,7 @@ struct priv {
     enum rife_mode mode;
     char  pt_reason[32];      // passthrough reason (for the status line)
 
-    // adaptive measurement
-    bool    adapt_warmup_done;
+    // 每对帧耗时测量（仅 OSD 显示 + 后续统一方案的原始证据）
     double  pair_cost_ms[RIFE_ADAPT_WIN];
     int     pair_count, adapt_idx;
 
@@ -236,8 +244,8 @@ struct priv {
 
 #define RIFE_STATUS_EVERY 30   // frames between status lines (~0.5s @60fps)
 
-static double adapt_avg(struct priv *p);   // defined below (adaptive section)
-static double now_ms(void);                // defined below (adaptive section)
+static double adapt_avg(struct priv *p);   // defined below (cost measurement)
+static double now_ms(void);                // defined below (cost measurement)
 static void rife_discard_prefetch(struct priv *p);   // defined below (process section)
 
 static void rife_status(struct mp_filter *f, struct priv *p)
@@ -245,16 +253,15 @@ static void rife_status(struct mp_filter *f, struct priv *p)
     char buf[256];
     int n = 0;
     if (p->mode == RIFE_ACTIVE) {
-        // 字段集合（一般模式为准）：mode/src/out/cost/budget/fps——
-        // pad（引擎 padded 尺寸）与 frames（累计计数）不输出
+        // 字段集合（一般模式为准）：mode/src/out/cost/fps——
+        // pad（引擎 padded 尺寸）与 frames（累计计数）不输出。
+        // cost 是**本节点**每对帧的 GPU 耗时测量值，纯观测（warmup 前为
+        // 部分窗口均值，数值渐进准确）；没有任何自动降级由它驱动。
         n = snprintf(buf, sizeof(buf),
                      "fruc-status: mode=active src=%.2f out=%.2f",
                      p->src_fps, p->out_fps);
-        // cost/budget 恒显示——一般模式与 benchmark 信息结构一致
-        //（warmup 前为部分窗口均值，数值渐进准确）
         n += snprintf(buf + n, sizeof(buf) - n,
-                      " cost=%.1fms budget=%.1fms",
-                      adapt_avg(p), p->frame_budget_ms);
+                      " cost=%.1fms", adapt_avg(p));
     } else {
         // 直通：仅 "直通 原因"（无 src/out/fps——直通无插帧网格语义，
         // fps 数值无意义且会乱）
@@ -467,7 +474,9 @@ static struct mp_image *rife_make_copy(struct mp_filter *f, struct priv *p,
                             p->eng.rgba_pitch, cur, tg);
 }
 
-// ── Adaptive measurement ───────────────────────────────────────────────
+// ── Cost measurement（仅观测）───────────────────────────────────────────
+// 每对帧的 GPU 耗时（含 cuStreamSynchronize），供 OSD 显示；旧的分级降级
+// 判据已移除（见文件头说明）。不做任何决策。
 
 static double now_ms(void)
 {
@@ -483,8 +492,6 @@ static void adapt_record(struct priv *p, double cost_ms)
         return;  // cold start (engine JIT etc)
     p->pair_cost_ms[p->adapt_idx] = cost_ms;
     p->adapt_idx = (p->adapt_idx + 1) % RIFE_ADAPT_WIN;
-    if (p->pair_count - RIFE_ADAPT_SKIP >= RIFE_ADAPT_WIN)
-        p->adapt_warmup_done = true;
 }
 
 static double adapt_avg(struct priv *p)
@@ -496,37 +503,6 @@ static double adapt_avg(struct priv *p)
     for (int i = 0; i < n; i++)
         sum += p->pair_cost_ms[i];
     return sum / n;
-}
-
-// ── 分级降级：cost 超预算时先降目标帧率档位（60→48→40→30），全档
-// 超才 passthrough（decide_mode 调用）。降档 = 网格重建（queue 清空 +
-// prev/t0 重置）+ 测量窗口重置（新档重新测量）；引擎保留。UI 设置不
-// 回退——OSD 的 out= 显示实际档位。降到 ≤src×0.95 时由 src-fps 直通
-// 判定兜底（等价最低档 passthrough）。
-static bool rife_try_downgrade(struct mp_filter *f, struct priv *p)
-{
-    static const int steps[] = {48, 40, 30};
-    double cur = p->out_fps;
-    double avg = adapt_avg(p);   // 触发时成本（重置前取值，日志用）
-    for (int i = 0; i < 3; i++) {
-        if (steps[i] < cur - 0.5) {
-            rife_discard_prefetch(p);
-            mp_image_unrefp(&p->prev);
-            p->have_prev = false;
-            p->prev_pts = 0;
-            p->t0 = 0;
-            p->cur_emitted = false;
-            p->out_fps = steps[i];
-            // 测量窗口重置：旧档成本不参与新档判定
-            p->pair_count = 0;
-            p->adapt_idx = 0;
-            p->adapt_warmup_done = false;
-            MP_WARN(f, "rife: cost downgrade out %.0f -> %d (avg %.1fms > budget %.1fms)\n",
-                    cur, steps[i], avg, p->frame_budget_ms);
-            return true;
-        }
-    }
-    return false;   // 无更低档——调用方 passthrough
 }
 
 // ── Mode decision ─────────────────────────────────────────────────────
@@ -542,9 +518,9 @@ static bool decide_mode(struct mp_filter *f, struct priv *p,
             snprintf(p->pt_reason, sizeof(p->pt_reason), "off");
             return false;
         }
-        // 4K 插帧允许（2026-08-09）：移除分辨率上限——实时性由下方
-        // adaptive 成本降级保护（先降档 60→48→40→30，全档超才
-        // passthrough；OSD 标记 reason=cost/out= 实际档位；UI 设置不回退）。
+        // 任意分辨率都允许插帧（2026-08-09 移除分辨率上限）。没有性能
+        // 自动降级（2026-10-15 移除，见文件头）：目标帧率按用户设置执行，
+        // 算力不够时表现为丢帧（OSD 的 cost=/fps= 与该文件头记录可诊断）。
         double src_fps = p->src_fps;
         // 插帧倍率 ≈ 1 无意义（59.94 源 + 60 目标 = 1.001×——社区 RIFE
         // 只支持 ≥2×，k7sfunc multi≥2 断言）。1.001× 实际无插帧（每对
@@ -554,20 +530,6 @@ static bool decide_mode(struct mp_filter *f, struct priv *p,
             src_fps >= p->opts->fps * 0.95) {
             p->mode = RIFE_PASSTHROUGH;
             snprintf(p->pt_reason, sizeof(p->pt_reason), "src-fps");
-            return false;
-        }
-        if (p->opts->adaptive && p->adapt_warmup_done &&
-            adapt_avg(p) > p->frame_budget_ms * 1.05) {
-            // 分级降级：先降档（60→48→40→30），全档超才 passthrough
-            if (rife_try_downgrade(f, p))
-                return true;
-            p->mode = RIFE_PASSTHROUGH;
-            snprintf(p->pt_reason, sizeof(p->pt_reason), "cost");
-            if (!p->degrade_warned) {
-                MP_WARN(f, "rife: adaptive passthrough — avg %.1fms > budget %.1fms\n",
-                        adapt_avg(p), p->frame_budget_ms);
-                p->degrade_warned = true;
-            }
             return false;
         }
     }
@@ -868,7 +830,7 @@ static void f_process(struct mp_filter *f)
         return;
     }
 
-    // size change → recompute output fps / adaptive budget
+    // size change → recompute output fps
     // (engine staging reconfig happens after engine ensure below)
     if (cur->w != p->in_w || cur->h != p->in_h) {
         p->in_w = cur->w;
@@ -881,14 +843,6 @@ static void f_process(struct mp_filter *f)
             p->out_fps = 2 * p->src_fps;
         else
             p->out_fps = p->opts->fps;
-        // 预算 = 每帧时间 − 下游 vsr 估算。大分辨率（>1080p）通常不再
-        // 启用 vsr（4K 上采样无意义）——不扣 vsr，否则 4K 插帧成本
-        // （如 24→48 的 33ms）会超扣减后预算误触发降级。
-        bool big = (cur->w > 1920 || cur->h > 1080);
-        p->frame_budget_ms = 1000.0 / p->src_fps
-                             - (big ? 0 : RIFE_BUDGET_VSR_MS);
-        if (p->frame_budget_ms < 5.0)
-            p->frame_budget_ms = 5.0;
         MP_INFO(f, "rife: %dx%d src %.2f fps → out %.2f fps (%s)\n",
                 cur->w, cur->h, p->src_fps, p->out_fps,
                 p->opts->scale > 0 ? "benchmark" : "target");
@@ -1125,10 +1079,9 @@ static void f_reset(struct mp_filter *f)
     p->status_t0 = 0;        // fps 统计窗重置（frame_count 清零后旧窗
     p->status_frames = 0;    // 会产生负 delta → 负 fps，如 fps 60→48 切换）
     p->status_emit = 0;
-    p->adapt_warmup_done = false;
     p->pair_count = 0;
     p->adapt_idx = 0;
-    p->mode = RIFE_ACTIVE;   // clear one-way adaptive degradation
+    p->mode = RIFE_ACTIVE;   // 复位节点内直通态（off/src-fps/sw/no-pts/引擎缺失）
     p->degrade_warned = false;
     p->engine_degraded = false;   // 引擎缺失降级重置（换文件/改参数重试）
     MP_INFO(f, "rife: reset\n");
@@ -1218,16 +1171,6 @@ static bool rife_command(struct mp_filter *f, struct mp_filter_command *cmd)
             MP_INFO(f, "rife: scale %d -> %d\n", p->opts->scale, v);
             p->opts->scale = v;
         }
-        return true;
-    }
-    if (strcmp(cmd->cmd, "adaptive") == 0) {
-        bool v;
-        if (strcmp(cmd->arg, "yes") == 0)      v = true;
-        else if (strcmp(cmd->arg, "no") == 0)  v = false;
-        else if (strcmp(cmd->arg, "1") == 0)   v = true;
-        else if (strcmp(cmd->arg, "0") == 0)   v = false;
-        else return false;
-        p->opts->adaptive = v;
         return true;
     }
     return false;

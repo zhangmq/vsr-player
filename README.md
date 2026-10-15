@@ -297,8 +297,7 @@ Filter options:
 | `quality` (vsr) | `low`, `medium`, `high`, `ultra` | VSR inference quality |
 | `denoise` (vsr) | `off`, `low`, `medium`, `high`, `ultra` | Denoise pass (works at scale=1) |
 | `fps` (rife) | `off`, `auto`, integer 1..120 | Interpolation target fps; `auto` = 2×source |
-| `scale` (rife) | `off`, `2`, `3`, `4` | Benchmark multiplier (no adaptive passthrough) |
-| `adaptive` (rife) | `yes`, `no` | Cost-based passthrough when interpolation is too slow |
+| `scale` (rife) | `off`, `2`, `3`, `4` | Benchmark multiplier (measures the device ceiling) |
 
 Example: `mpv-vsr --hwdec=nvdec --vf=rife:fps=60,vsr:scale=auto,quality=ultra video.mkv`
 

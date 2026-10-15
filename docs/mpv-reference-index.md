@@ -14,7 +14,7 @@
 | `video/filter/vf_vsr.c` | **VSR filter**。`mp_filter_info` name="vsr"（L1071）；`vsr_command` 热更新 scale/quality/denoise（L944，不重建 filter 链）；自定义 `m_option_type` "Scale"（L146，mpv 0.41 无 OPT_CHOICE_OR_FLOAT，支持 off/auto/数字/ratio） |
 | `video/filter/vsr_proc.c` | VSRProcessor 封装（CUDA + VFX SDK 推理管线；VFX 库搜索路径 `VSR_INSTALL_LIBDIR` → `~/.local/lib/vsr-player/` → dev 路径） |
 | `video/filter/vf_hwup.c` | **SW→HW 一致化**：软解帧上传 CUDA（NV12/P010 位深匹配），下游 rife/vsr 只处理 HW 帧；输出 hwctx = max(RT, 视频)（软解场景 VO 下载路径防越界） |
-| `video/filter/vf_rife.c` | **RIFE 插帧 filter**。name="rife"；选项 fps（off/auto/1-120，自定义 m_option_type "rife-fps"）/scale（benchmark 倍率）/adaptive；绝对时间网格调度 + 预取；场景切换直通；fruc-status 状态行（~0.5s）供 OSD |
+| `video/filter/vf_rife.c` | **RIFE 插帧 filter**。name="rife"；选项 fps（off/auto/1-120，自定义 m_option_type "rife-fps"）/scale（benchmark 倍率）；绝对时间网格调度 + 预取；场景切换直通；fruc-status 状态行（~0.5s，含 cost= 观测值）供 OSD。**无性能自动降级**（2026-10-15 移除旧的分级降级，见文件头） |
 | `video/filter/rife_proc.c` | RIFE 推理封装：engine 文件搜索（`RIFE_LIBDIR` → `~/.local/lib/vsr-player/` → dev 路径）；nvrtc 内核（assemble/convert，7ch 输入构造）；动态 shape set_shape |
 | `video/filter/rife_trt.cpp/.h` | TensorRT engine wrapper：dlopen `libnvinfer.so.11`（RTLD_LOCAL 隔离 VFX 的 TRT10）；动态引擎 [1,7,PH,PW] in/[1,3,PH,PW] out FP16；固定 shape 引擎拒绝加载 |
 | `video/filter/rife_internal.h` | vf_rife 内部接口 |

@@ -296,8 +296,7 @@ mpv-vsr --hwdec=auto --vf=hwup,rife:fps=60,vsr:scale=2 video.mkv
 | `quality`（vsr） | `low`、`medium`、`high`、`ultra` | VSR 推理质量 |
 | `denoise`（vsr） | `off`、`low`、`medium`、`high`、`ultra` | 降噪（scale=1 时单独生效） |
 | `fps`（rife） | `off`、`auto`、整数 1..120 | 插帧目标帧率；`auto` = 2×源 |
-| `scale`（rife） | `off`、`2`、`3`、`4` | benchmark 倍率（无自适应直通） |
-| `adaptive`（rife） | `yes`、`no` | 插帧过慢时按成本直通 |
+| `scale`（rife） | `off`、`2`、`3`、`4` | benchmark 倍率（测设备上限） |
 
 示例：`mpv-vsr --hwdec=nvdec --vf=rife:fps=60,vsr:scale=auto,quality=ultra video.mkv`
 
