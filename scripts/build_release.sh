@@ -122,9 +122,31 @@ for f in libavcodec.so.63 libavformat.so.63 libavutil.so.61 libavfilter.so.12 \
          libswscale.so.10 libswresample.so.7 libavdevice.so.63; do
     collect "$f" /usr/lib
 done
-collect libnvrtc.so.13 /opt/cuda/lib64
-collect libnvrtc-builtins.so.13.3 /opt/cuda/lib64
-collect libcudart.so.13 /opt/cuda/lib64
+# CUDA runtime：**不要钉 minor/patch 版本号**，从 /opt/cuda/lib64 发现实际 soname。
+# 2026-10 事故（issue #14）：Toolkit 13.3→13.4 升级后，钉死的
+# `libnvrtc-builtins.so.13.3` 让发布构建在 [4/6] 直接 "not found" 中止，
+# 报错还容易被误判成 CUDA 装坏了。
+# 发现方式：解析无版本软链（libX.so → libX.so.<N>.<M>.<P>）再读它的 ELF SONAME
+# —— SONAME 才是加载器要找的名字。注意 libnvrtc-builtins 并不出现在任何 NEEDED
+# 里（libnvrtc 运行时按内部版本取用，实测 readelf 无该条目），因此只能这样发现，
+# 不能像下面的媒体栈那样从 NEEDED 推导。
+cuda_collect() {  # cuda_collect <基础名>（libnvrtc / libnvrtc-builtins / libcudart）
+    local base="$1" target="" soname=""
+    target="$(readlink -f "/opt/cuda/lib64/$base.so" 2>/dev/null || true)"
+    if [ -n "$target" ] && [ -e "$target" ]; then
+        soname="$(readelf -d "$target" 2>/dev/null \
+                  | sed -n 's/.*(SONAME).*\[\(.*\)\]/\1/p' | head -1)"
+    fi
+    if [ -z "$soname" ]; then
+        echo "  ❌ CUDA runtime 缺 $base：/opt/cuda/lib64 下找不到可解析的 $base.so" >&2
+        echo "     （CUDA Toolkit 未安装或不在 /opt/cuda —— 属环境问题，非本仓库缺陷）" >&2
+        return 1
+    fi
+    collect "$soname" /opt/cuda/lib64
+}
+cuda_collect libnvrtc
+cuda_collect libnvrtc-builtins
+cuda_collect libcudart
 collect libnvinfer.so.11 /usr/lib
 collect libnvinfer_plugin.so.11 /usr/lib || echo "  ⚠ plugin missing（RIFE 图无 plugin 算子，可缺）"
 
