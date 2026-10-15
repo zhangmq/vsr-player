@@ -106,10 +106,24 @@ done
 
 ```bash
 git clone https://github.com/mpv-player/mpv.git third_party/mpv
+git -C third_party/mpv checkout a3d4b5919771a0ae351b80eb266c79681ee529b2   # 2026-07-02
 ```
 
-版本对应：上游 master 开发线（0.41.0-dev）。构建脚本 `scripts/build_mpv.sh` 将
-`src/mpv/` overlay 合入 `third_party/mpv` 后构建。
+**必须 checkout 到上面这个固定提交**——`src/mpv/` overlay 是**整文件副本**，不是
+补丁，基座 revision 不匹配时会以晦涩的编译/链接错误出现（issue #12 缺陷 2 实测：
+基座用当时的 master、领先 266 个提交，报
+`struct MPOpts has no member named 'playlist_inherit_options'`、
+`undefined reference to stream_info_env` / `stream_bstr_open2`）。
+
+- `a3d4b591…` 是 overlay 的**实际出处**：overlay 里的 `options.c` / `options.h` 与该
+  提交逐字节相同，`meson.build` 相对它只多出项目自身的改动；本仓库的合并构建
+  （`scripts/build_mpv.sh` + `src/mpv/`）就是在它之上验证通过的。
+- 版本对应关系是**固定提交**，不是"上游 master 开发线"。
+- 自行推导别的基座时，候选提交需同时满足：① 其 `meson.build` 的源文件清单是
+  overlay 版的子集（`meson.build` 变动频繁，锚点比 `options.h` 紧）②
+  `options.h` / `options.c` 与 overlay 一致 ③ 能独立编译通过。
+- `scripts/build_mpv.sh` 构建前会做基座预检，不匹配时打印警告（不中止——自行换基座
+  是允许的）。
 
 ## 图标字体（Material Design Icons, Pictogrammers）
 

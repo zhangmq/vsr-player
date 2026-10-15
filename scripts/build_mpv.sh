@@ -12,6 +12,18 @@ MPV_REF="$PROJECT_ROOT/third_party/mpv"
 OVERLAY="$PROJECT_ROOT/src/mpv"
 BUILD_DIR="${MPV_BUILD_DIR:-$PROJECT_ROOT/build/mpv}"
 
+# 基座 pin 预检（issue #12 缺陷 2）：src/mpv overlay 是整文件副本，基座 revision
+# 不匹配时会以晦涩的编译/链接错误出现。只警告不中止——自行换基座是允许的。
+MPV_PIN="${MPV_PIN:-a3d4b5919771a0ae351b80eb266c79681ee529b2}"
+if [ -d "$MPV_REF/.git" ]; then
+    have="$(git -C "$MPV_REF" rev-parse HEAD 2>/dev/null || true)"
+    if [ -n "$have" ] && [ "$have" != "$MPV_PIN" ]; then
+        echo "⚠ third_party/mpv 当前 $have ≠ 记录基座 $MPV_PIN"
+        echo "  overlay 按该提交制作；基座不同时若编译/链接报错，先 checkout 回它"
+        echo "  （见 docs/third-party-setup.md「mpv 源码」）"
+    fi
+fi
+
 echo "=== Preparing mpv build tree ==="
 rm -rf "$BUILD_DIR"
 mkdir -p "$(dirname "$BUILD_DIR")"
