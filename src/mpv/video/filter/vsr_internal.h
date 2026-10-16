@@ -1,23 +1,7 @@
 #pragma once
 
+#include "vfx_loader.h"
 #include "yuv_to_rgba.h"
-
-// ── NvCVImage（nvCVImage.h 的结构布局，C 兼容重定义）──────────────────
-// 图像缓冲为 per-context（多实例共存——退役队列延迟销毁方案）：每个
-// vsr_context 持有自己的 in/out/tmp 缓冲，SDK 引擎的 SetImage 引用
-// 各实例独立的 pixels 地址，销毁旧实例不影响新实例。
-
-typedef struct NvCVImage {
-    unsigned int width, height;
-    int pitch;
-    int pixelFormat, componentType;
-    unsigned char pixelBytes, componentBytes, numComponents;
-    unsigned char planar, gpuMem, colorspace;
-    void *pixels;
-    void *deletePtr;
-    void (*deleteProc)(void*);
-    unsigned long long bufferBytes;
-} NvCVImage;
 
 // ── VSR processor ─────────────────────────────────────────────────────
 
@@ -27,7 +11,7 @@ struct vsr_context {
     void   *out_pixels;   // allocated RGBA U8 GPU buffer
     void   *tmp_pixels;   // temp transfer buffer
     int     in_pitch, out_pitch, tmp_pitch;
-    CUstream stream;
+    CUstream stream;      // 交给引擎的流：必须是**阻塞流**（见 vsr_init）
     bool    own_stream;
     bool    ready;
     int     in_w, in_h, out_w, out_h;

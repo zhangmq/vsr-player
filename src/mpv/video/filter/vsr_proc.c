@@ -1,6 +1,8 @@
 #include "vsr_internal.h"
+#include "vfx_loader.h"
 
 #include <cuda.h>
+#include <dirent.h>
 #include <dlfcn.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -11,191 +13,15 @@
 
 
 // ── Types from nvCVImage.h / nvVideoEffects.h (C-compatible) ────────────
-// struct NvCVImage 定义见 vsr_internal.h（per-context 缓冲需要）
-
-#define NVCV_RGB    4
-#define NVCV_RGBA   6
-#define NVCV_U8     1
-#define NVCV_F32    7
-#define NVCV_PLANAR 1
-#define NVCV_CHUNKY 0
-#define NVCV_GPU    1
+// struct NvCVImage 与 NVCV_* 常量定义见 vfx_loader.h（VSR/VFG 共用）
 
 #define NVVFX_INPUT_IMAGE   "SrcImage0"
 #define NVVFX_OUTPUT_IMAGE  "DstImage0"
 #define NVVFX_CUDA_STREAM   "CudaStream"
 
-// ── NvVFX API function pointer types ─────────────────────────────────────
-
-typedef int (*PFN_NvVFX_CreateEffect)(const char*, void**);
-typedef void (*PFN_NvVFX_DestroyEffect)(void*);
-typedef int (*PFN_NvVFX_SetU32)(void*, const char*, unsigned int);
-typedef int (*PFN_NvVFX_SetImage)(void*, const char*, NvCVImage*);
-typedef int (*PFN_NvVFX_GetImage)(void*, const char*, NvCVImage*);
-typedef int (*PFN_NvVFX_SetCudaStream)(void*, const char*, CUstream);
-typedef int (*PFN_NvVFX_Load)(void*);
-typedef int (*PFN_NvVFX_Run)(void*, int);
-typedef int (*PFN_NvCVImage_Alloc)(NvCVImage*, unsigned int, unsigned int,
-    int, int, int, int, unsigned int);
-typedef int (*PFN_NvCVImage_Dealloc)(NvCVImage*);
-typedef int (*PFN_NvCVImage_Transfer)(const NvCVImage*, NvCVImage*, float,
-    CUstream, NvCVImage*);
-
-// ── Static globals ───────────────────────────────────────────────────────
-
-static void *g_vfx_lib = NULL;
-static void *g_nvcv_lib = NULL;
-
-
-static PFN_NvVFX_CreateEffect    pfn_NvVFX_CreateEffect;
-static PFN_NvVFX_DestroyEffect   pfn_NvVFX_DestroyEffect;
-static PFN_NvVFX_SetU32          pfn_NvVFX_SetU32;
-static PFN_NvVFX_SetImage        pfn_NvVFX_SetImage;
-static PFN_NvVFX_GetImage        pfn_NvVFX_GetImage;
-static PFN_NvVFX_SetCudaStream   pfn_NvVFX_SetCudaStream;
-static PFN_NvVFX_Load            pfn_NvVFX_Load;
-static PFN_NvVFX_Run             pfn_NvVFX_Run;
-static PFN_NvCVImage_Alloc       pfn_NvCVImage_Alloc;
-static PFN_NvCVImage_Dealloc     pfn_NvCVImage_Dealloc;
-static PFN_NvCVImage_Transfer    pfn_NvCVImage_Transfer;
-
 // 图像缓冲为 per-context（vsr_context.in_img/out_img/tmp_img）——引擎
 // 生命周期内缓冲随尺寸按需重建（vsr_set_output），SDK 引擎的 SetImage
 // 引用各实例自身的 pixels 地址。
-
-// ── Library loading ──────────────────────────────────────────────────────
-
-#define LOAD_SYM(LIB, NAME)                                      \
-    do {                                                          \
-        pfn_##NAME = (PFN_##NAME)dlsym(LIB, #NAME);             \
-        if (!pfn_##NAME) {                                        \
-            fprintf(stderr, "VSR: dlsym(" #NAME ") failed: %s\n", \
-                    dlerror());                                   \
-            return false;                                         \
-        }                                                         \
-    } while (0)
-
-static bool load_nvvfx_libraries(void) {
-    if (g_vfx_lib) return true;
-
-    // Find nvvfx lib directory — try common locations
-    const char *home = getenv("HOME");
-    char homedir_path[1024] = "";
-    if (home) {
-        snprintf(homedir_path, sizeof(homedir_path), "%s/.local/lib/vsr-player/", home);
-    }
-    // dev 路径按**可执行文件目录**推导，且仅当可执行文件位于构建树（路径含
-    // "/build/"）时启用——不用 CWD 相对路径：分发包在任意目录（例如视频所在
-    // 目录）运行时，CWD 里的 libNVCVImage.so 会被加载，构成库劫持面。
-    // dev 布局：<repo>/build/src/client/vsr-player → ../../../third_party/…
-    char dev_vfx[1024] = "", dev_build_lib[1024] = "";
-    {
-        char exe[1024];
-        ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-        if (n > 0) {
-            exe[n] = '\0';
-            char *slash = strrchr(exe, '/');
-            if (slash && strstr(exe, "/build/")) {
-                *slash = '\0';
-                snprintf(dev_vfx, sizeof(dev_vfx),
-                         "%s/../../../third_party/nvvfx/lib/", exe);
-                snprintf(dev_build_lib, sizeof(dev_build_lib),
-                         "%s/../../../build/lib/", exe);
-            }
-        }
-    }
-    const char *search[] = {
-#ifdef VSR_INSTALL_LIBDIR
-        VSR_INSTALL_LIBDIR,           // compile-time override (packaging)
-#endif
-        homedir_path,                  // user-local default
-        dev_vfx,                       // dev only（构建树内运行时）
-        dev_build_lib,                 // dev only
-    };
-    const char *nvvfx_dir = NULL;
-    int n_search = sizeof(search) / sizeof(search[0]);
-    for (int i = 0; i < n_search; i++) {
-        if (!search[i] || !search[i][0]) continue;       // skip NULL or empty
-        char path[1024];
-        snprintf(path, sizeof(path), "%s%s", search[i], "libNVCVImage.so");
-        if (access(path, R_OK) == 0) { nvvfx_dir = search[i]; break; }
-    }
-    if (!nvvfx_dir) {
-        fprintf(stderr, "VSR: nvvfx libs not found\n");
-        return false;
-    }
-
-    // VFX 捆绑的 TensorRT 10 链（onnxparser → nvinfer → plugin）：RTLD_LOCAL
-    // 预加载，必须在 libVideoFXLocal.so 之前（其 NEEDED libnvonnxparser.so.10
-    // 靠 SONAME 匹配复用）。RTLD_GLOBAL 会把 TRT 10 符号注入全局命名空间 →
-    // 系统 TRT 11（vf_rife 链接）符号绑错 → ABI 崩溃；LOCAL 仍满足 NEEDED。
-    {
-        const char *trt10[] = {
-            "libnvinfer.so.10", "libnvinfer_plugin.so.10", "libnvonnxparser.so.10",
-        };
-        for (int i = 0; i < 3; i++) {
-            char path[1024];
-            snprintf(path, sizeof(path), "%s%s", nvvfx_dir, trt10[i]);
-            void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
-            if (!h)
-                fprintf(stderr, "VSR: dlopen(%s): %s\n", trt10[i], dlerror());
-        }
-    }
-
-    // Load all nvvfx .so files (order matters for deps)
-    // Topological order: deps before dependents
-    const char *libs[] = {
-        "libnppc.so", "libnppial.so", "libnppicc.so", "libnppidei.so",
-        "libnppig.so", "libnppif.so", "libnppim.so", "libnppist.so",
-        "libnppitc.so", "libcudnn.so",
-        "libNVCVImage.so",    // before libnvngxruntime which needs it
-        "libnvngxruntime.so", "libnvidia-ngx-vsr.so",
-        "libVideoFXLocal.so", "libVideoFX.so",
-        "libnvVFXVideoSuperRes.so",
-    };
-    int nlibs = sizeof(libs) / sizeof(libs[0]);
-    for (int i = 0; i < nlibs; i++) {
-        char path[1024];
-        snprintf(path, sizeof(path), "%s%s", nvvfx_dir, libs[i]);
-        void *h = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
-        if (!h) {
-            fprintf(stderr, "VSR: dlopen(%s): %s\n", libs[i], dlerror());
-            // Continue — some libs might be missing but others work
-        }
-    }
-
-    // Retrieve handles for the two we need symbols from
-    char path[1024];
-    snprintf(path, sizeof(path), "%s%s", nvvfx_dir, "libVideoFX.so");
-    g_vfx_lib = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
-    snprintf(path, sizeof(path), "%s%s", nvvfx_dir, "libNVCVImage.so");
-    g_nvcv_lib = dlopen(path, RTLD_NOW);
-    if (!g_vfx_lib || !g_nvcv_lib) {
-        fprintf(stderr, "VSR: core libs failed\n");
-        if (g_vfx_lib) dlclose(g_vfx_lib);
-        if (g_nvcv_lib) dlclose(g_nvcv_lib);
-        g_vfx_lib = NULL;
-        g_nvcv_lib = NULL;
-        return false;
-    }
-
-    LOAD_SYM(g_vfx_lib,  NvVFX_CreateEffect);
-    LOAD_SYM(g_vfx_lib,  NvVFX_DestroyEffect);
-    LOAD_SYM(g_vfx_lib,  NvVFX_SetU32);
-    LOAD_SYM(g_vfx_lib,  NvVFX_SetImage);
-    LOAD_SYM(g_vfx_lib,  NvVFX_GetImage);
-    LOAD_SYM(g_vfx_lib,  NvVFX_SetCudaStream);
-    LOAD_SYM(g_vfx_lib,  NvVFX_Load);
-    LOAD_SYM(g_vfx_lib,  NvVFX_Run);
-    LOAD_SYM(g_nvcv_lib, NvCVImage_Alloc);
-    LOAD_SYM(g_nvcv_lib, NvCVImage_Dealloc);
-    LOAD_SYM(g_nvcv_lib, NvCVImage_Transfer);
-
-    fprintf(stderr, "VSR: NvVFX libraries loaded\n");
-    return true;
-}
-
-#undef LOAD_SYM
 
 // ── 图像缓冲按需分配（尺寸变化时重建，旧缓冲先释放）──────────────────
 // 单一分配入口：vsr_init 与 vsr_set_output/set_input 共用，杜绝
@@ -223,7 +49,7 @@ static bool ensure_img(NvCVImage *img, int w, int h, const char *tag) {
 
 bool vsr_init(struct vsr_context *c, int in_w, int in_h,
               int out_w, int out_h, int quality, CUstream stream) {
-    if (!load_nvvfx_libraries()) return false;
+    if (!vfx_load_libraries()) return false;
 
     memset(c, 0, sizeof(*c));
     c->in_w = in_w;
@@ -288,11 +114,19 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
     c->tmp_pitch = (int)c->tmp_img.pitch;
 
     // ── CUDA stream ───────────────────────────────────────────────────────
+    // 交给引擎的必须是**阻塞流**（官方 "Setting Up the CUDA Stream"：
+    // cudaStreamCreate() 或 NvVFX_CudaStreamCreate() 建流后 NvVFX_SetCudaStream；
+    // 后者反汇编可见就是一句 cudaStreamCreate → 默认 flags = 阻塞流）。
+    // VFX 1.3 内部有固定挂在 legacy 默认流上的环节（1.1 无此机制），非阻塞流与
+    // legacy 流**没有隐含顺序** → 引擎读到尚未落地的输入，表现为每个输出帧装的
+    // 是上一帧（外加非确定性重复/跳源帧）。实测：build/scratch/probe/
+    // BLOCKING_REPORT.md（阻塞流 offset 0，非阻塞流 1~2）。
+    // ⚠️ 输出必须在本流上读回；换别的流读需要自行同步。
     if (stream) {
         c->stream = stream;
         c->own_stream = false;
     } else {
-        cuStreamCreate(&c->stream, CU_STREAM_NON_BLOCKING);
+        cuStreamCreate(&c->stream, CU_STREAM_DEFAULT);
         c->own_stream = true;
     }
     pfn_NvVFX_SetCudaStream(c->handle, NVVFX_CUDA_STREAM, c->stream);
@@ -355,7 +189,9 @@ bool vsr_warmup(struct vsr_context *c, CUstream stream)
 
 // ── vsr_process ──────────────────────────────────────────────────────────
 // Caller must have written RGBA into c->in_pixels (HtoD or D2D on stream).
-// Runs VSR synchronously, returns output descriptor from pre-allocated buffer.
+// 引擎跑在 c->stream（阻塞流，见 vsr_init）上，调用方的写入与读回也在同一条
+// 流上 → 靠 CUDA 流内顺序即可（写完才读、跑完才拷）。
+// **输出必须在同一条流上读回**；跨流读回需要自行同步。
 
 bool vsr_process(struct vsr_context *c, CUstream stream,
                  void **output_ptr, int *out_w, int *out_h, int *out_pitch) {
@@ -439,12 +275,12 @@ bool vsr_set_quality(struct vsr_context *c, int quality) {
 // Dealloc/DestroyEffect 释放其目标缓冲会导致 CUDA 非法访问（ILLEGAL_ADDRESS
 // / GPU hang）。
 //
-// 同步范围 = 自己的流（c->stream，VSR 推理所在流，含 SDK 内部流——
-// NvVFX_SetCudaStream 指定的流；推理完成即内部流空闲）。不能做设备级
-// 同步（cuCtxSynchronize）：它会把 VO map 的 stream 0（GUI 渲染线程的
-// 异步拷贝）也卷进来等——渲染循环随 mpv 核心阻塞而停止后，stream 0 的
-// 拷贝永远不完成 → ctx sync 死锁（Xid 109 场景 core 实测：destroy 卡在
-// cuCtxSynchronize，stream 0 NOT_READY）。调用方须已 cuCtxPushCurrent。
+// 同步范围 = 引擎流（c->stream，阻塞流，见 vsr_init；推理完成即流空闲）。
+// 不能做设备级同步（cuCtxSynchronize）：它会把 VO map 的 stream 0（GUI
+// 渲染线程的异步拷贝）也卷进来等——渲染循环随 mpv 核心阻塞而停止后，
+// stream 0 的拷贝永远不完成 → ctx sync 死锁（Xid 109 场景 core 实测：
+// destroy 卡在 cuCtxSynchronize，stream 0 NOT_READY）。调用方须已
+// cuCtxPushCurrent。
 
 void vsr_destroy(struct vsr_context *c) {
     if (c->stream)

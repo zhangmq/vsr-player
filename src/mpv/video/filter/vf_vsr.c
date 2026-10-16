@@ -365,7 +365,15 @@ static bool ensure_cuda(struct mp_filter *f, struct priv *p,
     }
 
     cuCtxPushCurrent(p->cuda_ref->ctx);
-    cr = cuStreamCreate(&p->cuda_stream, CU_STREAM_NON_BLOCKING);
+    // 必须是**阻塞流**（官方 "Setting Up the CUDA Stream" 规定的 cudaStreamCreate
+    // 默认语义；NvVFX_CudaStreamCreate 反汇编可见就是一句 cudaStreamCreate）：
+    // VFX 1.3 内部有固定挂在 legacy 默认流上的环节（1.1 无此机制），非阻塞流与
+    // legacy 流**没有隐含顺序** → 引擎会读到尚未落地的输入，表现为每个输出帧装的
+    // 是上一帧，并叠加非确定性重复/跳源帧（build/scratch/probe/BLOCKING_REPORT.md、
+    // build/scratch/player-lag/BEFORE.md）。阻塞流与 legacy 流隐含同步，整条链
+    //（色彩转换 → 输入搬运 → 超分 → 输出搬运）都在本流上按序完成。
+    // ⚠️ 输出必须在本流上读回；换别的流读需要自行同步。
+    cr = cuStreamCreate(&p->cuda_stream, CU_STREAM_DEFAULT);
     cuCtxPopCurrent(NULL);
     if (cr != CUDA_SUCCESS) {
         MP_ERR(f, "cuStreamCreate failed (%d)\n", cr);
