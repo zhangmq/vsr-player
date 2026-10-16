@@ -92,7 +92,10 @@ void PlayerViewModel::attach(MpvController *mpv) {
         bool p = mpv_->propertyFlag("pause");
         int64_t drops = mpv_->propertyInt64("frame-drop-count");  // 事件线程读
         post([this, p, drops] {
-            updatePlaying(!p);
+            // 启动 idle（列表已排队、媒体未载入）时 mpv 的 pause 初值为
+            // false——没有活动文件就不算"播放中"，否则 UI 按钮显示成暂停
+            // 图标。有文件时语义不变（playing = !pause）。
+            updatePlaying(!p && fileLoaded_);
             if (p != pausePrev_) {
                 pausePrev_ = p;
                 resetSegmentCounters(drops);   // pause 值翻转 → 段重置
@@ -195,10 +198,16 @@ void PlayerViewModel::attach(MpvController *mpv) {
         // current 行高亮，不重建列表——QStringList 属性全量 reset
         // 是大列表卡顿主因）
         post([this, files, cur] {
-            playlistModel_.setSnapshot(files, cur);
+            // 启动 idle：列表只有排队条目、mpv 无 current（cur<0）→ 用记录的
+            // 目标索引高亮"按播放将载入的那一条"（否则列表看起来没有选中项）。
+            // 真正载入后 mpv 报 cur>=0，自然回到 mpv 的事实源。
+            int shown = cur;
+            if (shown < 0 && idlePlayIndex_ >= 0 && idlePlayIndex_ < files.size())
+                shown = idlePlayIndex_;
+            playlistModel_.setSnapshot(files, shown);
             // 持久化上次播放列表（启动 restorePlaylist 用；清空也写）
             saveSettings("playlist", files);
-            saveSettings("playlistCurrent", cur);
+            saveSettings("playlistCurrent", shown);
         });
     });
 
@@ -634,6 +643,28 @@ void PlayerViewModel::restorePlaylist() {
         mpv_->commandV({"playlist-play-index", std::to_string(cur).c_str(), nullptr});
 }
 
+// 启动 idle（用户要求）：只把列表排进 mpv，**不载入媒体**。
+// `loadfile <p> append` 的 action.play=false → 列表没有 current 条目
+//（third_party/mpv/player/command.c cmd_loadfile 的启动条件 =
+// LOAD_TYPE_REPLACE 或 (action.play && !playlist->current)）→ 不解码、
+// 不建滤镜链、不 Load VSR/VFG 引擎、不做 watch_later 续播 seek。
+// 播放键第一次按下时才 resumeLastPath() → playlist-play-index → 载入并
+// 由 mpv 恢复上次进度（与列表正常启动同一条路径）。
+void PlayerViewModel::restorePlaylistIdle() {
+    if (!mpv_) return;
+    int cur = -1;
+    const QStringList files = restoredFiles(&cur);
+    if (files.isEmpty()) return;
+    for (const QString &f : files)
+        mpv_->commandV({"loadfile", f.toUtf8().constData(), "append", nullptr});
+    // lastPath_ = 播放键要载入的条目（play() 的 !fileLoaded_ 分支据此走
+    // resumeLastPath；path 观察器在未载入时不会覆盖它）。
+    if (cur >= 0 && cur < files.size()) {
+        lastPath_ = files[cur];
+        idlePlayIndex_ = cur;
+    }
+}
+
 // 恢复列表的持久化来源 + 合法化当前索引：restoredCurrentFile()（启动暂停
 // 判定）与 restorePlaylist()（实际装载）共用同一规则，避免两处分叉。
 QStringList PlayerViewModel::restoredFiles(int *cur) const {
@@ -722,6 +753,13 @@ void PlayerViewModel::play() {
 void PlayerViewModel::resumeLastPath() {
     if (lastPath_.isEmpty()) return;
     int idx = playlistModel_.indexOfPath(lastPath_);
+    if (idx < 0) {
+        // 启动 idle：播放列表在 mpv 里已就绪，但 playlistModel_ 由观察器
+        // 异步回填——尚未回填时用记录的原始索引兜底（消费后清零，避免
+        // 列表后来变化时误用陈旧索引）。
+        idx = idlePlayIndex_;
+        idlePlayIndex_ = -1;
+    }
     if (idx >= 0)
         mpv_->commandV({"playlist-play-index",
                         std::to_string(idx).c_str(), nullptr});
@@ -1641,6 +1679,7 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
                      || mpv_->propertyFlag("partially-seekable");
     QMetaObject::invokeMethod(this, [this, p, paused, drops, linear] {
         fileLoaded_ = true;
+        idlePlayIndex_ = -1;   // 已有活动文件 → idle 的"待载入索引"作废
         // 按文件记忆：即时落盘保证旧文件状态已随动作写盘，无需在此保存。
         // external 轨随文件切换被 mpv 清除——pending 待确认列表作废
         //（其内容已随 sub-add 动作落盘，此处只防陈旧路径并入新文件）。

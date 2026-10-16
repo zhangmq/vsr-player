@@ -140,9 +140,16 @@ public:
     /// 恢复上次播放列表（无 CLI 文件时调用）：首条 replace 开始播放，
     /// 其余 append，最后定位上次条目。
     void restorePlaylist();
+    /// 只恢复播放列表、**不载入任何媒体**（启动 idle，见 main.cpp）：
+    /// 全部条目 append（无 current 条目 → mpv 不建解码/滤镜链、不 Load
+    /// 引擎、不做续播 seek），仅把列表填进 UI 并记住"播放键该载入哪一条"。
+    /// 用户按播放 → play()/togglePlayPause() → resumeLastPath() →
+    /// playlist-play-index：此时才载入，mpv 按 watch_later 自动恢复到上次
+    /// 进度（与从列表正常启动完全同一条路径）。
+    void restorePlaylistIdle();
     /// 无参数启动将播放的条目（= settings playlist[playlistCurrent]，
     /// 越界回退首条；无列表则空）。与 restorePlaylist 同一来源——供
-    /// main.cpp 在 mpv 初始化前判定"是否以暂停态启动"。
+    /// main.cpp 在 mpv 初始化前判定"是否以 idle 态启动"。
     QString restoredCurrentFile() const;
     /// 该路径是否存在历史播放状态（mpv watch_later 条目存在）。
     /// 条目名 = MD5(路径) 大写十六进制（对照 third_party/mpv
@@ -480,6 +487,11 @@ private:
     QString liveSourcePath_;
     bool    liveSourcePending_ = false;
     QString lastPath_;
+    // 启动 idle：列表已排队但**没有 current 条目**（媒体未载入）。记住
+    // 播放键第一次要载入的目标索引；同时供 playlist 观察器在 mpv 报
+    // cur<0（无 current）时高亮"按播放将载入的那一条"。
+    // 一旦真正载入播放，mpv 报 cur>=0 → 自然失效（并在消费后清零）。
+    int idlePlayIndex_ = -1;
 
     // ── 音量节流（setVolume 合并投递）──────────────────────────────
     // 主线程 slot 高频调用（slider 拖动）只记录最新值；QueuedConnection

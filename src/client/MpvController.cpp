@@ -19,7 +19,7 @@ std::string MpvController::watchLaterDir() {
 }
 
 bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
-                         uint32_t qfi, bool benchmark, bool hwaccel, bool start_paused,
+                         uint32_t qfi, bool benchmark, bool hwaccel,
                          const char *vf_opt,
                          const std::vector<std::pair<std::string, std::string>> &passthrough,
                          const VkPhysicalDeviceFeatures2 *features,
@@ -86,11 +86,11 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
             mpv_set_option_string(mpv_, "watch-later-directory", wl.c_str());
         mpv_set_option_string(mpv_, "save-position-on-quit", "yes");
         mpv_set_option_string(mpv_, "resume-playback", "yes");
-        // 有历史进度 → 以暂停态起步：mpv 照常应用 watch_later 的 start
-        // （恢复位置），但不自动播放。pause 不在 watch_later_options 默认
-        // 表内（options.c .watch_later_options），不会被配置覆盖。
-        if (start_paused)
-            mpv_set_option_string(mpv_, "pause", "yes");
+        // 启动暂停/自动载入**不在这里**：无参数启动且有历史进度时，客户端
+        // 根本不载入媒体（main.cpp idle 启动 + restorePlaylistIdle），按播放
+        // 才 loadfile——mpv 届时照常应用 watch_later 的 start 恢复位置。
+        // 用户显式 `-- --pause=yes` 走上方的 passthrough（mpv 选项，命令行
+        // 优先），此时照旧载入并停在暂停态。
         // 同名字幕自动加载（exact：同名精确，fuzzy 易误配）
         mpv_set_option_string(mpv_, "sub-auto", "exact");
         mpv_set_option_string(mpv_, "autoload-files", "yes");

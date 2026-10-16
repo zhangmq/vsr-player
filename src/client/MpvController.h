@@ -25,11 +25,11 @@ public:
     /// @param dev_exts     device extensions enabled on `dev` (required for
     ///                     pl_vulkan_import: FD export/import fns stay NULL
     ///                     otherwise → SIGSEGV in cuda_vk interop)
-    /// @param start_paused 以暂停态起步（启动目标存在历史进度时由调用方判定）
-    ///                     ——mpv 仍应用 watch_later 的 start（恢复位置），
-    ///                     只是不自动播放。
+    /// 注意：启动不在此处设 pause——"有历史进度就不自动载入"由调用方
+    /// （main.cpp 的 idle 启动）决定；用户显式 `-- --pause=yes` 经
+    /// passthrough 设选项，mpv 语义（命令行 > 配置）不变。
     bool init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
-              uint32_t qfi, bool benchmark, bool hwaccel, bool start_paused,
+              uint32_t qfi, bool benchmark, bool hwaccel,
               const char *vf_opt,
               const std::vector<std::pair<std::string, std::string>> &passthrough,
               const VkPhysicalDeviceFeatures2 *features,

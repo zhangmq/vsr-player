@@ -255,6 +255,7 @@ first run on this HOME: engine kernel cache is empty (<path>) — the first supe
 - Quality control: bottom bar `Quality` popup — scale off/auto/2×/3×/4×, VSR quality, denoise
 - Playlist panel: `P`; auto-hide UI driven by the bottom hover zone (mouse leaves → UI hides)
 - OSD: `Tab` toggles the mpv-rendered info overlay (source, output, render, decoder, GPU…)
+- Startup: launched with no arguments, the app only restores the previous playlist and does **not** load any media (no decode, no VSR/FRUC engine work, no GPU/VRAM use); pressing Play loads the current entry and resumes at the last saved position. Passing a file on the command line — or an explicit `-- --pause=yes` — loads immediately, following mpv semantics
 
 ### CLI Options
 

@@ -204,29 +204,35 @@ int main(int argc, char *argv[]) {
     std::string vf = viewModel.vfOption();
 
     // ── mpv ─────────────────────────────────────────────────────────────
-    // 启动暂停（"有历史进度就先暂停"）**只用于一种情况**：启动时自动恢复
-    // 上次的列表——那时用户没有表达"现在就要看"的意图，突然出声很讨厌。
-    // 命令行明确给了文件 = 明确的播放意图 → **直接播放**（位置仍由 mpv 的
-    // watch_later 恢复到上次进度），不再因为有历史进度而暂停。
-    // 两种情况下 `-- --pause=...` 仍以命令行优先（mpv 语义：命令行 > 配置）。
-    bool startPaused = false;
+    // 启动策略（无参数启动 = 恢复上次列表）：
+    //   有历史进度 → **idle 启动**：不载入媒体（只把列表排进 mpv），窗口
+    //     秒开、零滤镜/零引擎工作；用户按播放时才载入，mpv 按 watch_later
+    //     自动恢复到上次进度（与从列表正常启动完全同一条路径）。
+    //     理由：mpv 的精确 seek 会把"关键帧→目标位置之间的帧"全部过一遍
+    //     滤镜链再丢掉——实测 start=12.302（关键帧 6.25s）白跑 142 帧
+    //     （VFG 570 个输出帧 ~1.3s + VSR 0.5s），海报晚 1.6s 出现。
+    //   无历史进度 → 直接恢复列表并播放（无 seek，无浪费）。
+    //   命令行给了文件 = 明确的播放意图 → 直接载入播放（不进 idle）。
+    //   `-- --pause=yes` 仍是命令行优先（mpv 选项语义）：照旧载入并停在
+    //     暂停态（海报可见）——这正是用户显式要求的。
+    bool idleStart = false;
     if (!opts.benchmark && opts.video_file.empty()) {
         bool explicitPause = false;
         for (const auto &kv : opts.passthrough)
             if (kv.first == "pause") explicitPause = true;
         const QString target = viewModel.restoredCurrentFile();
-        if (!explicitPause && !target.isEmpty() && PlayerViewModel::hasResumeState(target)) {
-            startPaused = true;
-            MLOG_INFO("resume state found → start paused (restored list): %s",
-                      target.toUtf8().constData());
-        }
+        idleStart = !explicitPause && !target.isEmpty()
+                 && PlayerViewModel::hasResumeState(target);
+        if (idleStart)
+            MLOG_INFO("resume state found → idle start (list restored, media load "
+                      "deferred to Play): %s", target.toUtf8().constData());
     }
 
     MpvController mpv;
     int num_dev_exts = 0;
     const char *const *dev_exts = vk.deviceExtensions(&num_dev_exts);
     if (!mpv.init(vk.instance(), vk.physicalDevice(), vk.device(),
-                  vk.queueFamilyIndex(), opts.benchmark, opts.hwaccel, startPaused,
+                  vk.queueFamilyIndex(), opts.benchmark, opts.hwaccel,
                   vf.c_str(), opts.passthrough, vk.features(),
                   dev_exts, num_dev_exts))
         return 1;
@@ -351,11 +357,11 @@ int main(int argc, char *argv[]) {
                              &app, syncSessionIdle);
             QObject::connect(&viewModel, &PlayerViewModel::overlaysVisibleChanged,
                              &app, syncSessionIdle);
-            // 直播/线性流：resume 不适用 → 撤销启动时的自动暂停，直接跟最新
+            // 直播/线性流：resume 不适用 → 撤销暂停，直接跟最新
             QObject::connect(&viewModel, &PlayerViewModel::liveSourceDetected,
-                             &app, [&viewModel, startPaused]() {
-                if (startPaused && !viewModel.playing()) {
-                    MLOG_INFO("live source: cancelling start-paused, following live edge");
+                             &app, [&viewModel]() {
+                if (!viewModel.playing()) {
+                    MLOG_INFO("live source: cancelling pause, following live edge");
                     viewModel.setPaused(false);
                 }
             });
@@ -470,20 +476,29 @@ int main(int argc, char *argv[]) {
                        video->width(), video->height());
         MLOG_INFO("skip render pass done (%dx%d)", video->width(), video->height());
 
-        // 媒体载入（冷启动预热期间推迟到预热完成；见文件上方 prewarm 注释）
+        // 媒体载入（冷启动预热期间推迟到预热完成；见文件上方 prewarm 注释；
+        // idle 启动不载入媒体 → 不等预热，立刻恢复列表）
         bool mediaLoaded = false;
         auto loadMedia = [&]() {
             if (mediaLoaded) return;
             mediaLoaded = true;
             if (opts.benchmark || !opts.video_file.empty()) {
                 mpv.loadFile(opts.video_file.c_str());   // CLI 文件优先
+            } else if (idleStart) {
+                viewModel.restorePlaylistIdle();         // 只填列表，不载入媒体
             } else {
                 viewModel.restorePlaylist();             // 无参数 → 恢复上次列表
             }
-            MLOG_INFO("loadFile, entering app.exec()");
+            MLOG_INFO("%s, entering app.exec()",
+                      idleStart ? "playlist restored (idle start, no media load)"
+                                : "loadFile");
         };
 
-        if (warmupPending && warmupProc.state() != QProcess::NotRunning) {
+        if (idleStart) {
+            // idle 启动：只排队列表，不触发任何引擎/解码工作 → 不必等预热
+            MLOG_INFO("idle start → restoring the playlist only (no media, no seek)");
+            loadMedia();
+        } else if (warmupPending && warmupProc.state() != QProcess::NotRunning) {
             MLOG_INFO("prewarm in flight → media load deferred until the engines are warm");
             QObject::connect(&warmupProc, &QProcess::finished, &app,
                              [&loadMedia](int code, QProcess::ExitStatus st) {

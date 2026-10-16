@@ -18,6 +18,7 @@
 ## 保留文件（知识/经验类）
 
 - `fruc-auto-degrade-removal.md` — **插帧性能自动降级移除记录（2026-10-15，搁置）**：判据为何不可靠（节点内自测 vs 下游 VSR/呈现通路）、上屏率实测对照、vf 节点能力边界查证、统一跨节点方案待定问题
+- `startup-idle-policy.md` — **启动 idle 策略（2026-10-17）**：无参数启动不载入媒体（列表照常恢复、按播放才载入并续播）；"启动不暂停"实测证伪；精确 seek 丢弃帧（关键帧 6.25s→目标 12.302s，142 源帧/570 输出帧）的测量与被否方案
 - `mpv-render-context-create-18.md` — mpv_render_context_create -18 根因（libplacebo features 要求）与修复清单
 - `nano-investigation-status.md` — Nano（Open-Frame-gen）调查最终结论：发布权重=帧平均器（flow 恒零实证）；TRT 图级 bug 发现
 - `vfx-no-trt10-needed.md` — VFX SDK 对 TRT 零符号调用（readelf/nm 实证），VFX/TRT 打包决策依据
