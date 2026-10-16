@@ -35,6 +35,11 @@ cd "$BUILD_DIR"
 # DIST_RPATH（发布打包）：-Ddist-rpath 注入 $ORIGIN 相对捆绑路径；
 # BUILDTYPE 可覆盖（默认 debug，发布用 release）
 BUILDTYPE="${BUILDTYPE:-debug}"
+# FRUC_BACKEND（插帧后端，默认 vfg）：注入 overlay 选项 -Dfruc_backend=…
+# 选项定义在 src/mpv/meson.options（overlay 新增），combo vfg|rife，默认 vfg。
+# 与 DIST_RPATH 同款条件注入：显式置空时不传，交给 mpv 侧默认值。
+# build_release.sh / build-from-source.sh 经环境变量传值。
+FRUC_BACKEND="${FRUC_BACKEND:-vfg}"
 meson setup _build \
     -Dlibmpv=true \
     -Dcplayer=true \
@@ -45,6 +50,7 @@ meson setup _build \
     -Dcuda-interop=enabled \
     --buildtype="$BUILDTYPE" \
     ${DIST_RPATH:+-Ddist-rpath="$DIST_RPATH"} \
+    ${FRUC_BACKEND:+-Dfruc_backend="$FRUC_BACKEND"} \
     --wipe
 
 echo "=== Building ==="

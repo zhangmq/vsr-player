@@ -2,6 +2,13 @@
 # build_release.sh — 构建可分发的 vsr-player release tarball。
 #
 # 用法: ./scripts/build_release.sh [--variant=standard|full]
+#                                 [--fruc-backend=vfg|rife] [--engine=<已有引擎>]
+#
+# 插帧后端（--fruc-backend，默认 vfg）：
+#   vfg （默认）：NVIDIA VFX SDK 1.3 VideoFrameGeneration（AI 插帧）。发行包**不含**
+#                TensorRT 库（libnvinfer*）也不含 engines/ —— 这是预期布局，不是缺件。
+#   rife        ：RIFE + TensorRT 11 引擎；捆绑 libnvinfer(+plugin).so.11，并打入
+#                engines/rife_full_fp16.engine（用 --engine= 可跳过 trtexec 复用）。
 #
 # 产物结构（安装后 $ORIGIN 相对 RPATH 成立）：
 #   vsr-player-<ver>[-full]/
@@ -12,39 +19,51 @@
 #   │   ├── ffmpeg ×7         #    防系统版本漂移（62→63 实测破坏）
 #   │   ├── 光盘媒体栈         #    libcdio*/libdvd*/libbluray（cdda/蓝光/ISO）
 #   │   ├── libnvrtc/builtins/cudart.so.13   # CUDA runtime（mpv 硬依赖）
-#   │   └── libnvinfer(+plugin).so.11        # TRT 11.2.1.2（engine 版本绑定）
+#   │   └── libnvinfer(+plugin).so.11        # 仅 rife：TRT 11.2.1.2（engine 版本绑定）
 #   ├── lib/                  # 仅 full：Qt6 库（插件 RUNPATH 期望 <prefix>/lib）
 #   ├── lib/qt6/plugins/      # 仅 full：platforms(wayland/xcb) + wayland-* + imageformats
 #   ├── lib/qt6/qml/          # 仅 full：QtQuick/QtQuick.Controls/Dialogs/Layouts/Shapes/QtQml
-#   ├── engines/rife_full_fp16.engine  # ampere+ 跨架构（30/40/50 系通用）
+#   ├── engines/rife_full_fp16.engine  # 仅 rife：ampere+ 跨架构（30/40/50 系通用）
 #   ├── fonts/  translations/  licenses/  README.md
 #   └── install.sh            # 用户端安装（见 scripts/install.sh）
 #
-# 流程：mpv dist 构建 → client dist 构建 → 依赖闭包收集 → engine → 资产 → tarball
-# 依赖：meson/ninja/trtexec（系统 TensorRT）/lrelease（Qt6 翻译）/Qt6（full 变体）
+# 流程：mpv dist 构建 → client dist 构建 → 依赖闭包收集 → [rife: engine] → 资产 → tarball
+# 依赖：meson/ninja/lrelease（Qt6 翻译）/Qt6（full 变体）；
+#       rife 后端另需 trtexec（系统 TensorRT）现建引擎，或用 --engine= 复用已构建引擎。
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-# ── 变体 ─────────────────────────────────────────────────────────────
-# standard（默认）：捆绑 FFmpeg/CUDA/TRT/RIFE 引擎 + 光盘媒体栈；
-#                   GUI 依赖系统 Qt ≥ 6.11。
+# ── 变体 + 插帧后端 ──────────────────────────────────────────────────
+# standard（默认）：捆绑 FFmpeg/CUDA + 光盘媒体栈（rife 后端另含 TRT + RIFE 引擎）；
+#                   GUI 依赖系统 Qt ≥ 6.12。
 # full：额外捆绑最小 Qt（库 + 平台插件 + QML 模块，镜像发行版布局），
 #       用户侧只需驱动 + Vulkan loader + 基础 C 运行库。
 # 依赖收集 = 传递闭包 + 系统白名单：非白名单的 NEEDED 自动捆绑，
 # 因此系统 soname 升级（如 libcdio .so.19→.so.21）不会漏收。
 VARIANT=standard
+# 插帧后端（见头部说明）：vfg = VFX VideoFrameGeneration（默认，不带 TRT/engine）；
+# rife = RIFE + TensorRT 引擎（保持既有行为）。
+FRUC_BACKEND=vfg
 ENGINE_OVERRIDE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --variant=standard) VARIANT=standard ;;
         --variant=full)     VARIANT=full ;;
         --variant=*) echo "❌ 未知变体: ${1#--variant=}（支持 standard | full）" >&2; exit 2 ;;
+        --fruc-backend=vfg)  FRUC_BACKEND=vfg ;;
+        --fruc-backend=rife) FRUC_BACKEND=rife ;;
+        --fruc-backend)      FRUC_BACKEND="${2:?--fruc-backend 需要参数}"; shift
+                             case "$FRUC_BACKEND" in
+                                 vfg|rife) ;;
+                                 *) echo "❌ 未知插帧后端: $FRUC_BACKEND（支持 vfg | rife）" >&2; exit 2 ;;
+                             esac ;;
+        --fruc-backend=*)   echo "❌ 未知插帧后端: ${1#--fruc-backend=}（支持 vfg | rife）" >&2; exit 2 ;;
         --engine=*)         ENGINE_OVERRIDE="${1#--engine=}" ;;
         --engine)           ENGINE_OVERRIDE="${2:?--engine 需要路径}"; shift ;;
-        -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
-        *) echo "❌ 未知参数: $1（用法: $0 [--variant=standard|full] [--engine=<已有引擎>]）" >&2; exit 2 ;;
+        -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+        *) echo "❌ 未知参数: $1（用法: $0 [--variant=standard|full] [--fruc-backend=vfg|rife] [--engine=<已有引擎>]）" >&2; exit 2 ;;
     esac
     shift
 done
@@ -54,37 +73,49 @@ VERSION="$(grep -oP "version: '\K[^']+" meson.build | head -1)"
 DIST_RPATH='$ORIGIN/../lib/vsr-player:$ORIGIN/../lib'
 MPV_DIST="$PROJECT_ROOT/build/mpv-dist"
 CLIENT_DIST="$PROJECT_ROOT/build/client-dist"
+# 产物名带后端后缀（仅当后端 ≠ 默认 vfg）：vfg 与 rife 两个包必须能同时存在，
+# 否则同名互相覆盖（本仓库同版本要同时产出两种后端的包）。
+case "$FRUC_BACKEND" in
+    vfg)  BACKEND_SUFFIX="" ;;
+    *)    BACKEND_SUFFIX="-$FRUC_BACKEND" ;;
+esac
 if [ "$VARIANT" = full ]; then
     STAGE="$PROJECT_ROOT/build/release-staging-full"
-    TARBALL="$PROJECT_ROOT/build/vsr-player-$VERSION-linux-x86_64-full.tar.xz"
-    PKG_NAME="vsr-player-$VERSION-full"
+    TARBALL="$PROJECT_ROOT/build/vsr-player-$VERSION-linux-x86_64-full$BACKEND_SUFFIX.tar.xz"
+    PKG_NAME="vsr-player-$VERSION-full$BACKEND_SUFFIX"
 else
     STAGE="$PROJECT_ROOT/build/release-staging"
-    TARBALL="$PROJECT_ROOT/build/vsr-player-$VERSION-linux-x86_64.tar.xz"
-    PKG_NAME="vsr-player-$VERSION"
+    TARBALL="$PROJECT_ROOT/build/vsr-player-$VERSION-linux-x86_64$BACKEND_SUFFIX.tar.xz"
+    PKG_NAME="vsr-player-$VERSION$BACKEND_SUFFIX"
 fi
 STAGE_BASE="$(basename "$STAGE")"
 
-echo "=== vsr-player release build (v$VERSION, variant=$VARIANT) ==="
+echo "=== vsr-player release build (v$VERSION, variant=$VARIANT, fruc_backend=$FRUC_BACKEND) ==="
 
 # ── 1. mpv dist 构建（独立树 + release + dist-rpath）──────────────────
-echo "--- [1/6] mpv (dist build) ---"
+echo "--- [1/6] mpv (dist build, fruc_backend=$FRUC_BACKEND) ---"
 MPV_BUILD_DIR="$MPV_DIST" DIST_RPATH="$DIST_RPATH" BUILDTYPE=release \
+    FRUC_BACKEND="$FRUC_BACKEND" \
     ./scripts/build_mpv.sh
 
 # ── 2. client dist 构建 ──────────────────────────────────────────────
-echo "--- [2/6] client (dist build) ---"
+echo "--- [2/6] client (dist build, fruc_backend=$FRUC_BACKEND) ---"
 rm -rf "$CLIENT_DIST"
 meson setup "$CLIENT_DIST" --buildtype=release \
     -Ddist-rpath="$DIST_RPATH" \
-    -Dmpv-build-dir="$MPV_DIST/_build" >/dev/null
+    -Dmpv-build-dir="$MPV_DIST/_build" \
+    -Dfruc_backend="$FRUC_BACKEND" >/dev/null
 ninja -C "$CLIENT_DIST"
 
 # ── 3. 组装目录 ─────────────────────────────────────────────────────
 echo "--- [3/6] staging ---"
 rm -rf "$STAGE"
-mkdir -p "$STAGE/lib/vsr-player" "$STAGE/engines" "$STAGE/fonts" \
+mkdir -p "$STAGE/lib/vsr-player" "$STAGE/fonts" \
          "$STAGE/translations" "$STAGE/licenses"
+# engines/ 只属于 rife 后端；vfg（默认）tarball 内**不含**该目录。
+if [ "$FRUC_BACKEND" = rife ]; then
+    mkdir -p "$STAGE/engines"
+fi
 cp "$CLIENT_DIST/src/client/vsr-player" "$STAGE/vsr-player"
 cp "$MPV_DIST/_build/mpv" "$STAGE/mpv-vsr"
 cp -L "$MPV_DIST/_build/libmpv.so.2" "$STAGE/lib/vsr-player/libmpv.so.2"
@@ -124,7 +155,7 @@ collect_to() {  # collect_to <outdir> <soname> <search-dirs...>（SONAME 即目�
 LIB="$STAGE/lib/vsr-player"
 collect() { collect_to "$LIB" "$@"; }
 
-# 4a. 核心集：FFmpeg / CUDA runtime / TensorRT（版本绑定，显式固定）
+# 4a. 核心集：FFmpeg / CUDA runtime（+ rife 后端才有的 TensorRT，版本绑定，显式固定）
 for f in libavcodec.so.63 libavformat.so.63 libavutil.so.61 libavfilter.so.12 \
          libswscale.so.10 libswresample.so.7 libavdevice.so.63; do
     collect "$f" /usr/lib
@@ -154,8 +185,11 @@ cuda_collect() {  # cuda_collect <基础名>（libnvrtc / libnvrtc-builtins / li
 cuda_collect libnvrtc
 cuda_collect libnvrtc-builtins
 cuda_collect libcudart
-collect libnvinfer.so.11 /usr/lib
-collect libnvinfer_plugin.so.11 /usr/lib || echo "  ⚠ plugin missing（RIFE 图无 plugin 算子，可缺）"
+# TensorRT 库只有 rife 后端需要（引擎反序列化）；vfg 包不收集 libnvinfer*。
+if [ "$FRUC_BACKEND" = rife ]; then
+    collect libnvinfer.so.11 /usr/lib
+    collect libnvinfer_plugin.so.11 /usr/lib || echo "  ⚠ plugin missing（RIFE 图无 plugin 算子，可缺）"
+fi
 
 # 4b. 光盘/蓝光媒体栈：从实际 NEEDED 发现 soname——**不要硬编码**。
 #     2026-09 事故：libcdio .so.19→.so.21、libbluray .so.3→.so.4 升级后，
@@ -226,7 +260,7 @@ ALLOW+='|libOpenCL|libclang|libLLVM|libwayland-egl'
 ALLOW+='|libOpenGL|libGLdispatch|libGLESv2|liburing|libdouble-conversion|libmd4c|libb2|libSM|libICE|libmtdev|libts|libinput|libhunspell'
 # mpv/FFmpeg 的可选特性依赖（输出/图像/采集），发行版常规组件
 ALLOW+='|libmujs|liblcms2|libcaca|libwebp|libopenjp2|libraw1394|libavc1394|librom1394|libiec61883|libbs2b|libflite|libOpenEXR|libIlmThread|libImath|libzvbi|libdc1394'
-# standard 变体：Qt 由系统提供（硬性要求 ≥ 6.11）；full 变体则必须已捆绑
+# standard 变体：Qt 由系统提供（硬性要求 ≥ 6.12）；full 变体则必须已捆绑
 [ "$VARIANT" = standard ] && ALLOW+='|libQt6'
 
 validate_closure() {
@@ -251,15 +285,26 @@ else
 fi
 
 # ── 5. engine + 资产 ────────────────────────────────────────────────
-echo "--- [5/6] engine + assets ---"
-if [ -n "$ENGINE_OVERRIDE" ]; then
-    [ -f "$ENGINE_OVERRIDE" ] || { echo "❌ --engine 指定的文件不存在: $ENGINE_OVERRIDE" >&2; exit 1; }
-    cp "$ENGINE_OVERRIDE" "$STAGE/engines/rife_full_fp16.engine"
-    echo "  ✓ 复用引擎（跳过 trtexec）: $ENGINE_OVERRIDE"
-    echo "  ⚠ 复用引擎必须与目标 TRT 版本一致（引擎内嵌构建时的 TRT 版本，不匹配会被拒绝反序列化）"
+# engine 段落只属于 rife 后端；vfg（默认）整段跳过 → tarball 无 engines/。
+if [ "$FRUC_BACKEND" = rife ]; then
+    echo "--- [5/6] engine + assets ---"
+    if [ -n "$ENGINE_OVERRIDE" ]; then
+        [ -f "$ENGINE_OVERRIDE" ] || { echo "❌ --engine 指定的文件不存在: $ENGINE_OVERRIDE" >&2; exit 1; }
+        cp "$ENGINE_OVERRIDE" "$STAGE/engines/rife_full_fp16.engine"
+        echo "  ✓ 复用引擎（跳过 trtexec）: $ENGINE_OVERRIDE"
+        echo "  ⚠ 复用引擎必须与目标 TRT 版本一致（引擎内嵌构建时的 TRT 版本，不匹配会被拒绝反序列化）"
+    else
+        command -v trtexec >/dev/null 2>&1 || {
+            echo "❌ --fruc-backend=rife 未给 --engine 且系统找不到 trtexec（RIFE 引擎需 trtexec 现建）" >&2
+            echo "   任选其一：--engine=<已构建引擎> 复用，或安装 TensorRT（含 trtexec）后重跑" >&2
+            exit 1
+        }
+        bash tests/fruc/build_rife_full_engine.sh --hardware-compat=on \
+            "$STAGE/engines/rife_full_fp16.engine"
+    fi
 else
-    bash tests/fruc/build_rife_full_engine.sh --hardware-compat=on \
-        "$STAGE/engines/rife_full_fp16.engine"
+    echo "--- [5/6] assets (fruc_backend=vfg：无 RIFE engine) ---"
+    [ -z "$ENGINE_OVERRIDE" ] || echo "  ⚠ 已指定 --engine 但 fruc_backend=vfg：忽略（VFG 包不含 engines/）"
 fi
 cp third_party/material-icons/materialdesignicons-webfont.ttf "$STAGE/fonts/"
 cp "$CLIENT_DIST/src/client/"*.qm "$STAGE/translations/"
@@ -288,7 +333,7 @@ fi
 cat > "$STAGE/README.md" << 'EOR'
 # vsr-player vVERSION_PLACEHOLDER
 
-NVIDIA GPU 实时 AI 超分 + 插帧视频播放器（libmpv + Qt6 + VFX SDK + RIFE）。
+NVIDIA GPU 实时 AI 超分 + 插帧视频播放器（libmpv + Qt6 + VFX SDK，插帧 = FRUC_TITLE_PLACEHOLDER）。
 
 ## 系统依赖（必须）
 DEPS_PLACEHOLDER
@@ -305,10 +350,7 @@ tarball 不含 VFX SDK（NVIDIA SLA 限制再分发）。install.sh 检测缺失
 - 官方来源: https://pypi.nvidia.com/nvidia-vfx/（manylinux wheel；pypi.org 只有占位 sdist）
 - 许可: NVIDIA Software License Agreement（licenses/，下载前脚本会提示）
 
-## 插帧（RIFE）
-engines/rife_full_fp16.engine 为 ampere+ 跨架构构建（Ampere 30 系及以上）。
-RTX 20 系（Turing）及更早不支持 → 插帧自动直通（VSR 不受影响）。
-插帧需 GPU 支持 FP16 Tensor Cores。
+FRUC_SECTION_PLACEHOLDER
 
 ## 测试现状
 项目在有限硬件条件下开发，无法覆盖所有 GPU/驱动/媒体组合——你可能遇到
@@ -323,8 +365,7 @@ RTX 20 系（Turing）及更早不支持 → 插帧自动直通（VSR 不受影�
   手动放置时需自行补齐无版本软链
   （vsr_proc 以无版本名 dlopen：libnppc.so/libcudnn.so/...，缺软链
   VFX 加载链断裂 → 超分静默直通；install.sh 自动下载路径会补）
-- RIFE 引擎与 TensorRT 版本绑定（本 tarball 内自洽）；手工重建引擎见
-  仓库 tests/fruc/build_rife_full_engine.sh（需 trtexec + ONNX 资产）
+FRUC_COMPAT_PLACEHOLDER
 
 ## 运行
 ```
@@ -336,17 +377,42 @@ sed -i "s/VERSION_PLACEHOLDER/$VERSION/" "$STAGE/README.md"
 if [ "$VARIANT" = full ]; then
     DEPS_TEXT='- NVIDIA 显卡 + 驱动（`libcuda.so.1`）
 - Vulkan loader（`libvulkan.so.1`）与 Wayland/X11 客户端库（发行版常规组件）
-- **Qt6 已随包捆绑**——无需系统 Qt（本变体面向 Qt < 6.11 的发行版）'
+- **Qt6 已随包捆绑**——无需系统 Qt（本变体面向 Qt < 6.12 的发行版）'
 else
     DEPS_TEXT='- NVIDIA 显卡 + 驱动（`libcuda.so.1`）——唯一强制外部依赖
-- 系统 Qt ≥ 6.11（GUI 版；`mpv-vsr` 命令行版不需要）'
+- 系统 Qt ≥ 6.12（GUI 版；`mpv-vsr` 命令行版不需要）'
 fi
-python3 - "$STAGE/README.md" "$DEPS_TEXT" << 'PYEOF'
+# README 中随后端分支的段落（vfg 无 TRT/engine，不能留 RIFE 专属说明误导用户）
+if [ "$FRUC_BACKEND" = rife ]; then
+    FRUC_TITLE='RIFE'
+    FRUC_SECTION='## 插帧（RIFE）
+engines/rife_full_fp16.engine 为 ampere+ 跨架构构建（Ampere 30 系及以上）。
+RTX 20 系（Turing）及更早不支持 → 插帧自动直通（VSR 不受影响）。
+插帧需 GPU 支持 FP16 Tensor Cores。'
+    FRUC_COMPAT='- RIFE 引擎与 TensorRT 版本绑定（本 tarball 内自洽）；手工重建引擎见
+  仓库 tests/fruc/build_rife_full_engine.sh（需 trtexec + ONNX 资产）'
+else
+    FRUC_TITLE='VFX VideoFrameGeneration'
+    FRUC_SECTION='## 插帧（VFX VideoFrameGeneration）
+本包为 VFG 后端（NVIDIA VFX SDK 1.3 的 AI 插帧）：**不需要 TensorRT 库，也不含
+engines/ 与 RIFE engine——这是预期布局**，不是缺件。插帧随 VFX SDK 运行时提供
+（首次安装由 install.sh 下载，见上），需 GPU 支持 FP16 Tensor Cores。'
+    FRUC_COMPAT='- 本包为 VFG 后端：无 RIFE 引擎、无 TensorRT 库（因此没有 TRT 版本绑定
+  问题）。需要 RIFE 时用 `--fruc-backend=rife` 重新取包或源码构建'
+fi
+python3 - "$STAGE/README.md" "$DEPS_TEXT" "$FRUC_TITLE" "$FRUC_SECTION" "$FRUC_COMPAT" << 'PYEOF'
 import sys
-path, text = sys.argv[1], sys.argv[2]
+path = sys.argv[1]
+repl = {
+    'DEPS_PLACEHOLDER': sys.argv[2],
+    'FRUC_TITLE_PLACEHOLDER': sys.argv[3],
+    'FRUC_SECTION_PLACEHOLDER': sys.argv[4],
+    'FRUC_COMPAT_PLACEHOLDER': sys.argv[5],
+}
 with open(path, encoding='utf-8') as fh:
     content = fh.read()
-content = content.replace('DEPS_PLACEHOLDER', text)
+for key, text in repl.items():
+    content = content.replace(key, text)
 with open(path, 'w', encoding='utf-8') as fh:
     fh.write(content)
 PYEOF
@@ -355,4 +421,4 @@ cp scripts/install.sh "$STAGE/install.sh" && chmod +x "$STAGE/install.sh"
 tar -C "$PROJECT_ROOT/build" -cJf "$TARBALL" "$STAGE_BASE" \
     --transform "s/$STAGE_BASE/$PKG_NAME/"
 echo ""
-echo "=== Done: $TARBALL ($(du -h "$TARBALL" | cut -f1), variant=$VARIANT) ==="
+echo "=== Done: $TARBALL ($(du -h "$TARBALL" | cut -f1), variant=$VARIANT, fruc_backend=$FRUC_BACKEND) ==="

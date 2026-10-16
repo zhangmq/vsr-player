@@ -2,9 +2,16 @@
 # check-deps.sh — Verify build-time dependencies are present (current architecture:
 # libmpv patch build + Qt6 client + VFX SDK runtime).
 #
+# 插帧后端（环境变量 FRUC_BACKEND=vfg|rife，默认 vfg；与 build_mpv.sh /
+# build-from-source.sh / build_release.sh 同一约定）：
+#   vfg ：VFX VideoFrameGeneration —— **不需要** TensorRT/trtexec，
+#         既不检查也不置 MISSING（缺 TRT 不得中止 vfg 构建）。
+#   rife：RIFE + TensorRT —— trtexec 必需（RIFE 引擎构建），缺则 MISSING=1。
+#
 # 用法: ./scripts/check-deps.sh [--record]
 #   --record  记录当前已构建产物的依赖快照（build/.dep-snapshot.tsv）。
 #             每次成功构建后运行一次，作为"依赖漂移"检测的基线。
+#             快照首行记录 FRUC_BACKEND；后端与记录不一致时只提示重录，不判失败。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,6 +19,12 @@ TP="$ROOT/third_party"
 MISSING=0
 DRIFT=0
 RECORD=0
+# 插帧后端（默认 vfg，与另三个脚本同约定）；未知值直接报错，避免被当成 vfg 静默放行。
+FRUC_BACKEND="${FRUC_BACKEND:-vfg}"
+case "$FRUC_BACKEND" in
+    vfg|rife) ;;
+    *) echo "❌ 未知 FRUC_BACKEND: $FRUC_BACKEND（支持 vfg | rife）" >&2; exit 2 ;;
+esac
 
 case "${1:-}" in
     --record) RECORD=1 ;;
@@ -68,17 +81,25 @@ else
 fi
 
 echo ""
-echo "=== RIFE / TensorRT（引擎构建与插帧） ==="
-if command -v trtexec >/dev/null 2>&1; then
-    echo "  ✅ trtexec ($(trtexec --version 2>/dev/null | head -1 | grep -oE 'v[0-9.]+' | head -1))"
+# TensorRT 检查只在 rife 后端有意义（RIFE 引擎由 trtexec 构建）；vfg（默认）用
+# VFX SDK 的 VideoFrameGeneration，既不检查也不置 MISSING——否则"没装 TensorRT"
+# 会变成 vfg 构建的静默/显式中止。
+if [ "$FRUC_BACKEND" = rife ]; then
+    echo "=== RIFE / TensorRT（引擎构建与插帧） ==="
+    if command -v trtexec >/dev/null 2>&1; then
+        echo "  ✅ trtexec ($(trtexec --version 2>/dev/null | head -1 | grep -oE 'v[0-9.]+' | head -1))"
+    else
+        echo "  ❌ trtexec — MISSING (TensorRT；RIFE 引擎构建用，插帧不可用)"
+        MISSING=1
+    fi
+    if [ -f /usr/lib/libnvinfer.so.11 ] || ls /usr/lib/libnvinfer.so.11* >/dev/null 2>&1; then
+        echo "  ✅ libnvinfer.so.11 (TensorRT runtime)"
+    else
+        echo "  ⚠ libnvinfer.so.11 — 系统 TRT 未检测到（分发 tarball 自带捆绑版，dev 运行需系统 TRT）"
+    fi
 else
-    echo "  ❌ trtexec — MISSING (TensorRT；RIFE 引擎构建用，插帧不可用)"
-    MISSING=1
-fi
-if [ -f /usr/lib/libnvinfer.so.11 ] || ls /usr/lib/libnvinfer.so.11* >/dev/null 2>&1; then
-    echo "  ✅ libnvinfer.so.11 (TensorRT runtime)"
-else
-    echo "  ⚠ libnvinfer.so.11 — 系统 TRT 未检测到（分发 tarball 自带捆绑版，dev 运行需系统 TRT）"
+    echo "=== RIFE / TensorRT（fruc_backend=vfg：跳过） ==="
+    echo "  ℹ fruc_backend=vfg：RIFE/TensorRT 不需要（跳过检查）"
 fi
 
 echo ""
@@ -142,7 +163,17 @@ STAGING_STALE=0
 for t in "${DEP_TARGETS[@]}"; do
     [ -f "$ROOT/$t" ] || continue
     BUILT=1
-    missing="$(ldd_of "$t" | awk '/not found/ {print $1}' | tr '\n' ' ')"
+    # ldd 本身失败（≠ 库缺失）绝不能静默中止：set -e + pipefail 下
+    # `missing="$(ldd_of … | awk | tr)"` 会直接 exit 1 且不打印任何信息
+    # （2026-10 实测：ldd 瞬时返回非 0 即可触发）。探测失败仍判失败（DRIFT=1），
+    # 但必须把原因明确打出来；空结果不走下面的"缺失"判定，避免误报成缺库。
+    ldd_raw="$(ldd_of "$t" || true)"
+    if [ -z "$ldd_raw" ]; then
+        echo "  ⚠ $t — ldd 探测失败（非库缺失，请重跑确认；本次判为依赖状态未知）"
+        DRIFT=1
+        continue
+    fi
+    missing="$(printf '%s\n' "$ldd_raw" | awk '/not found/ {print $1}' | tr '\n' ' ')"
     [ -n "$missing" ] || continue
     if [[ "$t" == build/release-staging/* ]]; then
         echo "  ⚠ $t — 缺失: $missing（打包树过期 → ./scripts/build_release.sh）"
@@ -156,15 +187,24 @@ done
 if [ "$BUILT" -eq 0 ]; then
     echo "  ⏭  未发现已构建产物（先构建再检查）"
 elif [ "$RECORD" -eq 1 ]; then
-    snapshot_deps > "$SNAPSHOT"
-    echo "  ✅ 已记录依赖快照: build/.dep-snapshot.tsv（$(wc -l < "$SNAPSHOT") 条）"
+    # 首行记录后端身份：rife/vfg 决定 libmpv 与客户端是否 NEEDED libnvinfer*，
+    # 后端一旦切换，旧快照记录的"应解析库集合"就不再覆盖当前产物。
+    { echo "# fruc_backend=$FRUC_BACKEND"; snapshot_deps; } > "$SNAPSHOT"
+    echo "  ✅ 已记录依赖快照: build/.dep-snapshot.tsv（$(awk '!/^#/' "$SNAPSHOT" | wc -l) 条，fruc_backend=$FRUC_BACKEND）"
 elif [ -f "$SNAPSHOT" ]; then
+    # 后端身份与记录不符 → 只提示重录（信息性）。**不**参与下面的漂移判定，
+    # 也不改退出码：真实漂移（soname 缺失 / 已解析库被替换）照旧判失败。
+    SNAP_BACKEND="$(sed -n 's/^# fruc_backend=//p' "$SNAPSHOT" | head -1 || true)"
+    if [ -n "$SNAP_BACKEND" ] && [ "$SNAP_BACKEND" != "$FRUC_BACKEND" ]; then
+        echo "  ℹ 快照记录于 fruc_backend=$SNAP_BACKEND，当前 $FRUC_BACKEND——后端已切换，请重跑 --record"
+    fi
     declare -A cur=()
     while IFS=$'\t' read -r tgt soname path mtime size; do
         cur["$tgt|$soname"]="$mtime|$size"
     done < <(snapshot_deps)
     CHANGED=0
     while IFS=$'\t' read -r tgt soname path mtime size; do
+        case "$tgt" in \#*) continue ;; esac   # 快照头（`# fruc_backend=…`）不是数据行
         now="${cur["$tgt|$soname"]:-}"
         [ -n "$now" ] || continue          # 缺失情况已在上面报过
         if [ "$now" != "$mtime|$size" ]; then

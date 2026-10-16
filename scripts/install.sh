@@ -5,7 +5,8 @@
 #   - 只复制文件到应用自属目录（~/.local/bin + ~/.local/lib/vsr-player/）
 #   - 系统依赖（Qt/driver）只检测提示，绝不自动安装
 #   - VFX 获取：curl 从 NVIDIA 官方索引（pypi.nvidia.com）wheel 纯下载 + 解压（不调用 pip 安装器，
-#     不碰 Python 环境）；失败则保留提示，可手动下载后重跑
+#     不碰 Python 环境）；**下载/提取失败直接报错退出（exit 1）**，不静默降级
+#     （VFX 缺失 = VSR 静默直通，静默成功会让人以为装好了；显式 `--no-vfx` 才允许缺）
 #   - PATH 只提示，不修改 shell 配置
 #
 # 双场景：
@@ -79,11 +80,11 @@ QT_MAJOR="${QT_VER%%.*}"
 QT_MINOR="$(printf '%s' "$QT_VER" | cut -d. -f2)"
 if [ -d "$SRC/lib/qt6" ]; then
     echo "  ✅ 捆绑 Qt 已随包（全依赖版）——无需系统 Qt"
-elif [ -n "$QT_VER" ] && [ "${QT_MAJOR:-0}" -ge 6 ] && [ "${QT_MINOR:-0}" -ge 11 ]; then
-    echo "  ✅ Qt $QT_VER (≥6.11)"
+elif [ -n "$QT_VER" ] && [ "${QT_MAJOR:-0}" -ge 6 ] && [ "${QT_MINOR:-0}" -ge 12 ]; then
+    echo "  ✅ Qt $QT_VER (≥6.12)"
 else
-    echo "  ⚠ Qt 未检测到或 <6.11（需要 Qt ≥6.11；GUI 可能无法启动）"
-    echo "     → 或改用全依赖版 tarball（*-full.tar.xz，自带 Qt）"
+    echo "  ⚠ Qt 未检测到或 <6.12（需要 Qt ≥6.12；GUI 可能无法启动）"
+    echo "     → 或源码构建自带 Qt 的包：./scripts/build_release.sh --variant=full（本项目不再分发预编译 full 包）"
 fi
 GPU_INFO="$(nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader 2>/dev/null | head -1 || true)"
 # nvidia-smi 失败时把错误文本打到 stdout（非 stderr），只接受正常 CSV（含逗号）
@@ -150,11 +151,25 @@ fi
 
 # ── 3. engine + 字体 + 翻译 ─────────────────────────────────────────
 echo "--- [3/5] engine + fonts + translations ---"
+# 后端推断（**推断，不是元数据**）：没有 backend 标记文件，用已有信号判断——
+# 捆绑了 libnvinfer.so.11 ⇒ 该包具备 RIFE/TensorRT 能力（rife 源码构建或 rife
+# tarball），此时缺 engine 才是真问题；没有 TRT 库 ⇒ VFG-only 包（发行默认），
+# 本来就不带 RIFE engine，不该告警。
+# 判据必须看**本包**（$SRC/lib/vsr-player/libnvinfer* 或 $SRC/engines/）是否为 rife 后端，
+# 不能看已安装目录：~/.local/lib/vsr-player/ 会累积上一版安装的残留（先装 rife 包、
+# 再装 vfg 包时，旧 TRT 库还在，会把 VFG 包误判成"rife 包缺引擎"并误报告警）。
+HAS_TRT=0
+[ -f "$LIB_DIR/libnvinfer.so.11" ] && HAS_TRT=1
+HAS_TRT_IN_PKG=0
+[ -f "$SRC/lib/vsr-player/libnvinfer.so.11" ] && HAS_TRT_IN_PKG=1
 if [ -f "$ENG_SRC/rife_full_fp16.engine" ]; then
     cp "$ENG_SRC/rife_full_fp16.engine" "$LIB_DIR/"
     echo "  ✅ RIFE engine（ampere+ 跨架构）→ $LIB_DIR/"
-else
+elif [ "$HAS_TRT_IN_PKG" -eq 1 ]; then
     echo "  ⚠ engine 缺失 — 插帧直通（build_release.sh 会构建）"
+else
+    echo "  ℹ VFG 后端：本包不含 TRT/engine，插帧走 VFX VideoFrameGeneration"
+    [ "$HAS_TRT" -eq 1 ] && echo "     （注：$LIB_DIR/ 里有旧版 RIFE 的 TRT 库/引擎残留，不影响 VFG 使用）"
 fi
 FONT_SRC="$SRC/fonts/materialdesignicons-webfont.ttf"
 [ -f "$FONT_SRC" ] || FONT_SRC="$SRC/third_party/material-icons/materialdesignicons-webfont.ttf"
@@ -170,7 +185,17 @@ if ls "$TR_SRC"/*.qm >/dev/null 2>&1; then
 fi
 
 # ── 4. VFX SDK（NVIDIA 官方 wheel，纯下载）──────────────────────────
+# ⚠ 策略：**下载/提取失败一律报错退出（exit 1）**，不静默降级。
+# 理由（2026-10-17 用户决定）：VFX 缺失时 VSR 会"静默直通"——脚本却 exit 0，
+# 用户很容易以为装好了，超分其实没生效。要么装成，要么明确失败。
 echo "--- [4/5] VFX SDK check ---"
+vfx_fail() {   # VFX 不可用 → 明确报错并退出（手动方式一并给出）
+    echo "  ❌ VFX SDK 不可用：$*" >&2
+    echo "     手动方式：从 https://pypi.nvidia.com/nvidia-vfx/ 下载 manylinux x86_64 wheel，" >&2
+    echo "     解压 nvvfx/libs/* → $LIB_DIR/、nvidia_vfx.libs/* → $VFX_SIBLING/，再重跑本脚本。" >&2
+    echo "     （漏掉 nvidia_vfx.libs/ 会让 libVideoFXLocal.so 加载失败 → VSR 静默直通）" >&2
+    exit 1
+}
 VFX_READY=0
 if [ -f "$LIB_DIR/libNVCVImage.so" ]; then
     if ls "$VFX_SIBLING"/libcudart-*.so.* >/dev/null 2>&1; then
@@ -210,7 +235,16 @@ if [ "$VFX_READY" -eq 0 ]; then
                 | grep -oE '"url": *"[^"]*manylinux[^"]*\.whl"' | head -1 \
                 | sed -E 's/"url": *"([^"]*)"/\1/' || true)"
         fi
-        echo "    来源: ${WHEEL_URL:-（未找到可用 wheel）}"
+        # wheel 文件名形如 nvidia_vfx-0.2.0.0-...-manylinux...whl，版本 = 第一段之后、
+        # 第二个 "-" 之前；解析失败（pypi.org 兜底路径 WHEEL_FILE 为空/命名变化）静默留空
+        VFX_WHEEL_VER=""
+        case "$WHEEL_FILE" in
+            nvidia_vfx-*)
+                VFX_WHEEL_VER="${WHEEL_FILE#nvidia_vfx-}"
+                VFX_WHEEL_VER="${VFX_WHEEL_VER%%-*}"
+                ;;
+        esac
+        echo "    来源: ${WHEEL_URL:-（未找到可用 wheel）}${VFX_WHEEL_VER:+（VFX SDK $VFX_WHEEL_VER）}"
         if [ -n "$WHEEL_URL" ] && curl -fL "$WHEEL_URL" -o "$TMPVFX/nvidia_vfx.whl"; then
             unzip -o -q "$TMPVFX/nvidia_vfx.whl" "nvvfx/libs/*" -d "$TMPVFX"
             cp "$TMPVFX"/nvvfx/libs/*.so* "$LIB_DIR/" 2>/dev/null || true
@@ -235,9 +269,12 @@ if [ "$VFX_READY" -eq 0 ]; then
             esac
             # vsr_proc.c dlopen 无版本名（libnppc.so/libcudnn.so/...），wheel 只有
             # 带版本名（.so.12/.so.9/.so.1.8.2）——缺软链则 NEEDED 链断 → VFX 全灭
+            # libnvidia-ngx-truehdr：VFX SDK 1.3（wheel 0.2.0.0）新增 TrueHDR effect，
+            # wheel 只给带版本名（.so.1.2.3），播放器按无版本名 dlopen，约定同 ngx-vsr。
+            # 旧 wheel 无此文件时下面的 [ -e "$s" ] 守卫直接跳过（无害）。
             for target in libnppc libnppial libnppicc libnppidei libnppig \
                           libnppif libnppim libnppist libnppitc libcudnn \
-                          libnvidia-ngx-vsr; do
+                          libnvidia-ngx-vsr libnvidia-ngx-truehdr; do
                 src=""
                 for s in "$LIB_DIR/${target}.so."*; do [ -e "$s" ] && src="$s" && break; done
                 [ -n "$src" ] && ln -sf "$(basename "$src")" "$LIB_DIR/$target.so"
@@ -247,19 +284,14 @@ if [ "$VFX_READY" -eq 0 ]; then
             if [ "$COUNT" -ge 10 ]; then
                 echo "  ✅ VFX SDK 下载并提取完成（$COUNT 个库）→ $LIB_DIR/"
             else
-                echo "  ⚠ VFX 提取不完整（$COUNT 库）——请手动下载后重跑脚本"
+                vfx_fail "wheel 提取不完整（仅 $COUNT 个库）"
             fi
         else
             rm -rf "$TMPVFX"
-            echo "  ❌ 下载失败（网络/代理？）。手动方式："
-            echo "     官方索引: https://pypi.nvidia.com/nvidia-vfx/（选 manylinux x86_64 wheel）"
-            echo "     解压其中 nvvfx/libs/* 到 $LIB_DIR/、nvidia_vfx.libs/* 到"
-            echo "     ~/.local/nvidia_vfx.libs/ 后重跑本脚本（0.2.0.0 起的 wheel 把"
-            echo "     cudart 放在 nvidia_vfx.libs/，漏掉则 VSR 静默直通）"
+            vfx_fail "下载失败（网络/代理）——wheel 未取到或下载被中断"
         fi
     else
-        echo "  （需要 curl + unzip 才能自动下载；手动下载 wheel：nvvfx/libs/* → $LIB_DIR/、"
-        echo "   nvidia_vfx.libs/* → $VFX_SIBLING/ 亦可）"
+        vfx_fail "缺少 curl 或 unzip，无法自动获取 wheel"
     fi
 fi
 
@@ -270,12 +302,27 @@ if [ -n "$LDD_MISSING" ]; then
     echo "  ⚠ vsr-player 依赖缺失:"; echo "$LDD_MISSING"
 fi
 [ -f "$LIB_DIR/libnvinfer.so.11" ] && RIFE_TRT="✅" || RIFE_TRT="❌"
+# 摘要里的 TRT 字段：无 TRT 库 = VFG-only 包（HAS_TRT 在上方 [3/5] 由同一信号推断），
+# 显示后端名而不是看起来像故障的 "TRT:❌"。
+if [ "$HAS_TRT" -eq 1 ]; then
+    TRT_TAG="TRT:$RIFE_TRT"
+else
+    TRT_TAG="FRUC:VFG"
+fi
 { [ -f "$LIB_DIR/libNVCVImage.so" ] && ls "$VFX_SIBLING"/libcudart-*.so.* >/dev/null 2>&1; } \
     && VFX_ST="✅" || VFX_ST="❌"
+# VFX SDK 版本：离线从已解压目录推断（libnvVFXVideoFrameGeneration.so 是 1.3/0.2.0.0 新增），不联网
+[ -f "$LIB_DIR/libnvVFXVideoFrameGeneration.so" ] && VFX_VER="1.3+ (0.2.0.0)" || VFX_VER="≤1.2"
 echo ""
 echo "=== Done ==="
-echo "  GUI:  $BIN_DIR/vsr-player        [VFX:$VFX_ST TRT:$RIFE_TRT]"
+echo "  GUI:  $BIN_DIR/vsr-player        [VFX:$VFX_ST $TRT_TAG]"
+echo "  VFX:  $VFX_VER"
 [ -x "$BIN_DIR/mpv-vsr" ] && echo "  CLI:  $BIN_DIR/mpv-vsr"
-echo "  库:   $LIB_DIR/（捆绑依赖 + engine + VFX）"
+LIBS_DESC="捆绑依赖 + VFX"
+# 描述按目录事实写：engine 文件在就打出来（与上面的后端标签解耦）。
+if [ -f "$LIB_DIR/rife_full_fp16.engine" ]; then
+    LIBS_DESC="捆绑依赖 + VFX + RIFE engine"
+fi
+echo "  库:   $LIB_DIR/（$LIBS_DESC）"
 echo "运行: vsr-player <视频或目录>"
 echo "（若 PATH 无 $BIN_DIR：export PATH=\"\$PATH:$BIN_DIR\"）"
