@@ -1,6 +1,32 @@
 #include "Options.h"
+#include "FrucBackend.h"
 #include <cstdio>
 #include <cstring>
+
+// ── Usage ────────────────────────────────────────────────────────────
+// --fruc 合法值列表来自编译期分支（FrucBackend.h 单一事实源）：
+// VFG = off|2|3|4（倍率）；RIFE = off|40|48|60|2|3|4（目标帧率 + benchmark
+// 倍率）。--fruc-order 仅 VFG 可切换（RIFE 链序固定），故只在 VFG 分支列出；
+// --fruc-quality 同理仅 VFG 可选（RIFE 无质量档）。
+// 值本身的合法性不在本层校验（与 --fruc 同模式：字符串搬运，语义/兜底在
+// PlayerViewModel::initFruc/initFrucOrder/initFrucQuality）。
+static void printUsage(FILE *out, const char *prog) {
+    const std::string frucVals = fruc::cliValuesHelp();
+    std::string orderOpt;
+    if (fruc::kOrderSelectable)
+        orderOpt = "[--fruc-order pre|post] ";
+    std::string qualityOpt;
+    if (fruc::kModeSelectable)
+        qualityOpt = "[--fruc-quality " + fruc::modeValuesHelp() + "] ";
+    fprintf(out,
+        "Usage: %s [--benchmark] [--no-hwaccel] [--vsync] "
+        "[--no-rpc] [--rpc-socket <path>] "
+        "[--scale off|auto|2|3|4] [--denoise off|low|medium|high|ultra] "
+        "[--quality low|medium|high|ultra] "
+        "[--fruc %s] %s%s"
+        "[--lang <locale>] [--screenshot-dir <dir>] [-- mpv-opt ...] <video>\n",
+        prog, frucVals.c_str(), orderOpt.c_str(), qualityOpt.c_str());
+}
 
 bool Options::parse(int argc, char *argv[], Options *out) {
     Options o;
@@ -26,6 +52,10 @@ bool Options::parse(int argc, char *argv[], Options *out) {
                 }
             }
             break;
+        }
+        if (strcmp(argv[i], "--help") == 0) {
+            o.help = true;
+            continue;
         }
         if (strcmp(argv[i], "--benchmark") == 0) {
             o.benchmark = true;
@@ -58,6 +88,14 @@ bool Options::parse(int argc, char *argv[], Options *out) {
             o.fruc = argv[++i];
         } else if (strncmp(argv[i], "--fruc=", 7) == 0) {
             o.fruc = argv[i] + 7;
+        } else if (strcmp(argv[i], "--fruc-order") == 0 && i + 1 < argc) {
+            o.fruc_order = argv[++i];
+        } else if (strncmp(argv[i], "--fruc-order=", 13) == 0) {
+            o.fruc_order = argv[i] + 13;
+        } else if (strcmp(argv[i], "--fruc-quality") == 0 && i + 1 < argc) {
+            o.fruc_quality = argv[++i];
+        } else if (strncmp(argv[i], "--fruc-quality=", 15) == 0) {
+            o.fruc_quality = argv[i] + 15;
         } else if (strcmp(argv[i], "--lang") == 0 && i + 1 < argc) {
             o.lang = argv[++i];
         } else if (strncmp(argv[i], "--lang=", 7) == 0) {
@@ -77,16 +115,15 @@ bool Options::parse(int argc, char *argv[], Options *out) {
             return false;
         }
     }
+    // --help：只列用法（其余参数忽略），main 据此直接退出（不改工作区/不启引擎）
+    if (o.help) {
+        printUsage(stdout, argv[0]);
+        *out = o;
+        return true;
+    }
     if (o.video_file.empty()) {
         if (o.benchmark) {
-            fprintf(stderr,
-                "Usage: %s [--benchmark] [--no-hwaccel] [--vsync] "
-                "[--no-rpc] [--rpc-socket <path>] "
-                "[--scale off|auto|2|3|4] [--denoise off|low|medium|high|ultra] "
-                "[--quality low|medium|high|ultra] "
-                "[--fruc off|30|40|60|2|3|4] "
-                "[--lang <locale>] [--screenshot-dir <dir>] [-- mpv-opt ...] <video>\n",
-                argv[0]);
+            printUsage(stderr, argv[0]);
             return false;
         }
         // 无参数正常启动：恢复上次播放列表（main.cpp restorePlaylist 分支）。

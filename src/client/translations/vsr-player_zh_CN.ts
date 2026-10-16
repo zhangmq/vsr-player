@@ -389,6 +389,53 @@
         <source>reason=no-pts</source>
         <translation>无时间戳</translation>
     </message>
+    <!-- FRUC 档位标签（PlayerViewModel::frucModel，来源 src/client/FrucBackend.h
+         的 QT_TRANSLATE_NOOP）：两个编译分支（fruc_backend=vfg|rife）的标签
+         都登记在此——lupdate 只能看到当前分支，勿删未编译分支的条目。 -->
+    <message>
+        <source>Off</source>
+        <translation>关闭</translation>
+    </message>
+    <message>
+        <source>×2</source>
+        <translation>×2</translation>
+    </message>
+    <message>
+        <source>×3</source>
+        <translation>×3</translation>
+    </message>
+    <message>
+        <source>×4</source>
+        <translation>×4</translation>
+    </message>
+    <message>
+        <source>40 fps</source>
+        <translation>40 fps</translation>
+    </message>
+    <message>
+        <source>48 fps</source>
+        <translation>48 fps</translation>
+    </message>
+    <message>
+        <source>60 fps</source>
+        <translation>60 fps</translation>
+    </message>
+    <!-- FRUC 质量档标签（PlayerViewModel::frucQualityModel，来源同上
+         src/client/FrucBackend.h 的 kModePresets 表）：仅 VFG 分支使用
+        （kModeSelectable=false 的 RIFE 分支隐藏该排），同样登记在此以免在
+         fruc_backend=rife 下跑 lupdate 时丢失。勿删。 -->
+    <message>
+        <source>Low</source>
+        <translation>低</translation>
+    </message>
+    <message>
+        <source>Medium</source>
+        <translation>中</translation>
+    </message>
+    <message>
+        <source>High</source>
+        <translation>高</translation>
+    </message>
 </context>
 <context>
     <name>PlaylistPanel</name>
@@ -435,25 +482,25 @@
         <location filename="../ui/QualityPopup.qml" line="24"/>
         <location filename="../ui/QualityPopup.qml" line="31"/>
         <source>Low</source>
-        <translation>Low</translation>
+        <translation>低</translation>
     </message>
     <message>
         <location filename="../ui/QualityPopup.qml" line="25"/>
         <location filename="../ui/QualityPopup.qml" line="32"/>
         <source>Medium</source>
-        <translation>Medium</translation>
+        <translation>中</translation>
     </message>
     <message>
         <location filename="../ui/QualityPopup.qml" line="26"/>
         <location filename="../ui/QualityPopup.qml" line="33"/>
         <source>High</source>
-        <translation>High</translation>
+        <translation>高</translation>
     </message>
     <message>
         <location filename="../ui/QualityPopup.qml" line="27"/>
         <location filename="../ui/QualityPopup.qml" line="34"/>
         <source>Ultra</source>
-        <translation>Ultra</translation>
+        <translation>超高</translation>
     </message>
     <message>
         <location filename="../ui/QualityPopup.qml" line="40"/>
@@ -474,6 +521,11 @@
         <location filename="../ui/QualityPopup.qml" line="101"/>
         <source>Frame interpolation</source>
         <translation>帧插值</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="142"/>
+        <source>Interpolation quality</source>
+        <translation>插帧质量</translation>
     </message>
     <message>
         <location filename="../ui/QualityPopup.qml" line="104"/>

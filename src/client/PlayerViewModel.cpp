@@ -1,5 +1,6 @@
 #include "PlayerViewModel.h"
 #include "MpvController.h"
+#include "FrucBackend.h"
 #include "Log.h"
 
 #include <QMetaObject>
@@ -479,22 +480,84 @@ void PlayerViewModel::initVsr(const std::string &scale,
 }
 
 void PlayerViewModel::initFruc(const std::string &fruc, bool benchmark) {
-    // 单一字段 frucFps_（-1 off | 2/3/4 倍率 | 40/48/60 目标帧率）——
-    // benchmark 与正常模式共用一套状态（OSD/ vf 构造不分叉）。
-    if (fruc == "2" || fruc == "3" || fruc == "4" ||
-        fruc == "40" || fruc == "48" || fruc == "60") {
-        frucFps_ = atoi(fruc.c_str());
-        return;
+    // 单一字段 frucFps_（VFG 分支 -1 off | 2/3/4 倍率；RIFE 分支 -1 off |
+    // 40/48/60 目标帧率 | 2/3/4 benchmark 倍率）——benchmark 与正常模式共用
+    // 一套状态（OSD/vf 构造不分叉）。合法值见 FrucBackend.h。
+    int v;
+    if (fruc::parseCli(fruc, &v)) {
+        // RIFE：2/3/4 是 **benchmark 专用**倍率，会覆盖目标帧率（vf_rife.c:63），
+        // 并让界面档位失效（实测：以 --fruc 2 起步后，界面/RPC 选 40/48/60/off
+        // 全都改不动实际输出）。非 benchmark 下一律**当作没传**（忽略 + 回落
+        // 持久化档位），避免进入"控件看起来有效、实际无效"的状态。
+        // VFG 分支里 2/3/4 就是正常倍率档位，不受此限。
+#ifndef FRUC_BACKEND_VFG
+        const bool benchmark_only = (v == 2 || v == 3 || v == 4);
+#else
+        const bool benchmark_only = false;
+#endif
+        if (benchmark || !benchmark_only) {
+            frucFps_ = v;   // 含 "off" → -1（显式 off 本次播放关闭，不落持久化）
+            return;
+        }
+        MLOG_WARN("--fruc %d is benchmark-only for the RIFE backend (2/3/4 are "
+                  "multipliers): ignored, using the saved setting", v);
+    } else if (!fruc.empty() && fruc::kIsVfg) {
+        // VFG：40/48/60 是 RIFE 的目标帧率档（VFG 只有倍率档）——同样**当没传**
+        // 处理（回落持久化档位），与上面 RIFE 侧对 2/3/4 的做法对称。
+        MLOG_WARN("--fruc %s is RIFE-only (this is the VFG backend, expect %s): "
+                  "ignored, using the saved setting",
+                  fruc.c_str(), fruc::cliValuesHelp().c_str());
     }
-    // CLI 显式 off：本次播放关闭（不落持久化——persistFruc_ 是 UI 上次
-    // 值，下次启动恢复）。修复：此前 "off" 落入 persistFruc_ 分支，
-    // 持久化 40/60 时 --fruc off 无效（插帧照常开启，实测 2026-08-12）。
-    if (fruc == "off") {
-        frucFps_ = -1;
-        return;
-    }
-    // 空/非法：benchmark = 不插帧（CLI 语义）；正常 = 持久化目标。
     frucFps_ = benchmark ? -1 : persistFruc_;
+}
+
+void PlayerViewModel::initFrucOrder(const std::string &order) {
+    if (!fruc::kOrderSelectable) {
+        // RIFE 链序固定（hwup → rife → vsr → VO，插帧在源分辨率）：选项
+        // 接受但无效果——显式提示，避免"设了没反应"被当成缺陷。
+        if (!order.empty())
+            MLOG_WARN("--fruc-order %s ignored: not selectable with the RIFE backend",
+                      order.c_str());
+        return;
+    }
+    if (order.empty() || order == fruc::kOrderDefault) {
+        frucOrderPre_ = false;
+        return;
+    }
+    if (order == "pre") {
+        frucOrderPre_ = true;
+        MLOG_INFO("FRUC vf order: pre (vfg before vsr)");
+        return;
+    }
+    MLOG_WARN("--fruc-order %s invalid (expect pre|%s): using %s",
+              order.c_str(), fruc::kOrderDefault, fruc::kOrderDefault);
+}
+
+void PlayerViewModel::initFrucQuality(const std::string &quality) {
+    if (!fruc::kModeSelectable) {
+        // RIFE 无质量档（mode 是 VFG VideoFrameGeneration 的引擎参数）：
+        // 选项接受但无效果——显式提示，避免"设了没反应"被当成缺陷
+        //（照 --fruc-order 的既有处理）。
+        if (!quality.empty())
+            MLOG_WARN("--fruc-quality %s ignored: not selectable with the RIFE backend",
+                      quality.c_str());
+        return;
+    }
+    if (quality.empty()) {
+        // 空 = CLI 未显式指定 → 持久化值（loadSettings 已清洗）。
+        frucQuality_ = persistFrucQuality_;
+        return;
+    }
+    int v;
+    if (!fruc::parseMode(quality, &v)) {
+        MLOG_WARN("--fruc-quality %s invalid (expect %s): using %s",
+                  quality.c_str(), fruc::modeValuesHelp().c_str(),
+                  fruc::modeName(fruc::kModeDefault));
+        frucQuality_ = fruc::kModeDefault;
+        return;
+    }
+    frucQuality_ = v;
+    MLOG_INFO("FRUC quality: mode=%s (%d)", fruc::modeName(v), v);
 }
 
 bool PlayerViewModel::parseScale(const std::string &s, double *out) {
@@ -542,8 +605,11 @@ void PlayerViewModel::loadSettings() {
     persistQuality_ = settings_.value("quality", 3).toInt();
     persistDenoise_ = settings_.value("denoiseQuality", -1).toInt();
     persistFruc_ = settings_.value("frucFps", -1).toInt();
-    if (persistFruc_ != -1 && persistFruc_ != 30 && persistFruc_ != 40 && persistFruc_ != 60)
-        persistFruc_ = -1;   // 非法值（手改配置）→ off
+    if (!fruc::isValidPersisted(persistFruc_))
+        persistFruc_ = -1;   // 非法值（手改配置/上一后端残留）→ off
+    persistFrucQuality_ = settings_.value("frucQuality", fruc::kModeDefault).toInt();
+    if (!fruc::isValidMode(persistFrucQuality_))
+        persistFrucQuality_ = fruc::kModeDefault;   // 非法值（手改配置）→ medium
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -846,11 +912,51 @@ void PlayerViewModel::setDenoiseQuality(int d) {
 
 void PlayerViewModel::setFrucFps(int v) {
     if (!mpv_) return;
-    if (v != -1 && v != 40 && v != 48 && v != 60) return;
+    if (!fruc::isValidPreset(v)) return;
     if (frucFps_ != v) { frucFps_ = v; emit frucFpsChanged(); }
     saveSettings("frucFps", v);
-    pushVf("rife", "fps", v == -1 ? "off" : std::to_string(v));
+    pushVf(frucFilterName(), "fps", v == -1 ? "off" : std::to_string(v));
 }
+
+// UI 档位模型：label 走 tr()（QML 的 qsTr 迁到 C++，context 由 QualityPopup
+// 变为 PlayerViewModel——.ts 已补 "Off" 条目）。value 语义 = frucFps_。
+QVariantList PlayerViewModel::frucModel() const {
+    QVariantList out;
+    for (std::size_t i = 0; i < fruc::kPresetCount; ++i) {
+        QVariantMap m;
+        m["label"] = tr(fruc::kPresets[i].label);
+        m["value"] = fruc::kPresets[i].value;
+        out.append(m);
+    }
+    return out;
+}
+
+// 质量档热切换（仅 VFG）：vf-command `vfg mode <low|medium|high>`——filter
+// 侧下一帧检测 Mode 不一致 → 重建引擎（不重建 filter 链）。RIFE 分支无此
+// 档：不生效（CLI/RPC 路径各有一致处理）。
+void PlayerViewModel::setFrucQuality(int v) {
+    if (!mpv_) return;
+    if (!fruc::kModeSelectable) return;
+    if (!fruc::isValidMode(v)) return;
+    if (frucQuality_ != v) { frucQuality_ = v; emit frucQualityChanged(); }
+    saveSettings("frucQuality", v);
+    pushVf(frucFilterName(), "mode", fruc::modeName(v));
+}
+
+// 质量档 UI 模型（同 frucModel：label 走 tr()，context = PlayerViewModel；
+// RIFE 分支该排隐藏，模型照常产出但不消费）。
+QVariantList PlayerViewModel::frucQualityModel() const {
+    QVariantList out;
+    for (std::size_t i = 0; i < fruc::kModePresetCount; ++i) {
+        QVariantMap m;
+        m["label"] = tr(fruc::kModePresets[i].label);
+        m["value"] = fruc::kModePresets[i].value;
+        out.append(m);
+    }
+    return out;
+}
+
+bool PlayerViewModel::frucQualityAvailable() const { return fruc::kModeSelectable; }
 
 // 剥离 mpv 日志消息的尾随换行与前导空格（mpv 的 log text 以 \n 结尾——
 // 原样存入会让 OSD 行内嵌 \n → 行距异常/提前折行；"vsr-status:" 前缀后
@@ -1360,20 +1466,14 @@ void PlayerViewModel::screenshot() {
 // ── vf string ────────────────────────────────────────────────────────
 
 std::string PlayerViewModel::vfOption() const {
-    // 链序：decode → hwup（SW→HW 一致化）→ rife（插帧，源分辨率）→
-    // vsr（超分）→ VO。hwup 使 rife/vsr 只处理 CUDA 帧（软解输入
-    // 也走 HW 路径）。rife 目标语义（单一字段 frucFps_，数值自区分）：
-    // 2/3/4 = 倍率（benchmark 强制，决定 decide_mode 的 benchmark 分支）；
-    // off/40/48/60 = fps（正常模式，按用户设置执行——性能自动降级已移除）。
-    std::string vf = "@hwup:hwup,";
-    int fruc = frucFps_.load();
-    if (fruc == 2 || fruc == 3 || fruc == 4) {
-        vf += "@rife:rife:fps=off:scale=" + std::to_string(fruc) + ",";
-    } else if (fruc > 0) {
-        vf += "@rife:rife:fps=" + std::to_string(fruc) + ":scale=off,";
-    } else {
-        vf += "@rife:rife:fps=off:scale=off,";
-    }
+    // 链序（编译期后端分支，见 FrucBackend.h）：
+    //   VFG：decode → hwup（SW→HW 一致化）→ vsr（超分）→ vfg（插帧）→ VO
+    //        为默认（--fruc-order post）；pre 时 vfg 在 vsr 之前处理。
+    //   RIFE：decode → hwup → rife（插帧，源分辨率）→ vsr（超分）→ VO，
+    //        固定不变（rife 目标语义：2/3/4 = 倍率（benchmark 强制，
+    //        决定 decide_mode 的 benchmark 分支）；off/40/48/60 = 目标
+    //        帧率（正常模式，按用户设置执行——性能自动降级已移除））。
+    // hwup 使插帧/超分只处理 CUDA 帧（软解输入也走 HW 路径）。
     // scale: OPT_FLOAT 仅 strtod——"auto"/"off"/"4/3" 必须换算为数字
     double s = scale_.load();
     std::string scaleOpt;
@@ -1381,10 +1481,35 @@ std::string PlayerViewModel::vfOption() const {
     else if (s == 0)     scaleOpt = "0";
     else if (fabs(s - 4.0 / 3.0) < 0.01) scaleOpt = "1.3333";
     else { char buf[16]; snprintf(buf, sizeof buf, "%g", s); scaleOpt = buf; }
-    vf += "@vsr:vsr:scale=" + scaleOpt;
-    vf += ":denoise=" + denoiseString();
-    vf += ":quality=" + qualityString();
+    const std::string vsr = "@vsr:vsr:scale=" + scaleOpt
+                          + ":denoise=" + denoiseString()
+                          + ":quality=" + qualityString();
+    const int fruc = frucFps_.load();
+#ifdef FRUC_BACKEND_VFG
+    // VFG 倍率语义：fps=off|2|3|4 直通/整数倍率；mode 恒发显式值
+    // low|medium|high（默认 medium——依据见 FrucBackend.h kModeDefault；
+    // 滤镜的 auto 仅作兜底，客户端不再发送）。
+    const std::string vfg = std::string("@") + frucFilterName() + ":" + frucFilterName()
+                          + ":fps=" + (fruc > 0 ? std::to_string(fruc) : "off")
+                          + ":mode=" + fruc::modeName(frucQuality_.load());
+    if (frucOrderPre())
+        return "@hwup:hwup," + vfg + "," + vsr;
+    return "@hwup:hwup," + vsr + "," + vfg;
+#else
+    std::string vf = "@hwup:hwup,";
+    if (fruc == 2 || fruc == 3 || fruc == 4) {
+        vf += std::string("@") + frucFilterName() + ":" + frucFilterName()
+            + ":fps=off:scale=" + std::to_string(fruc) + ",";
+    } else if (fruc > 0) {
+        vf += std::string("@") + frucFilterName() + ":" + frucFilterName()
+            + ":fps=" + std::to_string(fruc) + ":scale=off,";
+    } else {
+        vf += std::string("@") + frucFilterName() + ":" + frucFilterName()
+            + ":fps=off:scale=off,";
+    }
+    vf += vsr;
     return vf;
+#endif
 }
 
 std::string PlayerViewModel::scaleString() const { return scaleStr(); }
@@ -1430,12 +1555,20 @@ void PlayerViewModel::pushVf(const char *filter, const char *param,
     mpv_->commandAsync({"vf-command", filter, param, value.c_str(), nullptr});
 }
 
+// FRUC 滤镜名的单一出口（其余地方一律经此取用，见 FrucBackend.h）。
+const char *PlayerViewModel::frucFilterName() const { return fruc::kFilterName; }
+
 void PlayerViewModel::syncVfOptions() {
     if (!mpv_) return;
     int fruc = frucFps_.load();
-    // rife 倍率模式（CLI 2/3/4）只经 vfOption 配置（scale 参数），此处
-    // 重放 fps 值即可（benchmark 分支忽略 fps，无破坏）。
-    pushVf("rife", "fps", fruc == -1 ? "off" : std::to_string(fruc));
+    // VFG 倍率模式与 RIFE benchmark 倍率（CLI 2/3/4）都只经 vfOption 配置
+    // （fps/scale 参数），此处重放 fps 值即可（RIFE benchmark 分支忽略
+    // fps，无破坏；VFG 的 fps 即倍率）；VFG 的 mode 同理由 vfOption 初始
+    // 化，链重建后一并重放（RIFE 无此参数，不发送）。
+    pushVf(frucFilterName(), "fps", fruc == -1 ? "off" : std::to_string(fruc));
+    // 质量档（仅 VFG 有此参数；RIFE 无 mode——发送会得到 vf-command 失败）。
+    if (fruc::kModeSelectable)
+        pushVf(frucFilterName(), "mode", fruc::modeName(frucQuality_.load()));
     pushVf("vsr", "scale", scaleStr());
     pushVf("vsr", "quality", qualityStr());
     pushVf("vsr", "denoise", denoiseStr());
@@ -1557,11 +1690,11 @@ std::string PlayerViewModel::osdTextString() {
         return s;
     };
 
-    // 除 label 外 OSD 统一不翻译（用户拍板）：状态行（vsr-status /
-    // fruc-status 的 mode=/reason=/数值参数）原样英文显示——翻译会引入
-    // 语义错位（如 mode=active 是 FRUC 的"插帧中"，vsr-status 共用后
-    // 超分行误显示）；设定段（auto/Denoise/off 等）同样保持英文。
-    // label 仍走 tr()。
+    // 除 label 外 OSD 统一不翻译（用户拍板）：状态行（vsr-status、插帧
+    // 状态行 vfg-status/fruc-status 的 mode=/reason=/数值参数）原样英文
+    // 显示——翻译会引入语义错位（如 mode=active 是 FRUC 的"插帧中"，
+    // vsr-status 共用后超分行误显示）；设定段（auto/Denoise/off 等）同样
+    // 保持英文。label 仍走 tr()。
 
     // Source：源信息（解码尺寸/codec/色深/容器帧率/总帧数）；无视频显示占位
     if (videoWidth_.load() <= 0) {
@@ -1627,8 +1760,10 @@ std::string PlayerViewModel::osdTextString() {
     }
 
     // FRUC：设定（目标帧率/倍率，off 显示"off"——整行不删除）|
-    // 实际状态（rife 的 fruc-status 行，事件线程从 "fruc-status:"
-    // 日志提取；off 时无状态段）。
+    // 实际状态（滤镜的插帧状态行，事件线程按后端前缀提取——
+    // VFG "vfg-status:" / RIFE "fruc-status:"，见 FrucBackend.h；off 时
+    // 无状态段）。设定段语义随编译分支：VFG 只有倍率档（-1/2/3/4 →
+    // "off"/"K×"），RIFE 保持目标帧率档（40/48/60 → "N fps"）。
     {
         int fruc = frucFps_.load();
         QString target;

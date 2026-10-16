@@ -99,7 +99,8 @@ public:
     /// 事件线程执行——可调 mpv API（线程安全）。OSD 拉取推送用。
     void setIdlePollCallback(std::function<void()> cb) { idlePollCb_ = std::move(cb); }
     // mpv 日志行回调（事件线程，LOG_MESSAGE 先经此再转发 stderr）——
-    // 用于提取结构化状态行（如 rife 的 "fruc-status:"）。
+    // 用于提取结构化状态行（插帧滤镜的 "vfg-status:"/"fruc-status:"，
+    // 前缀随后端编译分支，见 FrucBackend.h）。
     void setLogMessageCallback(std::function<void(const char *text)> cb) {
         logCb_ = std::move(cb);
     }

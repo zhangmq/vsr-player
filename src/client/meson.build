@@ -15,6 +15,18 @@ if qt6_dbus.found()
     add_project_arguments('-DHAVE_QTDBUS', language: 'cpp')
 endif
 
+# FRUC（插帧）后端编译期分支——仓库根 option `fruc_backend`（默认 vfg）。
+# 二选一宏：FRUC_BACKEND_VFG（VFX SDK VFG）/ FRUC_BACKEND_RIFE（TensorRT
+# RIFE，保留但冻结）。客户端所有与后端耦合的名字/语义集中在
+# src/client/FrucBackend.h（滤镜名、状态行前缀、CLI 合法值、UI 档位）。
+if get_option('fruc_backend') == 'rife'
+    add_project_arguments('-DFRUC_BACKEND_RIFE', language: 'cpp')
+    message('FRUC backend: rife (legacy TensorRT RIFE)')
+else
+    add_project_arguments('-DFRUC_BACKEND_VFG', language: 'cpp')
+    message('FRUC backend: vfg (NVIDIA VFX SDK VideoFrameGeneration)')
+endif
+
 vulkan_dep     = dependency('vulkan')
 libplacebo_dep = dependency('libplacebo')
 

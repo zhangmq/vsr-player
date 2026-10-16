@@ -1,6 +1,7 @@
 #include "RpcServer.h"
 #include "MpvController.h"
 #include "PlayerViewModel.h"
+#include "FrucBackend.h"
 #include <mpv/client.h>
 #include <QMetaObject>
 #include <QQuickWindow>
@@ -274,8 +275,10 @@ void RpcServer::handleLine(int fd, const std::string &line) {
         else
             response = handleGetVsr(args[0]);
     } else if (cmd == "set-fruc") {
-        // 插帧目标帧率（viewModel 单一来源，与 UI 同路径——vf-command
-        // 直改 filter 会绕过 frucFps_，重播后状态丢失/被重放覆盖）
+        // 插帧档位（viewModel 单一来源，与 UI 同路径——vf-command
+        // 直改 filter 会绕过 frucFps_，重播后状态丢失/被重放覆盖）。
+        // 合法档位随编译后端（FrucBackend.h）：VFG -1|2|3|4（倍率）/
+        // RIFE -1|40|48|60（目标帧率）。
         if (args.empty()) {
             response = formatResponse("missing value");
         } else if (!vm) {
@@ -284,11 +287,36 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             char *end = nullptr;
             long v = strtol(args[0].c_str(), &end, 10);
             if (end == args[0].c_str() || *end != '\0' ||
-                (v != -1 && v != 40 && v != 48 && v != 60)) {
-                response = formatResponse("invalid value (-1|40|48|60)");
+                !fruc::isValidPreset((int)v)) {
+                response = formatResponse("invalid value (" +
+                                          fruc::presetValuesHelp() + ")");
             } else {
                 QMetaObject::invokeMethod(vm, "setFrucFps", Qt::QueuedConnection,
                                           Q_ARG(int, (int)v));
+                response = formatResponse("success");
+            }
+        }
+    } else if (cmd == "set-fruc-quality") {
+        // 插帧质量档（VFG VideoFrameGeneration 的 mode；viewModel 单一来源，
+        // 与 UI 同路径）。合法值随编译后端（FrucBackend.h kModeSelectable）：
+        // VFG low|medium|high；RIFE 分支无此档——与 CLI --fruc-quality 一致
+        //（接受但忽略 + 警告）。
+        if (args.empty()) {
+            response = formatResponse("missing value");
+        } else if (!vm) {
+            response = formatResponse("no view model");
+        } else if (!fruc::kModeSelectable) {
+            MLOG_WARN("set-fruc-quality %s ignored: not selectable with the RIFE backend",
+                      args[0].c_str());
+            response = formatResponse("success");
+        } else {
+            int v;
+            if (!fruc::parseMode(args[0], &v)) {
+                response = formatResponse("invalid value (" +
+                                          fruc::modeValuesHelp() + ")");
+            } else {
+                QMetaObject::invokeMethod(vm, "setFrucQuality", Qt::QueuedConnection,
+                                          Q_ARG(int, v));
                 response = formatResponse("success");
             }
         }

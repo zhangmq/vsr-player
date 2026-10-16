@@ -287,6 +287,55 @@
         <source>%1Hz %2ch</source>
         <translation>%1Hz %2ch</translation>
     </message>
+    <!-- FRUC preset labels (PlayerViewModel::frucModel, sourced from
+         src/client/FrucBackend.h QT_TRANSLATE_NOOP): entries for BOTH compile
+         branches (fruc_backend=vfg|rife) live here — lupdate only sees the
+         branch being compiled, do not delete the other branch's entries. -->
+    <message>
+        <source>Off</source>
+        <translation>Off</translation>
+    </message>
+    <message>
+        <source>×2</source>
+        <translation>×2</translation>
+    </message>
+    <message>
+        <source>×3</source>
+        <translation>×3</translation>
+    </message>
+    <message>
+        <source>×4</source>
+        <translation>×4</translation>
+    </message>
+    <message>
+        <source>40 fps</source>
+        <translation>40 fps</translation>
+    </message>
+    <message>
+        <source>48 fps</source>
+        <translation>48 fps</translation>
+    </message>
+    <message>
+        <source>60 fps</source>
+        <translation>60 fps</translation>
+    </message>
+    <!-- FRUC quality-mode labels (PlayerViewModel::frucQualityModel, sourced
+         from the same FrucBackend.h kModePresets table): VFG-only
+         (kModeSelectable), but registered in this shared context so that
+         running lupdate under fruc_backend=rife cannot drop them.
+         Do not delete. -->
+    <message>
+        <source>Low</source>
+        <translation>Low</translation>
+    </message>
+    <message>
+        <source>Medium</source>
+        <translation>Medium</translation>
+    </message>
+    <message>
+        <source>High</source>
+        <translation>High</translation>
+    </message>
 </context>
 <context>
     <name>PlaylistPanel</name>
@@ -371,6 +420,11 @@
     <message>
         <source>Frame interpolation</source>
         <translation>Frame interpolation</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="142"/>
+        <source>Interpolation quality</source>
+        <translation>Interpolation quality</translation>
     </message>
     <message>
         <source>30 fps</source>

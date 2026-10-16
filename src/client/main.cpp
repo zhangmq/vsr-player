@@ -20,9 +20,12 @@
 #include <QFontDatabase>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QProcess>
 #include <QSettings>
+#include <QTimer>
 
 #include "Options.h"
+#include "FrucBackend.h"
 #include "VulkanContext.h"
 #include "CompositePipeline.h"
 #include "Video.h"
@@ -48,9 +51,38 @@ int main(int argc, char *argv[]) {
     // ── CLI ──────────────────────────────────────────────────────────────
     Options opts;
     if (!Options::parse(argc, argv, &opts)) return 1;
+    if (opts.help) return 0;   // --help：用法已打印（Options.cpp）
     // benchmark 全静默（与 mpv msg-level all=no 对齐，日志不干扰测量）
     vsr_log_set_quiet(opts.benchmark);
     MLOG_INFO("video: %s (benchmark=%d)", opts.video_file.c_str(), opts.benchmark);
+
+    // ── 冷启动预热：引擎内核缓存为空时，后台先把内核编译掉 ───────────────
+    // 超分/插帧引擎的首次 Load 要现编译内核，缓存落在 $HOME/.nv/ComputeCache；
+    // 全新 HOME 第一次实测 10.8~13.5s（build/scratch/resize/REPORT.md §2.1），
+    // 且该缓存与尺寸/倍率**无关**——预暖一次之后换任何尺寸/倍率都只要 ~0.15s。
+    // ⚠️ 通用 CUDA 计算**无效**（实测 torch 跑一次加法后超分 Load 仍 11301ms），
+    //    必须真的把这两个引擎 Load 一次。
+    // 做法：用**随包分发的命令行播放器** + 合成画面跑 4 帧——零素材、零引擎代码
+    // 重复（走的就是同一套 user_filters / vsr_proc / vfg_proc）。
+    // 预热期间**不载入媒体**：暂停态的海报帧同样会触发引擎 Load（实测 12s），
+    // 所以"只推迟播放"是不够的，必须把 loadFile 一起推迟（见下方 loadFile 处）。
+    bool engineCacheCold = false;
+    QProcess warmupProc;
+    bool warmupPending = false;
+    {
+        const QString home = qEnvironmentVariable("HOME");
+        const QString cache = home + QStringLiteral("/.nv/ComputeCache");
+        const QDir d(cache);
+        engineCacheCold = !d.exists()
+            || d.entryList(QDir::NoDotAndDotDot | QDir::AllEntries).isEmpty();
+        if (engineCacheCold)
+            MLOG_INFO("first run on this HOME: engine kernel cache is empty (%s) — "
+                      "the first super-resolution engine load compiles kernels and "
+                      "can take 10-15 s (one-time; later loads ~0.15 s)",
+                      qUtf8Printable(cache));
+    }
+
+    // 预热的实际启动在 QGuiApplication 就绪之后（applicationDirPath 需要 app）。
 
     qputenv("QSG_RHI_BACKEND", "vulkan");
     // basic 渲染循环：updatePaintNode/mpv work 在 GUI 线程同步执行
@@ -107,6 +139,36 @@ int main(int argc, char *argv[]) {
     QVulkanInstance qtVi; qtVi.setVkInstance(vk.instance()); qtVi.create();
     MLOG_INFO("QGuiApplication ready");
 
+    // ── 冷启动预热：启动命令行播放器在后台把引擎内核编译掉 ───────────────
+    //（检测在上方；此处才启动是因为 applicationDirPath 需要 app 就绪）
+    if (!opts.benchmark && engineCacheCold) {
+        const QString appDir = QCoreApplication::applicationDirPath();
+        QString cli;
+        const QString candidates[] = { appDir + QStringLiteral("/mpv-vsr"),                // 安装/包内布局
+                                       appDir + QStringLiteral("/../../mpv/_build/mpv") }; // 开发树
+        for (const QString &c : candidates)
+            if (QFileInfo::exists(c)) { cli = c; break; }
+        if (cli.isEmpty()) {
+            MLOG_WARN("engine cache is cold but no CLI player next to %s — skipping prewarm",
+                      qUtf8Printable(appDir));
+        } else {
+            warmupProc.setStandardOutputFile(QProcess::nullDevice());
+            warmupProc.setStandardErrorFile(QProcess::nullDevice());
+            warmupProc.start(cli, QStringList{
+                QStringLiteral("--no-config"),
+                QStringLiteral("--vo=null"), QStringLiteral("--ao=null"),
+                // 代表性配置即可（缓存与尺寸/倍率无关）：720p 输入 × 超分 2 倍 + 插帧 ×2
+                QStringLiteral("--vf=hwup,vsr:scale=2,vfg:fps=2:mode=medium"),
+                QStringLiteral("--frames=4"),
+                QStringLiteral("av://lavfi:testsrc=size=1280x720:rate=2") });
+            warmupPending = warmupProc.waitForStarted(2000);
+            if (warmupPending)
+                MLOG_INFO("prewarm started in background (%s)", qUtf8Printable(cli));
+            else
+                MLOG_WARN("prewarm failed to start: %s", qUtf8Printable(warmupProc.errorString()));
+        }
+    }
+
     // ── i18n：--lang 覆盖，否则跟随系统 locale（前缀回退 en）─────────
     // .qm 由 meson 生成到 VSR_TRANSLATIONS_DIR（构建目录）；未来打包
     // 时改为 <app>/translations。
@@ -137,25 +199,26 @@ int main(int argc, char *argv[]) {
         viewModel.loadSettings();
     viewModel.initVsr(opts.scale, opts.quality, opts.denoise);
     viewModel.initFruc(opts.fruc, opts.benchmark);
+    viewModel.initFrucOrder(opts.fruc_order);   // vf 链序（仅 VFG 可切换）
+    viewModel.initFrucQuality(opts.fruc_quality);  // 插帧质量档（仅 VFG 可选）
     std::string vf = viewModel.vfOption();
 
     // ── mpv ─────────────────────────────────────────────────────────────
-    // 启动目标的历史进度判定必须在 mpv 初始化之前：有历史进度 → 以暂停态
-    // 起步（mpv 仍恢复位置，但不自动播放）。判定用的路径字符串与随后
-    // loadfile 的完全一致（watch_later 条目名是路径的 MD5，见
-    // PlayerViewModel::hasResumeState）。用户经 `-- --pause=...` 显式指定时
-    // 以命令行优先（mpv 语义：命令行 > 配置）。
+    // 启动暂停（"有历史进度就先暂停"）**只用于一种情况**：启动时自动恢复
+    // 上次的列表——那时用户没有表达"现在就要看"的意图，突然出声很讨厌。
+    // 命令行明确给了文件 = 明确的播放意图 → **直接播放**（位置仍由 mpv 的
+    // watch_later 恢复到上次进度），不再因为有历史进度而暂停。
+    // 两种情况下 `-- --pause=...` 仍以命令行优先（mpv 语义：命令行 > 配置）。
     bool startPaused = false;
-    if (!opts.benchmark) {
+    if (!opts.benchmark && opts.video_file.empty()) {
         bool explicitPause = false;
         for (const auto &kv : opts.passthrough)
             if (kv.first == "pause") explicitPause = true;
-        const QString target = !opts.video_file.empty()
-            ? QString::fromLocal8Bit(opts.video_file.c_str())
-            : viewModel.restoredCurrentFile();
+        const QString target = viewModel.restoredCurrentFile();
         if (!explicitPause && !target.isEmpty() && PlayerViewModel::hasResumeState(target)) {
             startPaused = true;
-            MLOG_INFO("resume state found → start paused: %s", target.toUtf8().constData());
+            MLOG_INFO("resume state found → start paused (restored list): %s",
+                      target.toUtf8().constData());
         }
     }
 
@@ -299,13 +362,15 @@ int main(int argc, char *argv[]) {
             syncSessionIdle();   // 初始状态（恢复播放时 mpv 可能已 pause）
         }
 
-        // ── rife 状态行 → OSD ────────────────────────────────────────
-        // rife filter 每 ~0.5s 输出 MSGL_STATUS 状态行（"fruc-status:"
-        // 前缀），事件线程提取后存入 viewModel，osdTextString 拼入 OSD。
+        // ── FRUC（插帧）状态行 → OSD ─────────────────────────────────
+        // 滤镜每 ~0.5s 输出 MSGL_STATUS 状态行，前缀随后端（FrucBackend.h
+        // 单一事实源）：VFG "vfg-status:" / RIFE "fruc-status:"；事件线程
+        // 提取后存入 viewModel，osdTextString 拼入 OSD。
         mpv.setLogMessageCallback([&viewModel](const char *text) {
-            if (strncmp(text, "fruc-status:", 12) == 0) {
-                viewModel.setFrucStatus(text + 12);
-                // 调试可见性：rife 状态行同步转发 stderr（其余 status 级
+            const std::size_t frucPrefixLen = strlen(fruc::kStatusPrefix);
+            if (strncmp(text, fruc::kStatusPrefix, frucPrefixLen) == 0) {
+                viewModel.setFrucStatus(text + frucPrefixLen);
+                // 调试可见性：插帧状态行同步转发 stderr（其余 status 级
                 // 消息（mpv 进度行）默认过滤）。
                 fprintf(stderr, "[mpv status] %s", text);
             } else if (strncmp(text, "vsr-status:", 11) == 0) {
@@ -405,12 +470,39 @@ int main(int argc, char *argv[]) {
                        video->width(), video->height());
         MLOG_INFO("skip render pass done (%dx%d)", video->width(), video->height());
 
-        if (opts.benchmark || !opts.video_file.empty()) {
-            mpv.loadFile(opts.video_file.c_str());   // CLI 文件优先
+        // 媒体载入（冷启动预热期间推迟到预热完成；见文件上方 prewarm 注释）
+        bool mediaLoaded = false;
+        auto loadMedia = [&]() {
+            if (mediaLoaded) return;
+            mediaLoaded = true;
+            if (opts.benchmark || !opts.video_file.empty()) {
+                mpv.loadFile(opts.video_file.c_str());   // CLI 文件优先
+            } else {
+                viewModel.restorePlaylist();             // 无参数 → 恢复上次列表
+            }
+            MLOG_INFO("loadFile, entering app.exec()");
+        };
+
+        if (warmupPending && warmupProc.state() != QProcess::NotRunning) {
+            MLOG_INFO("prewarm in flight → media load deferred until the engines are warm");
+            QObject::connect(&warmupProc, &QProcess::finished, &app,
+                             [&loadMedia](int code, QProcess::ExitStatus st) {
+                MLOG_INFO("prewarm finished (exit=%d status=%d)", code, (int)st);
+                loadMedia();
+            });
+            // 兜底：预热失败/卡死也不能永远不播（正常 ~13s 完成）
+            QTimer::singleShot(90000, &app, [&]() {
+                if (!mediaLoaded) {
+                    MLOG_WARN("prewarm timeout → loading media anyway");
+                    warmupProc.kill();
+                    loadMedia();
+                }
+            });
         } else {
-            viewModel.restorePlaylist();             // 无参数 → 恢复上次列表
+            if (warmupPending)
+                MLOG_INFO("prewarm already finished → loading media");
+            loadMedia();
         }
-        MLOG_INFO("loadFile, entering app.exec()");
 
         app.exec();
 

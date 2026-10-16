@@ -150,10 +150,15 @@ Item {
             quality: viewModel.quality
             denoiseQuality: viewModel.denoiseQuality
             frucFps: viewModel.frucFps
+            frucModel: viewModel.frucModel   // 档位标签随编译后端分支（C++ 单一来源）
+            frucQuality: viewModel.frucQuality
+            frucQualityModel: viewModel.frucQualityModel  // 同上（仅 VFG 分支有档）
+            frucQualityAvailable: viewModel.frucQualityAvailable  // RIFE 分支隐藏该排
             onScalPicked: function(v) { viewModel.setScale(v) }
             onQualityPicked: function(v) { viewModel.setQuality(v) }
             onDenoiseQualityPicked: function(v) { viewModel.setDenoiseQuality(v) }
             onFrucFpsPicked: function(v) { viewModel.setFrucFps(v) }
+            onFrucQualityPicked: function(v) { viewModel.setFrucQuality(v) }
             onOpened: uiLayer.closeOtherPopups(qualityPopup)
         }
 

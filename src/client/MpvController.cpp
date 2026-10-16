@@ -1,4 +1,5 @@
 #include "MpvController.h"
+#include "FrucBackend.h"
 #include "Log.h"
 #include <chrono>
 #include <cstdio>
@@ -61,13 +62,15 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
         // 基准测量口径：禁用位置恢复（mpv 默认 resume-playback=yes，
         // 会按 watch_later 恢复起始位置 → 时长/吞吐失真）
         mpv_set_option_string(mpv_, "resume-playback", "no");
-        // 全静默 + 例外：仅保留 rife 的 status 通道（fruc-status 状态行
-        // → OSD 插帧状态；其余模块 no 保持测量口径）
-        mpv_set_option_string(mpv_, "msg-level", "all=no,rife=status");
+        // 全静默 + 例外：仅保留插帧滤镜的 status 通道（状态行 → OSD
+        // 插帧状态；其余模块 no 保持测量口径）。模块名 = 滤镜名（mpv
+        // filters/filter.c 用 info->name 建日志前缀），随后端分支，
+        // 见 FrucBackend.h。
+        mpv_set_option_string(mpv_, "msg-level", fruc::kMsgLevelBenchmark);
     } else {
-        // 默认只输出 status 及以上（status=播放状态行——rife 的
-        // fruc-status 走该级别；info=状态变更节点，warn/err/fatal 默认
-        // 可见）。msg-level 在 log callback 之前过滤（mp_msg_test），
+        // 默认只输出 status 及以上（status=播放状态行——插帧滤镜的状态
+        // 行（"<滤镜>-status:"）走该级别；info=状态变更节点，warn/err/fatal
+        // 默认可见）。msg-level 在 log callback 之前过滤（mp_msg_test），
         // 必须提到 status 才能让 request_log_messages("status") 收到
         // 状态行。调试需要更细日志时 --msg-level all=v|dbg。
         mpv_set_option_string(mpv_, "msg-level", "all=status");
@@ -113,13 +116,12 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
     MLOG_INFO("mpv_initialize: %.0fms", (t2 - t1) * 1000.0);
 
     // mpv 内部日志 → MPV_EVENT_LOG_MESSAGE 事件（事件线程转发 stderr）：
-    // 请求 status 及以上——比 info 多收 MSGL_STATUS（播放状态行），rife
-    // 插帧的状态行（"fruc-status:"）走该级别（周期性报告，非状态变更）；
-    // benchmark 请求 "no" 全静默（与 all=no 对齐）。不用 log-file——
-    // 其过滤级别下限是 MSGL_DEBUG，会绕过 msg-level 把 verbose/debug
-    // 全灌进 stderr。
-    // benchmark：仍请求 status（rife status 通道已单独开——fruc-status
-    // 供 OSD；其余模块被 all=no 过滤，转发量仅 rife 状态行）
+    // 请求 status 及以上——比 info 多收 MSGL_STATUS（播放状态行），插帧
+    // 滤镜的状态行走该级别（周期性报告，非状态变更）；benchmark 请求
+    // "no" 全静默（与 all=no 对齐）。不用 log-file——其过滤级别下限是
+    // MSGL_DEBUG，会绕过 msg-level 把 verbose/debug 全灌进 stderr。
+    // benchmark：仍请求 status（插帧滤镜的 status 通道已单独开——状态行
+    // 供 OSD；其余模块被 all=no 过滤，转发量仅该状态行）
     mpv_request_log_messages(mpv_, "status");
 
     return true;
@@ -171,7 +173,8 @@ void MpvController::eventLoop() {
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             // mpv 内部日志转发 stderr（级别由 request_log_messages 过滤，
             // 默认 status 及以上；benchmark 请求 "no" 不产生该事件）。
-            // 状态行先经 logCb_（客户端提取结构化状态，如 fruc-status）。
+            // 状态行先经 logCb_（客户端提取结构化状态，插帧滤镜的
+            // "<滤镜>-status:" 行，前缀随后端分支，见 FrucBackend.h）。
             auto *lm = (mpv_event_log_message *)ev->data;
             // mpv 自己的播放进度状态行（AV: ...，每秒一行）转发无价值——
             // 客户端 stderr 只转发真正的日志（非 status 前缀）；状态行

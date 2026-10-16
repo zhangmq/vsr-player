@@ -45,8 +45,19 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(bool vsrActive READ vsrActive NOTIFY vsrActiveChanged)
     Q_PROPERTY(double scale READ scale NOTIFY scaleChanged)
     Q_PROPERTY(int denoiseQuality READ denoiseQuality NOTIFY denoiseQualityChanged)
-    // Frame interpolation (RIFE): -1=off | 30/40/60 target fps (UI presets)
+    // Frame interpolation (FRUC): -1=off；>0 = 倍率（VFG 分支）/ 目标帧率
+    // （RIFE 分支）——合法档位与标签见 FrucBackend.h（编译期分支）。
     Q_PROPERTY(int frucFps READ frucFps NOTIFY frucFpsChanged)
+    // UI 档位模型（{label,value} 列表，随编译分支产出；QualityPopup 数据源）：
+    // VFG = Off/×2/×3/×4，RIFE = Off/40 fps/48 fps/60 fps。编译期常量，CONSTANT。
+    Q_PROPERTY(QVariantList frucModel READ frucModel CONSTANT)
+    // 插帧质量档（仅 VFG：0=low / 1=medium / 2=high，见 FrucBackend.h）。
+    // RIFE 分支该排隐藏（frucQualityAvailable=false），值恒为默认 medium。
+    Q_PROPERTY(int frucQuality READ frucQuality NOTIFY frucQualityChanged)
+    // 质量档 UI 模型（{label,value}，标签随编译分支；C++ 单一来源）。
+    Q_PROPERTY(QVariantList frucQualityModel READ frucQualityModel CONSTANT)
+    // 该排是否可见/可用：VFG true / RIFE false（编译期常量，CONSTANT）。
+    Q_PROPERTY(bool frucQualityAvailable READ frucQualityAvailable CONSTANT)
     // Speed
     Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
     // Aspect ratio（mpv video-aspect-override：-1=auto, no=不覆盖, 或 16:9 等）
@@ -108,8 +119,17 @@ public:
                  const std::string &denoise);
     /// Initialize frame interpolation from CLI string. benchmark=true: value is
     /// a hard multiplier ("2"/"3"/"4", 0=off) — no passthrough, no persistence.
-    /// Normal mode: "off" | "30" | "40" | "60" (target fps, persists fallback).
+    /// 编译期分支（见 FrucBackend.h）：VFG 分支 --fruc 为倍率语义
+    /// "off"|"2"|"3"|"4"；RIFE 分支保持既有 "off"|"40"|"48"|"60"（目标帧率）
+    /// 与 "2"/"3"|"4"（benchmark 倍率）。
     void initFruc(const std::string &fruc, bool benchmark);
+    /// vf 链顺序（CLI --fruc-order）：VFG 分支 "pre"|"post"（默认 post，
+    /// 后置 hwup → vsr → vfg）；RIFE 分支链序固定，仅记日志提示忽略。
+    void initFrucOrder(const std::string &order);
+    /// 插帧质量档（CLI --fruc-quality）：VFG 分支 "low"|"medium"|"high"
+    /// （默认 medium，见 FrucBackend.h）；RIFE 分支无此档，仅记日志提示忽略
+    /// （照 initFrucOrder）。CLI 未显式指定（空）→ 用持久化值。
+    void initFrucQuality(const std::string &quality);
 
     void setGpuName(const QString &name);
     /// 持久化：启动时读（须在 initVsr 前调用——scale/quality/denoise
@@ -168,6 +188,13 @@ public:
     double scale() const        { return scale_.load(); }
     int denoiseQuality() const  { return denoise_.load(); }
     int frucFps() const         { return frucFps_.load(); }
+    /// UI 档位模型（编译分支决定 label/value，见 FrucBackend.h）。
+    QVariantList frucModel() const;
+    /// 插帧质量档（仅 VFG 有效；RIFE 分支恒默认 medium）。
+    int frucQuality() const     { return frucQuality_.load(); }
+    /// 质量档 UI 模型 / 该排是否可用（编译分支决定，见 FrucBackend.h）。
+    QVariantList frucQualityModel() const;
+    bool frucQualityAvailable() const;
     double speed() const        { return speed_.load(); }
     QString aspect() const      { return aspect_; }
     bool hwDecoding() const     { return hwDecoding_.load(); }
@@ -245,8 +272,12 @@ public slots:
     void setScale(double s);
     void setQuality(int q);
     void setDenoiseQuality(int d);
-    void setFrucFps(int v);   // -1 | 30 | 40 | 60（乐观更新 + pushVf + saveSettings）
-    // rife 状态行（事件线程从 mpv status 日志提取，"fruc-status:" 前缀）
+    void setFrucFps(int v);   // 档位（见 FrucBackend.h：VFG -1|2|3|4；RIFE -1|40|48|60）
+    /// 插帧质量档（仅 VFG：0|1|2 = low|medium|high）。热切换 vf-command
+    /// `vfg mode <name>`（filter 下帧重配引擎，不重建链）+ 持久化。
+    void setFrucQuality(int v);
+    /// FRUC 状态行（事件线程从 mpv status 日志提取；前缀随后端：
+    /// VFG "vfg-status:" / RIFE "fruc-status:"，见 FrucBackend.h）
     void setFrucStatus(const std::string &s);
     void setVsrStatus(const std::string &s);
     void toggleLoop();
@@ -289,6 +320,7 @@ signals:
     void scaleChanged();
     void denoiseQualityChanged();
     void frucFpsChanged();
+    void frucQualityChanged();
     void speedChanged();
     void aspectChanged();
     void hwDecodingChanged();
@@ -356,6 +388,11 @@ private:
     /// 下一帧自动重配（scale→effective_scale 重算 / quality→ensure_vsr
     /// 检测 / denoise→passthrough 判定）。参数调用时同步复制，无需保活。
     void pushVf(const char *filter, const char *param, const std::string &value);
+    /// FRUC 滤镜名（编译期分支的单一出口：vf 串 label、vf-command 目标）。
+    /// 定义见 FrucBackend.h（VFG "vfg" / RIFE "rife"）。
+    const char *frucFilterName() const;
+    /// vf 链顺序是否前置插帧（仅 VFG 分支可能为 true；RIFE 恒 false）。
+    bool frucOrderPre() const { return frucOrderPre_.load(); }
     /// 运行时 vf 参数重放（FILE_LOADED 后，主线程）：vf-command 只改
     /// filter 实例 opts，mpv 的 vf 选项本体不变——stop（terminate_playback
     /// 销毁链）后重播重建 filter 时状态回到 vfOption 初始值 → UI 修改
@@ -417,11 +454,16 @@ private:
     std::atomic<int> quality_{3};
     std::atomic<int> denoise_{-1};
     std::atomic<double> scale_{0.0};
-    std::atomic<int> frucFps_{-1};      // -1 off | 2/3/4 倍率 | 30/40/60 target
-                                        //（倍率=benchmark 强制；帧率=正常模式，
-                                        // 数值自区分，正常/benchmark 共用）
+    std::atomic<int> frucFps_{-1};      // 档位：-1 off | VFG 2/3/4 倍率 |
+                                        // RIFE 40/48/60 目标帧率（RIFE 另接受
+                                        // benchmark 2/3/4 倍率；数值自区分，
+                                        // 正常/benchmark 共用，见 FrucBackend.h）
+    std::atomic<bool> frucOrderPre_{false};  // vf 链前置插帧（仅 VFG，--fruc-order pre）
+    // 插帧质量档：0 low / 1 medium / 2 high（仅 VFG 生效；默认 1 = medium，
+    // 依据见 FrucBackend.h kModeDefault）。RIFE 分支不发送该参数。
+    std::atomic<int> frucQuality_{1};
     std::mutex frucStatusMtx_;
-    std::string frucStatus_;            // 最新 rife 状态行（OSD 显示）
+    std::string frucStatus_;            // 最新 FRUC 状态行（OSD 显示；前缀随后端）
     std::string vsrStatus_;             // 最新 vsr 状态行（OSD 显示）
     std::mutex  vsrStatusMtx_;
     int loopMode_ = 0;           // 0 none, 1 loop-file, 2 loop-playlist
@@ -458,4 +500,5 @@ private:
     int persistQuality_ = 3;
     int persistDenoise_ = -1;
     int persistFruc_ = -1;        // 持久化插帧目标 fps（initFruc 用）
+    int persistFrucQuality_ = 1;  // 持久化插帧质量档（initFrucQuality 用；1=medium）
 };
