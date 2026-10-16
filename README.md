@@ -16,7 +16,7 @@ This project calls the Video Effects SDK C API directly from a player. This is n
 
 - **AI Super-Resolution** — real-time 2×/3×/4× upscaling via Tensor Cores (mpv video filter `vf_vsr`)
 - **AI Denoising** — configurable denoise pass (Low to Ultra), works standalone at scale=1
-- **AI Frame Interpolation (FRUC)** — RIFE-based motion interpolation to 40/48/60 fps or any target (mpv video filter `vf_rife`, TensorRT, runs before VSR at source resolution)
+- **AI Frame Interpolation (FRUC)** — NVIDIA VFX SDK `VideoFrameGeneration` (VFG) motion interpolation by integer multiplier ×2/×3/×4 with a hot-switchable quality mode (`low`/`medium`/`high`) — mpv video filter `vf_vfg`, chain order after VSR by default. A frozen TensorRT/RIFE backend (target fps 40/48/60) remains as a source-build option only (`-Dfruc_backend=rife`) and sees no further development
 - **NVDEC Hardware Decode** — AV1, H.264, HEVC GPU decoding (software fallback; SW frames auto-uploaded via `vf_hwup`)
 - **Vulkan Rendering** — CUDA-Vulkan shared device, mpv renders into the Qt scene graph
 - **QML Overlay UI** — auto-hide controls (bottom hover zone driven), playlist with virtualized list, OSD info panel
@@ -47,14 +47,15 @@ If something breaks, an effective path is to let an AI coding agent help you deb
 ## Architecture
 
 ```
-demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt scene graph
+demux → decode → [vf_hwup] → [vf_vsr] → [vf_vfg] → VO (libmpv) → Qt scene graph
                 ↑            ↑               ↑
-           SW→CUDA upload   RIFE (TRT)    VFX SDK + CUDA
+           SW→CUDA upload   VFX SDK + CUDA  VFG (VFX SDK)
 ```
 
 - mpv manages: demux, decode, A/V sync, timing, seek, VO
 - `vf_hwup`: SW frames (software decode) uploaded to CUDA so downstream filters always see hardware frames
-- `vf_rife` (patch overlay `src/mpv/video/filter/vf_rife.c`): RIFE frame interpolation (TensorRT), runs at source resolution before upscaling
+- `vf_vfg` (patch overlay `src/mpv/video/filter/vf_vfg.c`): VFX SDK `VideoFrameGeneration` interpolation — integer multiplier ×2/×3/×4, quality mode low/medium/high; default chain order after `vf_vsr` (`--fruc-order pre` moves it before)
+- `vf_rife` (patch overlay `src/mpv/video/filter/vf_rife.c`): RIFE frame interpolation (TensorRT) — frozen source-build backend (`-Dfruc_backend=rife`), runs at source resolution before upscaling
 - `vf_vsr` (patch overlay `src/mpv/video/filter/vf_vsr.c`): receives `mp_image`, upscales via CUDA+VFX SDK, outputs upscaled `mp_image`
 - Frontend: Qt 6 + QML (`src/client/`) — MpvController (libmpv wrapper), PlayerViewModel (single source of truth), Vulkan shared device
 - mpv patch scheme: `third_party/mpv` (pristine 0.41) + `src/mpv` overlay, merged by `scripts/build_mpv.sh`
@@ -63,11 +64,12 @@ demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt
 
 | Component | Requirement | Applies to |
 |-----------|-------------|------------|
-| GPU | NVIDIA RTX 20-series or newer (FRUC needs Ampere+ with FP16 Tensor Cores) | all |
+| GPU | NVIDIA RTX 20-series or newer for VSR; frame interpolation needs **Ada/Blackwell** for the default VFG backend (the frozen RIFE source-build backend needs Ampere+ with FP16 Tensor Cores) | all |
 | Driver | 570+ (with CUDA; Wayland works out of the box — DRM modeset is enabled by default on modern drivers) | all |
-| Qt | 6.11+ (Quick, QuickControls, Vulkan) | source build / standard tarball (**the full tarball bundles Qt**) |
+| VFX SDK | NVIDIA VFX SDK **1.3** (`nvidia-vfx` 0.2.0.0 wheel) — provides **both** VSR (super-resolution) and VFG (frame interpolation); `install.sh` downloads and unpacks it from NVIDIA's official index (`pypi.nvidia.com`), never into a Python environment | all |
+| Qt | 6.12+ (Quick, QuickControls, Vulkan) | source build / standard tarball (**there is no prebuilt full package — build it yourself with `--variant=full`, which bundles Qt**) |
 | C++ Compiler | GCC 13+ (C++20) | source build |
-| Build | meson, ninja, CUDA Toolkit (`/opt/cuda`), TensorRT (system `trtexec`, for engine builds) | source build |
+| Build | meson, ninja, CUDA Toolkit (`/opt/cuda`); TensorRT (system `trtexec`) only for `-Dfruc_backend=rife` engine builds | source build |
 
 Third-party SDKs (NvVFX headers/runtime, MDI icon font, mpv source) are **not** bundled in the repo — see [docs/third-party-setup.md](docs/third-party-setup.md) to prepare `third_party/` (needed for source builds).
 
@@ -79,7 +81,7 @@ Build on your own machine: the resulting binaries **match your system libraries 
 
 ```bash
 git clone https://github.com/zhangmq/vsr-player && cd vsr-player
-# 1) prepare third_party/ per docs/third-party-setup.md (NvVFX runtime, MDI font, mpv source, RIFE ONNX)
+# 1) prepare third_party/ per docs/third-party-setup.md (NvVFX runtime, MDI font, mpv source; RIFE ONNX only for -Dfruc_backend=rife)
 ./scripts/build-from-source.sh
 ```
 
@@ -96,27 +98,27 @@ One command does it all: dependency self-check → build libmpv + client → ins
 
 For when you'd rather not compile, or your distro lacks FFmpeg 9.x development packages.
 
-| | standard (default) | full (bundles Qt) |
+| | standard (the only distributed prebuilt package) | full (source build only — `--variant=full`, bundles Qt) |
 |---|---|---|
-| Bundles | libmpv + ffmpeg ×7 + CUDA runtime + TensorRT 11 + RIFE engine + **optical-media stack** (libcdio/libdvd/libbluray) + fonts/translations/licenses | the same **+ Qt6** (libs / platform plugins / QML modules) |
-| Still needs from the system | **Qt ≥ 6.11**, Vulkan loader, Wayland/X11 client libs, NVIDIA driver | Vulkan loader, Wayland/X11 client libs, NVIDIA driver |
-| For | rolling-release distros (Arch/CachyOS/Fedora…) | distros with Qt < 6.11 (Debian stable, Ubuntu LTS…) |
-| Size | ~320 MB | ~340 MB |
+| Bundles | libmpv + ffmpeg ×7 + CUDA runtime + **optical-media stack** (libcdio/libdvd/libbluray) + fonts/translations/licenses. Default builds ship the **VFG** backend only: **no** TensorRT libraries (`libnvinfer*`) and **no** `engines/`; `--fruc-backend=rife` adds TensorRT 11 + the RIFE engine | the same **+ Qt6** (libs / platform plugins / QML modules) |
+| Still needs from the system | **Qt ≥ 6.12**, Vulkan loader, Wayland/X11 client libs, NVIDIA driver | Vulkan loader, Wayland/X11 client libs, NVIDIA driver |
+| For | rolling-release distros (Arch/CachyOS/Fedora…) | distros with Qt < 6.12 (Debian stable, Ubuntu LTS…) — build it yourself with `--variant=full` |
+| Size | ~56 MB | ~78 MB (self-built via `--variant=full`) |
 
 ```bash
-tar -xJf vsr-player-<ver>-linux-x86_64[-full].tar.xz
+tar -xJf vsr-player-<ver>-linux-x86_64[-rife].tar.xz   # default = VFG backend; -rife adds TensorRT 11 + the RIFE engine; the full variant (-full, combinable: -full-rife) is self-built
 ./install.sh                         # installs to ~/.local, no sudo
 ```
 
-Check with `pkg-config --modversion Qt6Quick`: ≥ 6.11 → standard, otherwise → full.
+Check with `pkg-config --modversion Qt6Quick`: ≥ 6.12 → standard; otherwise build the full variant yourself (`--variant=full`) — this project no longer distributes a prebuilt full package. The floor is 6.12 because the package is built with **Qt 6.12.0**, and Qt 6 binary compatibility is **one-way** (a package built with 6.x runs on 6.x and newer 6.y, not on older ones).
 
-- The **VFX runtime** (~0.6 GB wheel, ~1.1 GB extracted) is **not** bundled (NVIDIA's SLA forbids redistribution): `install.sh` downloads and extracts it from **NVIDIA's official index `pypi.nvidia.com`** (plain curl, no pip, no system changes), or you can place it in `~/.local/lib/vsr-player/` manually.
+- The **VFX runtime** (~0.6 GB wheel, ~1.1 GB extracted) is **not** bundled (NVIDIA's SLA forbids redistribution): `install.sh` downloads and extracts it from **NVIDIA's official index `pypi.nvidia.com`** (plain curl, no pip, no system changes), or you can place it in `~/.local/lib/vsr-player/` manually. The required version is **NVIDIA VFX SDK 1.3** (`nvidia-vfx` 0.2.0.0) — VSR and VFG both come from it; the optional `-rife` package additionally bundles TensorRT 11 and the RIFE engine.
 - Packaging uses "explicit core set + auto-discovered media stack + **closure check at package time**": any dependency that is neither bundled nor on the system allowlist fails the build, so a broken tarball can't ship silently.
 - Both variants also rely on ordinary distro components: the Vulkan loader, Wayland/X11 client libraries, and mpv/FFmpeg optional deps (libass, libplacebo, libmujs, liblcms2, libwebp, libopenjp2, the 1394 capture libs, …) — all validated by the closure check.
 
 ## Manual Build (development/debugging)
 
-1. **Prepare `third_party/`** — NvVFX SDK headers/runtime, MDI icon font, mpv source, CUDA 12 archive, RIFE ONNX asset: follow [docs/third-party-setup.md](docs/third-party-setup.md).
+1. **Prepare `third_party/`** — NvVFX SDK headers/runtime, MDI icon font, mpv source, CUDA 12 archive; RIFE ONNX asset only for `-Dfruc_backend=rife`: follow [docs/third-party-setup.md](docs/third-party-setup.md).
 2. **Build and run:**
 
 ```bash
@@ -133,16 +135,16 @@ ninja -C build                  # build the Qt client
 - **After system library upgrades** (FFmpeg, Qt, TensorRT, libcdio, … — pacman/apt) stale binaries link the old sonames and fail to start: run `./scripts/build-from-source.sh` to rebuild with one command (or manually `./scripts/build_mpv.sh` + `ninja -C build`). `./scripts/check-deps.sh` compares against the build-time snapshot and tells you whether a rebuild is needed.
 - **RIFE engine**: built with the system `trtexec` via `bash tests/fruc/build_rife_full_engine.sh` (dynamic-shape FP16, `--hardware-compat on` for cross-architecture). Requires the RIFE ONNX asset in `third_party/rife/`.
 - **Development install**: `./scripts/install.sh` works from a repo checkout too (dev mode — picks up the build tree automatically, no tarball needed).
-- **Distributable build**: `./scripts/build_release.sh [--variant=standard|full]` — release build + `$ORIGIN`-relative RPATH + dependency collection + closure check + tarball (`--engine=<path>` reuses an existing engine and skips trtexec). `build_mpv.sh`/client builds accept `MPV_BUILD_DIR`, `BUILDTYPE`, `DIST_RPATH` env overrides (used by the release scripts).
+- **Distributable build**: `./scripts/build_release.sh [--variant=standard|full] [--fruc-backend=vfg|rife]` — release build + `$ORIGIN`-relative RPATH + dependency collection + closure check + tarball. `--fruc-backend=vfg` (default) bundles no TensorRT and no `engines/`; `--fruc-backend=rife` adds them (`--engine=<path>` reuses an existing engine and skips trtexec). Only `--variant=standard` is distributed; `--variant=full` (bundles Qt) exists for Qt < 6.12 users to build themselves. `build_mpv.sh`/client builds accept `MPV_BUILD_DIR`, `BUILDTYPE`, `DIST_RPATH` env overrides (used by the release scripts).
 
 ## Version Compatibility
 
 | Component | Binding | If mismatched |
 |-----------|---------|---------------|
 | **VFX SDK ↔ driver** | The latest NVIDIA-index wheel may require a newer driver; an old driver + new VFX → VSR fails to load | Upgrade the driver, or pin an older VFX version (below) |
-| **RIFE engine ↔ TensorRT** | Engine files embed the exact TRT version that built them — deserialization fails on version mismatch (verified in both directions) | Rebuild the engine with your system TRT (`bash tests/fruc/build_rife_full_engine.sh`), or install a matching TRT. Tarball users: engine + bundled TRT ship together and are self-consistent. The VFX SDK's own TRT 10 libs coexist with RIFE's TRT 11 in one process (RTLD_LOCAL isolation) — nothing to do |
-| **Qt** | Hard requirement ≥ 6.11 for the source build and the standard tarball (QML/QuickControls features used) | Upgrade the system Qt, or switch to the **full tarball** (bundles Qt6 — no system Qt needed) |
-| **GPU** | VSR needs RTX 20+; FRUC needs Ampere+ (FP16 Tensor Cores) | Older GPUs: VSR works, interpolation degrades to passthrough |
+| **RIFE engine ↔ TensorRT** (rife backend only) | Engine files embed the exact TRT version that built them — deserialization fails on version mismatch (verified in both directions) | Rebuild the engine with your system TRT (`bash tests/fruc/build_rife_full_engine.sh`), or install a matching TRT. Tarball users: engine + bundled TRT ship together and are self-consistent. The VFX SDK's own TRT 10 libs coexist with RIFE's TRT 11 in one process (RTLD_LOCAL isolation) — nothing to do. Not applicable to the default VFG backend, which involves no TensorRT |
+| **Qt** | Hard requirement ≥ 6.12 for the source build and the standard tarball (QML/QuickControls features used) | Upgrade the system Qt, or build the full variant yourself (`--variant=full`, bundles Qt6 — no system Qt needed). There is no prebuilt full package |
+| **GPU** | VSR needs RTX 20+; the default VFG interpolation backend needs **Ada/Blackwell**, the frozen RIFE source-build backend needs Ampere+ (FP16 Tensor Cores) | Older GPUs: VSR works, interpolation is unavailable (passthrough) |
 | **Driver** | 570+ for VFX; Wayland needs no kernel parameters on modern drivers (modeset on by default) | Upgrade, or pin an older VFX wheel |
 
 **Pinning a VFX SDK version** — `install.sh` always fetches the **latest** `nvidia-vfx` wheel from **NVIDIA's official index** (`pypi.nvidia.com`; pypi.org only carries a placeholder sdist). If the default doesn't work with your setup (e.g. driver too old), you are not forced to use it:
@@ -199,7 +201,7 @@ done
 | Install method | Action |
 |---|---|
 | **Source build** | Re-run `./scripts/build-from-source.sh` — one command rebuilds binaries that match your current system libraries. **This is the main reason the source path is recommended**: you can fix it yourself immediately instead of waiting for a new release |
-| **standard / full tarball** | What the package bundles (ffmpeg/CUDA/TRT/media stack, plus Qt in the full variant) is unaffected; what breaks are the libraries it still takes **from the system** (Qt, Vulkan, Wayland/X11, mpv optional deps). In order: ① download a **newer tarball** (its bundled set has followed along) ② switch to a source build ③ temporary workaround below |
+| **standard tarball** (a self-built full variant additionally bundles Qt) | What the package bundles (ffmpeg/CUDA/media stack — plus TensorRT and the RIFE engine only in `--fruc-backend=rife` builds) is unaffected; what breaks are the libraries it still takes **from the system** (Qt, Vulkan, Wayland/X11, mpv optional deps). In order: ① download a **newer tarball** (its bundled set has followed along) ② switch to a source build ③ temporary workaround below |
 
 **Temporary workaround (not for the long term)**: create compatibility symlinks for the missing soname — **only safe when the old and new libraries are ABI-compatible**:
 
@@ -222,15 +224,30 @@ When the VFX runtime is missing or fails to load, `vf_vsr` **passes through sile
 - Re-fetch: run `./scripts/install.sh` (downloads from NVIDIA's official index), or place the files manually per [docs/third-party-setup.md](docs/third-party-setup.md)
 - An outdated driver also makes VFX fail to load: the **VFX version ↔ driver** pair must match (see "Pinning a VFX SDK version" above)
 
-### Frame interpolation inactive / engine deserialization error
+### Frame interpolation inactive
 
-A RIFE engine embeds the **exact TensorRT version that built it**; after a TRT upgrade the old engine is refused at deserialization (interpolation silently degrades to passthrough):
+Which backend a build uses is visible in the startup filter status line: `vfg-status:` for VFG (default), `fruc-status:` for RIFE. The default **VFG** backend needs Ada/Blackwell (see "Version Compatibility"); on older GPUs the filter stays inactive.
+
+**RIFE backend only** (`-Dfruc_backend=rife`): a RIFE engine embeds the **exact TensorRT version that built it**; after a TRT upgrade the old engine is refused at deserialization (interpolation silently degrades to passthrough):
 
 ```bash
 bash tests/fruc/build_rife_full_engine.sh    # rebuild the engine with your current system TRT
 ```
 
-Tarball users normally don't need this: the engine inside the package is self-consistent with the bundled TRT — only replacing the system TRT yourself requires a rebuild.
+RIFE tarball users normally don't need this: the engine inside the package is self-consistent with the bundled TRT — only replacing the system TRT yourself requires a rebuild. Default (VFG) packages contain neither a RIFE engine nor TensorRT.
+
+### First run appears frozen for 10–15 s (engine kernel cache)
+
+The **first** run in a HOME that has never run CUDA compute has to compile the super-resolution engine kernels, so the picture takes 10–15 s to appear. The startup log says so:
+
+```
+first run on this HOME: engine kernel cache is empty (<path>) — the first super-resolution engine load compiles kernels and can take 10-15 s (one-time; later loads ~0.15 s)
+```
+
+- One-time cost per HOME (`$HOME/.nv/ComputeCache`); later engine loads take about 0.15 s.
+- The cache is **independent of size/multiplier**: after one warm run, every other scale/multiplier is fast too.
+- A **reboot does not** invalidate it. Whether a **major driver upgrade** does is **not verified**.
+- This is a notice only — there is no pre-warm: the first frame still waits 10–15 s.
 
 ## Usage
 
@@ -246,7 +263,9 @@ Tarball users normally don't need this: the engine inside the package is self-co
 | `--scale` | `off`, `auto`, `2`, `3`, `4` | `auto` | Super-resolution scale |
 | `--quality` | `low`, `medium`, `high`, `ultra` | `high` | Upscale quality |
 | `--denoise` | `off`, `low`, `medium`, `high`, `ultra` | `off` | Denoise quality (applied at scale=1) |
-| `--fruc` | `off`, `40`, `48`, `60`, `2`, `3`, `4` | persisted | Frame interpolation: target fps (40/48/60) or ×multiplier (2/3/4, benchmark mode) |
+| `--fruc` | `off`, `2`, `3`, `4` (default VFG backend); `off`, `40`, `48`, `60`, `2`, `3`, `4` (RIFE source build) | persisted | Frame interpolation: integer ×multiplier (VFG) or target fps 40/48/60 (RIFE) |
+| `--fruc-quality` | `low`, `medium`, `high` | `medium` | VFG model quality (hot-switchable; accepted but ignored by the RIFE backend) |
+| `--fruc-order` | `pre`, `post` | `post` | VFG chain order: `post` = after VSR, `pre` = before VSR (RIFE is fixed) |
 | `--no-hwaccel` | — | — | Disable NVDEC, use software decode |
 | `--lang` | e.g. `en`, `zh_CN` | system locale | UI language |
 | `--benchmark` | — | — | Headless throughput measurement (no UI, `all=no` logging) |
@@ -280,14 +299,14 @@ Commands: `play`, `pause`, `stop`, `seek`, `loadfile`, `set-vsr`, `get-vsr`, `qu
 
 ## Standalone mpv-vsr CLI
 
-The patched mpv binary (with `vf_vsr` + `vf_rife` + `vf_hwup` filters) is also built and shipped standalone,
+The patched mpv binary (with `vf_vsr` + `vf_vfg` + `vf_hwup` filters, plus `vf_rife` in RIFE builds) is also built and shipped standalone,
 usable as a plain mpv replacement:
 
 ```bash
-mpv-vsr --hwdec=auto --vf=hwup,rife:fps=60,vsr:scale=2 video.mkv
+mpv-vsr --hwdec=auto --vf=hwup,vsr:scale=2,vfg:fps=2:mode=medium video.mkv
 ```
 
-Filter chain (left to right): `hwup` (SW→CUDA upload, enables soft-decode path) → `rife` (interpolation, source resolution) → `vsr` (upscaling). Use `--hwdec=nvdec` for hardware decode (then `hwup` is a no-op passthrough).
+Filter chain (left to right): `hwup` (SW→CUDA upload, enables soft-decode path) → `vsr` (upscaling) → `vfg` (VFG interpolation) — the default order; put `vfg` before `vsr` for the `pre` order. RIFE builds use `hwup` → `rife` (interpolation, source resolution) → `vsr` instead. Use `--hwdec=nvdec` for hardware decode (then `hwup` is a no-op passthrough).
 
 Filter options:
 
@@ -296,10 +315,12 @@ Filter options:
 | `scale` (vsr) | `off`, `auto`, `2`, `3`, `4`, ratio (e.g. `4/3`) | Upscale factor; `auto` picks by viewport |
 | `quality` (vsr) | `low`, `medium`, `high`, `ultra` | VSR inference quality |
 | `denoise` (vsr) | `off`, `low`, `medium`, `high`, `ultra` | Denoise pass (works at scale=1) |
-| `fps` (rife) | `off`, `auto`, integer 1..120 | Interpolation target fps; `auto` = 2×source |
-| `scale` (rife) | `off`, `2`, `3`, `4` | Benchmark multiplier (measures the device ceiling) |
+| `fps` (vfg) | `off`, `2`, `3`, `4` | Interpolation multiplier (VFG, the default backend) |
+| `mode` (vfg) | `low`, `medium`, `high` | VFG model quality (default `medium`) |
+| `fps` (rife) | `off`, `auto`, integer 1..120 | Interpolation target fps (RIFE builds only); `auto` = 2×source |
+| `scale` (rife) | `off`, `2`, `3`, `4` | Benchmark multiplier (measures the device ceiling; RIFE builds only) |
 
-Example: `mpv-vsr --hwdec=nvdec --vf=rife:fps=60,vsr:scale=auto,quality=ultra video.mkv`
+Example: `mpv-vsr --hwdec=nvdec --vf=vsr:scale=auto,quality=ultra,vfg:fps=2:mode=medium video.mkv`
 
 `mpv-vsr-wrapper.py` (browser integration, ff2mpv-style): exports Chrome cookies,
 extracts playlists via yt-dlp (YouTube/Bilibili/Niconico), and launches mpv-vsr.

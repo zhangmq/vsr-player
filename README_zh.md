@@ -16,7 +16,7 @@ NVIDIA Video Effects SDK 提供了相同的底层 AI 模型，也有 Linux 版�
 
 - **AI 超分辨率** — Tensor Cores 实时 2×/3×/4× 超分（mpv 视频滤镜 `vf_vsr`）
 - **AI 降噪** — 可配置降噪强度（低至超高），scale=1 时单独生效
-- **AI 插帧（FRUC）** — RIFE 运动插帧至 40/48/60 fps 或任意目标（mpv 视频滤镜 `vf_rife`，TensorRT，在超分之前以源分辨率运行）
+- **AI 插帧（FRUC）** — NVIDIA VFX SDK `VideoFrameGeneration`（VFG）整数倍率插帧 ×2/×3/×4，质量档可热切换（`low`/`medium`/`high`）——mpv 视频滤镜 `vf_vfg`，默认链序在超分之后。冻结的 TensorRT/RIFE 后端（目标帧率 40/48/60）**仅**保留为源码构建选项（`-Dfruc_backend=rife`），方向不再投入
 - **NVDEC 硬解码** — AV1、H.264、HEVC GPU 解码（含软解回退；软解帧经 `vf_hwup` 自动上传为 CUDA 帧）
 - **Vulkan 渲染** — CUDA-Vulkan 共享设备，mpv 渲染进 Qt 场景图
 - **QML 叠加 UI** — 底部悬停区域驱动的自动隐藏控件、虚拟化播放列表、OSD 信息面板
@@ -47,14 +47,15 @@ NVIDIA Video Effects SDK 提供了相同的底层 AI 模型，也有 Linux 版�
 ## 架构
 
 ```
-demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt 场景图
+demux → decode → [vf_hwup] → [vf_vsr] → [vf_vfg] → VO (libmpv) → Qt 场景图
                 ↑            ↑               ↑
-           SW→CUDA 上传    RIFE (TRT)    VFX SDK + CUDA
+           SW→CUDA 上传    VFX SDK + CUDA    VFG (VFX SDK)
 ```
 
 - mpv 承担：解封装、解码、音视频同步、时序、seek、VO
 - `vf_hwup`：软解帧上传为 CUDA 帧，使下游滤镜永远只处理硬件帧
-- `vf_rife`（覆盖层 `src/mpv/video/filter/vf_rife.c`）：RIFE 插帧（TensorRT），在超分之前以源分辨率运行
+- `vf_vfg`（覆盖层 `src/mpv/video/filter/vf_vfg.c`）：VFX SDK `VideoFrameGeneration` 插帧——整数倍率 ×2/×3/×4、质量档 low/medium/high；默认链序在 `vf_vsr` 之后（`--fruc-order pre` 可前置）
+- `vf_rife`（覆盖层 `src/mpv/video/filter/vf_rife.c`）：RIFE 插帧（TensorRT）——冻结的源码构建后端（`-Dfruc_backend=rife`），在超分之前以源分辨率运行
 - `vf_vsr`（覆盖层 `src/mpv/video/filter/vf_vsr.c`）：接收 `mp_image`，CUDA+VFX SDK 超分，输出超分 `mp_image`
 - 前端：Qt 6 + QML（`src/client/`）——MpvController（libmpv 封装）、PlayerViewModel（UI 状态单一事实源）、Vulkan 共享设备
 - mpv patch 方案：`third_party/mpv`（纯净 0.41）+ `src/mpv` 覆盖层，`scripts/build_mpv.sh` 合并构建
@@ -63,11 +64,12 @@ demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt
 
 | 组件 | 要求 | 适用 |
 |------|------|------|
-| GPU | NVIDIA RTX 20 系或更新（插帧需 Ampere+ 且支持 FP16 Tensor Cores） | 全部 |
+| GPU | 超分需 NVIDIA RTX 20 系或更新；插帧默认走 VFG 后端，需 **Ada/Blackwell**（冻结的 RIFE 源码构建后端需 Ampere+ 且支持 FP16 Tensor Cores） | 全部 |
 | 驱动 | 570+（含 CUDA；Wayland 开箱即用——现代驱动默认启用 DRM modeset，无需内核参数） | 全部 |
-| Qt | 6.11+（Quick、QuickControls、Vulkan） | 源码构建 / standard 包（**full 包自带 Qt**） |
+| VFX SDK | NVIDIA VFX SDK **1.3**（`nvidia-vfx` 0.2.0.0 wheel）——**超分（VSR）与插帧（VFG）都来自它**；`install.sh` 从 NVIDIA 官方索引（`pypi.nvidia.com`）下载并解包，不装进 Python 环境 | 全部 |
+| Qt | 6.12+（Quick、QuickControls、Vulkan） | 源码构建 / standard 包（**不再分发预编译 full 包——需要就用 `--variant=full` 自建，自带 Qt**） |
 | 编译器 | GCC 13+（C++20） | 源码构建 |
-| 构建 | meson、ninja、CUDA Toolkit（`/opt/cuda`）、TensorRT（系统 `trtexec`，构建引擎用） | 源码构建 |
+| 构建 | meson、ninja、CUDA Toolkit（`/opt/cuda`）；TensorRT（系统 `trtexec`）仅 `-Dfruc_backend=rife` 构建引擎时需要 | 源码构建 |
 
 第三方 SDK（NvVFX 头文件/运行时、MDI 图标字体、mpv 源码）**不随仓库分发**——按 [docs/third-party-setup.md](docs/third-party-setup.md) 准备 `third_party/`（源码构建需要）。
 
@@ -79,7 +81,7 @@ demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt
 
 ```bash
 git clone https://github.com/zhangmq/vsr-player && cd vsr-player
-# 1) 按 docs/third-party-setup.md 准备 third_party/（NvVFX 运行时、MDI 字体、mpv 源码、RIFE ONNX）
+# 1) 按 docs/third-party-setup.md 准备 third_party/（NvVFX 运行时、MDI 字体、mpv 源码；RIFE ONNX 仅 -Dfruc_backend=rife 需要）
 ./scripts/build-from-source.sh
 ```
 
@@ -96,27 +98,27 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 
 不想自己编译，或发行版没有 FFmpeg 9.x 开发包时使用。
 
-| | standard（默认） | full（自带 Qt） |
+| | standard（唯一分发的预编译包） | full（仅源码自建——`--variant=full`，自带 Qt） |
 |---|---|---|
-| 自带 | libmpv + ffmpeg×7 + CUDA runtime + TensorRT 11 + RIFE 引擎 + **光盘媒体栈**（libcdio/libdvd/libbluray）+ 字体/翻译/许可 | 同上 **+ Qt6（库/平台插件/QML 模块）** |
-| 还需要系统提供 | **Qt ≥ 6.11**、Vulkan loader、Wayland/X11 客户端库、NVIDIA 驱动 | 仅 Vulkan loader、Wayland/X11 客户端库、NVIDIA 驱动 |
-| 适用 | 主流滚动发行版（Arch/CachyOS/Fedora 等） | Qt < 6.11 的发行版（Debian stable、Ubuntu LTS 等） |
-| 体积 | 约 320 MB | 约 340 MB |
+| 自带 | libmpv + ffmpeg×7 + CUDA runtime + **光盘媒体栈**（libcdio/libdvd/libbluray）+ 字体/翻译/许可。默认构建**只带 VFG 后端**：**不含** TensorRT 库（`libnvinfer*`）、**不含** `engines/`；`--fruc-backend=rife` 才会加上 TensorRT 11 + RIFE 引擎 | 同上 **+ Qt6（库/平台插件/QML 模块）** |
+| 还需要系统提供 | **Qt ≥ 6.12**、Vulkan loader、Wayland/X11 客户端库、NVIDIA 驱动 | 仅 Vulkan loader、Wayland/X11 客户端库、NVIDIA 驱动 |
+| 适用 | 主流滚动发行版（Arch/CachyOS/Fedora 等） | Qt < 6.12 的发行版（Debian stable、Ubuntu LTS 等）——用 `--variant=full` 自行构建 |
+| 体积 | 约 56 MB | 约 78 MB（`--variant=full` 自建产物） |
 
 ```bash
-tar -xJf vsr-player-<ver>-linux-x86_64[-full].tar.xz
+tar -xJf vsr-player-<ver>-linux-x86_64[-rife].tar.xz   # 默认 = VFG 后端；-rife 额外含 TensorRT 11 与 RIFE 引擎；full 变体（-full，可与 -rife 叠加）仅源码自建
 ./install.sh                         # 安装到 ~/.local，无需 sudo
 ```
 
-判断用哪个：`pkg-config --modversion Qt6Quick`（≥ 6.11 → standard，否则 full）。
+判断用哪个：`pkg-config --modversion Qt6Quick`（≥ 6.12 → standard；否则用 `--variant=full` 自建——本项目不再分发预编译 full 包）。下限是 6.12 的原因：发布包用 **Qt 6.12.0** 编出，而 Qt 6 的二进制兼容是**单向**的（用 6.x 编的包只能在 6.x 及更新的 6.y 上跑，更旧的 6.y 无保证）。
 
-- **VFX 运行时**（wheel 约 0.6 GB，解压后约 1.1 GB）**不随包分发**（NVIDIA SLA 禁止再分发）：`install.sh` 会从 **NVIDIA 官方索引 `pypi.nvidia.com`** 选最新 manylinux wheel 下载提取（curl 纯下载、不调 pip、不改系统），也可手动放置到 `~/.local/lib/vsr-player/`
+- **VFX 运行时**（wheel 约 0.6 GB，解压后约 1.1 GB）**不随包分发**（NVIDIA SLA 禁止再分发）：`install.sh` 会从 **NVIDIA 官方索引 `pypi.nvidia.com`** 选最新 manylinux wheel 下载提取（curl 纯下载、不调 pip、不改系统），也可手动放置到 `~/.local/lib/vsr-player/`。需要的版本是 **NVIDIA VFX SDK 1.3**（`nvidia-vfx` 0.2.0.0）——超分与插帧都来自它；可选的 `-rife` 包额外自带 TensorRT 11 与 RIFE 引擎
 - 打包采用"显式核心集 + 媒体栈动态发现 + **打包时闭包自检**"：既未捆绑、也不在系统白名单的依赖会让打包直接失败，不会带病发布
 - 两个变体都还依赖发行版常规组件：Vulkan loader、Wayland/X11 客户端库，以及 mpv/FFmpeg 的可选依赖（libass、libplacebo、libmujs、liblcms2、libwebp、libopenjp2、1394 采集库等）——由闭包自检逐项校验
 
 ## 手工构建（开发/调试）
 
-1. **准备 `third_party/`** — NvVFX SDK 头文件/运行时、MDI 图标字体、mpv 源码、CUDA 12 存档、RIFE ONNX 资产：按 [docs/third-party-setup.md](docs/third-party-setup.md) 操作。
+1. **准备 `third_party/`** — NvVFX SDK 头文件/运行时、MDI 图标字体、mpv 源码、CUDA 12 存档；RIFE ONNX 资产仅 `-Dfruc_backend=rife` 需要：按 [docs/third-party-setup.md](docs/third-party-setup.md) 操作。
 2. **构建并运行：**
 
 ```bash
@@ -133,16 +135,16 @@ ninja -C build                  # 构建 Qt 客户端
 - **系统库升级后**（FFmpeg、Qt、TensorRT、libcdio 等——pacman/apt）旧二进制会链旧 soname、直接启动失败：跑 `./scripts/build-from-source.sh` 一条命令重建（或手动 `./scripts/build_mpv.sh` + `ninja -C build`）。`./scripts/check-deps.sh` 会比对构建时快照并提示是否需要重建。
 - **RIFE 引擎**：用系统 `trtexec` 构建（`bash tests/fruc/build_rife_full_engine.sh`，动态 shape FP16；分发用 `--hardware-compat on` 跨架构）。需要 `third_party/rife/` 下的 RIFE ONNX 资产。
 - **开发安装**：仓库内直接跑 `./scripts/install.sh` 即可（dev 模式，自动识别构建树，无需 tarball）。
-- **分发构建**：`./scripts/build_release.sh [--variant=standard|full]`——release + `$ORIGIN` 相对 RPATH + 依赖收集 + 闭包自检 + tarball（`--engine=<已构建引擎>` 可复用引擎跳过 trtexec）。`build_mpv.sh`/client 构建接受 `MPV_BUILD_DIR`、`BUILDTYPE`、`DIST_RPATH` 环境变量覆盖（发布脚本使用）。
+- **分发构建**：`./scripts/build_release.sh [--variant=standard|full] [--fruc-backend=vfg|rife]`——release + `$ORIGIN` 相对 RPATH + 依赖收集 + 闭包自检 + tarball。`--fruc-backend=vfg`（默认）不捆绑 TensorRT、也不含 `engines/`；`--fruc-backend=rife` 才会加上（`--engine=<已构建引擎>` 可复用引擎跳过 trtexec）。本项目只分发 `--variant=standard`；`--variant=full`（自带 Qt）供 Qt < 6.12 的用户自建。`build_mpv.sh`/client 构建接受 `MPV_BUILD_DIR`、`BUILDTYPE`、`DIST_RPATH` 环境变量覆盖（发布脚本使用）。
 
 ## 版本兼容性
 
 | 组件 | 绑定关系 | 不匹配时 |
 |------|----------|----------|
 | **VFX SDK ↔ 驱动** | NVIDIA 索引最新 wheel 可能要求更新的驱动；旧驱动 + 新 VFX → VSR 加载失败 | 升级驱动，或锁定旧版 VFX（见下） |
-| **RIFE 引擎 ↔ TensorRT** | 引擎文件内嵌构建时的 TRT 精确版本——版本不匹配时反序列化直接拒绝（双向均实测） | 用当前系统 TRT 重建引擎（`bash tests/fruc/build_rife_full_engine.sh`），或装匹配版本 TRT。tarball 用户：引擎与捆绑 TRT 一起分发，自洽。VFX 自带的 TRT 10 与 RIFE 的 TRT 11 同进程共存（RTLD_LOCAL 隔离），无需处理 |
-| **Qt** | standard 变体硬性要求 ≥ 6.11（用到的 QML/QuickControls 特性） | 升级系统 Qt，或改用 **full 变体**（自带 Qt6，无系统 Qt 要求） |
-| **GPU** | VSR 需 RTX 20+；插帧需 Ampere+（FP16 Tensor Cores） | 旧 GPU：VSR 可用，插帧退化为直通 |
+| **RIFE 引擎 ↔ TensorRT**（仅 rife 后端） | 引擎文件内嵌构建时的 TRT 精确版本——版本不匹配时反序列化直接拒绝（双向均实测） | 用当前系统 TRT 重建引擎（`bash tests/fruc/build_rife_full_engine.sh`），或装匹配版本 TRT。tarball 用户：引擎与捆绑 TRT 一起分发，自洽。VFX 自带的 TRT 10 与 RIFE 的 TRT 11 同进程共存（RTLD_LOCAL 隔离），无需处理。默认 VFG 后端不涉及 TensorRT，本行不适用 |
+| **Qt** | standard 变体硬性要求 ≥ 6.12（用到的 QML/QuickControls 特性） | 升级系统 Qt，或用 `--variant=full` 自建 full 变体（自带 Qt6，无系统 Qt 要求）；不再有预编译 full 包 |
+| **GPU** | VSR 需 RTX 20+；插帧默认的 VFG 后端需 **Ada/Blackwell**，冻结的 RIFE 源码构建后端需 Ampere+（FP16 Tensor Cores） | 旧 GPU：VSR 可用，插帧不可用（直通） |
 | **驱动** | VFX 需 570+；Wayland 在现代驱动上无需内核参数（modeset 默认开启） | 升级驱动，或锁定旧版 VFX wheel |
 
 **锁定 VFX SDK 版本**——install.sh 总是从 **NVIDIA 官方索引**（`pypi.nvidia.com`；pypi.org 上只有占位 sdist）拉取**最新** `nvidia-vfx` wheel。如果默认版本在你的环境不工作（如驱动太旧），不必被迫使用它：
@@ -199,7 +201,7 @@ install.sh 从不把任何版本强加给你的系统——一切都在 `~/.loca
 | 安装方式 | 处理 |
 |---|---|
 | **源码构建** | 重跑 `./scripts/build-from-source.sh`——一条命令重建出与新系统库匹配的二进制。**这是推荐源码构建的核心原因**：你能立刻自救，不必等新版本发布 |
-| **standard / full 包** | 包里捆绑的部分（ffmpeg/CUDA/TRT/媒体栈，full 另含 Qt）不受影响；受影响的是包仍需**系统提供**的库（Qt、Vulkan、Wayland/X11、mpv 的可选依赖）。按序尝试：① 下载**更新版本**的 tarball（其捆绑集合已跟进）② 改用源码构建 ③ 临时救急见下 |
+| **standard 包**（自建的 full 变体另含 Qt） | 包里捆绑的部分（ffmpeg/CUDA/媒体栈——其中 TensorRT 与 RIFE 引擎仅存在于 `--fruc-backend=rife` 构建）不受影响；受影响的是包仍需**系统提供**的库（Qt、Vulkan、Wayland/X11、mpv 的可选依赖）。按序尝试：① 下载**更新版本**的 tarball（其捆绑集合已跟进）② 改用源码构建 ③ 临时救急见下 |
 
 **临时救急（不推荐长期）**：给缺失的 soname 建兼容软链——**仅当新旧库 ABI 兼容时才安全**：
 
@@ -222,15 +224,30 @@ VFX 运行时缺失或加载失败时，`vf_vsr` 会**静默直通**（视频照
 - 重新获取：跑 `./scripts/install.sh`（从 NVIDIA 官方索引下载），或按 [docs/third-party-setup.md](docs/third-party-setup.md) 手动放置
 - 驱动过旧也会导致 VFX 加载失败：**VFX 版本 ↔ 驱动**需匹配（见下方"锁定 VFX SDK 版本"）
 
-### 插帧不生效 / 引擎反序列化报错
+### 插帧不生效
 
-RIFE 引擎内嵌了**构建时的 TensorRT 精确版本**，TRT 升级后旧引擎会被拒绝反序列化（表现为插帧退化为直通）：
+先确认这次构建用的哪个后端——启动日志里的滤镜状态行：VFG（默认）是 `vfg-status:`，RIFE 是 `fruc-status:`。默认的 **VFG** 后端需 **Ada/Blackwell**（见"版本兼容性"）；旧 GPU 上该滤镜不生效。
+
+**仅 RIFE 后端**（`-Dfruc_backend=rife`）：RIFE 引擎内嵌了**构建时的 TensorRT 精确版本**，TRT 升级后旧引擎会被拒绝反序列化（表现为插帧退化为直通）：
 
 ```bash
 bash tests/fruc/build_rife_full_engine.sh    # 用当前系统 TRT 重建引擎
 ```
 
-分发用户一般无需处理：tarball 内的引擎与捆绑的 TRT 自洽，只有自己替换过系统 TRT 才需要重建。
+RIFE 分发用户一般无需处理：tarball 内的引擎与捆绑的 TRT 自洽，只有自己替换过系统 TRT 才需要重建。默认（VFG）包里既没有 RIFE 引擎、也没有 TensorRT。
+
+### 首次运行像是卡住 10–15 秒（引擎内核缓存）
+
+在**第一次**运行的 HOME 上（该 HOME 从未跑过 CUDA 计算），超分引擎加载时要现编译内核，画面会等 10–15 秒才出来。启动日志会写明：
+
+```
+first run on this HOME: engine kernel cache is empty (<path>) — the first super-resolution engine load compiles kernels and can take 10-15 s (one-time; later loads ~0.15 s)
+```
+
+- 每个 HOME 只付一次（`$HOME/.nv/ComputeCache`）；之后的引擎加载约 0.15 秒。
+- 该缓存**与尺寸/倍率无关**：暖过一次后，换任何缩放倍率都一样快。
+- **重启不会**让它失效；**驱动大版本升级**是否会失效**未验证**。
+- 这只是提示、不是预热：首帧仍会等 10–15 秒。
 
 ## 使用
 
@@ -246,7 +263,9 @@ bash tests/fruc/build_rife_full_engine.sh    # 用当前系统 TRT 重建引擎
 | `--scale` | `off`、`auto`、`2`、`3`、`4` | `auto` | 超分倍率 |
 | `--quality` | `low`、`medium`、`high`、`ultra` | `high` | 超分质量 |
 | `--denoise` | `off`、`low`、`medium`、`high`、`ultra` | `off` | 降噪强度（scale=1 时生效） |
-| `--fruc` | `off`、`40`、`48`、`60`、`2`、`3`、`4` | 持久化 | 插帧：目标帧率（40/48/60）或倍率（2/3/4，benchmark 模式） |
+| `--fruc` | `off`、`2`、`3`、`4`（默认 VFG 后端）；`off`、`40`、`48`、`60`、`2`、`3`、`4`（RIFE 源码构建） | 持久化 | 插帧：整数倍率（VFG）或目标帧率 40/48/60（RIFE） |
+| `--fruc-quality` | `low`、`medium`、`high` | `medium` | VFG 模型质量档（可热切换；RIFE 后端接受但忽略） |
+| `--fruc-order` | `pre`、`post` | `post` | VFG 链序：`post` = 超分之后，`pre` = 超分之前（RIFE 固定） |
 | `--no-hwaccel` | — | — | 关闭 NVDEC，使用软解 |
 | `--lang` | 如 `en`、`zh_CN` | 系统 locale | 界面语言 |
 | `--benchmark` | — | — | 无 UI 吞吐测量（`all=no` 日志） |
@@ -280,13 +299,13 @@ printf '{"command":["play"]}\n' | socat - UNIX-CONNECT:/tmp/vsr-player.sock
 
 ## 独立版 mpv-vsr CLI
 
-带 `vf_vsr` + `vf_rife` + `vf_hwup` 滤镜的 patched mpv 也独立构建分发，可作普通 mpv 替代：
+带 `vf_vsr` + `vf_vfg` + `vf_hwup` 滤镜（RIFE 构建另含 `vf_rife`）的 patched mpv 也独立构建分发，可作普通 mpv 替代：
 
 ```bash
-mpv-vsr --hwdec=auto --vf=hwup,rife:fps=60,vsr:scale=2 video.mkv
+mpv-vsr --hwdec=auto --vf=hwup,vsr:scale=2,vfg:fps=2:mode=medium video.mkv
 ```
 
-滤镜链（从左到右）：`hwup`（SW→CUDA 上传，软解路径可用）→ `rife`（插帧，源分辨率）→ `vsr`（超分）。硬解（`--hwdec=nvdec`）时 `hwup` 为纯直通可省略。
+滤镜链（从左到右）：`hwup`（SW→CUDA 上传，软解路径可用）→ `vsr`（超分）→ `vfg`（VFG 插帧）——这是默认链序；要 `pre` 顺序就把 `vfg` 放在 `vsr` 前面。RIFE 构建里链序是 `hwup` → `rife`（插帧，源分辨率）→ `vsr`。硬解（`--hwdec=nvdec`）时 `hwup` 为纯直通可省略。
 
 滤镜选项：
 
@@ -295,10 +314,12 @@ mpv-vsr --hwdec=auto --vf=hwup,rife:fps=60,vsr:scale=2 video.mkv
 | `scale`（vsr） | `off`、`auto`、`2`、`3`、`4`、比例（如 `4/3`） | 超分倍率；`auto` 按视口选择 |
 | `quality`（vsr） | `low`、`medium`、`high`、`ultra` | VSR 推理质量 |
 | `denoise`（vsr） | `off`、`low`、`medium`、`high`、`ultra` | 降噪（scale=1 时单独生效） |
-| `fps`（rife） | `off`、`auto`、整数 1..120 | 插帧目标帧率；`auto` = 2×源 |
-| `scale`（rife） | `off`、`2`、`3`、`4` | benchmark 倍率（测设备上限） |
+| `fps`（vfg） | `off`、`2`、`3`、`4` | 插帧倍率（VFG，默认后端） |
+| `mode`（vfg） | `low`、`medium`、`high` | VFG 模型质量档（默认 `medium`） |
+| `fps`（rife） | `off`、`auto`、整数 1..120 | 插帧目标帧率（仅 RIFE 构建）；`auto` = 2×源 |
+| `scale`（rife） | `off`、`2`、`3`、`4` | benchmark 倍率（测设备上限；仅 RIFE 构建） |
 
-示例：`mpv-vsr --hwdec=nvdec --vf=rife:fps=60,vsr:scale=auto,quality=ultra video.mkv`
+示例：`mpv-vsr --hwdec=nvdec --vf=vsr:scale=auto,quality=ultra,vfg:fps=2:mode=medium video.mkv`
 
 `mpv-vsr-wrapper.py`（浏览器集成，ff2mpv 风格）：导出 Chrome cookie、yt-dlp 提取播放列表（YouTube/Bilibili/Niconico）、拉起 mpv-vsr。个人自用工具，不随发布包分发——有兴趣可自行研究。
 
