@@ -131,3 +131,7 @@ option('pdf-build', type: 'feature', value: 'disabled', description: 'PDF manual
 # vsr-player: distribution RPATH override（DIST_RPATH 环境变量注入，见 meson.build）
 option('dist-rpath', type: 'string', value: '',
        description: 'Distribution RPATH for bundled libs ($ORIGIN-relative; empty = dev default)')
+
+# vsr-player: FRUC 后端选择（默认 vfg；rife 需 TensorRT，见 meson.build）
+option('fruc_backend', type: 'combo', choices: ['vfg', 'rife'], value: 'vfg',
+       description: 'FRUC backend: vfg (VFX VideoFrameGeneration) or rife (TensorRT)')

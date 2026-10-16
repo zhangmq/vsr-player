@@ -40,4 +40,5 @@ extern const struct mp_user_filter_entry vf_fingerprint;
 extern const struct mp_user_filter_entry vf_gpu;
 extern const struct mp_user_filter_entry vf_hwup;
 extern const struct mp_user_filter_entry vf_vsr;
+extern const struct mp_user_filter_entry vf_vfg;
 extern const struct mp_user_filter_entry vf_rife;

@@ -1776,15 +1776,20 @@ conf_data = configuration_data()
 conf_data.set_quoted('CONFIGURATION', meson.build_options().strip().replace('\\', '\\\\'))
 conf_data.set_quoted('DEFAULT_OPTICAL_DEVICE', optical_device)
 
-# RIFE filter (TensorRT engine) — optional; without TRT the filter builds but
-# degrades to passthrough at runtime (rife_proc.c guards on HAVE_TRT).
-# MUST be before the features loop below (config.h generation).
+# TensorRT 探测（RIFE 后端专用；默认的 VFG 走纯 dlopen 的 VFX 运行时，不需要
+# TRT）。fruc_backend=rife 而缺 TRT 是**硬报错**（见下方 FRUC backend 段），
+# 不存在"无 TRT 就静默降级直通"的构建（旧描述已不成立）。
+# MUST be before the features loop below（fruc-rife 特性与 config.h 都在那里生成）。
 trt_h = cc.has_header('NvInfer.h')
 # libnvinfer is dlopen'd at runtime (RTLD_LOCAL — isolates TRT 11 from VFX's
 # bundled TRT 10; linking globally cross-binds symbols and crashes).
 cudart_lib = cc.find_library('cudart', dirs: '/opt/cuda/lib64', required: false)
 has_trt = trt_h and cudart_lib.found()
 features += {'trt': has_trt}
+# FRUC 后端 = rife 时才编译/注册 vf_rife（vfg 走 VFX VideoFrameGeneration）。
+# 合成特性：生成 config.h 的 HAVE_FRUC_RIFE（filters/user_filters.c 据此门控注册项），
+# 必须在下方 features 循环之前。
+features += {'fruc-rife': get_option('fruc_backend') == 'rife'}
 
 # Loop over all features in the build, create a define and add them to config.h
 feature_keys = []
@@ -1859,21 +1864,35 @@ if features['vsr']
     sources += files(
         'video/filter/yuv_to_rgba.c',
         'video/filter/vsr_proc.c',
-        'video/filter/vf_rife.c',
-        'video/filter/rife_proc.c',
+        'video/filter/vfx_loader.c',
         'video/filter/vf_hwup.c',
+        # VFG（VFX SDK VideoFrameGeneration）= 默认 FRUC 后端；与 VSR 共用
+        # vfx_loader 的库加载层。无条件编入（与 vsr_proc/vfx_loader 同处），
+        # 注册项在 filters/user_filters.c。
+        'video/filter/vfg_proc.c',
+        'video/filter/vf_vfg.c',
     )
     message('VSR filter: enabled')
 else
     message('VSR filter: disabled (CUDA toolkit not found)')
 endif
 
-if features['trt'] and features['vsr']
+# FRUC backend（默认 vfg）：vfx_loader 是 VSR/VFG 共用的 VFX 库加载层，无条件编入；
+# rife 需要 TensorRT（NvInfer.h + cudart），缺失即硬报错——静默退化的结果是运行期
+# --fruc 报"没有该滤镜"，很难查。
+if get_option('fruc_backend') == 'rife'
+    if not features['trt']
+        error('fruc_backend=rife 需要 TensorRT（NvInfer.h + cudart）；请安装 TensorRT 或改用 -Dfruc_backend=vfg')
+    endif
     dependencies += [cudart_lib]
-    sources += files('video/filter/rife_trt.cpp')
-    message('RIFE filter: TensorRT enabled')
+    sources += files(
+        'video/filter/vf_rife.c',
+        'video/filter/rife_proc.c',
+        'video/filter/rife_trt.cpp',
+    )
+    message('FRUC backend: rife (TensorRT)')
 else
-    message('RIFE filter: TensorRT disabled (passthrough)')
+    message('FRUC backend: vfg (VideoFrameGeneration)')
 endif
 
 libmpv = library('mpv', sources, dependencies: dependencies, gnu_symbol_visibility: 'hidden',
@@ -1998,6 +2017,7 @@ summary({'cocoa': features['cocoa'] and features['swift'],
          'vulkan': features['vulkan'],
          'vsr': features['vsr'],
          'trt': features['trt'],
+         'fruc-backend': get_option('fruc_backend'),
          'wayland': features['wayland'],
          'x11': features['x11']},
          bool_yn: true)

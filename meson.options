@@ -6,3 +6,8 @@ option('dist-rpath', type: 'string', value: '',
        description: 'Distribution RPATH for bundled libs ($ORIGIN-relative; empty = dev default)')
 option('mpv-build-dir', type: 'string', value: '',
        description: 'mpv build tree for libmpv linking; empty = build/mpv/_build')
+# FRUC（插帧）后端编译期开关：vfg = NVIDIA VFX SDK VideoFrameGeneration（默认，
+# 倍率语义 fps=off|2|3|4）；rife = TensorRT RIFE（保留但冻结，目标帧率语义）。
+# 客户端语义分支定义见 src/client/FrucBackend.h（单一事实源）。
+option('fruc_backend', type: 'combo', choices: ['vfg', 'rife'], value: 'vfg',
+       description: 'Frame interpolation backend (vfg = VFX SDK VFG default; rife = legacy TensorRT RIFE)')

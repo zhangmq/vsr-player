@@ -108,7 +108,10 @@ const struct mp_user_filter_entry *vf_list[] = {
 #endif
     &vf_hwup,
     &vf_vsr,
+    &vf_vfg,
+#if HAVE_FRUC_RIFE
     &vf_rife,
+#endif
 };
 
 static bool get_vf_desc(struct m_obj_desc *dst, int index)
