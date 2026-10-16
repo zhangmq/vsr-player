@@ -1,0 +1,24 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+# Name/Comment 双语（README/发行说明同为中英双语；未列语言回退到英文）
+Name=VSR Player
+Name[zh_CN]=VSR 播放器
+GenericName=Video Player
+GenericName[zh_CN]=视频播放器
+Comment=Video player with NVIDIA VFX AI super-resolution and frame interpolation
+Comment[zh_CN]=带 NVIDIA VFX AI 超分与插帧的视频播放器
+# @EXEC@ 由 scripts/install.sh 替换为安装后的绝对路径（不依赖 PATH）；
+# %f = 单个文件/目录（播放器支持目录 → 展开为播放列表）。
+# 不用 %U/%F：命令行只接受一个位置参数（多文件会 error: multiple video files）。
+Exec=@EXEC@ %f
+TryExec=@EXEC@
+Icon=vsr-player
+Terminal=false
+Categories=AudioVideo;Player;Video;Qt;
+Keywords=video;player;mpv;VSR;upscale;interpolation;超分;插帧;
+StartupNotify=true
+# Wayland app_id / X11 WM_CLASS：main.cpp 用 setDesktopFileName("vsr-player")
+# 与应用 id 对齐（等于本文件名去 .desktop），窗口图标/任务栏分组才不会串。
+StartupWMClass=vsr-player
+MimeType=video/*;audio/*;

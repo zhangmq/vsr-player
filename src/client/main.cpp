@@ -135,6 +135,11 @@ int main(int argc, char *argv[]) {
     // 必须在 QGuiApplication 构造前设置；无 portal 环境时回退 Qt 自绘。
     qputenv("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
     QGuiApplication app(argc, argv);
+    // 桌面集成：Wayland app_id / X11 WM_CLASS 钉成 "vsr-player"，与安装的
+    // ~/.local/share/applications/vsr-player.desktop 同名（Qt 的
+    // StartupWMClass 匹配规则）→ 任务栏图标/分组、启动器关联才对得上。
+    // 须在建窗口前设置。默认值取可执行文件名，钉死可避免改名/软链启动时失配。
+    QGuiApplication::setDesktopFileName(QStringLiteral("vsr-player"));
     setlocale(LC_NUMERIC, "C");
     QVulkanInstance qtVi; qtVi.setVkInstance(vk.instance()); qtVi.create();
     MLOG_INFO("QGuiApplication ready");

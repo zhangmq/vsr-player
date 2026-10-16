@@ -23,6 +23,7 @@ This project calls the Video Effects SDK C API directly from a player. This is n
 - **Adaptive Scale** — auto-selects upscale factor based on viewport size
 - **Playlist & Playback** — directory loading, loop modes, speed control, A/V sync handled by mpv
 - **Remote Control** — JSON IPC over Unix socket; standalone `mpv-vsr` CLI
+- **Desktop Integration** — application-menu/launcher entry (bundled icon, usable as the default video/audio handler)
 
 ## Testing Status
 
@@ -109,6 +110,8 @@ For when you'd rather not compile, or your distro lacks FFmpeg 9.x development p
 tar -xJf vsr-player-<ver>-linux-x86_64[-rife].tar.xz   # default = VFG backend; -rife adds TensorRT 11 + the RIFE engine; the full variant (-full, combinable: -full-rife) is self-built
 ./install.sh                         # installs to ~/.local, no sudo
 ```
+
+The installer also sets up **desktop integration**: a **VSR Player** entry appears in the application menu/launcher (pinnable to the taskbar, usable as the default handler for video/audio files). The icon ships with the package — it is currently a placeholder; replacing `data/vsr-player.svg` is all it takes to change it.
 
 Check with `pkg-config --modversion Qt6Quick`: ≥ 6.12 → standard; otherwise build the full variant yourself (`--variant=full`) — this project no longer distributes a prebuilt full package. The floor is 6.12 because the package is built with **Qt 6.12.0**, and Qt 6 binary compatibility is **one-way** (a package built with 6.x runs on 6.x and newer 6.y, not on older ones).
 

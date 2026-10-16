@@ -24,7 +24,7 @@
 #   ├── lib/qt6/plugins/      # 仅 full：platforms(wayland/xcb) + wayland-* + imageformats
 #   ├── lib/qt6/qml/          # 仅 full：QtQuick/QtQuick.Controls/Dialogs/Layouts/Shapes/QtQml
 #   ├── engines/rife_full_fp16.engine  # 仅 rife：ampere+ 跨架构（30/40/50 系通用）
-#   ├── fonts/  translations/  licenses/  README.md
+#   ├── fonts/  translations/  licenses/  data/  README.md
 #   └── install.sh            # 用户端安装（见 scripts/install.sh）
 #
 # 流程：mpv dist 构建 → client dist 构建 → 依赖闭包收集 → [rife: engine] → 资产 → tarball
@@ -307,6 +307,9 @@ else
     [ -z "$ENGINE_OVERRIDE" ] || echo "  ⚠ 已指定 --engine 但 fruc_backend=vfg：忽略（VFG 包不含 engines/）"
 fi
 cp third_party/material-icons/materialdesignicons-webfont.ttf "$STAGE/fonts/"
+# 桌面集成（install.sh 用它写 ~/.local/share/applications/：模板 .desktop.in
+# + 图标 svg/png）——放包根的 data/，install.sh 按 $SRC/data/ 找。
+rm -rf "$STAGE/data"; cp -r "$PROJECT_ROOT/data" "$STAGE/data"
 cp "$CLIENT_DIST/src/client/"*.qm "$STAGE/translations/"
 
 # ── 6. 许可 + README + tarball ──────────────────────────────────────

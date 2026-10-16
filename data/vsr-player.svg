@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- vsr-player 图标（**占位**：用户 2026-10-17 决定后续做正式版）：
+     深色圆角底 + 播放三角 + 四角"放大/超分"括角。矢量是单一事实源——改这里后
+     跑 scripts/render-icon.sh 重新生成 data/vsr-player.png（hicolor 用）。 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"
+     viewBox="0 0 512 512" role="img" aria-label="VSR Player">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2130"/>
+      <stop offset="1" stop-color="#0d1119"/>
+    </linearGradient>
+    <linearGradient id="play" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8ae9ff"/>
+      <stop offset="1" stop-color="#3aa5ff"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.03"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="url(#bg)"/>
+  <rect x="24.5" y="24.5" width="463" height="463" rx="103.5"
+        fill="none" stroke="url(#edge)" stroke-width="1"/>
+
+  <!-- 四角括角：暗示"放大 / 超分" -->
+  <g stroke="#5fd8ff" stroke-opacity="0.55" stroke-width="18"
+     stroke-linecap="round" fill="none">
+    <path d="M120 176 L120 132 Q120 120 132 120 L176 120"/>
+    <path d="M336 120 L380 120 Q392 120 392 132 L392 176"/>
+    <path d="M392 336 L392 380 Q392 392 380 392 L336 392"/>
+    <path d="M176 392 L132 392 Q120 392 120 380 L120 336"/>
+  </g>
+
+  <!-- 播放三角（round join 让三个角是圆的） -->
+  <path d="M212 168 L212 344 Q212 366 231 355 L356 272 Q374 260 356 248
+           L231 157 Q212 146 212 168 Z"
+        fill="url(#play)" stroke="url(#play)" stroke-width="10"
+        stroke-linejoin="round"/>
+</svg>

@@ -17,6 +17,8 @@
 #   ~/.local/bin/vsr-player、mpv-vsr        # RPATH=$ORIGIN/../lib/vsr-player
 #   ~/.local/lib/vsr-player/                # 捆绑库 + engine + VFX（共用）
 #   ~/.local/share/vsr-player/fonts/        # 图标字体（main.cpp fallback）
+#   ~/.local/share/applications/            # 桌面入口（应用菜单/启动器可见）
+#   ~/.local/share/icons/hicolor/…/apps/    # 桌面图标（svg + 512 PNG）
 #   ~/.local/bin/translations/              # 翻译（main.cpp fallback）
 set -euo pipefail
 
@@ -63,7 +65,7 @@ fi
 echo "=== vsr-player install (mode=$MODE, src=$SRC) ==="
 
 # ── 1. 系统依赖检查（只检测提示，不安装）────────────────────────────
-echo "--- [1/5] system check ---"
+echo "--- [1/6] system check ---"
 OK=1
 if ldconfig -p 2>/dev/null | grep -q "libcuda\.so\.1" || \
    find /usr/lib* -name "libcuda.so.1" 2>/dev/null | grep -q .; then
@@ -108,7 +110,7 @@ if [ "$OK" -eq 0 ]; then
 fi
 
 # ── 2. 复制自建部分 ──────────────────────────────────────────────────
-echo "--- [2/5] install binaries + bundled libs ---"
+echo "--- [2/6] install binaries + bundled libs ---"
 mkdir -p "$BIN_DIR" "$LIB_DIR" "$FONT_DIR" "$BIN_DIR/translations"
 cp "$GUI_BIN" "$BIN_DIR/vsr-player" && chmod +x "$BIN_DIR/vsr-player"
 echo "  ✅ $BIN_DIR/vsr-player"
@@ -150,7 +152,7 @@ if [ -d "$QT_SRC" ]; then
 fi
 
 # ── 3. engine + 字体 + 翻译 ─────────────────────────────────────────
-echo "--- [3/5] engine + fonts + translations ---"
+echo "--- [3/6] engine + fonts + translations ---"
 # 后端推断（**推断，不是元数据**）：没有 backend 标记文件，用已有信号判断——
 # 捆绑了 libnvinfer.so.11 ⇒ 该包具备 RIFE/TensorRT 能力（rife 源码构建或 rife
 # tarball），此时缺 engine 才是真问题；没有 TRT 库 ⇒ VFG-only 包（发行默认），
@@ -184,11 +186,40 @@ if ls "$TR_SRC"/*.qm >/dev/null 2>&1; then
     echo "  ✅ 翻译 → $BIN_DIR/translations/"
 fi
 
-# ── 4. VFX SDK（NVIDIA 官方 wheel，纯下载）──────────────────────────
+# ── 4. 桌面集成（应用菜单/启动器入口 + 图标）─────────────────────────
+# 入口内容 = data/vsr-player.desktop.in（单一事实源，含中英 Name/Comment），
+# 这里只把 @EXEC@ 换成安装后的绝对路径（不依赖 PATH）。图标装进 hicolor
+# （scalable SVG + 512 PNG，DE 自己挑）。缓存刷新是 best-effort：命令缺失
+# （非 KDE / 无 gtk 工具）不算安装失败。
+echo "--- [4/6] desktop integration ---"
+DESKTOP_IN="$SRC/data/vsr-player.desktop.in"
+APPS_DIR="$HOME/.local/share/applications"
+ICON_BASE="$HOME/.local/share/icons/hicolor"
+if [ -f "$DESKTOP_IN" ]; then
+    mkdir -p "$APPS_DIR" "$ICON_BASE/scalable/apps" "$ICON_BASE/512x512/apps"
+    sed "s|@EXEC@|$BIN_DIR/vsr-player|g" "$DESKTOP_IN" \
+        > "$APPS_DIR/vsr-player.desktop"
+    echo "  ✅ 应用入口 → $APPS_DIR/vsr-player.desktop"
+    if [ -f "$SRC/data/vsr-player.svg" ]; then
+        cp "$SRC/data/vsr-player.svg" "$ICON_BASE/scalable/apps/vsr-player.svg"
+    fi
+    if [ -f "$SRC/data/vsr-player.png" ]; then
+        cp "$SRC/data/vsr-player.png" "$ICON_BASE/512x512/apps/vsr-player.png"
+    fi
+    echo "  ✅ 图标 → $ICON_BASE/{scalable,512x512}/apps/vsr-player.*"
+    update-desktop-database "$APPS_DIR" 2>/dev/null || true
+    gtk-update-icon-cache -q -t -f "$ICON_BASE" 2>/dev/null || true
+    kbuildsycoca6 --noincremental 2>/dev/null \
+        || kbuildsycoca5 --noincremental 2>/dev/null || true
+else
+    echo "  ⚠ 缺 $DESKTOP_IN（旧包不含 data/）→ 跳过桌面入口"
+fi
+
+# ── 5. VFX SDK（NVIDIA 官方 wheel，纯下载）──────────────────────────
 # ⚠ 策略：**下载/提取失败一律报错退出（exit 1）**，不静默降级。
 # 理由（2026-10-17 用户决定）：VFX 缺失时 VSR 会"静默直通"——脚本却 exit 0，
 # 用户很容易以为装好了，超分其实没生效。要么装成，要么明确失败。
-echo "--- [4/5] VFX SDK check ---"
+echo "--- [5/6] VFX SDK check ---"
 vfx_fail() {   # VFX 不可用 → 明确报错并退出（手动方式一并给出）
     echo "  ❌ VFX SDK 不可用：$*" >&2
     echo "     手动方式：从 https://pypi.nvidia.com/nvidia-vfx/ 下载 manylinux x86_64 wheel，" >&2
@@ -296,13 +327,13 @@ if [ "$VFX_READY" -eq 0 ]; then
 fi
 
 # ── 5. 验证 + 摘要 ──────────────────────────────────────────────────
-echo "--- [5/5] verify ---"
+echo "--- [6/6] verify ---"
 LDD_MISSING="$(ldd "$BIN_DIR/vsr-player" 2>/dev/null | grep "not found" | head -3 || true)"
 if [ -n "$LDD_MISSING" ]; then
     echo "  ⚠ vsr-player 依赖缺失:"; echo "$LDD_MISSING"
 fi
 [ -f "$LIB_DIR/libnvinfer.so.11" ] && RIFE_TRT="✅" || RIFE_TRT="❌"
-# 摘要里的 TRT 字段：无 TRT 库 = VFG-only 包（HAS_TRT 在上方 [3/5] 由同一信号推断），
+# 摘要里的 TRT 字段：无 TRT 库 = VFG-only 包（HAS_TRT 在上方 [3/6] 由同一信号推断），
 # 显示后端名而不是看起来像故障的 "TRT:❌"。
 if [ "$HAS_TRT" -eq 1 ]; then
     TRT_TAG="TRT:$RIFE_TRT"
@@ -324,5 +355,6 @@ if [ -f "$LIB_DIR/rife_full_fp16.engine" ]; then
     LIBS_DESC="捆绑依赖 + VFX + RIFE engine"
 fi
 echo "  库:   $LIB_DIR/（$LIBS_DESC）"
+echo "  入口: 应用菜单/启动器 → VSR Player"
 echo "运行: vsr-player <视频或目录>"
 echo "（若 PATH 无 $BIN_DIR：export PATH=\"\$PATH:$BIN_DIR\"）"

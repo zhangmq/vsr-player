@@ -23,6 +23,7 @@ NVIDIA Video Effects SDK 提供了相同的底层 AI 模型，也有 Linux 版�
 - **自适应缩放** — 按视口尺寸自动选择超分倍率
 - **播放列表与播放控制** — 目录加载、循环模式、倍速、音视频同步（mpv 承载）
 - **远程控制** — Unix socket JSON IPC；独立 `mpv-vsr` CLI
+- **桌面集成** — 应用菜单/启动器入口（随包分发图标、可设为视频/音频默认打开方式）
 
 ## 测试现状
 
@@ -109,6 +110,8 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 tar -xJf vsr-player-<ver>-linux-x86_64[-rife].tar.xz   # 默认 = VFG 后端；-rife 额外含 TensorRT 11 与 RIFE 引擎；full 变体（-full，可与 -rife 叠加）仅源码自建
 ./install.sh                         # 安装到 ~/.local，无需 sudo
 ```
+
+安装会一并加好**桌面集成**：应用菜单/启动器里出现 **VSR Player**（可固定到任务栏、可设为视频/音频文件的默认打开方式），图标随包分发（当前为占位图标，后续替换 `data/vsr-player.svg` 即可）。
 
 判断用哪个：`pkg-config --modversion Qt6Quick`（≥ 6.12 → standard；否则用 `--variant=full` 自建——本项目不再分发预编译 full 包）。下限是 6.12 的原因：发布包用 **Qt 6.12.0** 编出，而 Qt 6 的二进制兼容是**单向**的（用 6.x 编的包只能在 6.x 及更新的 6.y 上跑，更旧的 6.y 无保证）。
 
