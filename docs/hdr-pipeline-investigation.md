@@ -449,3 +449,767 @@ sRGB `105.4` / PQ-BT2020 `102.8`（≈一致 → 往返正确）/ BT2020-Linear 
 hdr10）/`SPIKE_CS`（srgb|pq|linear|p3）/`SPIKE_SCREEN`（按名字选屏）/`SPIKE_VKEXT`（instance
 加 `VK_EXT_swapchain_colorspace`）/`SPIKE_FORCE`（强设 QRhi 格式）；输出 `QRhiSwapChain::format()`、
 `isFormatSupported` 三项、`surfaceForWindow`。**必须配 `QSG_RHI_BACKEND=vulkan`**。
+
+## 12. 探测链路已落地（2026-10-17，分支 feat/10bit-hdr-path）
+
+**已实现（零行为变更：只探测 + 打日志，不改任何上屏行为）**
+
+1. `src/client/VulkanContext.cpp`：instance 扩展加 **`VK_EXT_swapchain_colorspace`**
+   （先枚举可用性再决定加入——loader 不支持时只记日志，绝不让 `vkCreateInstance` 失败）。
+   未启用时 `vkGetPhysicalDeviceSurfaceFormatsKHR` 只返回 SRGB 色彩空间 →
+   Qt 的 `isFormatSupported(HDR10/scRGB/P3)` 恒 false。
+2. `src/client/HdrOutput.{h,cpp}`：首帧（`afterRendering` 第一帧，此时 swapchain 才绑定
+   窗口）探测 `QRhiSwapChain::isFormatSupported()/format()/hdrInfo()`；`screenChanged`
+   重探；全部只打日志。`<rhi/qrhi.h>` 需要 qtbase 私有头目录（meson `_qt6_priv_inc`
+   追加了 `<inc>/QtGui/<ver>/QtGui`，这是 Qt6::GuiPrivate 的标准布局）。
+3. `src/client/WaylandColorManagement.{h,cpp}` → `libvsr-color-wayland.so`
+   （独立 `wl_display` 连接 + 后台线程 dispatch，**不碰 Qt 的连接/事件线程**；
+   与 `WaylandIdleInhibit.cpp` 同一"独立模块 + dlopen、失败即降级"模式）：
+   bind `wp_color_management_v1` → 每个 `wl_output` 取 `get_image_description()`
+   → `get_information()` → 解析 primaries/tf/luminances/target_*（与 mpv
+   `wayland_common.c` 的 `info_*` 监听一一对应）。`HdrOutput` 按
+   `QScreen::name()`（= `wl_output.name`）查询；描述变化回调 → `QMetaObject::
+   invokeMethod(..., QueuedConnection)` 转投 GUI 线程重新评估。
+
+**实测（KWin 6.8，DP-3 = LG 27" ULTRAFINE，DP-2 = DELL P2415Q）**
+
+| 来源 | DP-3（HDR + WCG 开） | DP-2（HDR/WCG 均 incapable） |
+|---|---|---|
+| `isFormatSupported(HDR10/scRGB/P3)`（Qt） | 1 / 1 / 1 | **1 / 1 / 1（完全相同）** |
+| swapchain 实际格式（未请求 HDR） | SDR | SDR |
+| Qt `hdrInfo()` | min 0 / max 1000 nit / sdrWhite 200 | 同（硬编码，两屏一致） |
+| 合成器 output description | **bt2020** / gamma2.2 / min 0 – max **400** nit / ref **124** | **srgb** / gamma2.2 / 0.01 – 200 nit / ref 63 |
+| target(max_cll/fall) | 400 / 400 | 200 / 200 |
+| `kscreen-doctor -o` | HDR enabled、WCG enabled、peak 400、SDR brightness 400 | HDR incapable、WCG incapable |
+
+结论（都改写了 §10.3 的部分措辞）：
+
+- **`isFormatSupported()` 在 Wayland 上是"合成器整体支持"，与窗口在哪块屏无关**：
+  SDR 屏（DP-2）同样返回 HDR10=1。它只能回答"这个环境能不能建 HDR10 swapchain"，
+  **不能**回答"这块屏现在是不是 HDR"（原文档"per-surface"的说法要按此修正：
+  查的确实是该 surface 的 format 列表，但 KWin 对任意 surface 返回的都是全局列表）。
+- 真实差异只在合成器的 **output image description**：primaries（bt2020 vs srgb）、
+  亮度范围（400/124 vs 200/63）、target_*。
+- **mpv 的 `max_luma > ref_luma ⇒ HDR` 判据在本机不成立**：DP-2 也是 200/63
+  （headroom 3.17×），mpv 在 Dell 上同样打印 "Setting preferred transfer to PQ for
+  HDR output"。根因：KWin 的 `reference_lum ≈ max_lum / π`（200/π≈63.7、
+  400/π≈127≈124）——比例是构造出来的，不携带 HDR 信息。
+- KWin 能力：`wp_color_management_v1 v2`，features{parametric、set_primaries、
+  set_luminances、set_mastering、ext_volume、scrgb}（**无 icc、无 set_tf_power、
+  无 windows_bt2100**）；tf 支持 bt1886/gamma22/ext_linear/**st2084_pq**/
+  compound_power_2_4。→ 声明 PQ 可行（`vsr_color_wl_supports_tf(11)==1`）。
+- ⚠ **未验证**：KWin 在 **WCG-only（HDR 关、WCG 开）** 状态下的 output description
+  是 bt2020 还是 srgb。若是 bt2020，"WCG-only 屏"会被我们的判据当成可 HDR 输出
+  （取舍见 §13）。
+- 亮度口径：合成器亮度以 reference_lum 为参考，libplacebo 固定参考白 203 nit →
+  按 mpv `wayland_common.c` `info_done` 的线性缩放换算（`HdrOutput.cpp` 的
+  `PL_SDR_WHITE`）。DP-3 换算后 peak=654.8 nit（原始 400）、DP-2 644.5（原始 200）。
+
+**验证工装**（均在 gitignore 的 `build/scratch/`）
+
+- `hdr_cmspike/cmspike [--watch] [--verbose]`：独立 wayland 客户端直读
+  `wp_color_management_v1`（不依赖 Qt），输出每个 output 的描述与派生判定。
+- `hdr_probe/query_mod DP-3 DP-2`：dlopen 我们的模块做自检（与 app 同一条代码路径）。
+- `hdr_probe/run*.log`：app 启动日志（`hdr probe[...]` / `hdr display[...]`）。
+- 对照：`kscreen-doctor -o`（KWin 的真实 HDR 状态，含 sdrBrightness/peak）、
+  `mpv --fs --fs-screen-name=DP-3 --target-colorspace-hint=yes --vo=gpu-next`（mpv 读到的
+  同一份描述，日志 `[vo/gpu-next/wayland] Preferred surface feedback received`）。
+
+## 13. 待定决策（**已于 §15/§16 关闭**，留档）
+
+1. **HDR 判据（选屏）**：当前实现取"transfer 是 PQ/HLG **或** primaries 宽于
+   sRGB/BT.709 ⇒ 可 HDR 输出"，读不到描述一律 SDR。待定：要不要把 WCG-only 排除
+   （需先做 §12 的 WCG-only 对照实验）；给不给用户显式开关（`--hdr-output=auto|on|off`）。
+2. **内容驱动 vs 显示驱动**：只在 HDR 片源时用 HDR10 swapchain（SDR 片源保持 8-bit
+   现状，切换发生在换片边界），还是"显示器 HDR 就一直 10-bit"。前者与"不改变 SDR
+   现状"一致，但 SDR↔HDR 切换需要重建 swapchain/渲染通道（§11.1 第 8 点）。
+3. **Qt Quick 自己的 UI 在 HDR10 swapchain 上的观感**（Qt 用硬编码 1000/200 nit 假设，
+   Linux 无真实查询）——需目检，必要时上报 Qt。
+
+## 14. 强制 HDR10 切片（实现与验证，2026-10-17）
+
+**范围**：只做"链路打通"的垂直切片——**强制模式**，不做自动决策、不做运行期切换。
+默认行为必须与改动前逐字节一致。
+
+### 14.1 开关与改动点
+
+- 开关：env **`VSR_HDR=off|hdr10`**（默认/空/`off`/`0`/`sdr` → SDR = 现状；未知值记 ERR 后退 SDR）。
+  `hdr10` 时在 `view.show()` **之前**：`setProperty("_qt_sg_hdr_format","hdr10")` +
+  `QSurfaceFormat::setColorSpace(QColorSpace(Primaries::Bt2020, TransferFunction::St2084))`。
+- `src/client/HdrOutput.{h,cpp}`：`requestedModeFromEnv()` / `qtHdrFormatProperty()` /
+  `renderTargetFormatForMode()`（rtImage 用：SDR `R8G8B8A8_UNORM`、HDR10
+  `A2B10G10R10_UNORM_PACK32`）/ `installSwapchainVerification()`（首帧后核对
+  `QRhiSwapChain::format()`，不一致打 ERR，**不自动回退**）。
+- `src/client/Video.{h,cpp}`：新增 `setRenderFormat()` + `renderFormat_/fmt_`；
+  `ensureRenderTarget()` 的早退**同时比较格式**（格式变化即重建，销毁前仍
+  `vkQueueWaitIdle`）；图像/视图/mpv 渲染都用同一格式。
+- `src/client/CompositePipeline.{h,cpp}`：`create(..., VkFormat attachmentFormat)`，
+  render pass attachment 不再硬编码 `B8G8R8A8`（必须匹配 Qt 实际 swapchain：
+  SDR `B8G8R8A8_UNORM` / HDR10 `A2B10G10R10_UNORM_PACK32`）。
+- `src/client/main.cpp`：模式决策 + 属性/色彩空间 + `setRenderFormat` +
+  `comp.create(..., swapchainFmt)` + `mpv.setHdrTarget(...)`（亮度取
+  `hdr::displayInfoFor()` = 合成器描述；读不到记 ERR 并退保守默认 max=1000/min=0）。
+  另外把 loadFile 前的 SKIP_RENDERING pass 从硬编码 `R8G8B8A8` 改成
+  `video->renderFormat()`（否则首帧 mpv 侧格式是错的）。
+- mpv overlay（需 `scripts/build_mpv.sh` 重建）：
+  - `src/mpv/include/mpv/render_vk.h`：`mpv_vulkan_image` 追加 `hdr` / `min_luma` /
+    `max_luma`（0 = SDR，与旧调用方完全兼容）。
+  - `src/mpv/video/out/vulkan/libmpv_vk.c`：`wrap_fbo()` 抄入宿主格式/HDR 目标 →
+    `pl_vulkan_wrap_params.format = p->cur_format`（不再硬编码 RGBA8）；
+    `vk_start_frame()` 的 `*out_fbo.color_space` 在 hdr 时填
+    `{BT_2020, PQ, hdr={min_luma,max_luma}}`（**缓存快路径也带**，mpv 每帧调两次）、
+    SDR 保持 `{0}`；`vk_color_depth()` 按 `cur_format` 返回 10/16/8；
+    格式变化时打一条 `MP_INFO`（见 14.2 的 `libmpv_vk:` 行）。
+- `src/client/MpvController.{h,cpp}`：`setHdrTarget(bool,min,max)` + `render()/skipRender()`
+  填充 `mpv_vulkan_image` 的 HDR 字段（默认 SDR）。
+
+### 14.2 实测（本机：DP-3=LG 400nit HDR 开 / DP-2=Dell 非 HDR；窗口由 KWin 决定落哪块屏）
+
+SDR（默认，`VSR_HDR` 未设）——行为不变：
+
+```
+hdr: off（VSR_HDR 未启用）→ 保持 SDR 8-bit 现状
+render target 2560x1440 fmt=37                     # R8G8B8A8_UNORM
+[mpv info] libmpv_vk: render target fmt=37 hdr=0 color_depth=8 csp=unspecified
+hdr verify: swapchain=SDR == 期望 SDR ✔（screen=DP-2）
+wayland dmabuf create_immed 2560x1440 XR24(0x34325258)   # XRGB8888 = 8-bit
+```
+
+`VSR_HDR=hdr10`：
+
+```
+hdr: 强制 HDR10（VSR_HDR）—— _qt_sg_hdr_format=hdr10, colorSpace=BT.2020/ST2084,
+     rtImage fmt=64, composite attachment fmt=64      # A2B10G10R10_UNORM_PACK32
+mpv HDR target: HDR10 (PQ/BT.2020) (min=0.010 nit max=203.0 nit)
+hdr: mpv target ← 合成器 screen=DP-2 peak=203.0 nit min=0.01 nit（primaries=1 tf=2）
+render target 2560x1440 fmt=64
+[mpv info] libmpv_vk: render target fmt=64 hdr=1 color_depth=10 csp=PQ/BT.2020
+hdr probe[initial]: backend=Vulkan screen=DP-2 swapchain=HDR10 supported{HDR10=1 scRGB=1 P3=1}
+hdr verify: swapchain=HDR10 == 期望 HDR10 ✔（screen=DP-2）
+hdr probe[screen changed]: backend=Vulkan screen=DP-3 swapchain=HDR10 ...   # 换屏后仍是 HDR10
+hdr display[screen changed]: screen=DP-3 primaries=6 tf=2 luminances{min=0.0 max=400.0 ref=400.0}
+     → HDR-capable（primaries=6（宽于 sRGB/BT.709）） mpv口径 peak=203.0 nit min=0.00 nit
+[mpv info] VO: [libmpv] 2880x540 cuda[x2bgr10]
+[mpv status] vsr-status: mode=active scale=3.00 cost=0.9ms fps=25
+wayland: wp_image_description_creator_params_v1.set_primaries_named(6)   # bt2020
+         wp_image_description_creator_params_v1.set_tf_named(11)         # st2084_pq
+         wp_color_management_surface_v1.set_image_description(...) + wp_image_description_v1.ready
+wayland dmabuf create_immed 2560x1440 XB30(0x30334258)   # XBGR2101010 = 10-bit
+```
+
+- **0** 条 VUID/validation/"Failed to"/`[mpv error]`/`[mpv warn]`。
+- 10-bit 与 PQ 声明都有直接证据（dmabuf fourcc XB30 vs XR24；协议 primaries=6/tf=11 + ready）。
+- `peak=203.0 nit` 不是"屏只有 203 nit"：这是 mpv/libplacebo 的**参考白口径**
+  （`PL_COLOR_SDR_WHITE=203`），与 mpv `wayland_common.c` 对同一描述算出的
+  `pl_color_space.hdr.max_luma` 完全一致（DP-3：`(400-0)*203/400 = 203`），
+  可直接喂给 libplacebo；填原始 400 反而会多出 ~2× headroom。
+- 切片把窗口先放在 DP-2（Dell，非 HDR）再被 KWin 移到 DP-3；`isFormatSupported` 是
+  "合成器整体支持"（两块屏都返回 1），**不能**判断某块屏是否真 HDR——这正是下一步
+  "内容/显示驱动决策"要解决的问题（§13）。
+
+### 14.3 本切片**未做**（后续）
+
+1. 自动决策（HDR 片源 or HDR 屏 → 自动开）与运行期切换（切格式需重建 swapchain +
+   Qt 的 swapchain render pass + 我们的 composite render pass）。
+2. 换屏后重新读显示能力并更新 mpv target（本切片只在启动时读一次；DP-2→DP-3 的例子已证明必要）。
+3. 色彩空间声明的动态更新（`QSurfaceFormat::setColorSpace` 运行期改，Qt 有 pending 机制）。
+4. HDR10 静态元数据（MaxCLL/MaxFALL/母版显示）的上报。
+5. `vk_color_depth()` 的顺序依赖：vo_gpu 只在 `resize()` 里读它（决定 dither 深度，
+   不改格式），而 `resize()` 可能早于首个 `wrap_fbo` → 首次可能读到默认 8；窗口尺寸
+   变化后会恢复正确（本切片接受，已在代码注释里写明）。
+
+## 15. 选屏判据修正：只能用 **surface** preferred 描述（2026-10-17 实测）
+
+§12 的判据（读 output image description 的 primaries）**被本轮实测推翻**：output
+description 分不出 HDR 开关状态。改用 **合成器给这块表面的 preferred 描述**
+（= mpv `--target-colorspace-hint` 用的同一个信号）后判据才成立。
+
+**对照实验（`kscreen-doctor output.DP-3.hdr.enable|disable` 切换，cmspike --watch 观察）**
+
+| 状态（同一块 LG，窗口在 DP-3） | output description | **surface preferred** | gamut_area | 判定 |
+|---|---|---|---|---|
+| HDR enabled | bt2020 / gamma2.2 / 0–400 / ref400 | **bt2020**(named=6) / gamma2.2 / 0–400 / ref124 | **0.2119** | HDR ✔ |
+| HDR disabled（WCG 仍开） | bt2020 / gamma2.2 / 0–400 / ref400（**与上行逐字段相同**） | **bt709**(named=1) / gamma2.2 / 0.01–200 / ref63 | **0.1120** | SDR ✔ |
+| DP-2（Dell，HDR/WCG 均 incapable） | srgb / gamma2.2 / 200 / ref200 | srgb / gamma2.2 / 200 / ref63 | 0.1120 | SDR ✔ |
+
+- **判据 = "transfer 是 PQ/HLG" 或"基色三角面积明显大于 sRGB"**
+  （面积：sRGB/BT.709=0.1120、DCI-P3≈0.1521、BT.2020=0.2119；阈值 1.15×sRGB）。
+  用面积而不是逐基色枚举：面板无关、无需维护各标准值表。
+- ⚠ `reference_lum` **不可用作判据**：同一状态下会在 `max/π`（63/124）与
+  `sdrBrightness`（200/400）之间变（取决于客户端有没有声明色彩空间 / KWin 内部
+  重算），而 `max>ref` 的 mpv 判据因此在本机不成立。
+- 输出能力（400 nit、target_max）仍可从 surface preferred 拿到；`min/max/ref`
+  换算到 libplacebo 参考白（203）的口径与 mpv `wayland_common.c` info_done 一致
+  → DP-3 HDR 开且 ref=124 时 peak=654.8 nit（填给 mpv 是对的，别当物理 nit 显示）。
+
+**实现：`src/client/WaylandColorFeedback.{h,cpp}` → `libvsr-color-feedback.so`**
+（**取代** §12 的 `WaylandColorManagement`/`libvsr-color-wayland.so`，后者已删除）
+
+- 为什么不能独立连接：surface feedback 必须在 **Qt 自己的 wayland 连接**上取
+  （wl_surface 是连接私有的）→ 用 Qt 导出的协议封装
+  `QtWayland::wp_color_manager_v1::get_surface_feedback()`（经
+  `QWaylandDisplay::colorManager()` 拿管理器）。
+- ⚠ **Qt 的便利类没有导出**：`ColorManagementFeedback` / `ImageDescriptionInfo` /
+  `ColorManager` 都无 export 宏（`staticMetaObject` 都取不到）→ dlopen 时
+  `undefined symbol`。只能基于**导出的协议封装**自己写 listener/解析（约 60 行）。
+- ⚠ **初始 preferred 要主动取**：协议只在变化时发 `preferred_changed`；
+  初次必须自己 `get_preferred()`（mpv 同样做法）。漏了会一直 `valid=0`。
+- 回调在 Qt 的 wayland 事件线程 → 状态用 mutex；对应用的监听经
+  `QMetaObject::invokeMethod(..., QueuedConnection)` 转投 GUI 线程。
+- 实测：`libvsr-color-feedback.so` 在 DP-3（HDR）读到 `named_prim=6`,
+  `gamut_area=0.2119`；WCG-only 与 DP-2 读到 `named_prim=1, gamut_area=0.1120`。
+
+**运行期重新声明色彩空间（切片 ⑧ 的关键拼图，已验证）**
+
+`QtWaylandClient::QWaylandWindow::initializeColorSpace()`（导出符号，dlopen 模块里
+可调）会读 `window()->requestedFormat().colorSpace()` 并重新下发描述 →
+`QWindow::setFormat(PQ)` + 调它 = **运行期把表面声明成 PQ/BT.2020**。
+`WAYLAND_DEBUG=1` 实测（`build/scratch/hdr_probe/cf_test pq`，协议在 t=2.5s 出现）：
+
+```
+-> wp_color_manager_v1.create_parametric_creator(...)
+-> ...set_primaries_named(6)      # bt2020
+-> ...set_tf_named(11)            # st2084_pq
+-> ...create(new id wp_image_description_v1)
+<- wp_image_description_v1.ready(15880)
+-> wp_color_management_surface_v1.set_image_description(<desc>, 0)
+```
+
+swapchain 侧的运行期切换（未实现，结论来自 Qt 源码）：`applySwapChainFormat()`
+只在 swapchain 创建时读一次 `_qt_sg_hdr_format`（`qsgrenderloop.cpp` 的
+`ensureRhi`）；运行期要自己
+`sc->setFormat(QRhiSwapChain::HDR10)` → `sc->setRenderPassDescriptor(
+sc->newCompatibleRenderPassDescriptor())` → `sc->createOrResize()`。
+`qrhivulkan.cpp` 的 `createOrResize()` 会刷新 `rtWrapper` 的 render pass
+（`rtWrapper.setRenderPassDescriptor(m_renderPassDesc)`）→ **Qt 每帧取
+`currentFrameRenderTarget()` 即拿到新描述符**（`QQuickWindowPrivate::
+rpDescForSwapchain` 只在 ensureRhi/清理处出现，无运行时读者）→ 理论可行，
+但**待实测**（还需同时重建我们的 composite pipeline 与 rtImage、重设
+`Video::setRenderFormat` + `mpv.setHdrTarget`）。
+
+**状态（2026-10-17）**：① instance 扩展 ✔ ② swapchain 能力探测 ✔
+③ 显示能力（surface preferred）✔ ④ 强制 HDR10 上屏 ✔（`VSR_HDR=hdr10`，§14）
+⑤⑥⑦ 10-bit 渲染链路 ✔ ⑧ 运行期切换与自动决策 **未做**（设计已定，见上）。
+
+## 16. 自动决策 + 运行期切换（2026-10-17，已实现并验证）
+
+§11.1 的第 ⑧ 步与"自动决策"本轮落地。策略由 env `VSR_HDR` 控制：
+
+| 值 | 行为 |
+|---|---|
+| `off` | 永远 SDR，且**完全不碰色彩空间声明**（= §14 之前的行为，逐字节不变） |
+| `auto`（默认） | **内容 HDR × 显示能力 HDR** 才切 HDR10；否则 SDR |
+| `hdr10` | 强制 HDR10（启动即切，验证/用户覆盖） |
+
+判据（`hdr::installPolicy` 里的状态机，GUI 线程）：
+- **内容 HDR** = mpv `video-params/gamma` ∈ {`pq`,`hlg`}（`PlayerViewModel::videoHdr`
+  观察器，`videoHdrChanged` 信号触发重新决策）。
+- **显示能力 HDR** = 合成器 surface preferred 描述（§15）→ `hdr_volume`
+  （PQ/HLG 传输函数 或 基色三角面积 > 1.15×sRGB）。
+- 读不到显示描述 / 内容非 HDR / 屏为 SDR 或 WCG-only → 一律 SDR（不假设）。
+
+**运行期切换 `hdr::applyMode(window, mode)`**（两步都实测通过）：
+
+1. `QWindow::setProperty("_qt_sg_hdr_format", ...)`（供 Qt 将来自己重建 swapchain 时沿用）
+   + `QSurfaceFormat::setColorSpace(PQ/BT2020 | sRGB)` + **重新下发
+   `wp_color_management` 声明**（`redeclareWindowColorSpace()` →
+   `QtWaylandClient::QWaylandWindow::initializeColorSpace()`，§15 有协议级证据）。
+2. `QRhiSwapChain::setFormat()` + `setRenderPassDescriptor(
+   newCompatibleRenderPassDescriptor())` + `createOrResize()`（Qt 的 per-frame
+   render target 在 createOrResize 里刷新，源码依据见 §15）。
+3. 应用侧钩子 `rebuildRenderPath`：`CompositePipeline::create(..., 新 attachment 格式)`
+   （可重入：`vkDeviceWaitIdle` 后销毁旧 render pass/pipeline）+ `Video::setRenderFormat`
+   （置脏 → 下一帧**立即**重建 rtImage；否则 mpv 会用新格式写旧 image）
+   + `video->setCompositeObjects()`；`updateMpvTarget`：
+   `mpv.setHdrTarget(mode==Hdr10, minNits, peakNits)`（亮度取自 §15 的合成器快照）。
+
+**实测（`VSR_HDR=auto`，HDR 片源 `build/scratch/hdr_bars10s.mp4`）**
+
+```
+795ms  hdr applyMode: swapchain SDR → HDR10（已重建，含 render pass）
+795ms  hdr policy[content]: → HDR10（内容 HDR × 显示 HDR（gamut_area=0.2119，peak=203.0 nit））
+804ms  hdr: 渲染链路 → HDR10（composite attachment=64 rtImage=64）
+804ms  mpv HDR target: HDR10 (PQ/BT.2020) (min=0.000 nit max=203.0 nit)
+805ms  render target 2560x1440 fmt=64
+       libmpv_vk: render target fmt=64 hdr=1 color_depth=10 csp=PQ/BT.2020
+       VO: [libmpv] cuda[x2bgr10] / vsr-status: mode=active（帧继续、25fps）
+```
+反向（RPC `loadfile` 切到 SDR 片源）：`hdr applyMode: swapchain HDR10 → SDR` →
+渲染链路/ mpv target / rtImage 全部回 SDR（`fmt=37 hdr=0 color_depth=8`），无错误。
+不满足条件时（内容 HDR 但 LG 的 HDR 关掉 = WCG-only，`gamut_area=0.1120`）**不切换**、
+继续 SDR —— 即"非 HDR 屏保持现状"。
+
+**⚠ 本轮踩到并修掉的真 bug（校验层抓到的）**：`CompositeRenderNode` 只在创建时
+缓存 `pipe`/`pipeLayout`，而运行期切换会销毁并重建 composite pipeline → 在"没有
+`updatePaintNode` 的帧"里节点会 `vkCmdBindPipeline` 一个**已销毁句柄**
+（`VUID-vkCmdBindPipeline-pipeline-parameter: pipeline Invalid VkPipeline Object`）。
+修法：节点持 `Video *owner`，**渲染阶段**从 owner 读当前 pipeline/layout
+（`compositePipeline()`/`compositePipelineLayout()`），不再缓存。
+校验层对照：`VSR_HDR=off` 与 `VSR_HDR=auto`（含运行期切换）的 VUID 集合与计数
+**完全一致**（各 9 类）——切换不引入新校验错误。
+
+**仍未做**：HDR10 静态元数据（MaxCLL/MaxFALL）上报；Qt Quick 自己的 UI 在
+HDR10 swapchain 上的观感需**目检**（Qt 在 Linux 用硬编码 1000/200 nit 假设）；
+`vk_color_depth()` 的 dither 深度在"只切换不 resize"时可能滞后（仅影响 dither）；
+运行期切换的第一帧会有一次 swapchain 重建（无黑帧，但需目检确认无闪烁）。
+
+## 17. "颜色偏红"根因与修复（2026-10-17，用户实测报告）
+
+**现象**：同一 HDR 片源（Fallout 2160p HDR10，4K 24fps），我们的 app 画面**偏红/偏暗**，
+mpv 原生（`--vo=gpu-next --target-colorspace-hint=yes`）正常。
+
+**根因（两个叠加，均已修）**
+
+1. **FBO 色彩空间被丢掉 → gl_video 把 PQ 内容烘成 gamma2.2 写进 PQ swapchain。**
+   generic libmpv 渲染路径 `video/out/gpu/libmpv_gpu.c` 的 `render()` 自己拼
+   `struct ra_fbo {.tex, .flip}`，**丢掉** backend（`libmpv_vk.c` 的
+   `vk_start_frame()`）填的 `ra_fbo.color_space` → gl_video 视 FBO 色彩空间为
+   "未指定" → `pass_colormanage()` 对 HDR 内容回退 `dst.transfer = gamma22`
+   （源码：`if (dst.transfer == UNKNOWN) { dst.transfer = src.transfer;
+   if (linear||hdr) dst.transfer = GAMMA22; }`）→ gamma2.2 编码的字节被合成器
+   按 PQ 解释 → 暗 + 高光过饱和（观感"偏红"）。
+   **修法**：宿主显式声明目标色彩空间 —— `MpvController::setHdrTarget()` 在 HDR 时
+   `set target-trc=pq` + `target-prim=bt.2020`（gl_video 的这两个选项**优先于**
+   fbo csp）→ 实测颜色恢复正常（R/G 0.858→0.904，高光由 (214,156,61) 回到
+   (181,163,127)，mpv 参照 (199,174,129)）。
+2. **预 tone map 到 203nit**（同时修掉）：一度把合成器亮度按 libplacebo 参考白
+   缩放后填进 `ra_fbo.color_space.hdr.max_luma=203` → gl_video 本地把 HDR 压到
+   SDR 白 → 暗 2.4 倍。**不要**把该值当峰值；`target-peak` 保持 auto
+   （= 不预 tone map，交给合成器；与 mpv hint 模式一致）。
+
+**剩余差异：我们自己下发 `wp_color_management` PQ 描述会让 KWin 明显变暗**
+
+同尺寸（视频区宽 2564px）、播放中截图、中心区挖掉后的实测：
+
+| 配置 | meanLum | R/G | B/G |
+|---|---|---|---|
+| mpv `--autofit=2560x1440`（hint=yes，**从不 set_image_description**） | **20.74** | 0.922 | 0.906 |
+| ours 默认（**不自己声明**，靠 swapchain `VkColorSpace=HDR10_ST2084`） | **19.64** | 0.929 | 0.918 |
+| ours `VSR_HDR_DECLARE=1`（自己声明 PQ/BT.2020 + luminances 0/10000/203） | 13.13 | 0.891 | 0.896 |
+
+- 关键对照是**同一 app、同一窗口/尺寸/内容，只切"是否声明"**：19.64 vs 13.13
+  → 声明 PQ 使 KWin 走另一条映射路径（忠实映射 PQ → 更暗）；mpv 在 Wayland 下
+  **从不自己声明**（实测：只 `get_surface_feedback/get_preferred/get_information`，
+  没有 `get_surface`/`set_image_description`），走的是"未声明 + swapchain 色彩空间"
+  这条路径。
+- 因此默认改为**不自己声明**（`VSR_HDR_DECLARE=1` 可切回声明路径对比）。
+  声明路径语义更"自洽"（buffer 与声明一致），但在这台 KWin 上明显更暗；
+  另外 `luminances(0,10000,203)` 的有无对结果**没有影响**（14.01 vs 14.01 实测）。
+- ⚠ 若采用"不声明"，Qt 自己的 UI 仍按窗口 format 的 PQ 编码（观感与视频一致，
+  但整块 surface 的最终解释依赖合成器默认）——**需目检**。
+
+**方法论教训（本轮踩过，写下来避免重犯）**
+- 亮度/颜色对比必须**同窗口尺寸**（我们 1280x720 *逻辑*@dpr2 = 2560x1440 设备像素；
+  mpv 的 `--autofit` 是设备像素量级，用 `--autofit=2560x1440` 才能对齐）+
+  **播放中截图**（暂停会显示播放按钮 overlay，`spectacle -a` 抓到的中心区被污染）
+  + 统计时**挖掉中心区**。
+- `spectacle -a` 会抓到"当前活动窗口"：mpv 因参数错误退出/启动失败时会抓到别的窗口
+  （本轮两次抓到白窗口），必须自检抓到的图像内容。
+- 用户报告优先当"测量"，不要急着用自己口径不干净的截图反驳或确认。
+
+**附：本轮工具/复现**
+- 抓帧：`build/scratch/hdr_color/`（`same_mpv_2560.png` / `same_ours_nodecl.png` /
+  `same_ours_decl.png` + 同名 `.log`）；脚本 `/tmp/shot.sh`（launch → wait → `spectacle -a`
+  → 自检图像非纯色 → kill）。
+- 诊断日志：`vf_vsr.c`/`vf_vfg.c` 的 `yuv->rgb: bd=.. matrix=.. range=.. src sys=.. primaries=..`
+  （本轮证明矩阵取值**是对的**：BT.2020_NC/limited/primaries=bt2020）。
+
+### 17.1 修正：默认**声明 PQ**（用户目检 2026-10-17）
+
+上表的"亮度更高"结论**是错的**，已按目检改正：
+
+| 配置 | 用户目检 |
+|---|---|
+| 不下发自定义描述（对齐 mpv hint） | **画面发灰**（PQ 缓冲被按 gamma2.2 解释：更亮但饱和/对比塌陷） |
+| 自己声明 PQ/BT.2020 + luminances（mpv 语义） | **画面正常** ✔ |
+
+→ **默认改为声明**（`VSR_HDR_DECLARE=0` 才是"不声明"的对照路径）。
+教训写在这里避免重犯：**平均亮度不是正确性判据**——"发灰"恰恰表现为均值更高；
+颜色/亮度对比必须配合**目检**或饱和度/对比度指标，不能只看 meanLum。
+（mpv 自己窗口看着正常是因为它走的是另一条 surface 路径（p010 + 未声明），
+不能据此推断"我们的窗口不声明也对"。）
+
+## 18. 交接（2026-10-17 会话末；供压缩上下文后直接续做）
+
+### 18.1 分支与工作树状态
+
+- 分支 `feat/10bit-hdr-path`（已推送的前 4 个 commit 是 10-bit 通路 + 文档：`6b92b02`/`5a81395`/`aeef6eb`/`63f30b4`）。
+- **本轮全部改动尚未提交**（用户未说"提交"）。改动清单：
+  - 新增：`src/client/HdrOutput.{h,cpp}`（能力探测 + 策略状态机 + 运行期切换）、
+    `src/client/WaylandColorFeedback.{h,cpp}`（→ `libvsr-color-feedback.so`：读 surface
+    preferred 描述 + 按 mpv 语义声明 HDR10；协议代码自生成）。
+  - 修改：`VulkanContext.{h,cpp}`（instance 加 `VK_EXT_swapchain_colorspace`）、
+    `main.cpp`（策略接线 + 钩子）、`Video.{h,cpp}`（`setRenderFormat` 置脏立即重建 +
+    节点渲染期取 pipeline）、`CompositePipeline.{h,cpp}`（`create(..., VkFormat)` 可重入）、
+    `MpvController.{h,cpp}`（`setHdrTarget` → `target-trc/prim`）、`meson.build`、
+    `PlayerViewModel.{h,cpp}`（`videoHdr` = `video-params/gamma∈{pq,hlg}`）、
+    `src/mpv/include/mpv/render_vk.h`（`mpv_vulkan_image` 加 hdr/min/max）、
+    `src/mpv/video/out/vulkan/libmpv_vk.c`（wrap 用宿主格式/`color_depth` 按格式/
+    亮度仅诊断）、`src/mpv/video/filter/vf_vsr.c`+`vf_vfg.c`（**临时诊断日志**
+    `yuv->rgb: bd=.. matrix=.. range=.. src sys=.. primaries=..`，定位完可删）。
+  - 文档：本文件 §12–§18、`AGENTS.md` HDR 小节。
+
+### 18.2 运行开关
+
+- `VSR_HDR=off|auto|hdr10`（**默认 auto**：内容 HDR × 显示能力 HDR 才切 HDR10；
+  `off` 完全不碰色彩空间声明 = 逐字节现状）。
+- `VSR_HDR_DECLARE`：**默认 1 = 我们自己下发 PQ/BT.2020 + luminances(0,10000,203)**
+  （用户目检"画面正常"）；`=0` = 不下发（对齐 mpv hint 路径，本机**画面发灰**，仅作对照）。
+
+### 18.3 本轮已修的真 bug
+
+1. **`CompositeRenderNode` 缓存 pipeline 句柄** → 运行期切换后在没有 `updatePaintNode`
+   的帧里绑已销毁 pipeline（校验层 `VUID-vkCmdBindPipeline-pipeline-parameter`）。
+   修法：节点持 `Video*`，渲染阶段读 `compositePipeline()/compositePipelineLayout()`。
+2. **HDR 目标色彩空间没送到 gl_video**（用户报告的"偏红"根因）：
+   `video/out/gpu/libmpv_gpu.c` 的 `render()` 自己拼 `ra_fbo {.tex,.flip}`，**丢掉**
+   `libmpv_vk.c` 的 `vk_start_frame()` 填的 `color_space` → gl_video 对 HDR 内容回退
+   `dst.transfer=GAMMA22` → PQ 内容被烘成 gamma2.2 写进 PQ swapchain（暗 + 高光过饱和）。
+   修法：宿主用 mpv 选项声明目标（`MpvController::setHdrTarget()` → `target-trc=pq`
+   + `target-prim=bt.2020`）。**上游 `libmpv_gpu.c` 未改**（说明写在 `libmpv_vk.c` 注释里）。
+3. 副产物：曾把合成器亮度按参考白缩放填进 `ra_fbo.color_space.hdr.max_luma=203`
+   → 本地预 tone map 到 SDR 白（暗 2.4 倍）；已去掉（该值当前**仅诊断**）。
+
+### 18.4 用户目检结论（权威）
+
+- 声明 PQ：**画面正常** ✔（当前默认）；不声明：**画面发灰** ✗。
+- 与 `mpv --vo=gpu-next --target-colorspace-hint=yes` 对比，**mpv 的对比度仍略好**。
+
+### 18.5 下一步（按优先级，先分析已给出）
+
+1. ~~**修 `src/mpv/video/filter/yuv_to_rgba.c` 的 limited-range 归一化**~~ ——
+   **已修，见 §19**（2026-10-17 续做；正确跨度 8-bit 219/224、10-bit packed
+   876/896、P010 56064/57344）。
+2. 量化**渲染器差异**：同尺寸跑 `mpv --vo=gpu`（= 我们同族的 gl_video）vs
+   `--vo=gpu-next`，再跑我们 `--fruc off --scale off`（这时 YUV→RGB 交给 libplacebo）
+   —— 把"内核"与"渲染器"两个变量分开。（`--tone-mapping-mode` 等默认档差异**尚未逐行核对**。）
+3. 我们的 kernel **色度无插值**（一对像素复用同一 Cb/Cr），libplacebo 会插值 → 彩色边缘
+   更糊；属同类"细节/对比"差异。
+4. 未做：HDR10 静态元数据（MaxCLL/MaxFALL，可照 mpv 的 `set_mastering_luminance`）；
+   HDR10 下 **Qt 自己的 UI** 亮度需目检（Qt Linux 用硬编码 1000/200 nit 假设）。
+5. 等用户说"提交"再 commit/push（含推送 `feat/10bit-hdr-path`）。
+
+### 18.6 方法论/坑（本轮踩过，务必沿用）
+
+- 亮度/颜色对比必须：**同窗口尺寸**（我们 1280×720 逻辑@dpr2 = 2560×1440 设备像素；
+  mpv 的 `--autofit` 是设备像素量级）+ **播放中截图**（暂停会显示播放按钮 overlay）
+  + 统计**挖掉中心区**；`spectacle -a` 抓"活动窗口"，抓错窗口会得到白图 → 必须自检图像。
+- **平均亮度不是正确性判据**：发灰（PQ 被按 gamma2.2 解释）恰恰表现为**均值更高**。
+  必须目检或看饱和度/对比度指标。
+- **Qt 未导出的符号**：`QtWaylandClient::ColorManagementFeedback`/`ImageDescriptionInfo`/
+  `ColorManager` 无 export 宏；Qt 导出的 `QtWayland::` 封装依赖其内部 `*_interface`
+  符号，也没导出（dlopen 报 `undefined symbol: wp_image_description_v1_interface`）
+  → 协议代码必须自生成（`wayland-scanner`，照 `WaylandIdleInhibit.cpp` 的模式绑定全局）。
+- 初始 preferred 描述**必须主动 `get_preferred()`**（协议只在变化时发事件）；
+  全局绑定可能在首次 `init()` 之后才到 → 模块在 `ColorManagerManagerExt::init()` 里补订阅，
+  且 `ensureModule()` 对 `-2`（未就绪）要**每次重试**，不能只试一次。
+- **写文件别用 `open(p,'w').write(open(p).read())`**：写模式先截断、再读到空 → 文件清零
+  （本轮把 `HdrOutput.cpp` 清空过一次，已按 header/main.cpp 的 API 面完整重写）。
+- `spectacle`/`mpv --target-prim` 等：mpv 的取值是 `bt.2020`（`bt2020` 会 fatal 退出）。
+
+### 18.7 复现/证据路径（gitignore）
+
+- `build/scratch/hdr_color/`：本轮同尺寸对照截图 + 日志（`same_mpv_2560.png`、
+  `same_ours_nodecl.png`、`same_ours_decl.png`、`play_*.png`）。
+- `build/scratch/hdr_slice/`（强制切片日志）、`hdr_slice2/`（auto/切换/换屏/开关 HDR 日志）、
+  `hdr_probe/`（`query_mod` 模块自检、`cf_test` 声明路径验证、`run*.log`）、
+  `hdr_cmspike/`（独立客户端直读协议、`--watch` 看 HDR 开关变化）。
+- 临时抓帧脚本 `/tmp/shot.sh`（launch → wait → `spectacle -a` → 图像自检 → kill）。
+- 诊断日志出处：`vf_vsr.c:595`、`vf_vfg.c:409`（`yuv->rgb:` 行）；`libmpv_vk.c:108`
+  （`render target fmt=.. hdr=.. color_depth=.. csp=..`）。
+
+---
+
+## 19. limited-range 归一化修正（2026-10-17 续做；§18.5 第 1 项落地）
+
+### 19.1 缺陷
+
+`src/mpv/video/filter/yuv_to_rgba.c` 的 limited 分支用 `y_max - y_min` 当跨度
+（8-bit `255-16=239`、P010 `65535-4096=61439`、10-bit packed `1023-64=959`），
+**luma 与色度都错**（旧 AGENTS 记录只写了色度）。正确跨度 = 标准 limited 码域：
+
+| 存储 | y_min | **y_span** | uv_mid | **uv_span** |
+|---|---|---|---|---|
+| 8-bit（NV12） | 16 | **219**（16..235） | 128 | **224**（16..240） |
+| 10-bit packed | 64 | **876**（64..940） | 512 | **896**（64..960） |
+| P010/P016（16bit 存储，MSB 对齐） | 4096 | **56064**（=876×64） | 32768 | **57344**（=896×64） |
+
+**参考口径**：libplacebo `src/colorspace.c` limited 分支（7.360.1 已核对源码）——
+`scale = 2^bits/(2^bits-1)`，`ymax=235/256*scale`、`ymin=16/256*scale`、
+`cmax=240/256*scale`、`cmid=128/256*scale`，`ymul=1/(ymax-ymin)`、
+`cmul=0.5/(cmax-cmid)`。展开后正是上表（8-bit → `(Y-16)/219`、`(C-128)/224`）。
+ffmpeg swscale 同口径（`(Y-16)*255/219`，实测 16→0 / 235→255 / 180→191 / 213→229）。
+**full-range 分支不动**（我们除满幅，与 libplacebo 的 `cmid=128/256*scale`
+差 ~0.2%，历史全幅对账已吻合）。
+
+症状幅度：白位只到满幅的 **91.6%**（8-bit 白 234/255、P010 白 934/1023）；
+PQ 10-bit 条红 941 vs 参考 1010（≈8% 码值 → 高光亮度损失远大于 8%）。
+这**同时**解释 §18.4 用户"mpv 对比度仍略好"（我们整体平/暗）。
+
+### 19.2 数值对账（全部可复跑）
+
+工具：`build/scratch/range/`（`probe.c` 直接驱动真实内核 · `compare.py` 对账
+libplacebo 公式/ffmpeg · `e2e.sh`/`e2e_hdr.sh` + `e2e_check.py` 走真解码路径）。
+
+1. **内核 vs 参考（合成 limited 图案，16 矢量：8 标准 75% 彩条 + 灰阶 + 越界值）**
+
+   | 用例 | 旧内核 vs libplacebo | 新内核 vs libplacebo | ffmpeg vs libplacebo |
+   |---|---|---|---|
+   | 8-bit NV12，out 8-bit | mean\|Δ\| … max **21** | **max 0** | max 3（swscale 自身取整） |
+   | P010，out 10-bit | max **89**（934 vs 1023） | **max 1** | — |
+
+2. **端到端（真解码 → 内核 → `dump-both` 的 VSR 输入 PNG）**，素材
+   `sdr_bars8.mp4`（yuv420p / tv / bt709，静态彩条，loop 成 30s）：
+   - app dump **vs ffmpeg swscale 参考：mean\|Δ\|=0.444，max=2**
+   - app dump vs 新内核公式：mean\|Δ\|=0.093（max<0.5 LSB）
+   - app dump vs 旧内核公式：mean\|Δ\|=5.90，max=19 ← 修正前后的差距
+   - app 日志确认 `bd=8 out=8 matrix=1 range=0 | src sys=2 levels=1`（BT.709/limited）
+
+3. **10-bit PQ 路径（BT.2020 / tv / smpte2084 彩条 `hdr_bars420.mp4`）**，
+   解码帧在 10-bit 码域与 ffmpeg 参考对账（BT.2020 系数、neighbor 色度）：
+   - 旧内核 vs 参考：mean\|Δ\|=**23.76**，max=79（红条 941 vs 1010）
+   - 新内核 vs 参考：mean\|Δ\|=**0.98**，max=3
+   - **真机 E2E（`e2e_hdr.sh`，P010 解码帧 → dump 出的 8-bit PNG）**：
+     app dump vs ffmpeg = mean 0.447 / max 2；vs 新内核公式 = 0.057；
+     vs 旧内核公式 = 6.19 / max 21（红条 235 → 253）。日志
+     `yuv->rgb: bd=16 out=10 matrix=2 range=0 | src sys=4 levels=1 primaries=6 transfer=12`
+     确认走的是 P010 分支（bd=16 = 存储位深）。
+   ⚠ AGENTS 里"合成三色条 ours vs mpv 逐通道吻合（148.0/0/40.8 vs 145/0/39.7）"
+   是**修前**的 8-bit 屏幕截图口径（截图把码域差异压缩了），不能用来说明内核正确性。
+
+### 19.3 覆盖范围与副作用
+
+- 生效路径：`vf_vsr` / `vf_vfg` / `vf_rife` 共用同一内核（`ensure_yuv_converter`
+  传 `range_from_levels(src->repr.levels)`），所以 **HDR 10-bit 与 SDR 8-bit
+  limited 片源一起改变**。
+- **不是**"改完又在下游被放大一次"：滤镜产出的帧是 `IMGFMT_CUDA` + `hw_subfmt
+  =RGBA/X2BGR10`，`mp_image_params_guess_csp` 对 RGB 强制
+  `repr.sys=RGB / levels=FULL`（`mp_image.c:523` 的 forced_csp 取 **hw_subfmt**；
+  `mp_image.c:1019-1021`），`out->params.color` 只覆盖 primaries/transfer（保 HDR
+  元数据）。即内核是**唯一**做范围展开的一层。
+- ⚠ 观感影响是预期内的：SDR limited 片源白位 234→255、整体对比度上升；HDR 片源
+  高光显著抬升（对齐 mpv/libplacebo 的正常表现）。**需要用户目检确认**（尤其
+  之前"发灰/对比度略差"的判断要重新做一次）。
+
+### 19.4 复跑
+
+```bash
+# 1) 内核离线对账（合成彩条）
+cd build/scratch/range
+gcc -O1 -o probe probe.c ../../../src/mpv/video/filter/yuv_to_rgba.c \
+    -I../../../src/mpv/video/filter -I../../../third_party/mpv \
+    -I../../../build/mpv/build -I/opt/cuda/include -L/opt/cuda/lib64 \
+    -lnvrtc -lcuda -lm
+./probe 8 8 r8 > after_8bit.txt            # 8-bit NV12（另跑 10 10 对 P010）
+python3 compare.py after_8bit.txt after_p010_10bit.txt
+# 2) 端到端（需要 GUI/合成器；约 10s，跑完自动 kill）
+bash e2e.sh && python3 e2e_check.py          # SDR 8-bit 路径
+bash e2e_hdr.sh                              # 10-bit PQ / P010 路径（dump 是 8-bit PNG）
+```
+
+- 证据文件：`build/scratch/range/{before,after}_8bit.txt`、`before/after_p010_10bit.txt`、
+  `e2e_in.png`（SDR 内核输出）、`hdr_in.png`（P010 内核输出）、`e2e_ref.rgb` /
+  `hdr_ref.rgb24`、`e2e_frame.yuv` / `hdr_frame.yuv`、`e2e_app.log` / `hdr_app.log`。
+- 改动文件：`src/mpv/video/filter/yuv_to_rgba.c`（只动 limited 分支的跨度常量 +
+  注释）。同批次的 `build/mpv/video/filter/yuv_to_rgba.c` 为构建树副本（`build_mpv.sh`
+  会重新合并覆盖）。
+- 仍未做：`vf_vsr.c:595`/`vf_vfg.c:409` 的临时 `yuv->rgb:` 诊断行保留（下次颜色
+  排查还要用，定位完再删）。
+
+---
+
+## 20. 合成器的"内容峰值"：HDR10 静态元数据必须随声明下发（2026-10-17 续做）
+
+### 20.1 症状与归因链
+
+**症状**：同一帧 HDR10 彩条（`build/scratch/hdr_bars10s.mp4`，PQ/BT.2020，三条柱 = 纯
+R/G/B 原色、PQ 码值 ≈1013/1023 ≈ 10000nit）
+
+| 运行 | 看到的柱色 |
+|---|---|
+| `VSR_HDR=auto ./build/src/client/vsr-player`（默认声明） | **红 黄 青** |
+| `mpv --vo=gpu-next --target-colorspace-hint=yes` | **红 绿 蓝** |
+| `VSR_HDR=auto VSR_HDR_DECLARE=0 ./build/src/client/vsr-player` | **红 绿 蓝** |
+
+归因（每条都有代码/协议/实测依据，**不是猜测**）：
+
+1. **与解码/超分/内核无关**：`dump-both` 拿到的 VSR 输入（VO 之前）就是
+   `(1013,0,0)/(0,1023,0)/(0,0,1010)`，与 ffmpeg 参考 mean|Δ|=0.98（§19）。
+2. **mpv 根本不声明**：`PL_API_VER=360`（libplacebo 7.360.1）时
+   `video/out/vulkan/context.c:554` 的 `bool supported = PL_API_VER >= 361 || !waylandvk;`
+   为 **false** → `sw->fns->set_color()` 直接返回 false → `vo_wayland_handle_color()`
+   从不执行。`WAYLAND_DEBUG=1` 实测 mpv：只发 `get_surface_feedback` /
+   `get_preferred` / `get_information`，`create_parametric_creator` 与
+   `set_image_description` **各 0 次**。mpv 只靠 VkColorSpace + 自己的 libplacebo 管线。
+3. **我们的 VO 本地不做 tone mapping**：`target-trc=pq` + `target-peak=auto`
+   → `video/out/gpu/video.c:2858` 把 `dst.hdr.max_luma` 取成
+   `pl_color_transfer_nominal_peak(PQ) * MP_REF_WHITE = 10000/203*203 = 10000 nit`，
+   src ≤ 10000 → 不触发。PQ 信号原样交给合成器。
+4. **协议语义**（`/usr/share/wayland-protocols/staging/color-management/color-management-v1.xml`）：
+   `set_luminances()` 描述的是**主色体积**，且 "With transfer_function.st2084_pq the
+   given 'max_lum' value is **ignored**, and 'max_lum' is taken as 'min_lum' + 10000 cd/m²"
+   —— 所以 `max_lum` **不是内容峰值**；内容峰值只能靠
+   `set_mastering_luminance()`（ST 2086）与 `set_max_cll()` / `set_max_fall()`
+   （CTA-861-H）表达。**我们原来这三个字段一个都没发。**
+5. **KWin 的实现**（`src/core/colorpipeline.cpp`）：tone mapper 的输入峰值
+   `maxWhiteLuminance` 由 `from->maxHdrLuminance().value_or(referenceLuminance)` 推出；
+   而 wayland 后端的 image-description 解析（`1c320a86` 的
+   `ImageDescriptionListener::done`）给出
+   `maxHdrLuminance = max_cll → mastering max → 主色体积上限`。
+   → 缺元数据时合成器只能假设"内容可达 10000nit"，对 400nit 面板做**最狠的压缩**。
+6. **实测两素材的元数据**（mpv `video-params`）：
+
+   | 素材 | mastering min/max | MaxCLL / MaxFALL |
+   |---|---|---|
+   | `input/Fallout …HDR…mkv`（真实片源） | 0.0001 / **1000** nit | **758 / 277** |
+   | `build/scratch/hdr_bars10s.mp4`（合成） | 0 / 10000 nit | 0 / 0（无 CLL） |
+
+   → 真实片源我们被按 **10000nit** 压（而内容只到 1000nit）→ 高光被过度压缩、
+   对比度变平，**这就是用户最初"mpv 对比度更好"的根因**；合成条则是"内容真到
+   10000nit"，压得狠是**正确**的，mpv 那边的饱和来自它没声明（KWin 走未声明路径）。
+
+### 20.2 修复（已实现，2026-10-17）
+
+在 HDR10 声明里补内容静态元数据（mpv `set_color_management()` 同款语义）：
+
+- `WaylandColorFeedback.{h,cpp}`：新增 `struct vsr_hdr_meta`；
+  `vsr_color_fb_declare_pq(win, meta)` 在原 `set_luminances(0,10000,203)` 之后补
+  - `set_mastering_luminance(min*10000, max)`（**门控 feature
+    `set_mastering_display_primaries`**，协议如此规定；mpv 同款门控）；
+  - `set_max_cll()` / `set_max_fall()`（无门控）；
+  - 合法性过滤 = mpv `cm_metadata_sanitize()`：`min>=max` 整体丢弃；v1 合成器要求
+    cll/fall ∈ (min,max]；`fall>cll` 时两者清零。
+  - mastering **基色**暂不下发（mpv 属性面没暴露；容器基色已是 BT.2020，KWin 缺省按
+    容器基色处理）。
+- `PlayerViewModel`：解析 `video-params/{min-luma,max-luma,max-cll,max-fall}`
+  （DOUBLE/INT64 都接）→ `hdrMeta()` + `videoHdrMetaChanged()`。
+- `HdrOutput`：`ContentMeta` + `setContentMeta()` —— 元数据变化时，若**当前已应用
+  HDR10 且 `VSR_HDR_DECLARE != 0`** 就**重新下发**描述（换片即更新）；`off` 策略不碰。
+- `main.cpp`：接线 `videoHdrMetaChanged → hdr::setContentMeta()`。
+
+### 20.3 验证（可复跑）
+
+```bash
+F="input/Fallout S02E02 2025 2160p AMZN WEB-DL HDR H 265 DDP5 1 Atmos-ADWeb.mkv"
+VSR_HDR=auto WAYLAND_DEBUG=1 timeout 12 ./build/src/client/vsr-player --scale off "$F" \
+    > /tmp/fo_wl.log 2>&1
+grep -c 'create_parametric_creator(' /tmp/fo_wl.log      # 2（切 HDR10 一次 + 元数据到达后重下发）
+grep -o 'set_mastering_luminance([^)]*)' /tmp/fo_wl.log  # set_mastering_luminance(1, 1000)
+grep -o 'set_max_cll([^)]*)' /tmp/fo_wl.log              # set_max_cll(758)
+grep -o 'set_max_fall([^)]*)' /tmp/fo_wl.log             # set_max_fall(277)
+grep -aiE 'protocol error|invalid_luminance' /tmp/fo_wl.log   # 空
+```
+实测输出（本机）：上述 4 条全部符合；合成条（无 CLL）→ `set_mastering_luminance(0,10000)`
++ `set_max_cll(0)/set_max_fall(0)`，行为与修复前一致（该素材本来就到 10000nit）。
+
+### 20.4 结论与边界
+
+- **"红黄青"不是 bug**：10000nit 的 BT.2020 原色映射到 400nit 面板必然去饱和（KWin 的
+  tone mapper 在 ICtCp 上压强度）。**修好后真实片源的对比度应明显改善**（用户目检项）。
+- mpv 的"红绿蓝"是**未声明路径**的结果（且随 libplacebo ≥ 7.361 会变成与我们现在
+  相同的声明）；`VSR_HDR_DECLARE=0` 只是复现那条路径，不是正确配置。
+- ⚠ **HDR 抓屏不能当判据**：本机 `spectacle -a` 截 HDR 窗口得到的结果与目检**相反**
+  （我们=纯 R/G/B、mpv hint=蓝柱带绿）→ KWin 抓屏对 HDR 面做了自己的映射。判 HDR
+  观感只能目检，或看协议流量/日志与参考实现代码。
+- 无 mastering 元数据的 HDR10 内容，合成器仍按主色体积上限（10000nit）——与
+  libplacebo 的名义口径一致，**不改**（想改只能自己本地 tone map，见 §18.5-2）。
+
+---
+
+## 21. `VSR_HDR=hdr10` 强制模式的两个真 bug（2026-10-17 修复）
+
+用户验收（元数据修复后）：真实片源"跟 mpv 差别不大了，甚至对比度更强"✔；
+`VSR_HDR_DECLARE=0` → 红绿蓝（= 预期，mpv 的未声明路径）；
+**`VSR_HDR=hdr10` 播 SDR 片源（goose_480p.webm）→ 颜色不正确** ✗（本轮修）；
+`VSR_HDR=off` 播 HDR 片源 → 红绿蓝但发灰（= 预期，HDR→SDR tone map，见 §21.3）。
+
+### 21.1 bug 1：模式没变就早退 → mpv target 钩子从未执行
+
+`HdrOutput.cpp` 的 `reevaluate()` 原本 `if (st.haveApplied && want == st.applied) return;`。
+`VSR_HDR=hdr10` 是"启动即 Hdr10"（`installPolicy(..., initialMode=Hdr10)` 把
+`applied=Hdr10, haveApplied=true`）→ 每次决策都命中早退 →
+`hooks.updateMpvTarget()` 与 `applyMode` 里的色彩描述下发**一次都没执行**：
+
+- mpv 侧没设 `target-trc=pq`/`target-prim=bt.2020` → gl_video 的目标色彩空间
+  = 源（SDR BT.709/BT.1886）→ **SDR 码值被原样写进 PQ 面** → PQ 解释 gamma 码值
+  = 又暗又过饱和，即"颜色不正确"。
+- 我们的 `wp_color_management` 描述也没下发（只有 Qt 的，缺 luminances/元数据）。
+
+**修法**：模式未变时也要同步"钩子输入"（`syncTargets(Mode)`：updateMpvTarget +
+HDR10 时设 colorSpace + 下发描述），并在首帧探测里补一次 `reevaluate("first-frame")`
+（首帧后 `wl_surface` 才存在）。`syncTargets` 幂等，重复调用安全。
+
+### 21.2 bug 2：color management surface 重复 → 协议错误、app 退出
+
+强制模式原本在 `show()` **之前**设 `QSurfaceFormat::colorSpace(BT2020/ST2084)`：
+Qt 在创建 platform window 时据此自己建了一个
+`wp_color_management_surface_v1`；我们的模块（`WaylandColorFeedback`）随后又
+`wp_color_manager_v1.get_surface()` → KWin 回
+`wp_color_manager_v1#N: error 1: there's already a color management surface for this wl_surface`
+→ **协议错误 = 连接断开，app 退出（exit 255）**。
+
+⚠ 协议约束：**一个 `wl_surface` 只能有一个 color management surface**
+（旧注释"允许多个"是错的，已改）。而我们需要自己拥有它（只有我们能发
+luminances + 内容静态元数据）。
+
+**修法**：强制模式**不在 show 前设 colorSpace**（只设 `_qt_sg_hdr_format` 属性，
+swapchain 格式需要它）；colorSpace 与描述都在**首帧之后**由 `syncTargets()` 下发
+（此时 platform window 已存在，Qt 不会再建 surface——自动切换路径一直如此，
+实测无冲突）。
+
+**验证**：`VSR_HDR=hdr10 --scale off input/goose_480p.webm` →
+`mpv HDR target: HDR10 (PQ/BT.2020) target-trc/prim=pq/bt.2020`、`已声明 HDR10`、
+**0 条协议错误**、进程存活到 timeout；自动路径（Fallout）回归无变化：仍
+`mastering 0.0001-1000 nit + max_cll 758 / max_fall 277`。
+
+### 21.3 两个"看起来像 bug 的预期行为"
+
+- `VSR_HDR=auto VSR_HDR_DECLARE=0` 播 HDR 彩条 → 红绿蓝：这就是 **mpv 的路径**
+  （未声明 → KWin 走未声明分支）。它是复现对照，不是推荐配置。
+- `VSR_HDR=off` 播 HDR 彩条 → 红绿蓝但发灰：`off` = 从不切 HDR10，HDR 内容由
+  gl_video **tone map 到 SDR 输出**（= 本应用 HDR 上屏前的历史行为）。
+  校验口径：`mpv build/scratch/hdr_bars10s.mp4`（**不加** `--target-colorspace-hint`）
+  同样是 HDR→SDR tone map，两者应接近。
+- ⚠ 强制模式（`VSR_HDR=hdr10`）播 **SDR** 内容会**比 SDR 播放暗**：SDR 白在 PQ
+  容器里落在 203nit（libplacebo 参考白），而本机 SDR 桌面的白是 400nit；我们没做
+  反相 tone mapping。mpv 做"SDR→HDR"用 `--inverse-tone-mapping` +
+  目标峰值（面板 400nit）。**未实现**，属可选增强。
+
+---
+
+## 22. OSD HDR 状态行 + `VSR_HDR=hdr10` 的定位（2026-10-17）
+
+### 22.1 `VSR_HDR=hdr10` = 诊断/覆盖，不是观看模式
+
+- 用途只有三类：**机制验收/回归**（不需要 HDR 片源就能拉起 swapchain+声明+composite 链路，
+  或在 SDR/WCG-only 屏上验证合成器接不接受 HDR10 面）、**逃生舱**（auto 判据失灵时唯一入口：
+  合成器把真 HDR 报成 bt709、或片源 HDR 但没打 `pq/hlg` tag）、**变量分离**
+  （HDR→面板 的映射由 gl_video 还是合成器做——auto/off vs hdr10）。
+- ⚠ **不是画质功能**：播 SDR 内容时 SDR 白落在 203nit（libplacebo 参考白），比 SDR 桌面的
+  400nit 暗，且**没有反相 tone mapping**（mpv 的对应能力是 `--inverse-tone-mapping`
+  + `target-peak`）。正常播放不要用它；auto 下 SDR 内容本来就不走 HDR10，不受影响。
+- 该模式**不暴露到 UI**（仅 env），避免用户做出"内容/屏幕不匹配"的错配选择。
+
+### 22.2 OSD 新增 `HDR` 状态行
+
+- 数据源：`hdr::statusText()`（`HdrOutput`，**不翻译**，与 OSD 其余状态段一致）；
+  由 `ApplyHooks.statusChanged` 在**模式/显示能力/内容元数据**任一变化时推给
+  `PlayerViewModel::setHdrStatus()`（加锁：GUI 线程写、事件线程 `osdTextString()` 读）。
+- 位置：`osdTextString()` 在 `Output` 之后、`VSR` 之前新增一行；标签 `HDR` 走 tr()。
+- 三种形态（本机实测日志 `hdr status: ...`）：
+  | 场景 | OSD 行 |
+  |---|---|
+  | SDR 片源 | `SDR · content SDR` |
+  | HDR 片源 + HDR 屏（切换瞬间→稳定） | `SDR · content HDR not displayed (display unknown)` → `HDR10 · BT.2020/PQ · display 400nit · content 758nit` |
+  | 强制 `VSR_HDR=hdr10` + SDR 片源 | `HDR10 · BT.2020/PQ · display 400nit · content SDR · (forced)` |
+- 口径：`content Xnit` 优先用 **MaxCLL**（KWin 实际用的值），退回 mastering max；
+  `display Xnit` 用合成器 preferred 的 `max_luma`（**物理峰值** 400nit，不是 203 参考白口径）。
+- 查看方式：正常播放按 **Tab** 显示 OSD（`osdPoll` 只在可见时推送 `osd-msg1`）；
+  `--benchmark` 启动即显示。无 UI 核对用日志：`hdr status: ...`（仅在文本变化时打，INFO 级）。
+- ⚠ **"从播放器内播放"（无参数启动 → 恢复播放列表 → 点播放/上次记录续播）实测同样正确**，
+  但有顺序坑（2026-10-17 用户提问后实测并修）：切 HDR10 与 `video-params` 静态元数据
+  到达可能是**同一瞬间**，`statusChanged` 先于元数据跑 → 文本会停在 `content ?`。
+  修法：`setContentMeta()` 里元数据变化后**立即**刷新状态文本（先刷新再走早退），
+  且内容 HDR 而元数据未到时显示 `content HDR`（不再显示 `?`）。实测序列：
+  `… · content HDR` → `… · content 758nit`（毫秒级）。
+  （命令行给文件那次只是碰巧元数据先到，所以没暴露这个 bug。）
