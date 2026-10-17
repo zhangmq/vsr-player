@@ -45,8 +45,9 @@ static bool g_video_verbose = getenv("VSR_LOG_VIDEO") != nullptr;
 class CompositeRenderNode : public QSGRenderNode {
 public:
     QQuickWindow *win = nullptr;
+    Video *owner = nullptr;          ///< 渲染阶段从 owner 取当前 pipeline（见下）
     VkDevice dev = VK_NULL_HANDLE;
-    VkPipeline pipe = VK_NULL_HANDLE;
+    VkPipeline pipe = VK_NULL_HANDLE;          ///< 兜底（owner 为空时）
     VkPipelineLayout pipeLayout = VK_NULL_HANDLE;
     VkDescriptorSet curDs = VK_NULL_HANDLE;
     VkImage srcImage = VK_NULL_HANDLE;
@@ -82,8 +83,13 @@ public:
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
                              0, nullptr, 0, nullptr, 1, &b);
 
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout,
+        // 运行时取当前 pipeline：切换 SDR↔HDR10 时 composite pipeline 会被
+        // 重建，缓存句柄在"没有 updatePaintNode 的帧"里会变成已销毁对象。
+        const VkPipeline pipeNow = owner ? owner->compositePipeline() : pipe;
+        const VkPipelineLayout layoutNow = owner ? owner->compositePipelineLayout() : pipeLayout;
+        if (!pipeNow || !layoutNow) return;
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeNow);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, layoutNow,
                                 0, 1, &curDs, 0, nullptr);
         vkCmdDraw(cb, 3, 1, 0, 0);
     }
@@ -175,7 +181,8 @@ bool Video::initRenderTarget(VkDevice dev, VkPhysicalDevice pd, uint32_t qfi, Vk
 
 bool Video::ensureRenderTarget(int w, int h) {
     if (w <= 0 || h <= 0) return false;
-    if (rtImage_ != VK_NULL_HANDLE && w == w_ && h == h_) return true;
+    if (rtImage_ != VK_NULL_HANDLE && w == w_ && h == h_ &&
+        renderFormat_ == fmt_) return true;
 
     // 销毁前无条件排空 GPU：原实现依赖"上一帧 need_render 时执行过
     // vkQueueWaitIdle"——但 need_render=false 的帧不 waitIdle，而场景图
@@ -192,7 +199,7 @@ bool Video::ensureRenderTarget(int w, int h) {
 
     VkImageCreateInfo ici = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     ici.imageType     = VK_IMAGE_TYPE_2D;
-    ici.format        = VK_FORMAT_R8G8B8A8_UNORM;
+    ici.format        = renderFormat_;   // SDR=R8G8B8A8，HDR10=A2B10G10R10
     ici.extent        = { (uint32_t)w, (uint32_t)h, 1 };
     ici.mipLevels     = 1; ici.arrayLayers = 1;
     ici.samples       = VK_SAMPLE_COUNT_1_BIT;
@@ -264,7 +271,7 @@ bool Video::ensureRenderTarget(int w, int h) {
     VkImageViewCreateInfo ivci = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
     ivci.image    = rtImage_;
     ivci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    ivci.format   = VK_FORMAT_R8G8B8A8_UNORM;
+    ivci.format   = renderFormat_;
     ivci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     ivci.subresourceRange.levelCount = ivci.subresourceRange.layerCount = 1;
     vkCreateImageView(dev_, &ivci, nullptr, &rtView_);
@@ -280,8 +287,8 @@ bool Video::ensureRenderTarget(int w, int h) {
                                  &dii, nullptr, nullptr };
     vkUpdateDescriptorSets(dev_, 1, &wds, 0, nullptr);
 
-    w_ = w; h_ = h;
-    MLOG_INFO("render target %dx%d", w_, h_);
+    w_ = w; h_ = h; fmt_ = renderFormat_;
+    MLOG_INFO("render target %dx%d fmt=%d", w_, h_, int(fmt_));
     return true;
 }
 
@@ -304,10 +311,14 @@ QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
     if (!node) {
         node = new CompositeRenderNode();
         node->win = window();
+        node->owner = this;
         node->dev = dev_;
-        node->pipe = pipe_;
-        node->pipeLayout = pipeLayout_;
     }
+    // 每帧同步 pipeline/layout：运行期 SDR↔HDR10 切换会重建 composite
+    // pipeline（新 attachment 格式），节点若继续用旧句柄就是**已销毁对象**
+    // （校验层 VUID-vkCmdBindPipeline-pipeline-parameter + 合成画面不更新）。
+    node->pipe = pipe_;
+    node->pipeLayout = pipeLayout_;
     if (auto *w = window()) {
         qreal dpr = w->devicePixelRatio();
         node->w = (int)(w->width() * dpr);
@@ -321,6 +332,14 @@ QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
     // 重建会触发 mpv reconfig（VSR 分辨率重配 + vsr_reconfigure），
     // 若每帧重建 → resize 拖动全程卡顿。
     if (node->w > 0 && node->h > 0) {
+        if (formatDirty_) {
+            // 格式切换（SDR↔HDR10）：不能用稳定计数节流——mpv 在同一帧稍后
+            // 就会用新格式渲染，旧格式的 image 必须已经换掉。
+            pendingW_ = node->w;
+            pendingH_ = node->h;
+            stableCount_ = RT_STABLE_FRAMES;
+            formatDirty_ = false;
+        }
         if (node->w == pendingW_ && node->h == pendingH_) {
             stableCount_++;
             if (stableCount_ >= RT_STABLE_FRAMES)
@@ -356,7 +375,7 @@ QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
                 if (frameRenderedCb_) frameRenderedCb_();   // 段内 rendered 计数
             }
             double t_rnd0 = now();
-            mpv_->render(rtImage_, VK_FORMAT_R8G8B8A8_UNORM, w_, h_);
+            mpv_->render(rtImage_, renderFormat_, w_, h_);
             double t_rnd1 = now();
             mpv_->reportSwap();
             double t_wait0 = now();

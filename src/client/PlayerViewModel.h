@@ -76,6 +76,8 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(int viewportWidth READ viewportWidth NOTIFY osdDataChanged)
     Q_PROPERTY(int viewportHeight READ viewportHeight NOTIFY osdDataChanged)
     Q_PROPERTY(QString decoderPixelFormat READ decoderPixelFormat NOTIFY osdDataChanged)
+    // 内容是否 HDR（video-params/gamma ∈ {pq, hlg}）——HDR 上屏的内容侧门控。
+    Q_PROPERTY(bool videoHdr READ videoHdr NOTIFY videoHdrChanged)
     Q_PROPERTY(int64_t droppedFrames READ droppedFrames NOTIFY osdDataChanged)
     Q_PROPERTY(int audioSampleRate READ audioSampleRate NOTIFY osdDataChanged)
     Q_PROPERTY(int audioChannels READ audioChannels NOTIFY osdDataChanged)
@@ -216,6 +218,18 @@ public:
     int viewportWidth() const { return viewportWidth_.load(); }
     int viewportHeight() const { return viewportHeight_.load(); }
     QString decoderPixelFormat() const { return decoderPixelFormat_; }
+    bool videoHdr() const { return videoHdr_; }
+
+    /// 内容 HDR10 静态元数据（mpv `video-params/{min-luma,max-luma,max-cll,max-fall}`，
+    /// 单位 nit）。用途：HdrOutput 把它下发给合成器当"内容峰值"（见 hdr::ContentMeta）。
+    struct HdrMeta {
+        bool   valid = false;    ///< false = 源无静态元数据
+        double minMastering = 0; ///< ST 2086 mastering min L
+        double maxMastering = 0; ///< ST 2086 mastering max L
+        double maxCll = 0;       ///< CTA-861 MaxCLL（0 = 未定义）
+        double maxFall = 0;      ///< CTA-861 MaxFALL（0 = 未定义）
+    };
+    HdrMeta hdrMeta() const { return hdrMeta_; }
     int64_t droppedFrames() const { return droppedCache_.load() - droppedBase_.load(); }
     int audioSampleRate() const { return audioSampleRate_.load(); }
     int audioChannels() const { return audioChannels_.load(); }
@@ -287,6 +301,9 @@ public slots:
     /// VFG "vfg-status:" / RIFE "fruc-status:"，见 FrucBackend.h）
     void setFrucStatus(const std::string &s);
     void setVsrStatus(const std::string &s);
+    /// HDR 上屏状态行（`hdr::statusText()`，OSD 显示）。
+    /// 由 GUI 线程在 hdr 策略钩子里设置；osdTextString 在事件线程读 → 加锁。
+    void setHdrStatus(const std::string &s);
     void toggleLoop();
     void setLoopMode(int m);   // 0=none, 1=file, 2=playlist（applyPlaybackSettings/toggleLoop 共用）
     void loadFile(const QString &path);
@@ -333,6 +350,8 @@ signals:
     void hwDecodingChanged();
     void videoInfoChanged();
     void osdDataChanged();
+    void videoHdrChanged();
+    void videoHdrMetaChanged();   // 内容静态元数据变化（HDR10 描述需重下发）
     void fullscreenChanged();
     void osdVisibleChanged();
     void loopModeChanged();
@@ -440,6 +459,8 @@ private:
     std::atomic<int> renderWidth_{0}, renderHeight_{0};
     std::atomic<int> viewportWidth_{0}, viewportHeight_{0};
     QString decoderPixelFormat_;
+    bool videoHdr_ = false;   // video-params/gamma = pq|hlg（主线程持有）
+    HdrMeta hdrMeta_;         // video-params 的 HDR10 静态元数据（主线程持有）
     std::atomic<int64_t> droppedBase_{0};      // frame-drop-count 段起始基准
     std::atomic<int64_t> droppedCache_{0};     // frame-drop-count 最新值（事件线程写）
     std::atomic<int> audioSampleRate_{0}, audioChannels_{0};
@@ -474,6 +495,8 @@ private:
     std::string frucStatus_;            // 最新 FRUC 状态行（OSD 显示；前缀随后端）
     std::string vsrStatus_;             // 最新 vsr 状态行（OSD 显示）
     std::mutex  vsrStatusMtx_;
+    std::string hdrStatus_;             // HDR 上屏状态行（OSD 显示）
+    std::mutex  hdrStatusMtx_;
     int loopMode_ = 0;           // 0 none, 1 loop-file, 2 loop-playlist
     PlaylistModel playlistModel_;   // 播放列表镜像（观察器 setSnapshot 增量喂入）
     QString gpuName_;

@@ -102,6 +102,16 @@ foreach _m : ['QtGui', 'QtCore']
         _qt6_priv_inc += '-I' + _r.stdout().strip()
     endif
 endforeach
+# QRhi 头（rhi/qrhi.h，HdrOutput.cpp 用来查 swapchain 的 HDR 格式）装在
+# <inc>/QtGui/<ver>/QtGui/rhi/ —— 与上面 qplatformwindow_p.h 的 <ver> 布局
+# 不同层，Qt6::GuiPrivate 的标准布局要求两个 -I 同时在。缺了会让
+# `#include <rhi/qrhi.h>` 找不到（实测踩过）。
+_rhi = run_command('sh', '-c',
+    'for d in ' + _qt6_inc + '/QtGui/*/QtGui; do [ -f "$d/rhi/qrhi.h" ] && echo "$d" && break; done',
+    check: false)
+if _rhi.returncode() == 0 and _rhi.stdout().strip() != ''
+    _qt6_priv_inc += '-I' + _rhi.stdout().strip()
+endif
 _idle_xml = ''
 if _wl_protocols.found()
     _idle_xml = _wl_protocols.get_variable(pkgconfig: 'pkgdatadir') / 'unstable/idle-inhibit/idle-inhibit-unstable-v1.xml'
@@ -131,6 +141,42 @@ else
     message('wayland idle-inhibit module: disabled (missing wayland-scanner / wayland-protocols / wayland-client / Qt6WaylandClient)')
 endif
 
+# ── Wayland 显示能力模块（独立 .so，主程序运行时 dlopen）────────────────
+# 读合成器给**这块表面**的 preferred image description（HDR 开 → bt2020；
+# HDR 关但 WCG 开 → bt709；SDR 屏 → bt709）作为选屏判据；并按 mpv 语义声明
+# HDR10（PQ/BT.2020 + luminances），后者是"HDR 亮度与 mpv 原生一致"的必要条件。
+# ⚠ output image description 不行（实测 HDR 开与 WCG-only 逐字段相同）。
+# ⚠ 协议代码**我们自己生成**：surface feedback 必须在 Qt 的连接上取，但 Qt 的
+#   便利类与 `*_interface` 符号都没导出（dlopen undefined symbol）→ 只能自己
+#   生成客户端代码，全局用 QtWaylandClient 的 QWaylandClientExtensionTemplate 绑。
+# 仍做成模块 + dlopen：未装 qt6-wayland/非 Wayland 时主程序启动不受影响。
+_wl_color_xml = ''
+if _wl_protocols.found()
+    _wl_color_xml = _wl_protocols.get_variable(pkgconfig: 'pkgdatadir') / 'staging/color-management/color-management-v1.xml'
+endif
+if _wl_scanner.found() and _wl_client.found() and _qt6_wl.found() and _fs.exists(_wl_color_xml)
+    _wlcolor_hdr = custom_target('color-management-client-header',
+        output: 'color-management-v1-client-protocol.h',
+        command: [_wl_scanner, 'client-header', _wl_color_xml, '@OUTPUT@'])
+    _wlcolor_code = custom_target('color-management-protocol-code',
+        output: 'color-management-v1-protocol.c',
+        command: [_wl_scanner, 'private-code', _wl_color_xml, '@OUTPUT@'])
+    shared_module('vsr-color-feedback',
+        'WaylandColorFeedback.cpp', _wlcolor_hdr, _wlcolor_code,
+        dependencies: [dependency('Qt6Core'), dependency('Qt6Gui'), _qt6_wl, _wl_client],
+        include_directories: include_directories('.'),
+        # 发布布局下 Qt 可能就在 $ORIGIN/..（full 变体 <prefix>/lib）；dlopen 的
+        # 模块 rpath 必须自带（调用方的 RUNPATH 不传递给 dlopen 的依赖）。
+        build_rpath: '$ORIGIN:$ORIGIN/..',
+        # 只需要 qtbase 的 qpa 私有头（取 wl_surface）；不再需要 QtWaylandClient
+        # 私有头（协议代码自己生成）。
+        cpp_args: ['-std=c++20', '-g', '-O0', '-fPIC'] + _qt6_priv_inc,
+        install: false)
+    message('wayland color-feedback module: enabled')
+else
+    message('wayland color-feedback module: disabled (missing wayland-scanner / wayland-protocols / wayland-client / Qt6WaylandClient)')
+endif
+
 # MPV_BUILD_DIR（env）：dist 构建指向独立 mpv 构建树（build_release.sh 用
 # build/mpv-dist/_build）；默认 dev 构建树 build/mpv/_build
 # mpv-build-dir option：dist 构建指向独立 mpv 构建树（build_release.sh 用
@@ -158,17 +204,21 @@ processed = qt6.preprocess(
 )
 
 # ── Executable ─────────────────────────────────────────────────────────
+# HdrOutput.cpp 需要 <rhi/qrhi.h>（QRhiSwapChain::format()/isFormatSupported，
+# HDR 上屏的唯一权威来源）：该头装在 qtbase 私有头目录，故 _qt6_priv_inc 也
+# 加给主程序。注意只是**头文件**依赖——QRhi 符号在 libQt6Gui 里（format()
+# 内联、isFormatSupported 纯虚），没有私有符号链接。
 executable('vsr-player',
     'main.cpp', 'Options.cpp', 'VulkanContext.cpp',
     'CompositePipeline.cpp', 'MpvController.cpp', 'Video.cpp',
     'PlayerViewModel.cpp', 'PlaylistModel.cpp', 'RpcServer.cpp', 'Log.cpp',
-    'SessionIdle.cpp',
+    'SessionIdle.cpp', 'HdrOutput.cpp',
     c_vert_h, c_frag_h, translations_qm, processed,
     dependencies: [qt6_dep, vulkan_dep, libplacebo_dep, mpv_dep],
     include_directories: include_directories(
         '../../src/mpv/include',
         '../../third_party/mpv/include',
     ),
-    cpp_args: ['-std=c++20', '-g', '-O0', '-fPIC'],
+    cpp_args: ['-std=c++20', '-g', '-O0', '-fPIC'] + _qt6_priv_inc,
     install: false,
 )

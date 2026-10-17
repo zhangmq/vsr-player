@@ -392,7 +392,8 @@ static bool ensure_cuda(struct mp_filter *f, struct priv *p,
 
 static bool ensure_yuv_converter(struct mp_filter *f, struct priv *p,
                                  int bit_depth, enum yuv_matrix matrix,
-                                 enum yuv_range range, int out_bits)
+                                 enum yuv_range range, int out_bits,
+                                 const struct mp_image_params *src)
 {
     if (p->yuv_conv_ready &&
         p->yuv_conv_bd == bit_depth &&
@@ -404,6 +405,11 @@ static bool ensure_yuv_converter(struct mp_filter *f, struct priv *p,
     if (p->yuv_conv_ready)
         yuv_to_rgba_destroy(&p->yuv_conv);
 
+    // HDR 上屏调试：矩阵/范围 + 源帧色彩元数据（矩阵取错 = 偏红，实测怀疑点）。
+    MP_INFO(f, "yuv->rgb: bd=%d out=%d matrix=%d range=%d | src sys=%d levels=%d "
+            "primaries=%d transfer=%d\n", bit_depth, out_bits, (int)matrix, (int)range,
+            (int)src->repr.sys, (int)src->repr.levels,
+            (int)src->color.primaries, (int)src->color.transfer);
     if (!yuv_to_rgba_init(&p->yuv_conv, bit_depth, matrix, range, out_bits)) {
         MP_ERR(f, "vfg: yuv_to_rgba_init failed (bd=%d out=%d)\n",
                bit_depth, out_bits);
@@ -603,7 +609,7 @@ static bool stage_input(struct mp_filter *f, struct priv *p,
         int bd = desc.bpp[0];
         enum yuv_matrix mx = matrix_from_repr(&cur->params);
         enum yuv_range  rn = range_from_levels(cur->params.repr.levels);
-        if (!ensure_yuv_converter(f, p, bd, mx, rn, p->vfg.bits))
+        if (!ensure_yuv_converter(f, p, bd, mx, rn, p->vfg.bits, &cur->params))
             return false;
         if (!yuv_to_rgba_convert(&p->yuv_conv,
                                  cur->planes[0], cur->stride[0],

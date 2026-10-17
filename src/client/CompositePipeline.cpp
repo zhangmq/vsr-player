@@ -12,22 +12,40 @@ void vkDestroyShaderModule(VkDevice, VkShaderModule, const VkAllocationCallbacks
 void vkDestroyPipeline(VkDevice, VkPipeline, const VkAllocationCallbacks*);
 void vkDestroyPipelineLayout(VkDevice, VkPipelineLayout, const VkAllocationCallbacks*);
 void vkDestroyRenderPass(VkDevice, VkRenderPass, const VkAllocationCallbacks*);
+VkResult vkDeviceWaitIdle(VkDevice);
 }
 
-CompositePipeline::~CompositePipeline() {
+void CompositePipeline::destroy() {
     if (!dev_) return;
     if (pipe_)       vkDestroyPipeline(dev_, pipe_, nullptr);
     if (pipeLayout_) vkDestroyPipelineLayout(dev_, pipeLayout_, nullptr);
     if (rp_)         vkDestroyRenderPass(dev_, rp_, nullptr);
+    pipe_ = VK_NULL_HANDLE;
+    pipeLayout_ = VK_NULL_HANDLE;
+    rp_ = VK_NULL_HANDLE;
 }
 
-bool CompositePipeline::create(VkDevice dev, VkDescriptorSetLayout dsLayout) {
+CompositePipeline::~CompositePipeline() {
+    destroy();
+}
+
+bool CompositePipeline::create(VkDevice dev, VkDescriptorSetLayout dsLayout,
+                               VkFormat attachmentFormat) {
+    // 可重入：运行期 SDR↔HDR10 切换要用新 attachment 格式重建。旧对象在
+    // vkDeviceWaitIdle 之后销毁（调用方保证——切换发生在 GUI 线程、两帧之间，
+    // 上一帧的绘制命令可能仍在途）。
+    if (dev_ && dev_ == dev) {
+        vkDeviceWaitIdle(dev_);
+        destroy();
+    }
     dev_ = dev;
 
-    // Render pass describing Qt's swapchain attachment (B8G8R8A8, load/store).
-    // The actual render pass is begun by Qt; this one only pins compatibility.
+    // Render pass describing Qt's swapchain attachment (load/store).
+    // The actual render pass is begun by Qt; this one only pins compatibility，
+    // 所以格式必须与 Qt 实际 swapchain 一致（SDR=B8G8R8A8，
+    // HDR10=A2B10G10R10_UNORM_PACK32；由 main.cpp 按 hdr::vkFormatForMode 传入）。
     VkAttachmentDescription att = {};
-    att.format         = VK_FORMAT_B8G8R8A8_UNORM;
+    att.format         = attachmentFormat;
     att.samples        = VK_SAMPLE_COUNT_1_BIT;
     att.loadOp         = VK_ATTACHMENT_LOAD_OP_LOAD;
     att.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;

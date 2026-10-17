@@ -577,7 +577,8 @@ static void free_cuda_buf(void *opaque, uint8_t *data)
 
 static bool ensure_yuv_converter(struct mp_filter *f, struct priv *p,
                                   int bit_depth, enum yuv_matrix matrix,
-                                  enum yuv_range range, int out_bits)
+                                  enum yuv_range range, int out_bits,
+                                  const struct mp_image_params *src)
 {
     if (p->yuv_conv_ready &&
         p->yuv_conv_bd == bit_depth &&
@@ -589,6 +590,12 @@ static bool ensure_yuv_converter(struct mp_filter *f, struct priv *p,
     if (p->yuv_conv_ready)
         yuv_to_rgba_destroy(&p->yuv_conv);
 
+    // HDR 上屏调试：把 YUV→RGB 用的矩阵/范围与源帧色彩元数据打出来
+    //（矩阵取错 = BT.709 系数解 BT.2020 → 偏红，实测怀疑点）。
+    MP_INFO(f, "yuv->rgb: bd=%d out=%d matrix=%d range=%d | src sys=%d levels=%d "
+            "primaries=%d transfer=%d\n", bit_depth, out_bits, (int)matrix, (int)range,
+            (int)src->repr.sys, (int)src->repr.levels,
+            (int)src->color.primaries, (int)src->color.transfer);
     if (!yuv_to_rgba_init(&p->yuv_conv, bit_depth, matrix, range, out_bits)) {
         MP_ERR(f, "yuv_to_rgba_init failed (bd=%d out=%d)\n", bit_depth, out_bits);
         p->yuv_conv_ready = false;
@@ -740,7 +747,7 @@ static void f_process(struct mp_filter *f)
         int bd = desc.bpp[0];
         enum yuv_matrix mx = matrix_from_repr(&mpi->params);
         enum yuv_range  rn = range_from_levels(mpi->params.repr.levels);
-        if (!ensure_yuv_converter(f, p, bd, mx, rn, bits)) {
+        if (!ensure_yuv_converter(f, p, bd, mx, rn, bits, &mpi->params)) {
             mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
         }
         if (!yuv_to_rgba_convert(&p->yuv_conv,

@@ -22,10 +22,29 @@ public:
     void setMpvController(MpvController *mpv);
     bool initRenderTarget(VkDevice dev, VkPhysicalDevice pd, uint32_t qfi, VkQueue queue);
     void setCompositeObjects(VkPipeline pipe, VkPipelineLayout layout);
+    /// 合成节点在**渲染阶段**读这两个 getter（而不是缓存句柄）：运行期
+    /// SDR↔HDR10 切换会重建 pipeline，缓存句柄会变成已销毁对象
+    ///（校验层 vkCmdBindPipeline-pipeline-parameter）。
+    VkPipeline compositePipeline() const { return pipe_; }
+    VkPipelineLayout compositePipelineLayout() const { return pipeLayout_; }
+
+    /// 渲染目标格式（mpv 渲染 & composite 采样用）。默认 SDR
+    /// R8G8B8A8_UNORM（= 改动前行为）；HDR10 时由 main.cpp 在首帧前设为
+    /// VK_FORMAT_A2B10G10R10_UNORM_PACK32（见 HdrOutput.h）。
+    /// 设置渲染目标格式。**格式变化时置脏**：下一帧 updatePaintNode 必须
+    /// 立刻重建 rtImage——否则 mpv 会用新格式写进旧格式的 image（校验错误）。
+    void setRenderFormat(VkFormat f) {
+        if (renderFormat_ != f) {
+            renderFormat_ = f;
+            formatDirty_ = true;
+        }
+    }
+    VkFormat renderFormat() const { return renderFormat_; }
 
     /// (Re)create render target for the given pixel size. Rebuilds
     /// image + view, then updates the descriptor set contents in place.
-    /// Idempotent when size unchanged.
+    /// Idempotent when size **and format** unchanged（格式变化必须重建：
+    /// image/view/描述符都与格式绑定）。
     bool ensureRenderTarget(int w, int h);
 
     VkImage image() const { return rtImage_; }
@@ -62,12 +81,15 @@ private:
     VkPhysicalDevice pd_ = VK_NULL_HANDLE;
     VkQueue          queue_ = VK_NULL_HANDLE;
 
+    VkFormat         renderFormat_ = VK_FORMAT_R8G8B8A8_UNORM;  // SDR 默认
     VkImage          rtImage_ = VK_NULL_HANDLE;
     VkDeviceMemory   rtMem_ = VK_NULL_HANDLE;
     VkImageView      rtView_ = VK_NULL_HANDLE;
     VkSampler        rtSampler_ = VK_NULL_HANDLE;
     VkCommandPool    cmdPool_ = VK_NULL_HANDLE;
     int w_ = 0, h_ = 0;      // current render target pixel size
+    VkFormat fmt_ = VK_FORMAT_UNDEFINED;   // 已创建 rtImage 的格式
+    bool formatDirty_ = false;             // 格式变更 → 跳过 resize 节流立即重建
 
     VkPipeline       pipe_ = VK_NULL_HANDLE;
     VkPipelineLayout pipeLayout_ = VK_NULL_HANDLE;

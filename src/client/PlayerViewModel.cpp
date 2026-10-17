@@ -245,7 +245,16 @@ void PlayerViewModel::attach(MpvController *mpv) {
         if (mpv_get_property(mpv_->handle(), "video-params", MPV_FORMAT_NODE,
                              &node) >= 0) {
             int w = 0, h = 0, bd = 0;
-            std::string pix, hwPix;
+            std::string pix, hwPix, gamma;
+            // HDR10 静态元数据（合成器做 tone mapping 时假设的"内容峰值"依据，
+            // 见 hdr::ContentMeta / WaylandColorFeedback.h）：min/max-luma 是
+            // ST 2086 mastering 范围，max-cll/max-fall 是 CTA-861 内容光级。
+            double minLuma = 0, maxLuma = 0, maxCll = 0, maxFall = 0;
+            auto num = [](const mpv_node *v, double *out) {
+                if (v->format == MPV_FORMAT_DOUBLE) { *out = v->u.double_; return true; }
+                if (v->format == MPV_FORMAT_INT64)  { *out = double(v->u.int64); return true; }
+                return false;
+            };
             if (node.format == MPV_FORMAT_NODE_MAP) {
                 for (int j = 0; j < node.u.list->num; j++) {
                     const char *k = node.u.list->keys[j];
@@ -260,6 +269,13 @@ void PlayerViewModel::attach(MpvController *mpv) {
                     else if (!strcmp(k, "hw-pixelformat") &&
                              v->format == MPV_FORMAT_STRING)
                         hwPix = v->u.string;
+                    else if (!strcmp(k, "gamma") &&
+                             v->format == MPV_FORMAT_STRING)
+                        gamma = v->u.string;
+                    else if (!strcmp(k, "min-luma"))   num(v, &minLuma);
+                    else if (!strcmp(k, "max-luma"))   num(v, &maxLuma);
+                    else if (!strcmp(k, "max-cll"))    num(v, &maxCll);
+                    else if (!strcmp(k, "max-fall"))   num(v, &maxFall);
                 }
                 // 色深：hw-pixelformat 优先（硬解时 pixelformat 是
                 // cuda/nv12 包装名），fallback pixelformat。解析 'p' 后
@@ -279,7 +295,16 @@ void PlayerViewModel::attach(MpvController *mpv) {
                 if (bd == 0 && !fmt.empty()) bd = 8;   // 无后缀：8bit
             }
             mpv_free_node_contents(&node);
-            postData([this, w, h, pix, hwPix, bd] {
+            // 内容侧 HDR 判据：gamma = pq / hlg（HDR10/HLG 源）。BT.2020 容器 +
+            // sig-peak>1 也可作弱信号，但常见 HDR 源都会带 pq/hlg → 只用它。
+            const bool hdr = (gamma == "pq" || gamma == "hlg");
+            HdrMeta meta;
+            meta.valid = hdr && maxLuma > minLuma && maxLuma > 0;
+            meta.minMastering = minLuma;
+            meta.maxMastering = maxLuma;
+            meta.maxCll = maxCll;
+            meta.maxFall = maxFall;
+            postData([this, w, h, pix, hwPix, bd, hdr, gamma, meta] {
                 if (videoWidth_ != w || videoHeight_ != h) {
                     videoWidth_.store(w); videoHeight_.store(h);
                     emit osdDataChanged();
@@ -295,6 +320,23 @@ void PlayerViewModel::attach(MpvController *mpv) {
                 if (videoBitDepth_.load() != bd) {
                     videoBitDepth_.store(bd);
                     emit osdDataChanged();
+                }
+                if (videoHdr_ != hdr) {
+                    videoHdr_ = hdr;
+                    MLOG_INFO("video-params: hdr=%d（gamma=%s）", int(hdr), gamma.c_str());
+                    emit videoHdrChanged();
+                }
+                if (hdrMeta_.valid != meta.valid ||
+                    hdrMeta_.minMastering != meta.minMastering ||
+                    hdrMeta_.maxMastering != meta.maxMastering ||
+                    hdrMeta_.maxCll != meta.maxCll ||
+                    hdrMeta_.maxFall != meta.maxFall) {
+                    hdrMeta_ = meta;
+                    MLOG_INFO("video-params: HDR10 元数据 mastering %.4f-%.0f nit, "
+                              "max_cll=%.0f, max_fall=%.0f（%s）",
+                              meta.minMastering, meta.maxMastering, meta.maxCll,
+                              meta.maxFall, meta.valid ? "有效" : "无 → 合成器按 10000nit 口径");
+                    emit videoHdrMetaChanged();
                 }
             });
         }
@@ -1026,6 +1068,12 @@ void PlayerViewModel::setVsrStatus(const std::string &s) {
     std::lock_guard<std::mutex> lk(vsrStatusMtx_);
     vsrStatus_ = s;
     stripEol(vsrStatus_);
+}
+
+void PlayerViewModel::setHdrStatus(const std::string &s) {
+    std::lock_guard<std::mutex> lk(hdrStatusMtx_);
+    hdrStatus_ = s;
+    stripEol(hdrStatus_);
 }
 
 // ── Speed / window / OSD ─────────────────────────────────────────────
@@ -1777,6 +1825,13 @@ std::string PlayerViewModel::osdTextString() {
         lines << tag("Output") + QStringLiteral("%1×%2 %3fps")
             .arg(viewportWidth_.load()).arg(viewportHeight_.load())
             .arg(renderFps_.load(), 0, 'f', 1);
+    }
+
+    // HDR：上屏状态（SDR / HDR10 + 显示峰值 + 内容峰值/未上屏原因）。
+    // 文本由 hdr::statusText() 给出（英文，不翻译），平台无关地反映实际状态。
+    {
+        std::lock_guard<std::mutex> lk(hdrStatusMtx_);
+        lines << tag("HDR") + QString::fromStdString(hdrStatus_);
     }
 
     // VSR：设定 | 状态（原 Render 行合并：输出帧尺寸——倍率由设定段

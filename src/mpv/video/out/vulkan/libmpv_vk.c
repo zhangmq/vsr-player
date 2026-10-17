@@ -41,11 +41,20 @@ struct priv {
     const char * const        *host_inst_extensions;
     int                        host_num_inst_extensions;
 
+    // 已打过日志的格式（fmt/hdr 变化时打一条 INFO；日志纪律：状态变更）
+    VkFormat    logged_format;
+    int         logged_hdr;
+
     // Per-frame
     VkImage     cur_image;
     VkSemaphore cur_signal_sem;
     uint64_t    cur_signal_value;
     int         cur_w, cur_h;
+    // 宿主声明的 render target 格式与 HDR 目标（每帧由 wrap_fbo 从
+    // mpv_vulkan_image 抄入；vk_start_frame / vk_color_depth 读它）
+    VkFormat    cur_format;
+    int         cur_hdr;
+    float       cur_min_luma, cur_max_luma;
 
     // Cached wrap — makes wrap_fbo idempotent across double-call
     VkImage     cached_image;
@@ -59,11 +68,29 @@ struct priv {
 
 // ── Swapchain ────────────────────────────────────────────────────────
 
-static int vk_color_depth(struct ra_swapchain *sw) { return 8; }
+// 目标位深（mpv 只把它喂给 gl_video_set_fb_depth，决定 dither 深度，
+// 不改格式/色彩空间）。⚠ 顺序依赖：vo_gpu 仅在 resize() 里读它
+// （video/out/vo_gpu.c:65），而 resize() 可能发生在首个 wrap_fbo 之前 →
+// 首帧之前拿到的是 cur_format 的初始值 0（返回 8，dither 略浅）；窗口尺寸
+// 变化后会重新读到正确值。cur_format 由 wrap_fbo（宿主每帧调用，早于
+// start_frame）写入，是链路里最早能拿到宿主格式的位置。
+static int vk_color_depth(struct ra_swapchain *sw)
+{
+    struct priv *p = sw->priv;
+    switch (p->cur_format) {
+    case VK_FORMAT_A2B10G10R10_UNORM_PACK32: return 10;
+    case VK_FORMAT_R16G16B16A16_SFLOAT:      return 16;  // scRGB：FP16 无需 dither
+    default:                                 return 8;
+    }
+}
 
+// ra_swapchain_fns.target_csp：vo_gpu 当前**不消费**它（只有 vo_gpu_next 用），
+// 真正生效的宿主色彩空间走 vk_start_frame 填的 ra_fbo.color_space
+// （见这里的 vk_start_frame 与 gpu/context.h:105 的语义说明）。
+// 保持 {0}（unspecified）与 GL 后端一致。
 static struct pl_color_space vk_target_csp(struct ra_swapchain *sw)
 {
-    return (struct pl_color_space){0};  // match GL backend: automatic/unspecified
+    return (struct pl_color_space){0};
 }
 
 static bool vk_start_frame(struct ra_swapchain *sw, struct ra_fbo *out_fbo)
@@ -73,11 +100,39 @@ static bool vk_start_frame(struct ra_swapchain *sw, struct ra_fbo *out_fbo)
     if (!p->cur_image)
         return false;
 
+    // 状态变更日志（MP_INFO ≤ 客户端的 all=status，可见）：一条即可证明
+    // ① pl_vulkan_wrap 用的就是宿主给的格式；② vk_color_depth() 的计算口径。
+    if (p->cur_format != p->logged_format || p->cur_hdr != p->logged_hdr) {
+        p->logged_format = p->cur_format;
+        p->logged_hdr    = p->cur_hdr;
+        MP_INFO(sw->ctx, "libmpv_vk: render target fmt=%d hdr=%d "
+                "color_depth=%d csp=%s（合成器亮度 min=%.2f max=%.2f nit，仅诊断；"
+                "故意不填进 csp —— 否则会本地预 tone map 到 203nit 变暗）\n",
+                (int)p->cur_format, p->cur_hdr, vk_color_depth(sw),
+                p->cur_hdr ? "PQ/BT.2020" : "unspecified",
+                p->cur_min_luma, p->cur_max_luma);
+    }
+
     pl_gpu gpu = p->vulkan->gpu;
+
+    // 宿主声明的目标色彩空间：hdr → HDR10（PQ/BT.2020 + 显示亮度），
+    // 否则 {0}（unspecified，与改动前一致）。缓存快路径也必须带它一起返回
+    // —— mpv 每帧会调用 start_frame 两次，第二次命中缓存。
+    // ra_fbo.color_space 保持 {0}（与 mpv 自己的 vulkan backend 一致）：
+    // ⚠ generic libmpv 渲染路径（video/out/gpu/libmpv_gpu.c 的 render()）
+    // 自己拼 `struct ra_fbo {.tex, .flip}`，**会丢掉这里的 color_space**，
+    // 所以"HDR 目标色彩空间"必须由宿主通过 mpv 选项声明
+    //（target-trc/target-prim，见 MpvController::setHdrTarget）——实测：
+    // 只填 primaries 不填 raw hdr.prim 还会撞上 libplacebo 的错误矩阵路径
+    //（整幅品红/青）。亮度值（cur_min/max_luma）仍逐帧带下来，仅用于诊断
+    // 日志（预 tone map 到 203nit 会让画面暗 2.4 倍，已实测排除该做法）。
+    const struct pl_color_space csp = (struct pl_color_space) {0};
+    (void)csp;
 
     // Idempotent: reuse cached wrap if same image (called twice per frame)
     if (p->cur_image == p->cached_image && p->cached_ratex) {
-        *out_fbo = (struct ra_fbo) { .tex = p->cached_ratex, .flip = false };
+        *out_fbo = (struct ra_fbo) { .tex = p->cached_ratex, .flip = false,
+                                     .color_space = csp };
         return true;
     }
 
@@ -95,7 +150,8 @@ static bool vk_start_frame(struct ra_swapchain *sw, struct ra_fbo *out_fbo)
         .image  = p->cur_image,
         .width  = p->cur_w,
         .height = p->cur_h,
-        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .format = p->cur_format,   // 宿主给的格式（SDR=R8G8B8A8，HDR10=A2B10G10R10）
+
         .usage  = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                   VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                   VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -122,7 +178,8 @@ static bool vk_start_frame(struct ra_swapchain *sw, struct ra_fbo *out_fbo)
     p->cached_pltex = pltex;
     p->cached_ratex = ratex;
 
-    *out_fbo = (struct ra_fbo) { .tex = ratex, .flip = false };
+    *out_fbo = (struct ra_fbo) { .tex = ratex, .flip = false,
+                                 .color_space = csp };
     return true;
 }
 
@@ -298,11 +355,19 @@ static int wrap_fbo(struct libmpv_gpu_context *ctx, mpv_render_param *params,
     p->cur_signal_value = img->signal_semaphore_value;
     p->cur_w = img->width;
     p->cur_h = img->height;
+    // 目标格式与色彩空间（本项目扩展字段；旧调用方不填 → 0 = SDR 行为不变）
+    p->cur_format   = img->format;
+    p->cur_hdr      = img->hdr;
+    p->cur_min_luma = img->min_luma;
+    p->cur_max_luma = img->max_luma;
 
     struct ra_swapchain *sw = p->ra_ctx->swapchain;
     struct ra_fbo target;
     if (!sw->fns->start_frame(sw, &target))
         return MPV_ERROR_UNSUPPORTED;
+    // 把 FBO 色彩空间（vk_start_frame() 按宿主 HDR 状态填的）交给
+    // libmpv_gpu.c 的 render()：上游会自己拼 fbo 丢掉它 → HDR 下 gl_video
+    // 误判 FBO 未指定 → PQ 内容被烘成 gamma2.2 写进 PQ swapchain（实测暗 2.4 倍）。
 
     *out = target.tex;
     return 0;

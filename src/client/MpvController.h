@@ -41,6 +41,11 @@ public:
     /// PlayerViewModel::hasResumeState() 用它定位条目文件。
     static std::string watchLaterDir();
 
+    /// HDR 输出目标（强制切片：启动时设一次，之后 render() 每帧带下去）。
+    /// hdr=false 时行为与加这个接口之前完全一致（mpv_vulkan_image.hdr=0）。
+    /// minLuma/maxLuma：显示能力（nit，来自合成器；读不到就别猜）。
+    void setHdrTarget(bool hdr, float minLuma, float maxLuma);
+
     uint64_t update();  // → MPV_RENDER_UPDATE_FRAME
     void render(VkImage img, VkFormat fmt, int w, int h);
     void skipRender(VkImage img, VkFormat fmt, int w, int h);
@@ -121,4 +126,9 @@ private:
     std::function<void()> idlePollCb_;   // 事件线程空闲回调（~100ms）
     std::function<void(const char *text)> logCb_;
     std::vector<PropObs> propObs_;  // written before startEvents, read by event thread
+
+    // HDR 上屏目标（默认 SDR = 现状；setHdrTarget 在播放前设一次）
+    bool  hdrTarget_ = false;
+    float hdrMinLuma_ = 0.0f;
+    float hdrMaxLuma_ = 0.0f;
 };

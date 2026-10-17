@@ -33,10 +33,15 @@
 #include "PlayerViewModel.h"
 #include "RpcServer.h"
 #include "SessionIdle.h"
+#include "HdrOutput.h"
+
+#include <QColorSpace>
+#include <QSurfaceFormat>
 
 extern "C" {
 VkResult vkDeviceWaitIdle(VkDevice);
 }
+
 
 // OSD 统一机制（benchmark 与正常播放共用）：viewModel 的 osdTextString()
 // 基于 viewModel 状态计算完整文本（数据源 = 观察器填充的真实数据），
@@ -303,6 +308,51 @@ int main(int argc, char *argv[]) {
                 MLOG_ERR("QML error: %s", e.toString().toUtf8().constData());
             return 1;
         }
+        // ── HDR 上屏策略（env VSR_HDR=off|auto|hdr10；默认 auto）────────
+        //   off  : 永远 SDR（= 改动前行为，且不碰色彩空间声明）
+        //   auto : 内容 HDR（video-params/gamma=pq|hlg）× 显示能力 HDR
+        //          （合成器 surface preferred 宽色域）才切 HDR10
+        //   hdr10: 强制 HDR10（验证/用户覆盖）
+        // 初始一律 SDR 起（auto/off）：只有强制模式需要 **show 之前** 设属性
+        // ——Qt 只在 swapchain 创建时读一次 `_qt_sg_hdr_format`
+        //（QSGRhiSupport::applySwapChainFormat，且只在 Vulkan RHI 后端生效）；
+        // auto 的切换走运行期路径（hdr::applyMode：setFormat +
+        // newCompatibleRenderPassDescriptor + createOrResize）。
+        const hdr::Policy hdrPolicy = hdr::policyFromEnv();
+        const hdr::Mode initialMode = hdrPolicy == hdr::Policy::ForceHdr10
+                                    ? hdr::Mode::Hdr10 : hdr::Mode::Sdr;
+        const VkFormat swapchainFmt = hdr::vkFormatForMode(initialMode);
+        const VkFormat renderFmt    = hdr::renderTargetFormatForMode(initialMode);
+        if (initialMode != hdr::Mode::Sdr) {
+            const char *prop = hdr::qtHdrFormatProperty(initialMode);
+            view.setProperty("_qt_sg_hdr_format", QString::fromLatin1(prop));
+            // ⚠ **不要**在 show 之前设 QSurfaceFormat::colorSpace：Qt 会在
+            // platform window 创建时据此自己建一个 `wp_color_management_surface_v1`；
+            // 协议规定**一个 wl_surface 只能有一个** color management surface
+            // （`wp_color_manager_v1` error surface_exists）→ 我们的模块
+            // （WaylandColorFeedback，负责 luminances + 内容静态元数据）再
+            // `get_surface()` 就是协议错误，**整条连接被断开、app 直接退出**（实测
+            // 2026-10-17：`VSR_HDR=hdr10 input/goose_480p.webm` exit=255）。
+            // 因此这里只设 `_qt_sg_hdr_format`（swapchain 格式需要它），
+            // 色彩空间与描述交给 HdrOutput：首帧后 `syncTargets()` 设
+            // colorSpace（此时 platform window 已存在，Qt 不会再建 surface——
+            // 自动切换路径一直如此）+ 我们下发带 luminances/元数据的描述。
+            MLOG_INFO("hdr: 强制 HDR10（VSR_HDR=hdr10）—— _qt_sg_hdr_format=%s, "
+                      "rtImage fmt=%d, composite attachment fmt=%d"
+                      "（色彩空间/描述在首帧后由 hdr 策略下发）",
+                      prop, int(renderFmt), int(swapchainFmt));
+        } else {
+            MLOG_INFO("hdr: 初始 SDR（策略 %s）%s",
+                      hdrPolicy == hdr::Policy::Auto ? "auto" : "off",
+                      hdrPolicy == hdr::Policy::Auto
+                          ? "——内容 HDR × 显示能力 HDR 时运行期切 HDR10"
+                          : "——off：从不切换");
+        }
+
+        // 能力探测 + 日志（零行为变更）。必须在首帧之前接线
+        // ——QRhiSwapChain 只在 afterRendering 里才绑定到窗口，且换屏要重探。
+        hdr::installCapabilityProbe(&view);
+        hdr::installSwapchainVerification(&view, initialMode);
         view.show();
         // QML 的 Qt.quit() → QQmlEngine::quit() signal——文档不保证默认
         // 连接，QQuickView 场景实测不退出（"退出无效"根因，2026-08-06）。
@@ -314,14 +364,87 @@ int main(int argc, char *argv[]) {
         auto *root = view.rootObject();
         auto *video = root ? root->findChild<Video*>() : nullptr;
         if (!video) { MLOG_ERR("Video not found in QML"); return 1; }
+        video->setRenderFormat(renderFmt);   // 必须在首帧（首次 ensureRenderTarget）之前
         video->initRenderTarget(vk.device(), vk.physicalDevice(),
                                 vk.queueFamilyIndex(), vk.queue());
         MLOG_INFO("video init done");
 
         // ── Composite pipeline（render target 由 Video 管理）───────────
         CompositePipeline comp;
-        if (!comp.create(vk.device(), video->descriptorSetLayout())) return 1;
+        if (!comp.create(vk.device(), video->descriptorSetLayout(), swapchainFmt)) return 1;
         MLOG_INFO("composite pipeline ready");
+
+        // ── HDR 策略：内容 × 显示能力 → 运行期切换 ─────────────────────
+        // 显示能力是异步到达的（窗口映射后才有 surface preferred 描述），
+        // 内容 HDR 由 PlayerViewModel 观察 video-params/gamma 给出 →
+        // 两者任一变化都会触发重新决策（hdr::installPolicy 内部）。
+        {
+            CompositePipeline *compPtr = &comp;
+            Video *videoPtr = video;
+            MpvController *mpvPtr = &mpv;
+            hdr::ApplyHooks hooks;
+            hooks.rebuildRenderPath = [compPtr, videoPtr, &vk](hdr::Mode m) {
+                // composite render pass 的 attachment 必须匹配新的 swapchain 格式；
+                // rtImage/mpv FBO 格式随 Video（下次 updatePaintNode 立即重建）。
+                if (!compPtr->create(vk.device(), videoPtr->descriptorSetLayout(),
+                                     hdr::vkFormatForMode(m))) {
+                    MLOG_ERR("hdr: composite pipeline 重建失败（%s）→ 画面可能不兼容",
+                             hdr::modeName(m));
+                    return;
+                }
+                videoPtr->setRenderFormat(hdr::renderTargetFormatForMode(m));
+                videoPtr->setCompositeObjects(compPtr->pipeline(), compPtr->pipelineLayout());
+                MLOG_INFO("hdr: 渲染链路 → %s（composite attachment=%d rtImage=%d）",
+                          hdr::modeName(m), int(hdr::vkFormatForMode(m)),
+                          int(hdr::renderTargetFormatForMode(m)));
+            };
+            hooks.updateMpvTarget = [mpvPtr](hdr::Mode m, const hdr::DisplayInfo &di) {
+                if (m != hdr::Mode::Hdr10) {
+                    mpvPtr->setHdrTarget(false, 0.0f, 0.0f);
+                    return;
+                }
+                if (di.haveLuminances && di.peakNits > 0) {
+                    mpvPtr->setHdrTarget(true, di.minNits, di.peakNits);
+                    MLOG_INFO("hdr: mpv target ← 合成器 screen=%s peak=%.1f nit min=%.2f nit "
+                              "gamut_area=%.4f（%s）", di.screen.toUtf8().constData(),
+                              di.peakNits, di.minNits, di.gamutArea,
+                              di.reason.toUtf8().constData());
+                } else {
+                    MLOG_ERR("hdr: 显示能力无亮度信息（valid=%d icc_only=%d）→ mpv target "
+                             "用保守默认 max=1000 nit/min=0", int(di.valid), int(di.iccOnly));
+                    mpvPtr->setHdrTarget(true, 0.0f, 1000.0f);
+                }
+            };
+            // OSD 的 HDR 状态行（SDR / HDR10 + 显示峰值 + 内容峰值/未上屏原因）：
+            // 模式、显示能力、内容元数据任一变化都会回调 → 刷新到 OSD 文本源。
+            hooks.statusChanged = [&viewModel] {
+                const QString s = hdr::statusText();
+                viewModel.setHdrStatus(s.toStdString());
+                // 状态变更才打日志（INFO = 状态变更；便于无 UI 时核对 OSD 来源）
+                static QString last;
+                if (last != s) {
+                    last = s;
+                    MLOG_INFO("hdr status: %s", s.toUtf8().constData());
+                }
+            };
+            hdr::installPolicy(&view, hdrPolicy, initialMode, hooks);
+            QObject::connect(&viewModel, &PlayerViewModel::videoHdrChanged, &view, [&viewModel] {
+                hdr::setContentHdr(viewModel.videoHdr());
+            });
+            // 内容静态元数据（mastering min/max + MaxCLL/MaxFALL）→ 合成器描述的
+            // "内容峰值"依据；缺它合成器只能按主色体积上限（PQ 名义 10000nit）压，
+            // 真实片源（普遍 mastering≈1000nit）会被压得过狠、对比度变差。
+            QObject::connect(&viewModel, &PlayerViewModel::videoHdrMetaChanged, &view, [&viewModel] {
+                const PlayerViewModel::HdrMeta m = viewModel.hdrMeta();
+                hdr::ContentMeta cm;
+                cm.valid = m.valid;
+                cm.minMastering = m.minMastering;
+                cm.maxMastering = m.maxMastering;
+                cm.maxCll = m.maxCll;
+                cm.maxFall = m.maxFall;
+                hdr::setContentMeta(cm);
+            });
+        }
 
         // ── Wire Video ────────────────────────────────────────────────
         video->setMpvController(&mpv);
@@ -477,7 +600,7 @@ int main(int argc, char *argv[]) {
              view.devicePixelRatio());
         video->ensureRenderTarget((int)(view.width() * view.devicePixelRatio()),
                                   (int)(view.height() * view.devicePixelRatio()));
-        mpv.skipRender(video->image(), VK_FORMAT_R8G8B8A8_UNORM,
+        mpv.skipRender(video->image(), video->renderFormat(),
                        video->width(), video->height());
         MLOG_INFO("skip render pass done (%dx%d)", video->width(), video->height());
 

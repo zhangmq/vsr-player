@@ -307,8 +307,36 @@ uint64_t MpvController::update() {
     return mpv_render_context_update(mctx_);
 }
 
+void MpvController::setHdrTarget(bool hdr, float minLuma, float maxLuma) {
+    hdrTarget_  = hdr;
+    hdrMinLuma_ = minLuma;
+    hdrMaxLuma_ = maxLuma;
+    // 目标色彩空间**必须在这里声明**（而不是靠 ra_fbo.color_space）：
+    // generic libmpv 渲染路径自己拼 struct ra_fbo、丢掉 backend 填的
+    // color_space → gl_video 会把 FBO 当"色彩空间未指定"，对 HDR 内容回退成
+    // gamma2.2 烘焙写进 PQ swapchain（实测同帧亮度 9.7 vs mpv 原生 23.1，
+    // 观感"偏红/偏暗"）。gl_video 的 target-trc/target-prim 显式设置优先于
+    // fbo csp，正是 mpv 自己的做法。
+    // target-peak 保持 auto：**不预 tone map**，把 PQ 信号交给合成器映射到面板
+    //（与 mpv --target-colorspace-hint 实测行为一致；填 203nit 会暗 2.4 倍）。
+    if (hdr) {
+        setPropertyString("target-trc", "pq");
+        setPropertyString("target-prim", "bt.2020");
+    } else {
+        setPropertyString("target-trc", "auto");
+        setPropertyString("target-prim", "auto");
+    }
+    MLOG_INFO("mpv HDR target: %s (min=%.3f nit max=%.1f nit; target-trc/prim=%s)",
+              hdr ? "HDR10 (PQ/BT.2020)" : "SDR", minLuma, maxLuma,
+              hdr ? "pq/bt.2020（不预 tone map）" : "auto/auto");
+}
+
 void MpvController::render(VkImage img, VkFormat fmt, int w, int h) {
-    mpv_vulkan_image vi = {img, fmt, w, h};
+    mpv_vulkan_image vi = {};
+    vi.image = img; vi.format = fmt; vi.width = w; vi.height = h;
+    vi.hdr      = hdrTarget_ ? 1 : 0;
+    vi.min_luma = hdrMinLuma_;
+    vi.max_luma = hdrMaxLuma_;
     mpv_render_param rp[] = {
         {MPV_RENDER_PARAM_VULKAN_IMAGE, &vi},
         {MPV_RENDER_PARAM_INVALID, nullptr}
@@ -317,7 +345,11 @@ void MpvController::render(VkImage img, VkFormat fmt, int w, int h) {
 }
 
 void MpvController::skipRender(VkImage img, VkFormat fmt, int w, int h) {
-    mpv_vulkan_image vi = {img, fmt, w, h};
+    mpv_vulkan_image vi = {};
+    vi.image = img; vi.format = fmt; vi.width = w; vi.height = h;
+    vi.hdr      = hdrTarget_ ? 1 : 0;
+    vi.min_luma = hdrMinLuma_;
+    vi.max_luma = hdrMaxLuma_;
     int skip = 1;
     mpv_render_param rp[] = {
         {MPV_RENDER_PARAM_VULKAN_IMAGE, &vi},

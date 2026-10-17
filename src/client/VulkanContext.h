@@ -31,10 +31,16 @@ public:
     /// Physical device name (for the OSD GPU line).
     const char *deviceName() const { return devName_.c_str(); }
 
+    /// VK_EXT_swapchain_colorspace 是否已在该 instance 上启用。false = 该环境
+    /// 不可能枚举 HDR 色彩空间（Qt 的 isFormatSupported 恒 false）→ HDR 上屏
+    /// 直接退 SDR，不必再往下探测。
+    bool swapchainColorspaceEnabled() const { return swapchainColorspaceExt_; }
+
 private:
     mutable std::string devName_;   // filled in init()
 
 private:
+    bool swapchainColorspaceExt_ = false;
     VkInstance inst_ = VK_NULL_HANDLE;
     VkPhysicalDevice pd_ = VK_NULL_HANDLE;
     VkDevice dev_ = VK_NULL_HANDLE;

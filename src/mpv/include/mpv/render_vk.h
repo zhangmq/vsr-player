@@ -98,6 +98,20 @@ typedef struct mpv_vulkan_image {
     // Set to VK_NULL_HANDLE if no signal is needed.
     VkSemaphore signal_semaphore;
     uint64_t signal_semaphore_value; // for timeline semaphores
+
+    // ── HDR 目标（本项目扩展；全 0 = SDR，与加这些字段之前完全一致）──
+    // hdr != 0：宿主按 **HDR10（PQ / BT.2020）** 解释这块 render target，
+    //   mpv 会把它当作渲染目标色彩空间（ra_fbo.color_space，见
+    //   video/out/gpu/context.h 的 "Host system's colorspace"），据此做
+    //   tonemap/gamut 映射；此时 format 必须是 10-bit 容器
+    //   （VK_FORMAT_A2B10G10R10_UNORM_PACK32）。
+    // min_luma / max_luma：显示能力的 min/max 亮度，单位 cd/m²（nit），
+    //   与 mpv 的 target-peak / libplacebo pl_color_space.hdr 同口径
+    //   （宿主从合成器读真实值；**不要**用 Qt 的 hdrInfo()——Linux 上它是
+    //   硬编码默认值）。hdr=0 时这两个字段被忽略。
+    int   hdr;
+    float min_luma;
+    float max_luma;
 } mpv_vulkan_image;
 
 #ifdef __cplusplus
