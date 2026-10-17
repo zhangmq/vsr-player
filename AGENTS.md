@@ -56,6 +56,32 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
   - `toggleHwaccel()` 原先把位置塞进 `loadfile` 第 4 参数（`start=+5.000`）。mpv 0.41 的第 4 参数是 key/value **列表**（`cmd_loadfile` 里 `cmd->args[3].v.str_list`），`mpv_command` 只能传 char* → 被当 index 解析失败（"The loadfile option must be an integer"）→ **重载从未发生**，而 `set hwdec` 已在当前流中途换解码器（新解码器无参考帧 → HEVC "Could not find ref with POC"）。修法：记 `pendingResumeSeek_` → `loadfile … replace` → `onFileLoadedFromEventThread` 里 seek 回原位置。
   - 残留：属性一改 mpv 立刻换解码器，重载生效前有短暂解码错误抖动。彻底消除需 per-entry hwdec（`mpv_command_node` 传 `["loadfile",url,"replace",-1,["hwdec",…,"start",…]]`）或 stop→set→reload（会动播放列表，未采用）。
 
+
+### HDR 上屏（spike 结论，2026-10-17）
+
+调研全文见 `docs/hdr-pipeline-investigation.md` §10。要点（**都与具体显示器无关**，
+本机 400nit 面板只用于验证机制）：
+
+- **前提：Qt 的 HDR swapchain 只在 Vulkan RHI 后端生效**。Wayland 下 Qt 默认
+  OpenGL(EGL) → `_qt_sg_hdr_format` 被静默忽略、`isFormatSupported(HDR10/scRGB/P3)` 全 0
+  （dmabuf fourcc 恒 AR24）——踩过这个坑并据此得出过错误结论。本项目 app 走 Vulkan ✔。
+- 入口是**动态窗口属性 `_qt_sg_hdr_format`**（"hdr10" / "scrgb" / "p3"，或 env
+  `QSG_RHI_HDR`），由 `QSGRhiSupport::applySwapChainFormat()` 在 swapchain 创建时读取；
+  Vulkan 后端实测 `isFormatSupported` 三项全 1、`QRhiSwapChain::format()==HDR10`。
+- **色彩空间声明走公开 API**：`QSurfaceFormat::setColorSpace(Bt2020+ST2084)` → Qt 发
+  `wp_color_management`（bt2020=6/st2084=11）→ KWin 回 `ready`；三种声明观感不同，
+  PQ 声明下 Qt 把 UI 按 PQ 编码、往返不偏色（sRGB 105.4 / PQ 102.8 / Linear 138.1）。
+- ⚠ **不要用 Qt 当显示能力的来源**：Linux 上 `QRhiSwapChain::hdrInfo()` 返回 Qt 硬编码
+  默认值（min 0 / max 1000 nit / sdrWhiteLevel 200），只有 Windows 有真实实现。峰值/色域必须
+  从合成器读（`wp_color_management` 的 output/surface feedback——mpv wayland 后端即此法），
+  需要我们自建协议客户端（已有 `WaylandIdleInhibit.cpp` 先例）或配置覆盖。
+- 格式选择要有 fallback 且逐屏判定：HDR10(`A2B10G10R10+HDR10_ST2084`) → scRGB
+  (`RGBA16F+EXTENDED_SRGB_LINEAR`) → SDR；`isFormatSupported()` 是 per-surface，
+  窗口换屏必须重新评估。自建 Vulkan instance 需加 `VK_EXT_swapchain_colorspace`。
+- 运行期开关：色彩空间声明可运行期改；**swapchain 格式**切换（SDR↔HDR10）需重建
+  swapchain + Qt 的 swapchain render pass + 我们的 composite render pass
+  （`applySwapChainFormat` 只在创建时调一次，要自己驱动或重建窗口）。
+
 ### 渲染循环（Qt Quick）
 
 - **纯请求驱动**：mpv update callback（按帧率推送；无活动时完全静默）→ QueuedConnection → 条件 requestRender（`mpv_->update() > 0 || renderRequested_`）→ updatePaintNode → render + reportSwap + vkQueueWaitIdle。**无心跳/无自主循环**——旧文档的"200ms 心跳"模型已证伪。

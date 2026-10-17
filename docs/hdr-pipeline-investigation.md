@@ -311,3 +311,74 @@ grep -rn "HDR10" /usr/include/qt6/QtGui/6.12.0/QtGui/rhi/qrhi.h
 
 参考：`docs/vfx-sdk-1.3-investigation.md`（TrueHDR 静图实测、VFG 接入要点、10-bit 待办）、
 `docs/memory/vfx-no-trt10-needed.md`、`AGENTS.md`（滤镜链/渲染循环背景）。
+
+## 10. HDR 上屏 spike 结果（2026-10-17 实测）
+
+**结论先写**：Qt 6.12 + KWin 这条路**可用**，而且入口是"动态窗口属性 + 公开 API"，不是必须碰私有 API。
+（注：本次 spike 只在开发机（KWin 6.8 + LG 400nit + 一台非 HDR Dell 作对照）验证机制，
+**设计不得依赖本机面板参数**——峰值/色域/是否 HDR 全部按运行时从合成器读到的能力决定。）
+
+### 10.1 关键坑：HDR swapchain 只在 **Vulkan** RHI 后端生效
+
+- Wayland 下 Qt 默认走 **OpenGL(EGL)** 后端。此时：
+  - `_qt_sg_hdr_format=hdr10` 被**静默忽略**（`QRhiSwapChain::format()` 恒 SDR）；
+  - `isFormatSupported(HDR10/scRGB/P3)` **全 0**（GL 后端没有对应实现）；
+  - 现象是 dmabuf fourcc 恒 `AR24`（8-bit）——我第一轮就踩了这个，并据此得出过
+    "Qt 走不通"的错误结论（已作废）。
+- 设 `QSG_RHI_BACKEND=vulkan`（本项目 app 本来就通过
+  `QQuickGraphicsDevice::fromDeviceObjects` 走 Vulkan）后，同一份代码：
+  - `isFormatSupported HDR10=1 scRGB=1 P3=1`；
+  - `_qt_sg_hdr_format = "hdr10"` → **`QRhiSwapChain::format() == HDR10`**（真建出 HDR10 swapchain）。
+- 也就是说：HDR 上屏的前提是**用 Vulkan 后端**（我们是），Qt 的 GL 后端不参与。
+
+### 10.2 色彩空间声明：公开 API，KWin 认
+
+`QSurfaceFormat::setColorSpace(QColorSpace(Primaries::Bt2020, TransferFunction::St2084))`
+→ Qt 的 Wayland 客户端发 `wp_color_management` 请求（协议 XML 枚举值核对过）：
+
+```
+set_primaries_named(6)      # bt2020
+set_tf_named(11)            # st2084_pq
+set_image_description(...)
+wp_image_description_v1.ready(...)   # KWin 接受
+```
+
+同一份 buffer 在三种声明下的观感确实不同（全屏窗口平均像素）：
+sRGB `105.4` / PQ-BT2020 `102.8`（≈一致 → 往返正确）/ BT2020-Linear `138.1`（明显更亮）。
+→ 证明声明**真的被合成器采纳**，且 PQ 下 Qt 会把 UI 按 PQ 编码，往返不偏色。
+
+### 10.3 显示器无关性：必须解决的三件事
+
+1. **真实显示能力不能靠 Qt**：Linux 上 `QRhiSwapChain::hdrInfo()` 只有 Windows 有实现
+   （`#ifdef Q_OS_WIN`），其余平台返回 Qt 的硬编码默认值（min 0 / max 1000 nit /
+   `sdrWhiteLevel` 200 nit）。Qt Quick 自己的 UI 会按这个默认值编码 → 在不同 HDR 显示器上
+   观感会偏。真实峰值/最小亮度/色域要**从合成器读**（KWin 的
+   `wp_color_management` output/surface feedback；mpv 的 wayland 后端已经这么读了：
+   日志 `target: min_luma=… max_luma=… primaries=…`）。我们需要自建该协议客户端
+   （项目已有 `WaylandIdleInhibit.cpp` 先例）或提供配置覆盖 + 合理兜底。
+2. **格式选择要有 fallback 链且逐显示器判定**：`isFormatSupported()` 要求精确的
+   `VkFormat + VkColorSpace` 配对（HDR10 = `A2B10G10R10 + HDR10_ST2084`，
+   scRGB = `RGBA16F + EXTENDED_SRGB_LINEAR`）。不同合成器/驱动给的不同 →
+   顺序应为 HDR10 → scRGB → SDR，且 `isFormatSupported` 是 **per-surface**：
+   窗口移动到另一块屏后必须重新评估（多显示器混合场景是常态）。
+3. **自建 Vulkan instance 要带 `VK_EXT_swapchain_colorspace`**（instance 扩展）：
+   mpv/libplacebo 侧已启用；我们的 `VulkanContext.cpp` 目前没加，做 HDR 时要加。
+
+### 10.4 运行期开关的边界（据 10.1–10.3 修正）
+
+- 色彩空间声明：运行期可改（公开 API + Qt 的 pending image description 机制）。
+- **swapchain 格式**（SDR 8-bit ↔ HDR10 10-bit）：从 SDR 屏切到 HDR 屏、或用户手动开关
+  HDR 时都必须换格式 → 需重建 swapchain + Qt 的 swapchain render pass descriptor +
+  我们自己的 composite render pass；Qt 的 `applySwapChainFormat()` 只在 swapchain 创建时调一次
+  （`QSGRhiRenderLoop::ensureRhi`），运行期要自己驱动（导出私有符号可调），
+  或者在换屏/切 HDR 时重建 QQuickWindow（约 100–300 ms 黑闪，mpv/VkDevice 不必重启）。
+- 因此：**"支持任意 HDR 显示器"与"运行期无缝切换"是两个独立目标**；前者是必修，
+  后者可以先做成"切 HDR = 重建渲染目标（必要时重建窗口）"。
+
+### 10.5 spike 工装
+
+`build/scratch/hdr_spike/`（gitignore）：`spike.cpp` + `spike.qml`，环境变量
+`SPIKE_HDR`（请求 hdr10 swapchain）/`SPIKE_CS`（sRGB|pq|linear|p3）/`SPIKE_SCREEN`
+（按名字选屏）/`SPIKE_VKEXT`/`SPIKE_FORCE`；输出 QRhi swapchain 实际格式、
+`isFormatSupported` 三项、`surfaceForWindow` 句柄；配合 `WAYLAND_DEBUG=1` 看
+`wp_color_management` 与 dmabuf fourcc。
