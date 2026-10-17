@@ -382,3 +382,70 @@ sRGB `105.4` / PQ-BT2020 `102.8`（≈一致 → 往返正确）/ BT2020-Linear 
 （按名字选屏）/`SPIKE_VKEXT`/`SPIKE_FORCE`；输出 QRhi swapchain 实际格式、
 `isFormatSupported` 三项、`surfaceForWindow` 句柄；配合 `WAYLAND_DEBUG=1` 看
 `wp_color_management` 与 dmabuf fourcc。
+
+## 11. 下一步实现清单（HDR 上屏；供后续会话直接照做）
+
+**目标**：HDR 片源在真 HDR 显示器上以 **10-bit HDR10（PQ/BT.2020）** 输出；SDR 片源、
+非 HDR 屏、不支持 color-management 的合成器**保持现状（8-bit SDR）**。能力全部运行时探测。
+（单纯"10-bit 内部链路"不算完成——用户 2026-10-17："只是链路支持但不能 output 毫无意义"。）
+
+### 11.1 改动点（按依赖顺序）
+
+1. `src/client/VulkanContext.cpp`：instance 扩展加 **`VK_EXT_swapchain_colorspace`**
+   （HDR 的 colorspace 枚举属于该 instance 扩展；mpv/libplacebo 侧已启用）。
+2. **能力探测（建议第一步，零行为变更）**：窗口 show 后
+   `QSGRendererInterface::RhiSwapchainResource` → `QRhiSwapChain*` →
+   `isFormatSupported(HDR10 / HDRExtendedSrgbLinear / HDRExtendedDisplayP3Linear)`；
+   监听 `QWindow::screenChanged`（`isFormatSupported` 是 **per-surface**，多屏混合必须重新评估）；
+   日志（后续 OSD）输出实际选中格式。**必须走 Vulkan 后端**（见 §10.1，GL 后端全 false）。
+3. **显示能力（峰值/最小亮度/色域）**：Qt 在 Linux 上 `hdrInfo()` 是硬编码默认值
+   （min 0 / max 1000 nit / sdrWhiteLevel 200，仅 Windows 有真实实现）→ 自建
+   `wp_color_management_v1` 客户端读 output/surface feedback（写法参考
+   `src/client/WaylandIdleInhibit.cpp` 的自建协议 + mpv `wayland_common.c:20xx` 的映射）；
+   读不到 → 退 SDR 或用户配置覆盖（不做硬编码假设）。
+4. **窗口**：`show()` 之前 `view.setProperty("_qt_sg_hdr_format", "hdr10")`（fallback `"scrgb"`）+
+   `QSurfaceFormat::setColorSpace(QColorSpace(Primaries::Bt2020, TransferFunction::St2084))`。
+5. **渲染目标**：`Video::ensureRenderTarget` 的 rtImage 格式按 HDR 状态取
+   `VK_FORMAT_A2B10G10R10_UNORM_PACK32`（HDR）/ `VK_FORMAT_R8G8B8A8_UNORM`（SDR）；
+   `MpvController::render()` 传同一格式；`vkQueueWaitIdle` 后再销毁旧 image（已有习惯）。
+6. **CompositePipeline**：render pass attachment **不能硬编码** `B8G8R8A8`——必须匹配 Qt 实际
+   swapchain 格式（按 `sc->format()` 映射：SDR→`B8G8R8A8_UNORM`、HDR10→
+   `A2B10G10R10_UNORM_PACK32`、scRGB→`R16G16B16A16_SFLOAT`），否则 pipeline 与
+   render pass 不兼容（验证层报错/黑屏）。
+7. **mpv 侧**（`src/mpv/video/out/vulkan/libmpv_vk.c`，我们的自建 backend）：
+   - `vk_color_depth()` 现在恒返回 8 → HDR 时返回 10；
+   - `pl_vulkan_wrap` 的 `.format` 现在硬编码 `R8G8B8A8_UNORM` → 用调用方传入的 VkFormat；
+   - `vk_target_csp()`/`*out_fbo` 的 `ra_fbo.color_space` 现在 `{0}` → 填
+     `{PQ, BT.2020, max_luma=<合成器峰值>}`（mpv `video/out/gpu/context.h:105` 的语义就是
+     "宿主会按什么色彩空间解释这个 FBO"）；
+   - `MpvController`：HDR 时设 `target-trc=pq` / `target-prim=bt.2020` / `target-peak=<峰值>`
+     （这三个是 runtime option，`gl_video_update_options` 每帧重读）。
+8. **切屏 / 手动切 HDR**：格式变化需重建 swapchain + Qt 的 swapchain render pass +
+   我们的 composite render pass。Qt 的 `applySwapChainFormat()` 只在 swapchain 创建时调一次
+   （`QSGRhiRenderLoop::ensureRhi`）→ 第一版接受"重建渲染目标 / 必要时重建 QQuickWindow"
+   （窗口重建 ≈100–300 ms 黑闪，mpv 与 VkDevice 不必重启）；运行期无缝切换留第二步。
+
+### 11.2 验收（每条都要有日志/截图/数值证据）
+
+- `QRhiSwapChain::format()` 与 `isFormatSupported` 实测值（HDR 屏应为 HDR10=1、format=HDR10）；
+- `WAYLAND_DEBUG=1` 看 dmabuf fourcc：HDR10 应为 10-bit（`AB30`/`XR30`），SDR 为 `AR24`；
+- 色彩空间声明：`wp_color_management` 的 `set_primaries_named(6)` / `set_tf_named(11)` +
+  `wp_image_description_v1.ready`（KWin 接受）；
+- 画面：PQ 片源（如 `input/Fallout S02E02 …HDR…mkv`）与 `mpv --vo=gpu-next
+  --target-colorspace-hint=yes` 的表现对比；SDR 屏/无协议环境仍能正常播放（退 SDR）；
+- SDR 内容在 HDR 屏上不应比以前更差（Qt 按 `hdrInfo()` 默认值编码 UI，需目检确认）。
+
+### 11.3 风险 / 未知
+
+- Qt 在换屏后是否自动重建 swapchain（`isFormatSupported` per-surface）；
+- Qt Quick 自己的 UI 在 HDR10 swapchain 上用的是硬编码 1000/200 nit 假设（Linux 无真实查询）
+  → UI 亮度可能与桌面其他窗口不一致（Qt 既有限制，需目检/必要时上报）；
+- wlroots / mutter 等合成器的 `wp_color_management` 支持未验证 → 必须"探测不到就退 SDR"；
+- 运行期无缝切换需要能重建 Qt 的 `rpDescForSwapchain`（私有）→ 第一版不做。
+
+### 11.4 spike 工装（可复跑）
+
+`build/scratch/hdr_spike/`（gitignore）：`spike.cpp` + `spike.qml`；env：`SPIKE_HDR`（请求
+hdr10）/`SPIKE_CS`（srgb|pq|linear|p3）/`SPIKE_SCREEN`（按名字选屏）/`SPIKE_VKEXT`（instance
+加 `VK_EXT_swapchain_colorspace`）/`SPIKE_FORCE`（强设 QRhi 格式）；输出 `QRhiSwapChain::format()`、
+`isFormatSupported` 三项、`surfaceForWindow`。**必须配 `QSG_RHI_BACKEND=vulkan`**。
