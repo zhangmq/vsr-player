@@ -33,9 +33,28 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 
 ### VSR（超分）
 
-- YUV→RGB 用自研 NVRTC CUDA 内核（`yuv_to_rgba.c`，NV12/P010/P016→RGBA U8，D2D 全 GPU）——旧 CPU filter graph 方案已被取代（不可再回退）。
+- YUV→RGB 用自研 NVRTC CUDA 内核（`yuv_to_rgba.c`，NV12/P010/P016→RGBA U8 或打包 RGB10A2，D2D 全 GPU）——旧 CPU filter graph 方案已被取代（不可再回退）。10-bit 通路见下面的「10-bit（HDR）通路」。
 - `vsr_set_output` 已确认：输入不变仅输出尺寸变化**无需重建 VFX**（SetImage 换输出缓冲）；输入变化由 mpv filter 链重建覆盖。
 - VFX 对 TRT **零符号调用**（纯冗余，cudnn 仅 GetVersion）——只有 RIFE 需要 TRT 11。`third_party/nvvfx/lib` 无版本 TRT 软链已改名（TRT 10/11 冲突修复），`vsr_proc.c` 用版本化 `.so.10` 加载 TRT、无版本名加载 NPP/cudnn/ngx-vsr。
+
+### 10-bit（HDR）通路（2026-10-17）
+
+**动机**：VFX 1.2 及以前只吃 8-bit，10-bit HDR 源被压成 8-bit 再进 AI（PQ 每个码步 ≈ 3.7–4% 亮度级，暗部单步近 10%，被 2–4× 超分放大成色带）。VFX 1.3 新增 RGB10A2 通路，本次接上；**typemap 全链 10-bit，末端仍由 mpv tonemap 到 8-bit SDR 输出**（HDR 上屏是另一件事，见 `docs/hdr-pipeline-investigation.md`）。
+
+- **开关是自动的**：`vfx_bits_from_imgfmt()`（`yuv_to_rgba.h`）按**单个分量的存储字节数**判定——NV12/RGBA=1 字节→8-bit，P010/P016=2 字节→10-bit，X2BGR10=强制 10-bit。⚠ 不能用 `imgfmt_desc.bpp[0]`（那是整像素位宽：RGBA=32 → 会被误判成 10-bit，实测 SDR 8-bit 走 VFG 时引擎按 RGB10A2 解释 RGBA 字节 → 花屏）。8-bit SDR 内容零回归（仍是 RGBA8 端到端）。
+- **NvCV 常量**（反汇编 `NvVFXVideoSuperResImpl::CheckImageEncodingMode` + 探针实测）：`NVCV_RGB10A2=13`、`NVCV_P32=11`；`ImageEncodingMode=1` 必须在 `Load()` 前设，输入/输出格式必须一致。VFG 无开关，按图像格式自动判定（prev/cur/dst 必须同编码）。
+- **位序**：RGB10A2 打包字小端 `R bit0-9 / G 10-19 / B 20-29 / A 30-31`（实测 `NvCVImage_Transfer`: RGBA8(255,0,0)→`0xC00003FF`）= **mpv `IMGFMT_X2BGR10`** = `AV_PIX_FMT_X2BGR10` = `VK_FORMAT_A2B10G10R10_UNORM_PACK32`。⚠ **不是** `IMGFMT_X2RGB10`（那是 R 在最高位，R/B 会互换）。
+- **FFmpeg CUDA hwframes 不支持 x2rgb10/x2bgr10**（`build/scratch/hwf_test.c` 实测：rgba/bgra/rgb0 ok，x2*10 "Pixel format is not supported"）→ 自建 `hw_frames_ctx` 的 sw_format 恒用 `AV_PIX_FMT_RGBA`（两者都 4B/px、同 stride），10-bit 由**帧参数 `hw_subfmt`** 承载。代价：`hwdownload` 软路径会按 sw_format 解析成 8-bit（本应用 VO 有 CUDA interop，不走该路径）。
+- **mpv 的 ra 不认 X2BGR10**（`ra_get_imgfmt_desc` 失败 → CUDA interop 报 `Unsupported format: x2bgr10` → VO 退回 CPU hwdownload + convert，4K 每帧回读）。修法 = mpv overlay 补丁 `src/mpv/video/out/placebo/ra_pl.c`：把 libplacebo 的 `rgb10a2` 格式标成 `special_imgfmt = IMGFMT_X2BGR10` + `special_imgfmt_desc`（components {1,2,3}，同 `ra_gl.c` 对 GL rgb10_a2 的做法）。
+- **QualityLevel 语义**（库内错误串 `Valid values: 0-4, 8-19, 21, 23`）：**1–4 = upscale 档，8–11 = 1:1 denoise 档**；混用（如 2× 上采样传 10）→ `Run` 返回 -7 "invalid parameter value"。`vf_vsr` 的 `quality` 选项映射 1–4、`denoise` 映射 8–11，两者不可混。
+- **性能**：10-bit 与 8-bit 引擎耗时相同（探针 `build/scratch/vsr10_probe.c`：960x540→1080p 1.36 vs 1.43 ms，1080p→4K 5.39 vs 5.69 ms）；RGB10A2 与 RGBA8 都是 32bpp，拷贝/显存不变。GUI 实测 4K HDR：VSR 1:1 denoise 16.6 ms、VFG@4K 2.9 ms，源 24fps 跟得上。
+- **验证证据**：合成 BT.2020/PQ 三色条（420）ours vs mpv 原生路径逐通道吻合（148.0/0/40.8 vs 145/0/39.7 等）；SDR 8-bit 仍是 `cuda[rgba]`、HDR/10-bit SDR 是 `cuda[x2bgr10]`。脚本：`build/scratch/{vsr10_probe.c,hwf_test.c,pixdesc.c}` + `hdr_bars420.mp4`/`hdr1080p_test.mp4`（均为 gitignore 的临时产物）。
+- **已知遗留（未修，均有实测证据）**：① `yuv_to_rgba` 的色度按**亮度 span** 归一化（8-bit 用 239 而非 224、P010 用 61439 而非 57344）→ 纯色比 ffmpeg 少 ~6%（红 235 vs 251，10-bit GPU 路径同）；② 4:4:4/4:2:2 hw 帧被 kernel 当 4:2:0 半平面读（合成测试暴露，8-bit 同样存在）；③ `-Dfruc_backend=rife` 分支的 RIFE 冻结在 8-bit（`yuv_to_rgba_init(..., VFX_BITS_8)`），RIFE 链（rife→vsr）因此恒 8-bit——VFG 链才走 10-bit。
+- **"软解 10-bit 偏暗"已证伪**（2026-10-17 用户目检 + 数值复核）：同一 app 内软/硬解逐像素一致——`dump-vsr` 的 VSR 输入/输出 PNG 对比 `mean|Δ|=0`、PSNR 138 dB。此前记录的"红 173 vs 235"是**口径错配**（`vo=image` 的原始 PQ dump vs GPU 截图已 tonemap）。注意 CLI 侧的假象：`--vo=gpu --hwdec=no` 时 VO 无 CUDA interop → 退回 hwdownload，会把 10-bit 帧按 hwframes 的 sw_format(RGBA) 解释 → 画面接近全白；app 的自建 VO 有 interop，不出现。
+- **运行中切 hwdec（软↔硬）的连环坑（2026-10-17 修）**：
+  - 引擎/转换器/流/out_buf 都绑定在**创建它的 CUDA context** 上。旧 `ensure_cuda` 换 context 时只销毁流 → 复用旧 `CUmodule`/engine 句柄 → `cuLaunchKernel` 返回 400（CUDA_ERROR_INVALID_VALUE）→ 滤镜自己报错被 mpv 禁用（"切软解后不插帧、切回也不恢复"的根因）。修法：在旧 context 内 `vsr_destroy`/`vfg_destroy` + `yuv_to_rgba_destroy` + `cuMemFree(out_buf)` + 销毁流，下帧在新 context 重建（`vf_vsr.c`/`vf_vfg.c` 的 ensure_cuda）。
+  - `toggleHwaccel()` 原先把位置塞进 `loadfile` 第 4 参数（`start=+5.000`）。mpv 0.41 的第 4 参数是 key/value **列表**（`cmd_loadfile` 里 `cmd->args[3].v.str_list`），`mpv_command` 只能传 char* → 被当 index 解析失败（"The loadfile option must be an integer"）→ **重载从未发生**，而 `set hwdec` 已在当前流中途换解码器（新解码器无参考帧 → HEVC "Could not find ref with POC"）。修法：记 `pendingResumeSeek_` → `loadfile … replace` → `onFileLoadedFromEventThread` 里 seek 回原位置。
+  - 残留：属性一改 mpv 立刻换解码器，重载生效前有短暂解码错误抖动。彻底消除需 per-entry hwdec（`mpv_command_node` 传 `["loadfile",url,"replace",-1,["hwdec",…,"start",…]]`）或 stop→set→reload（会动播放列表，未采用）。
 
 ### 渲染循环（Qt Quick）
 
@@ -67,7 +86,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 
 ## 环境速查
 
-- GPU：RTX 5060 Ti（Blackwell sm_120）；驱动 610.57.04；KWin Wayland 6.7.4（纯 Wayland，无 X11）
+- GPU：RTX 5060 Ti（Blackwell sm_120）；驱动 615.78.08（2026-10-17 实测）；KWin Wayland 6.8.0（纯 Wayland，无 X11）。显示器 DP-3 = LG ULTRAFINE 27" 4K：EDID 含 ST2084、峰值 400 nit、基色≈DCI-P3（HDR 可在 KWin 里开）
 - Qt 6.12.0 / C++20 (GCC 13+) / Meson / FFmpeg 9.0 / TRT 11.2.1.2（pacman）
 - 测试文件：`input/`（catlove_720p.webm、Jellyfish 1080p h264/h265、goose_480p、heya 等）
 - 复现命令：`./build/src/client/vsr-player --fruc 60 input/goose_480p.webm`；RPC socket `/tmp/vsr-player.sock`
