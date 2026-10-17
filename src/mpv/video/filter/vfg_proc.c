@@ -6,6 +6,7 @@
 // 日志：本层没有 filter 上下文（与 vsr_proc.c 相同），用 fprintf(stderr)
 // 加 "VFG:" 前缀；vf_vfg.c 侧一律走 mp_msg(f->log, ...)。
 #include "vfg_proc.h"
+#include "yuv_to_rgba.h"   // VFX_BITS_10 / vfx_* 格式映射（单一事实源）
 
 #include <cuda.h>
 #include <stdio.h>
@@ -19,19 +20,22 @@
 
 // ── 图像缓冲按需分配（镜像 vsr_proc.c ensure_img）──────────────────────
 
-static bool ensure_img(NvCVImage *img, int w, int h, const char *tag)
+static bool ensure_img(NvCVImage *img, int w, int h, int bits, const char *tag)
 {
-    if (img->pixels && img->width == (unsigned)w && img->height == (unsigned)h)
+    int pf = (bits == VFX_BITS_10) ? NVCV_RGB10A2 : NVCV_RGBA;
+    int ct = (bits == VFX_BITS_10) ? NVCV_P32     : NVCV_U8;
+    if (img->pixels && img->width == (unsigned)w && img->height == (unsigned)h &&
+        img->pixelFormat == pf && img->componentType == ct)
         return true;
     if (img->pixels) {
         pfn_NvCVImage_Dealloc(img);
         memset(img, 0, sizeof(*img));
     }
     int ar = pfn_NvCVImage_Alloc(img, (unsigned)w, (unsigned)h,
-                                 NVCV_RGBA, NVCV_U8,
-                                 NVCV_CHUNKY, NVCV_GPU, 32);
+                                 pf, ct, NVCV_CHUNKY, NVCV_GPU, 32);
     if (ar != 0) {
-        fprintf(stderr, "VFG: Alloc(%s %dx%d) failed (%d)\n", tag, w, h, ar);
+        fprintf(stderr, "VFG: Alloc(%s %dx%d %d-bit) failed (%d)\n",
+                tag, w, h, bits, ar);
         memset(img, 0, sizeof(*img));
         return false;
     }
@@ -43,7 +47,7 @@ static bool ensure_img(NvCVImage *img, int w, int h, const char *tag)
 // 落在中点 = 真合成中间帧）。探针在 Load 前设置全部参数与图像。
 
 bool vfg_init(struct vfg_context *c, int in_w, int in_h, int mode,
-              int multiplier, CUstream stream)
+              int multiplier, int bits, CUstream stream)
 {
     if (!vfx_load_libraries())
         return false;
@@ -58,6 +62,7 @@ bool vfg_init(struct vfg_context *c, int in_w, int in_h, int mode,
     c->in_h = in_h;
     c->mode = mode;
     c->multiplier = multiplier;
+    c->bits = (bits == VFX_BITS_10) ? VFX_BITS_10 : VFX_BITS_8;
 
     int ret = pfn_NvVFX_CreateEffect("VideoFrameGeneration", &c->handle);
     if (ret != 0) {
@@ -79,9 +84,10 @@ bool vfg_init(struct vfg_context *c, int in_w, int in_h, int mode,
     // 场景切换检测交给引擎（单一事实源）：vf_vfg 不再实现第二套 MAE。
     pfn_NvVFX_SetU32(c->handle, "AutomaticShotChangeDetectionEnabled", 1);
 
-    // ── 两张输入 + 一张输出：RGBA U8 chunky GPU（探针同款）─────────────
+    // ── 两张输入 + 一张输出：RGBA U8 / RGB10A2 chunky GPU ─────────────
+    // 三张图编码必须一致（库内文档：RGB8/RGB10A2 mixing is unsupported）。
     for (int i = 0; i < 2; i++) {
-        if (!ensure_img(&c->in_img[i], in_w, in_h, i ? "src1" : "src0")) {
+        if (!ensure_img(&c->in_img[i], in_w, in_h, c->bits, i ? "src1" : "src0")) {
             vfg_destroy(c);
             return false;
         }
@@ -89,7 +95,7 @@ bool vfg_init(struct vfg_context *c, int in_w, int in_h, int mode,
         c->in_pitch[i]  = (int)c->in_img[i].pitch;
     }
     // VFG 输出与输入同尺寸（探针：ow/oh = W/H）
-    if (!ensure_img(&c->out_img, in_w, in_h, "dst")) {
+    if (!ensure_img(&c->out_img, in_w, in_h, c->bits, "dst")) {
         vfg_destroy(c);
         return false;
     }
@@ -143,10 +149,10 @@ bool vfg_init(struct vfg_context *c, int in_w, int in_h, int mode,
 // 输入尺寸或 Mode 变更：销毁 + 重建 + 重新 Load（理由见 vfg_proc.h）。
 
 bool vfg_reconfig(struct vfg_context *c, int in_w, int in_h, int mode,
-                  int multiplier, CUstream stream)
+                  int multiplier, int bits, CUstream stream)
 {
     vfg_destroy(c);
-    return vfg_init(c, in_w, in_h, mode, multiplier, stream);
+    return vfg_init(c, in_w, in_h, mode, multiplier, bits, stream);
 }
 
 // ── vfg_set_multiplier ───────────────────────────────────────────────────

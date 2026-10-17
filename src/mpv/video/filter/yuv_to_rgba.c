@@ -11,7 +11,7 @@
 #include <string.h>
 
 static const char *kKernelSrc =
-"extern \"C\" __global__ void yuv_to_rgba_u8(\n"
+"extern \"C\" __global__ void yuv_to_rgb_kernel(\n"
 "    const unsigned char* __restrict__ y_plane,\n"
 "    int y_pitch,\n"
 "    const unsigned char* __restrict__ uv_plane,\n"
@@ -75,10 +75,21 @@ static const char *kKernelSrc =
 "    float b = __saturatef(Y + K_BU * U);\n"
 "\n"
 "    int out_idx = y * rgba_pitch + x * 4;\n"
+"#if OUT_BITS == 10\n"
+"    // 打包 RGB10A2（小端 u32）：R bit0-9 / G bit10-19 / B bit20-29 / A bit30-31。\n"
+"    // 与 mpv IMGFMT_X2RGB10、VK_FORMAT_A2B10G10R10_UNORM_PACK32 同位序\n"
+"    //（实测依据见 yuv_to_rgba.h 的 VFX_BITS_10 注释）。\n"
+"    unsigned int r10 = (unsigned int)(r * 1023.0f + 0.5f);\n"
+"    unsigned int g10 = (unsigned int)(g * 1023.0f + 0.5f);\n"
+"    unsigned int b10 = (unsigned int)(b * 1023.0f + 0.5f);\n"
+"    *(unsigned int *)(rgba_output + out_idx) =\n"
+"        r10 | (g10 << 10) | (b10 << 20) | (3u << 30);\n"
+"#else\n"
 "    rgba_output[out_idx + 0] = (unsigned char)(r * 255.0f + 0.5f);\n"
 "    rgba_output[out_idx + 1] = (unsigned char)(g * 255.0f + 0.5f);\n"
 "    rgba_output[out_idx + 2] = (unsigned char)(b * 255.0f + 0.5f);\n"
 "    rgba_output[out_idx + 3] = 255;\n"
+"#endif\n"
 "}\n";
 
 // ── Matrix coefficient helpers ─────────────────────────────────────────
@@ -109,13 +120,14 @@ static void get_matrix_defines(enum yuv_matrix m,
 // ── Init ───────────────────────────────────────────────────────────────
 
 bool yuv_to_rgba_init(struct yuv_to_rgba *c, int bit_depth,
-                       enum yuv_matrix matrix, enum yuv_range range)
+                       enum yuv_matrix matrix, enum yuv_range range,
+                       int out_bits)
 {
     if (c->ready) return true;
 
     nvrtcProgram prog;
     nvrtcResult res = nvrtcCreateProgram(&prog, kKernelSrc,
-                                         "yuv_to_rgba_u8", 0, NULL, NULL);
+                                         "yuv_to_rgb_kernel", 0, NULL, NULL);
     if (res != NVRTC_SUCCESS) {
         fprintf(stderr, "yuv_to_rgba: nvrtcCreateProgram failed: %s\n",
                 nvrtcGetErrorString(res));
@@ -134,10 +146,12 @@ bool yuv_to_rgba_init(struct yuv_to_rgba *c, int bit_depth,
     const char *k_rv, *k_gu, *k_gv, *k_bu;
     get_matrix_defines(matrix, &k_rv, &k_gu, &k_gv, &k_bu);
 
-    char bd_str[32], range_str[32];
+    char bd_str[32], range_str[32], ob_str[32];
     snprintf(bd_str, sizeof(bd_str), "-DBIT_DEPTH=%d", bit_depth);
     snprintf(range_str, sizeof(range_str), "-DYUV_RANGE_LIMITED=%d",
              range == YUV_RANGE_LIMITED ? 1 : 0);
+    snprintf(ob_str, sizeof(ob_str), "-DOUT_BITS=%d",
+             out_bits == VFX_BITS_10 ? 10 : 8);
 
     char krv_str[64], kgu_str[64], kgv_str[64], kbu_str[64];
     snprintf(krv_str, sizeof(krv_str), "-DK_RV=%s", k_rv);
@@ -146,9 +160,9 @@ bool yuv_to_rgba_init(struct yuv_to_rgba *c, int bit_depth,
     snprintf(kbu_str, sizeof(kbu_str), "-DK_BU=%s", k_bu);
 
     const char *opts[] = {arch, "--use_fast_math",
-                          bd_str, range_str,
+                          bd_str, range_str, ob_str,
                           krv_str, kgu_str, kgv_str, kbu_str};
-    int nopts = 8;
+    int nopts = 9;
 
     res = nvrtcCompileProgram(prog, nopts, opts);
     if (res != NVRTC_SUCCESS) {
@@ -175,14 +189,14 @@ bool yuv_to_rgba_init(struct yuv_to_rgba *c, int bit_depth,
         return false;
     }
 
-    cu_res = cuModuleGetFunction(&c->kernel, c->module, "yuv_to_rgba_u8");
+    cu_res = cuModuleGetFunction(&c->kernel, c->module, "yuv_to_rgb_kernel");
     if (cu_res != CUDA_SUCCESS) {
         fprintf(stderr, "yuv_to_rgba: cuModuleGetFunction failed (%d)\n", cu_res);
         return false;
     }
 
-    fprintf(stderr, "yuv_to_rgba: kernel compiled (sm_%d%d, bd=%d)\n",
-            major, minor, bit_depth);
+    fprintf(stderr, "yuv_to_rgba: kernel compiled (sm_%d%d, bd=%d, out=%d-bit)\n",
+            major, minor, bit_depth, out_bits == VFX_BITS_10 ? 10 : 8);
     c->ready = true;
     return true;
 }

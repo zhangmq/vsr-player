@@ -217,6 +217,7 @@ struct priv {
     struct yuv_to_rgba    yuv_conv;
     bool                  yuv_conv_ready;
     int                   yuv_conv_bd;
+    int                   yuv_conv_bits;   // 输出位深（8/10）
     enum yuv_matrix       yuv_conv_matrix;
     enum yuv_range        yuv_conv_range;
 
@@ -317,22 +318,45 @@ static bool ensure_cuda(struct mp_filter *f, struct priv *p,
             return true;
     }
 
-    // (re)bind: release the old context (frames in flight keep it alive via
-    // their refs), then adopt the new one. Streams are context-bound, so the
-    // filter's stream is recreated too.
-    if (p->cuda_ref) {
-        mp_cuda_ctx_ref_release(p->cuda_ref);
-        p->cuda_ref = NULL;
-    }
-    if (p->cuda_init_done) {
-        cuStreamDestroy(p->cuda_stream);
-        p->cuda_stream = NULL;
-    }
-
     CUresult cr = cuInit(0);
     if (cr != CUDA_SUCCESS) {
         MP_ERR(f, "cuInit failed (%d)\n", cr);
         return false;
+    }
+
+    // (re)bind: release the old context (frames in flight keep it alive via
+    // their refs), then adopt the new one.
+    // ⚠ 所有 CUDA 资源都绑在**创建它的 context** 上：引擎（CUmodule/engine 句柄）、
+    // yuv_to_rgba 的 NVRTC module、本滤镜的流、out_buf。旧代码只销毁了流，
+    // 切 hwdec（软解↔硬解，上游换 context）后仍复用旧引擎/旧 kernel →
+    // cuLaunchKernel 返回 400（CUDA_ERROR_INVALID_VALUE）→ 本滤镜被 mpv 禁用
+    // （2026-10-17 实测：切软解 VSR 立刻失败，切回硬解 VFG 也失败 → "插帧失效"）。
+    // 因此必须在旧 context 内把它们全部作废，下帧按需在新 context 重建。
+    if (p->cuda_ref) {
+        CUcontext old = p->cuda_ref->ctx;
+        if (old) cuCtxPushCurrent(old);
+        if (p->vsr_configured) {
+            vsr_destroy(&p->vsr);
+            p->vsr_configured = false;
+        }
+        if (p->yuv_conv_ready) {
+            yuv_to_rgba_destroy(&p->yuv_conv);
+            p->yuv_conv_ready = false;
+        }
+        if (p->out_buf) {
+            cuMemFree(p->out_buf);
+            p->out_buf = 0;
+            p->out_buf_size = 0;
+        }
+        if (p->cuda_init_done && p->cuda_stream) {
+            cuStreamDestroy(p->cuda_stream);
+            p->cuda_stream = NULL;
+            p->cuda_init_done = false;
+        }
+        if (old) cuCtxPopCurrent(NULL);
+        mp_cuda_ctx_ref_release(p->cuda_ref);
+        p->cuda_ref = NULL;
+        MP_VERBOSE(f, "vsr: CUDA context changed — engine/converter reset\n");
     }
 
     struct mp_cuda_ctx_ref *shared = mp_cuda_ctx_ref_from_mpi(mpi);
@@ -394,16 +418,26 @@ static bool ensure_cuda(struct mp_filter *f, struct priv *p,
 // in cuda_shared.h (mp_cuda_ensure_frames).
 
 static bool ensure_av_hw_frames(struct mp_filter *f, struct priv *p,
-                                 int w, int h)
+                                 int w, int h, int bits)
 {
     if (!p->cuda_init_done) return false;
     bool had = p->av_hw_frames != NULL;
+    // ⚠ hw_frames_ctx 的 sw_format 恒用 AV_PIX_FMT_RGBA：FFmpeg 的 CUDA
+    // hwframes 不支持 x2rgb10（build/scratch/hwf_test.c 实测：
+    // rgba/bgra/rgb0 ok，x2rgb10le "Pixel format not supported"）。
+    // 两者都是 4 字节/px、同 stride，所以缓冲语义一致；10-bit 的**真实
+    // 格式**由帧参数 hw_subfmt=IMGFMT_X2RGB10 承载（VO 的 CUDA interop
+    // 按 hw_subfmt 选 VkFormat，拷贝宽度用 pixel_size=4 —— hwdec_cuda.c:
+    // 255 "plane_w * format->pixel_size"，与 sw_format 无关）。
+    // 唯一受影响的是 hwdownload 软路径（本应用不会走）：那里会按 sw_format
+    // 解析成 RGBA 字节，10-bit 数据会被当 8-bit 显示。
     if (!mp_cuda_ensure_frames(f->log, p->cuda_ref->ctx, AV_PIX_FMT_RGBA,
                                w, h, &p->av_hw_device, &p->av_hw_frames,
                                &p->av_hw_frames_ctx))
         return false;
     if (!had)
-        MP_VERBOSE(f, "vsr: CUDA/RGBA hw_frames_ctx %dx%d\n", w, h);
+        MP_VERBOSE(f, "vsr: CUDA/4Bpp hw_frames_ctx %dx%d (%d-bit data)\n",
+                   w, h, bits);
     return true;
 }
 
@@ -411,8 +445,16 @@ static bool ensure_av_hw_frames(struct mp_filter *f, struct priv *p,
 
 static bool ensure_vsr(struct mp_filter *f, struct priv *p,
                         int in_w, int in_h, int out_w, int out_h,
-                        int quality)
+                        int quality, int bits)
 {
+    if (p->vsr_configured && p->vsr.bits != bits) {
+        // 位深变化（8↔10）必须重建：ImageEncodingMode + 图像格式都绑在
+        // Load 上，不能热更新。
+        MP_INFO(f, "vsr: bit depth %d -> %d (engine rebuild)\n",
+                p->vsr.bits, bits);
+        vsr_destroy(&p->vsr);
+        p->vsr_configured = false;
+    }
     if (p->vsr_configured) {
         // ── 引擎存在：优先轻量热更新，仅输入变化才重建 ──────────────
         // 尺寸全等 → quality 轻量（vfx_test5：SetU32 生效）。
@@ -447,9 +489,9 @@ static bool ensure_vsr(struct mp_filter *f, struct priv *p,
     }
 
     // 引擎不存在（filter 新建 / 尺寸变化重建 / passthrough 回切）：init
-    MP_VERBOSE(f, "vsr: init %dx%d -> %dx%d quality=%d\n",
-               in_w, in_h, out_w, out_h, quality);
-    if (!vsr_init(&p->vsr, in_w, in_h, out_w, out_h, quality,
+    MP_VERBOSE(f, "vsr: init %dx%d -> %dx%d quality=%d bits=%d\n",
+               in_w, in_h, out_w, out_h, quality, bits);
+    if (!vsr_init(&p->vsr, in_w, in_h, out_w, out_h, quality, bits,
                   p->cuda_stream)) {
         MP_ERR(f, "vsr_init failed\n");
         return false;
@@ -535,10 +577,11 @@ static void free_cuda_buf(void *opaque, uint8_t *data)
 
 static bool ensure_yuv_converter(struct mp_filter *f, struct priv *p,
                                   int bit_depth, enum yuv_matrix matrix,
-                                  enum yuv_range range)
+                                  enum yuv_range range, int out_bits)
 {
     if (p->yuv_conv_ready &&
         p->yuv_conv_bd == bit_depth &&
+        p->yuv_conv_bits == out_bits &&
         p->yuv_conv_matrix == matrix &&
         p->yuv_conv_range == range)
         return true;
@@ -546,13 +589,14 @@ static bool ensure_yuv_converter(struct mp_filter *f, struct priv *p,
     if (p->yuv_conv_ready)
         yuv_to_rgba_destroy(&p->yuv_conv);
 
-    if (!yuv_to_rgba_init(&p->yuv_conv, bit_depth, matrix, range)) {
-        MP_ERR(f, "yuv_to_rgba_init failed (bd=%d)\n", bit_depth);
+    if (!yuv_to_rgba_init(&p->yuv_conv, bit_depth, matrix, range, out_bits)) {
+        MP_ERR(f, "yuv_to_rgba_init failed (bd=%d out=%d)\n", bit_depth, out_bits);
         p->yuv_conv_ready = false;
         return false;
     }
 
     p->yuv_conv_bd = bit_depth;
+    p->yuv_conv_bits = out_bits;
     p->yuv_conv_matrix = matrix;
     p->yuv_conv_range = range;
     p->yuv_conv_ready = true;
@@ -588,6 +632,13 @@ static void f_process(struct mp_filter *f)
     struct mp_image *mpi = frame.data;
     p->frame_count++;
     double t0 = vsr_now_ms();   // 处理计时起点
+
+    // 通路位深：源 subfmt 是 10-bit 打包 RGB（上游 VFG）或源位深 >8
+    //（P010/P016）→ 10-bit 通路（VFX ImageEncodingMode=1 + RGB10A2）；
+    // 否则维持历史 8-bit 行为（逐字节不变，SDR 8-bit 内容零回归）。
+    int bits = (mpi->imgfmt == IMGFMT_CUDA)
+                   ? vfx_bits_from_imgfmt(mpi->params.hw_subfmt)
+                   : VFX_BITS_8;
 
     // Scale/resolution detection
     int video_w = mpi->w;
@@ -658,7 +709,7 @@ static void f_process(struct mp_filter *f)
     }
     cuCtxPushCurrent(p->cuda_ref->ctx);
 
-    if (!ensure_vsr(f, p, video_w, video_h, out_w, out_h, p->opts->quality)) {
+    if (!ensure_vsr(f, p, video_w, video_h, out_w, out_h, p->opts->quality, bits)) {
         // 首次失败：销毁引擎状态重试一次（瞬时失败自愈，如 GPU 忙）。
         if (p->vsr_configured) {
             cuCtxPushCurrent(p->cuda_ref->ctx);
@@ -667,7 +718,7 @@ static void f_process(struct mp_filter *f)
             p->vsr_configured = false;
         }
         if (!ensure_vsr(f, p, video_w, video_h, out_w, out_h,
-                        p->opts->quality)) {
+                        p->opts->quality, bits)) {
             MP_ERR(f, "vsr: init failed after retry\n");
             mp_frame_unref(&frame);
             mp_filter_internal_mark_failed(f);
@@ -682,14 +733,14 @@ static void f_process(struct mp_filter *f)
     bool is_hw = (mpi->imgfmt == IMGFMT_CUDA);
     int vsr_in_pitch = p->vsr.in_pitch;
 
-    if (is_hw && mpi->params.hw_subfmt != IMGFMT_RGBA) {
+    if (is_hw && !vfx_imgfmt_is_rgb(mpi->params.hw_subfmt)) {
         // HW YUV → D2D to vsr.in_pixels
         int subfmt = mpi->params.hw_subfmt;
         struct mp_imgfmt_desc desc = mp_imgfmt_get_desc(subfmt);
         int bd = desc.bpp[0];
         enum yuv_matrix mx = matrix_from_repr(&mpi->params);
         enum yuv_range  rn = range_from_levels(mpi->params.repr.levels);
-        if (!ensure_yuv_converter(f, p, bd, mx, rn)) {
+        if (!ensure_yuv_converter(f, p, bd, mx, rn, bits)) {
             mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
         }
         if (!yuv_to_rgba_convert(&p->yuv_conv,
@@ -758,7 +809,7 @@ static void f_process(struct mp_filter *f)
     //（mp_image_hw_download assert，实测）。HW/SW 输入输出段同构。
     mp_cuda_ctx_ref_acquire(p->cuda_ref);
     struct mp_image *out;
-    if (!ensure_av_hw_frames(f, p, vsr_out_w, vsr_out_h)) {
+    if (!ensure_av_hw_frames(f, p, vsr_out_w, vsr_out_h, bits)) {
         mp_cuda_ctx_ref_release(p->cuda_ref);
         mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
     }
@@ -771,7 +822,7 @@ static void f_process(struct mp_filter *f)
         talloc_free(out); mp_frame_unref(&frame); mp_filter_internal_mark_failed(f); cuCtxPopCurrent(NULL); return;
     }
     mp_image_setfmt(out, IMGFMT_CUDA);
-    mp_image_sethwfmt(out, IMGFMT_CUDA, IMGFMT_RGBA);
+    mp_image_sethwfmt(out, IMGFMT_CUDA, vfx_imgfmt_from_bits(bits));
     mp_image_params_guess_csp(&out->params);
     out->params.color = mpi->params.color; // preserve HDR metadata
     out->w = vsr_out_w; out->h = vsr_out_h;
@@ -842,7 +893,9 @@ static bool vsr_dump_frame(struct mp_filter *f, struct priv *p,
     if (!src || w <= 0 || h <= 0 || pitch <= 0)
         return false;
 
-    struct mp_image *img = mp_image_alloc(IMGFMT_RGBA, w, h);
+    // 输出格式随引擎位深：10-bit 引擎的缓冲是打包 RGB10A2，按 RGBA8 解释
+    // 会得到垃圾图（调试命令，格式必须与引擎一致）。
+    struct mp_image *img = mp_image_alloc(vfx_imgfmt_from_bits(c->bits), w, h);
     if (!img)
         return false;
 

@@ -366,7 +366,8 @@ static bool ensure_yuv_converter(struct mp_filter *f, struct priv *p,
         yuv_to_rgba_destroy(&p->yuv_conv);
         p->yuv_conv_ready = false;
     }
-    if (!yuv_to_rgba_init(&p->yuv_conv, bit_depth, mx, rn)) {
+    // RIFE 冻结在 8-bit 通路（不接 VFX 10-bit）：输出恒 RGBA U8。
+    if (!yuv_to_rgba_init(&p->yuv_conv, bit_depth, mx, rn, VFX_BITS_8)) {
         MP_ERR(f, "rife: yuv_to_rgba_init failed\n");
         return false;
     }

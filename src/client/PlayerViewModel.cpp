@@ -908,10 +908,18 @@ void PlayerViewModel::toggleHwaccel() {
         hwdecInit_ = mpv_->propertyString("hwdec");
     // async（主线程 UI 操作——同步 set 会等 dispatch 队列清空，
     // 与 decode DR 分配任务互等死锁，2026-08-10 根因同款）
+    // ⚠ 必须**重载文件**让 hwdec 生效：单改属性会让 mpv 在当前流中途换解码器，
+    // 新解码器没有参考帧 → "Could not find ref with POC / Error constructing
+    // the frame RPS"（2026-10-17 实测）。
+    // ⚠ 不能把位置塞进 loadfile 的第 4 参数：mpv 0.41 的 `loadfile <url>
+    // [<flags> [<index> [<options>]]]` 第 4 项是 key/value **列表**（字符串
+    // 数组），而 mpv_command 只能传 char* → "start=+5.000" 会被当成 index
+    // （整数）解析失败："The loadfile option must be an integer" → 命令整体
+    // 不执行，重载从未发生（本 bug 自 2026-08 一直存在，2026-10-17 查明）。
+    // 正确做法：重载后在 FILE_LOADED 里 seek 回原位置（pendingResumeSeek_）。
+    pendingResumeSeek_ = pos > 0 ? pos : -1.0;
     mpv_->setPropertyStringAsync("hwdec", target ? hwdecInit_ : "no");
-    char start[64];
-    snprintf(start, sizeof(start), "start=+%.3f", pos);
-    mpv_->commandV({"loadfile", path.c_str(), "replace", start, nullptr});
+    mpv_->commandV({"loadfile", path.c_str(), "replace", nullptr});
 }
 
 // ── Video settings ───────────────────────────────────────────────────
@@ -1702,6 +1710,11 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
             mpv_->setPropertyFlagAsync("save-position-on-quit", true);   // 普通文件恢复位置记忆
         restoreTrackMemory(lastPath_); // 按文件恢复轨道/字幕记忆（再次打开对应文件才恢复）
         syncVfOptions();               // 链重建后重放运行时 vf 状态（fps/vsr 防 UI 修改丢失）
+        if (pendingResumeSeek_ >= 0) { // hwdec 切换重载：回到切换前的位置
+            int64_t ms = (int64_t)(pendingResumeSeek_ * 1000.0);
+            pendingResumeSeek_ = -1.0;
+            seekAbsolute(ms);
+        }
     }, Qt::QueuedConnection);
 }
 

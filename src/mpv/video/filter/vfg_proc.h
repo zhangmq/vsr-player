@@ -42,18 +42,19 @@ struct vfg_context {
     int     in_w, in_h;
     int     mode;          // enum vfg_mode
     int     multiplier;    // FrameMultiplier（每次 Run 前 SetU32）
+    int     bits;          // 8 = RGBA U8，10 = 打包 RGB10A2（三张图必须一致）
 };
 
 // 创建 effect、绑定缓冲与流、Load。失败返回 false（并清理已建状态）。
 bool vfg_init(struct vfg_context *c, int in_w, int in_h, int mode,
-              int multiplier, CUstream stream);
+              int multiplier, int bits, CUstream stream);
 
 // 输入尺寸 / Mode 变更：销毁 effect + 重建 + 重新 Load。
 // 依据：官方 nvvfx 包装对 Mode / InputWidth / InputHeight 都标了
 // requires_reload（Load 后改这些参数必须重新 load）；探针只在 Load **之前**
 // 设过 Mode，Load 后改是否生效未验证 → 一律走重建，不赌。
 bool vfg_reconfig(struct vfg_context *c, int in_w, int in_h, int mode,
-                  int multiplier, CUstream stream);
+                  int multiplier, int bits, CUstream stream);
 
 // FrameMultiplier 更新（无需重建：官方包装的 run() 每次 SetU32 该参数，
 // 且未标 requires_reload）。

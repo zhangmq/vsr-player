@@ -7,8 +7,10 @@
 
 struct vsr_context {
     void   *handle;       // NvVFX_Handle
-    void   *in_pixels;    // allocated RGBA U8 GPU buffer
-    void   *out_pixels;   // allocated RGBA U8 GPU buffer
+    // 缓冲格式由 bits 决定：8 = RGBA U8；10 = 打包 RGB10A2/P32
+    //（位序见 yuv_to_rgba.h）。两者都是 4 字节/px，pitch 与拷贝口径不变。
+    void   *in_pixels;    // allocated RGB GPU buffer
+    void   *out_pixels;   // allocated RGB GPU buffer
     void   *tmp_pixels;   // temp transfer buffer
     int     in_pitch, out_pitch, tmp_pitch;
     CUstream stream;      // 交给引擎的流：必须是**阻塞流**（见 vsr_init）
@@ -16,12 +18,13 @@ struct vsr_context {
     bool    ready;
     int     in_w, in_h, out_w, out_h;
     int     quality;
+    int     bits;         // 8 / 10（引擎 ImageEncodingMode = bits==10）
     // ── per-context 图像缓冲（引擎生命周期内随尺寸按需重建）
     struct NvCVImage in_img, out_img, tmp_img;
 };
 
 bool vsr_init(struct vsr_context *c, int in_w, int in_h,
-              int out_w, int out_h, int quality, CUstream stream);
+              int out_w, int out_h, int quality, int bits, CUstream stream);
 bool vsr_warmup(struct vsr_context *c, CUstream stream);
 // ── 轻量热更新（引擎常驻）──────────────────────────────────────────────
 // quality：Load 后 SetU32 更新。仅输出尺寸（输入不变）：SetImage 换

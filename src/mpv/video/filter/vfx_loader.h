@@ -35,11 +35,22 @@ typedef struct NvCVImage {
 // 搬到此层与 NvCVImage 同处，避免第二份定义分叉（数值照 nvCVImage.h）。
 #define NVCV_RGB    4
 #define NVCV_RGBA   6
+#define NVCV_BGRA   7
 #define NVCV_U8     1
 #define NVCV_F32    7
 #define NVCV_PLANAR 1
 #define NVCV_CHUNKY 0
 #define NVCV_GPU    1
+// ── 10-bit 打包 RGB（VFX 1.3 新增通路；2026-10-17 接入）───────────────
+// 数值来源：反汇编 libnvVFXVideoSuperRes.so 的
+// NvVFXVideoSuperResImpl::CheckImageEncodingMode —— 它把 pixelFormat 与
+// {6,7}（RGBA/BGRA，componentType 必须 =1/U8）或 {13}（componentType 必须
+// =11）对比，再要求 planar=0 且 ImageEncodingMode 与格式匹配。
+// 探针实测（build/scratch/vsr10_probe.c）：pf=13 + ct=11 下
+// Alloc / Load / Run 全部通过，VSR 10-bit 引擎可用。
+// 像素位序见 yuv_to_rgba.h（R 在 bit0-9，与 mpv IMGFMT_X2RGB10 一致）。
+#define NVCV_RGB10A2 13
+#define NVCV_P32     11
 
 // ── NvVFX API function pointer types ─────────────────────────────────────
 

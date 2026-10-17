@@ -27,18 +27,21 @@
 // 单一分配入口：vsr_init 与 vsr_set_output/set_input 共用，杜绝
 // "旧缓冲未释放即被覆盖"的泄漏路径（旧实现 scale 热更新会 memset
 // 丢弃 g_out_img 而未 Dealloc）。
-static bool ensure_img(NvCVImage *img, int w, int h, const char *tag) {
-    if (img->pixels && img->width == (unsigned)w && img->height == (unsigned)h)
+static bool ensure_img(NvCVImage *img, int w, int h, int bits, const char *tag) {
+    int pf = (bits == VFX_BITS_10) ? NVCV_RGB10A2 : NVCV_RGBA;
+    int ct = (bits == VFX_BITS_10) ? NVCV_P32     : NVCV_U8;
+    if (img->pixels && img->width == (unsigned)w && img->height == (unsigned)h &&
+        img->pixelFormat == pf && img->componentType == ct)
         return true;
     if (img->pixels) {
         pfn_NvCVImage_Dealloc(img);
         memset(img, 0, sizeof(*img));
     }
     int ar = pfn_NvCVImage_Alloc(img, (unsigned)w, (unsigned)h,
-                                 NVCV_RGBA, NVCV_U8,
-                                 NVCV_CHUNKY, NVCV_GPU, 32);
+                                 pf, ct, NVCV_CHUNKY, NVCV_GPU, 32);
     if (ar != 0) {
-        fprintf(stderr, "VSR: Alloc(%s %dx%d) failed (%d)\n", tag, w, h, ar);
+        fprintf(stderr, "VSR: Alloc(%s %dx%d %d-bit) failed (%d)\n",
+                tag, w, h, bits, ar);
         memset(img, 0, sizeof(*img));
         return false;
     }
@@ -48,7 +51,7 @@ static bool ensure_img(NvCVImage *img, int w, int h, const char *tag) {
 // ── vsr_init ─────────────────────────────────────────────────────────────
 
 bool vsr_init(struct vsr_context *c, int in_w, int in_h,
-              int out_w, int out_h, int quality, CUstream stream) {
+              int out_w, int out_h, int quality, int bits, CUstream stream) {
     if (!vfx_load_libraries()) return false;
 
     memset(c, 0, sizeof(*c));
@@ -57,6 +60,7 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
     c->out_w = out_w;
     c->out_h = out_h;
     c->quality = quality;
+    c->bits = (bits == VFX_BITS_10) ? VFX_BITS_10 : VFX_BITS_8;
 
     // Create effect — responds to "VideoSuperRes" (not "SuperRes")
     int ret = pfn_NvVFX_CreateEffect("VideoSuperRes", &c->handle);
@@ -67,21 +71,34 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
 
     // QualityLevel (not "Strength")
     pfn_NvVFX_SetU32(c->handle, "QualityLevel", (unsigned int)quality);
+    // ImageEncodingMode 必须在 Load() 前设定（库内文档字符串：Set before
+    // Load(); input/output images must match this mode）。0=8-bit RGBA/BGRA，
+    // 1=10-bit RGB10A2。8-bit 时不设（默认 0），保持历史行为逐字节不变。
+    if (c->bits == VFX_BITS_10) {
+        int er = pfn_NvVFX_SetU32(c->handle, "ImageEncodingMode", 1);
+        if (er != 0) {
+            fprintf(stderr, "VSR: SetU32(ImageEncodingMode=1) failed (%d)\n", er);
+            vsr_destroy(c);
+            return false;
+        }
+    }
     {
         bool denoise = (in_w == out_w && in_h == out_h);
-        fprintf(stderr, "VSR: [%s] %dx%d->%dx%d quality=%d %s\n",
+        fprintf(stderr, "VSR: [%s] %dx%d->%dx%d quality=%d %s %d-bit\n",
                 denoise ? "DENOISE" : "UPSCALE",
                 in_w, in_h, out_w, out_h, quality,
-                denoise ? "(1:1 denoising)" : "(AI super-resolution)");
+                denoise ? "(1:1 denoising)" : "(AI super-resolution)",
+                c->bits);
     }
 
     // ── Output image: RGBA U8 chunky GPU ──────────────────────────────────
-    if (!ensure_img(&c->out_img, out_w, out_h, "output")) {
+    if (!ensure_img(&c->out_img, out_w, out_h, c->bits, "output")) {
         vsr_destroy(c);
         return false;
     }
     ret = pfn_NvVFX_SetImage(c->handle, NVVFX_OUTPUT_IMAGE, &c->out_img);
-    fprintf(stderr, "VSR: DstImage0 RGBA U8 -> %d\n", ret);
+    fprintf(stderr, "VSR: DstImage0 %s -> %d\n",
+            c->bits == VFX_BITS_10 ? "RGB10A2" : "RGBA U8", ret);
     if (ret != 0) {
         vsr_destroy(c);
         return false;
@@ -90,7 +107,7 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
     c->out_pitch = (int)c->out_img.pitch;
 
     // ── Input image: RGBA U8 chunky GPU ───────────────────────────────────
-    if (!ensure_img(&c->in_img, in_w, in_h, "input")) {
+    if (!ensure_img(&c->in_img, in_w, in_h, c->bits, "input")) {
         vsr_destroy(c);
         return false;
     }
@@ -107,7 +124,7 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
     {
         int max_dim = (out_w > in_w) ? out_w : in_w;
         int max_h = (out_h > in_h) ? out_h : in_h;
-        if (!ensure_img(&c->tmp_img, max_dim, max_h, "temp"))
+        if (!ensure_img(&c->tmp_img, max_dim, max_h, c->bits, "temp"))
             memset(&c->tmp_img, 0, sizeof(c->tmp_img));   // 非致命
     }
     c->tmp_pixels = c->tmp_img.pixels;
@@ -140,7 +157,8 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
     }
 
     c->ready = true;
-    fprintf(stderr, "VSR: init ok\n");
+    fprintf(stderr, "VSR: init ok (%d-bit, in_pitch=%d)\n",
+            c->bits, c->in_pitch);
     return true;
 }
 
@@ -164,12 +182,23 @@ bool vsr_warmup(struct vsr_context *c, CUstream stream)
     unsigned int seed = 42;
     for (size_t i = 0; i < in_bytes; i += 4) {
         seed = seed * 1103515245 + 12345;
-        random_rgba[i + 0] = (unsigned char)((seed >> 16) & 0xFF);
+        unsigned int r = (seed >> 16) & 0xFF;
         seed = seed * 1103515245 + 12345;
-        random_rgba[i + 1] = (unsigned char)((seed >> 16) & 0xFF);
+        unsigned int g = (seed >> 16) & 0xFF;
         seed = seed * 1103515245 + 12345;
-        random_rgba[i + 2] = (unsigned char)((seed >> 16) & 0xFF);
-        random_rgba[i + 3] = 255;
+        unsigned int b = (seed >> 16) & 0xFF;
+        if (c->bits == VFX_BITS_10) {
+            // 10-bit：字节序是打包字，不能按字节随机（A 位段必须 =3）；
+            // 8-bit 数据按 <<2 提到 10-bit 量级，内容仍是随机图案。
+            unsigned int word = (r << 2) | ((g << 2) << 10) |
+                                ((b << 2) << 20) | (3u << 30);
+            memcpy(random_rgba + i, &word, 4);
+        } else {
+            random_rgba[i + 0] = (unsigned char)r;
+            random_rgba[i + 1] = (unsigned char)g;
+            random_rgba[i + 2] = (unsigned char)b;
+            random_rgba[i + 3] = 255;
+        }
     }
     cuMemcpyHtoD((CUdeviceptr)c->in_pixels, random_rgba, in_bytes);
     free(random_rgba);
@@ -238,7 +267,7 @@ bool vsr_set_output(struct vsr_context *c, int out_w, int out_h) {
     if (!c->handle || !c->ready) return false;
     if (out_w == c->out_w && out_h == c->out_h)
         return true;
-    if (!ensure_img(&c->out_img, out_w, out_h, "output")) {
+    if (!ensure_img(&c->out_img, out_w, out_h, c->bits, "output")) {
         fprintf(stderr, "VSR: SetOutput alloc %dx%d failed\n", out_w, out_h);
         return false;
     }

@@ -416,6 +416,7 @@ private:
 
     MpvController *mpv_ = nullptr;
     std::string hwdecInit_;      // 启动时 hwdec 值（切换硬解时恢复）
+    double pendingResumeSeek_ = -1.0;  // hwdec 切换重载后要恢复的位置（秒，<0=无）
     bool playing_ = false;
     std::atomic<int64_t> currentTime_{0};
     std::atomic<int64_t> duration_{0};
