@@ -128,6 +128,19 @@ if [ -f "$IDLE_MOD" ]; then
     cp "$IDLE_MOD" "$STAGE/lib/vsr-player/"
     echo "  ✓ wayland idle-inhibit 模块"
 fi
+# Wayland 显示能力模块（可选）：主程序 dlopen 读合成器给本窗口的**表面色彩偏好**
+# （HDR 能力/物理峰值）→ 决定 HDR10 自动上屏与上变换的目标峰值。
+# ⚠ 漏打包的后果是**静默降级**：找不到模块 → 显示能力不可读 → 恒退 SDR
+# （HDR 片源不会上屏、SDR→HDR10 的目标峰值退回 650 兜底）。v0.3.0-fix/v0.4.0
+# 的包就漏了它（2026-10-18 安装后核对发现），本行是修复。
+COLOR_MOD="$CLIENT_DIST/src/client/libvsr-color-feedback.so"
+if [ -f "$COLOR_MOD" ]; then
+    cp "$COLOR_MOD" "$STAGE/lib/vsr-player/"
+    echo "  ✓ wayland color-feedback 模块（HDR 显示能力）"
+else
+    echo "  ❌ 缺 libvsr-color-feedback.so —— 打出来的包 HDR 自动上屏会静默失效" >&2
+    exit 1
+fi
 
 # ── 4. 依赖库收集（显式核心集 + 媒体栈动态发现 + full 变体 Qt）────────
 echo "--- [4/6] bundled libs ---"
