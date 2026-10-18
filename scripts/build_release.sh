@@ -338,7 +338,8 @@ fi
 cat > "$STAGE/README.md" << 'EOR'
 # vsr-player vVERSION_PLACEHOLDER
 
-NVIDIA GPU 实时 AI 超分 + 插帧视频播放器（libmpv + Qt6 + VFX SDK，插帧 = FRUC_TITLE_PLACEHOLDER）。
+NVIDIA GPU 实时 AI 视频处理播放器：**超分 + 降噪**、**插帧**（FRUC_TITLE_PLACEHOLDER）与
+**HDR**（10-bit RGB10A2 全链、HDR10 上屏、SDR→HDR10 上变换）。libmpv + Qt6 + NVIDIA VFX SDK。
 
 ## 系统依赖（必须）
 DEPS_PLACEHOLDER
@@ -356,6 +357,13 @@ tarball 不含 VFX SDK（NVIDIA SLA 限制再分发）。install.sh 检测缺失
 - 许可: NVIDIA Software License Agreement（licenses/，下载前脚本会提示）
 
 FRUC_SECTION_PLACEHOLDER
+
+## HDR
+- HDR 片源 × 支持 HDR 的显示 → 自动切 HDR10 上屏（运行期切换、带内容静态元数据；
+  SDR 显示下由 mpv tone map 到 SDR）。
+- **SDR→HDR10 上变换**（VFX TrueHDR）：画质弹窗里的 `SDR → HDR10` 开关 + `Advanced`
+  参数弹窗（目标峰值/亮度、饱和度、对比度、中灰、抗色带），**默认关**。面板非 HDR 也能开：
+  此时输出仍为 SDR，由 mpv 把上变换后的 HDR10 帧 tone map 回 SDR。
 
 ## 测试现状
 项目在有限硬件条件下开发，无法覆盖所有 GPU/驱动/媒体组合——你可能遇到
@@ -403,7 +411,9 @@ else
 engines/ 与 RIFE engine——这是预期布局**，不是缺件。插帧随 VFX SDK 运行时提供
 （首次安装由 install.sh 下载，见上），需 GPU 支持 FP16 Tensor Cores。'
     FRUC_COMPAT='- 本包为 VFG 后端：无 RIFE 引擎、无 TensorRT 库（因此没有 TRT 版本绑定
-  问题）。需要 RIFE 时用 `--fruc-backend=rife` 重新取包或源码构建'
+  问题）。RIFE 后端（TensorRT）已冻结、**不再提供预编译包**；需要它（Ampere 及更早
+  GPU——VFG 需要 Ada/Blackwell）可源码自建：./scripts/build-from-source.sh
+  --fruc-backend=rife'
 fi
 python3 - "$STAGE/README.md" "$DEPS_TEXT" "$FRUC_TITLE" "$FRUC_SECTION" "$FRUC_COMPAT" << 'PYEOF'
 import sys
