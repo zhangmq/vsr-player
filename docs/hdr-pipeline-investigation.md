@@ -15,7 +15,7 @@ scope: 只回答"能不能做、代价是什么、风险在哪"；不含实现
 1. **VFX 的 "SDR→HDR" = `TrueHDR` effect，方向和我们想的相反**：它吃 **SDR RGBA U8**、
    吐 **HDR10（BT.2020 + PQ，打包 RGB10A2）**。它不能处理 HDR 输入，也不是"HDR 内容支持"。
    已有实测（`docs/vfx-sdk-1.3-investigation.md` §4）：默认参数下平均饱和度降 6–15%、
-   `DebandingOff` 在样本上逐位无差异；**只在有 HDR 输出时才值得接**。
+   `DebandingOff` 在样本上逐位无差异（⚠ 该"逐位无差异"只说明**这几张样本没触发**它，**不构成关闭/跳过的依据**——抗色带是条件触发项，必须常开；见 `docs/vfx-truehdr-investigation.md` §7 与 `AGENTS.md` 工作铁律第 6 条）；**只在有 HDR 输出时才值得接**。
 2. **"新版 VFX 直接支持 HDR 内容"这句成立，但指的是 1.3 新增的 10-bit 通路**：
    `VideoSuperRes`（`ImageEncodingMode=1` → RGB10A2/P32）与 `VideoFrameGeneration`（自动按输入
    格式，RGB10A2 可用）都能跑 10-bit。**我们目前是 8-bit**，这是明确的画质升级点。
@@ -71,7 +71,8 @@ DebandingOff  (unsigned int) - set to 1 to skip the DL-Debander pass for higher 
 
 - 实现 = `NvVFXTrueHDRImpl`（导出符号 `NvVFXTrueHDRImpl`、`15VFXFilterBaseV0`），
   底层是 **NGX `libnvidia-ngx-truehdr.so.1.2.3`**（SDK 自带，和驱动级 "RTX Video HDR" 同源模型），
-  并串一个 **DL-Debander** pass（`DebandingOff=1` 可跳过）。
+  并串一个 **DL-Debander** pass（`DebandingOff=1` 可跳过；⚠ **默认必须保持 0=开**——
+  它每帧都跑（成本恒定）、只在检测到色带时改像素（收益条件触发），正是为最坏帧准备的）。
 - 数据通路：`AllocateInputBuffer` / `CopyInputToArray` 把输入拷进 **CUDA array**（`cuArrayCreate`），
   用 `cuSurfObjectCreate` / `cuTexObjectCreate` 做 surface/texture 读写，
   再 `CopyArrayToOutput` 写出；`BatchSize` 只支持 1。
@@ -90,7 +91,7 @@ DebandingOff  (unsigned int) - set to 1 to skip the DL-Debander pass for higher 
 | 高光 p99 | 93–99 nit | 341–389 nit（×3.7–3.9） |
 | 平均饱和度 | 0.298–0.365 | 0.254–0.328（**默认参数下降 6–15%**） |
 | 色域越界（BT.2020→709） | — | 1.4–7.7%（SDR 屏显示不出的部分） |
-| `DebandingOff` A/B | — | **max\|Δ\|=0，非零像素 0.000%**（样本上无作用） |
+| `DebandingOff` A/B | — | **max\|Δ\|=0，非零像素 0.000%**（样本未触发；**不作为关闭依据**） |
 
 结论：**它是"上变换"而不是"还原"**；在没有 HDR 屏的机器上接它 = 多一次推理 + 再 tonemap 回 SDR，
 纯亏。只有 HDR 输出落地后才有讨论价值。
@@ -1202,6 +1203,13 @@ swapchain 格式需要它）；colorSpace 与描述都在**首帧之后**由 `sy
   | SDR 片源 | `SDR · content SDR` |
   | HDR 片源 + HDR 屏（切换瞬间→稳定） | `SDR · content HDR not displayed (display unknown)` → `HDR10 · BT.2020/PQ · display 400nit · content 758nit` |
   | 强制 `VSR_HDR=hdr10` + SDR 片源 | `HDR10 · BT.2020/PQ · display 400nit · content SDR · (forced)` |
+  | SDR 片源 + TrueHDR 上变换（2026-10-18） | `SDR · content SDR → HDR10(400nit[, manual])` / HDR 面板时 `HDR10 · BT.2020/PQ · display 400nit · content SDR → HDR10(…)` |
+- **`Output` 行带实际输出模式**（2026-10-18 用户要求"OSD 缺少实际输出的信息，HDR10/SDR"）：
+  `输出  2560×1440 148.1fps · HDR10` / `· SDR`。数据源 = `hdr::outputText()`，取值是
+  **真实 swapchain 格式**（首帧 `installSwapchainVerification` 的 `probeSwapchain().current`
+  + 换屏重探 + 每次 `applyMode` 成功后的落地值），**不是策略意图**——Qt 静默回退时
+  两者不同，OSD 显示实际的那个（回退由 `installSwapchainVerification` 报 ERR）。
+  HDR 行讲**内容侧**状态（内容 HDR？有没有上变换），Output 行讲**显示输出侧**，两者分工不重叠。
 - 口径：`content Xnit` 优先用 **MaxCLL**（KWin 实际用的值），退回 mastering max；
   `display Xnit` 用合成器 preferred 的 `max_luma`（**物理峰值** 400nit，不是 203 参考白口径）。
 - 查看方式：正常播放按 **Tab** 显示 OSD（`osdPoll` 只在可见时推送 `osd-msg1`）；

@@ -1,6 +1,8 @@
 #include "PlayerViewModel.h"
 #include "MpvController.h"
 #include "FrucBackend.h"
+#include "HdrOutput.h"        // hdr::setUpconvertOptIn / setUpconvertLuminanceOverride
+#include "TrueHdrParams.h"    // TrueHDR 参数区间/默认值（客户端单一来源）
 #include "Log.h"
 
 #include <QMetaObject>
@@ -63,7 +65,11 @@ const char *denoiseName(int v) {
 
 }  // namespace
 
-PlayerViewModel::PlayerViewModel(QObject *parent) : QObject(parent) {}
+PlayerViewModel::PlayerViewModel(QObject *parent) : QObject(parent) {
+    // TrueHDR 总开关的**默认值** = env `VSR_UPHDR`（无持久化设置时生效）；
+    // loadSettings() 读到设置后以设置为准（benchmark 不读设置 → 保持 env 语义）。
+    persistUpHdrEnabled_ = hdr::upconvertOptedIn();
+}
 
 // ── attach: register mpv property observers ────────────────────────────
 //
@@ -661,6 +667,22 @@ void PlayerViewModel::loadSettings() {
     persistFrucQuality_ = settings_.value("frucQuality", fruc::kModeDefault).toInt();
     if (!fruc::isValidMode(persistFrucQuality_))
         persistFrucQuality_ = fruc::kModeDefault;   // 非法值（手改配置）→ medium
+
+    // ── TrueHDR（SDR→HDR10 上变换）参数 ────────────────────────────────
+    // 区间/默认值单一来源 = TrueHdrParams.h（= SDK 文档串）；手改配置越界 →
+    // 夹回合法区间（不整份丢弃，避免一个坏值让全部参数失效）。
+    using namespace truehdr_params;
+    persistUpHdrEnabled_ = settings_.value("upHdrEnabled", persistUpHdrEnabled_).toBool();
+    persistUpHdrLumOverride_ = settings_.value("upHdrLumOverride", false).toBool();
+    persistUpHdrLuminance_ = clampInt(settings_.value("upHdrLuminance", kLuminanceDefault).toInt(),
+                                      kLuminanceMin, kLuminanceMax);
+    persistUpHdrSaturation_ = clampInt(settings_.value("upHdrSaturation", kSaturationDefault).toInt(),
+                                       kSaturationMin, kSaturationMax);
+    persistUpHdrContrast_ = clampInt(settings_.value("upHdrContrast", kContrastDefault).toInt(),
+                                     kContrastMin, kContrastMax);
+    persistUpHdrMiddleGray_ = clampInt(settings_.value("upHdrMiddleGray", kMiddleGrayDefault).toInt(),
+                                       kMiddleGrayMin, kMiddleGrayMax);
+    persistUpHdrDebanding_ = settings_.value("upHdrDebanding", kDebandingDefault).toBool();
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -1074,6 +1096,12 @@ void PlayerViewModel::setHdrStatus(const std::string &s) {
     std::lock_guard<std::mutex> lk(hdrStatusMtx_);
     hdrStatus_ = s;
     stripEol(hdrStatus_);
+}
+
+void PlayerViewModel::setHdrOutput(const std::string &s) {
+    std::lock_guard<std::mutex> lk(hdrOutputMtx_);
+    hdrOutput_ = s;
+    stripEol(hdrOutput_);
 }
 
 // ── Speed / window / OSD ─────────────────────────────────────────────
@@ -1579,6 +1607,16 @@ std::string PlayerViewModel::vfOption() const {
                           + ":denoise=" + denoiseString()
                           + ":quality=" + qualityString();
     const int fruc = frucFps_.load();
+    // SDR→HDR10 上变换（VFX TrueHDR）：**恒在 vsr 之后**（方案 §8.1：VSR 输入
+    // 保持今天的 SDR 分布不变）。链串里恒 `enable=no`——实际状态由 HDR 策略经
+    // `vf-command truehdr enable|luminance` 运行期下发（单一事实源）。
+    // ⚠ enable 是 OPT_BOOL：**只认 yes/no**（"0"/"1" 会让整条 vf 选项解析失败
+    // → 链上所有滤镜都不生效，实测）。
+    // 峰值取"生效值"（覆盖开关打开时是用户值，否则面板自动值/默认 650）；
+    // 显示信息到达后策略会经 vf-command 纠正。参数里只有 luminance 进链串
+    //（其余 5 项由 syncVfOptions 重放，链串默认值 = SDK 默认）。
+    const std::string up = "@truehdr:truehdr:enable=no:luminance="
+                         + std::to_string(effectiveUpHdrLuminance());
 #ifdef FRUC_BACKEND_VFG
     // VFG 倍率语义：fps=off|2|3|4 直通/整数倍率；mode 恒发显式值
     // low|medium|high（默认 medium——依据见 FrucBackend.h kModeDefault；
@@ -1586,9 +1624,19 @@ std::string PlayerViewModel::vfOption() const {
     const std::string vfg = std::string("@") + frucFilterName() + ":" + frucFilterName()
                           + ":fps=" + (fruc > 0 ? std::to_string(fruc) : "off")
                           + ":mode=" + fruc::modeName(frucQuality_.load());
-    if (frucOrderPre())
+    if (frucOrderPre()) {
+        // pre 序下"vsr 之后"= 链尾 = 按输出帧计费（k× 成本）→ 本轮不支持
+        // （方案 §8.1）：不插入，日志一次。策略侧同步关掉上变换
+        //（initTrueHdr → hdr::setUpconvertInChain），OSD 不会声称在跑。
+        static bool pre_warned = false;
+        if (!pre_warned) {
+            pre_warned = true;
+            fprintf(stderr, "[truehdr] --fruc-order pre 下不支持上变换（方案 §8.1），"
+                            "该序未插入 truehdr 滤镜\n");
+        }
         return "@hwup:hwup," + vfg + "," + vsr;
-    return "@hwup:hwup," + vsr + "," + vfg;
+    }
+    return "@hwup:hwup," + vsr + "," + up + "," + vfg;
 #else
     std::string vf = "@hwup:hwup,";
     if (fruc == 2 || fruc == 3 || fruc == 4) {
@@ -1601,7 +1649,9 @@ std::string PlayerViewModel::vfOption() const {
         vf += std::string("@") + frucFilterName() + ":" + frucFilterName()
             + ":fps=off:scale=off,";
     }
-    vf += vsr;
+    // RIFE 后端：链序 hwup → rife → vsr（rife 在源分辨率），上变换插链尾
+    //（= vsr 之后，与 VFG post 序同语义）。
+    vf += vsr + "," + up;
     return vf;
 #endif
 }
@@ -1652,6 +1702,177 @@ void PlayerViewModel::pushVf(const char *filter, const char *param,
 // FRUC 滤镜名的单一出口（其余地方一律经此取用，见 FrucBackend.h）。
 const char *PlayerViewModel::frucFilterName() const { return fruc::kFilterName; }
 
+void PlayerViewModel::setUpconvert(bool on, float autoNit, float effectiveNit) {
+    // 口径全部来自 HdrOutput（策略单一事实源）：
+    //   autoNit      = 面板物理峰值（合成器 preferred maxLuma；OSD 显示用）
+    //   effectiveNit = 实际生效峰值（覆盖开关打开时是用户值，否则 = autoNit）
+    // 这里再兜一次区间，避免非法值把 vf-command 顶掉。
+    using namespace truehdr_params;
+    if (!(autoNit >= kLuminanceMin && autoNit <= kLuminanceMax))
+        autoNit = (float)kLuminanceDefault;
+    if (!(effectiveNit >= kLuminanceMin && effectiveNit <= kLuminanceMax))
+        effectiveNit = autoNit;
+
+    bool changed = false;
+    if (on != upconvertOn_) {
+        upconvertOn_ = on;
+        changed = true;
+        emit upHdrEffectiveChanged();
+    }
+    if (fabsf(autoNit - upHdrAutoNits_) >= 0.5f) {
+        upHdrAutoNits_ = autoNit;
+        changed = true;
+        emit upHdrAutoLuminanceChanged();
+    }
+    if (fabsf(effectiveNit - upHdrEffectiveNits_) >= 0.5f) {
+        upHdrEffectiveNits_ = effectiveNit;
+        changed = true;
+    }
+    if (!changed)
+        return;   // 幂等（策略重算会反复触发）
+
+    MLOG_INFO("truehdr: 上变换 %s（面板峰值 %.0f nit，生效峰值 %.0f nit）",
+              on ? "on" : "off", (double)autoNit, (double)effectiveNit);
+    // 链上恒有 truehdr 滤镜（vfOption 里 enable=no 占位）→ 运行期开关只改
+    // filter 实例选项，不重建链；引擎按需 lazy init（首帧 ~120ms）。
+    pushVf("truehdr", "enable", on ? "1" : "0");
+    pushVf("truehdr", "luminance", std::to_string((int)lroundf(effectiveNit)));
+}
+
+// ── TrueHDR 参数：UI/RPC 入口 + 下发 + 持久化 ─────────────────────────────
+
+int PlayerViewModel::effectiveUpHdrLuminance() const {
+    return (int)lroundf(upHdrEffectiveNits_);
+}
+
+QVariantMap PlayerViewModel::upHdrLimits() const {
+    using namespace truehdr_params;
+    QVariantMap m;
+    m["lumMin"] = kLuminanceMin;   m["lumMax"] = kLuminanceMax;
+    m["lumDef"] = kLuminanceDefault;
+    m["satMin"] = kSaturationMin;  m["satMax"] = kSaturationMax;
+    m["satDef"] = kSaturationDefault;
+    m["conMin"] = kContrastMin;    m["conMax"] = kContrastMax;
+    m["conDef"] = kContrastDefault;
+    m["mgMin"]  = kMiddleGrayMin;  m["mgMax"]  = kMiddleGrayMax;
+    m["mgDef"]  = kMiddleGrayDefault;
+    return m;
+}
+
+void PlayerViewModel::pushTrueHdrParams() {
+    if (!mpv_) return;
+    pushVf("truehdr", "saturation", std::to_string(upHdrSaturation_));
+    pushVf("truehdr", "contrast", std::to_string(upHdrContrast_));
+    pushVf("truehdr", "middle-gray", std::to_string(upHdrMiddleGray_));
+    // UI 语义"抗色带开" = SDK `DebandingOff` 0（反相；默认开，铁律 6）
+    pushVf("truehdr", "debanding-off", upHdrDebanding_ ? "0" : "1");
+    pushVf("truehdr", "luminance", std::to_string(effectiveUpHdrLuminance()));
+}
+
+void PlayerViewModel::initTrueHdr() {
+    upHdrEnabled_ = persistUpHdrEnabled_;
+    upHdrLumOverride_ = persistUpHdrLumOverride_;
+    upHdrLuminance_ = persistUpHdrLuminance_;
+    upHdrSaturation_ = persistUpHdrSaturation_;
+    upHdrContrast_ = persistUpHdrContrast_;
+    upHdrMiddleGray_ = persistUpHdrMiddleGray_;
+    upHdrDebanding_ = persistUpHdrDebanding_;
+    // 显示信息还没到 → 生效值先按"覆盖打开就用用户值，否则 SDK 默认 650"，
+    // 策略随后经 setUpconvert 回调纠正为面板峰值。
+    upHdrEffectiveNits_ = upHdrLumOverride_ ? (float)upHdrLuminance_
+                                            : (float)truehdr_params::kLuminanceDefault;
+    // 通知策略（opt-in + 峰值覆盖 + 链上是否有滤镜）：installPolicy 之前调用
+    // 只是存值；策略首次 reevaluate 会用到，之后每次变化都会重新决策 + 回调解钩子。
+    // `--fruc-order pre`（仅 VFG 可选）下 vfOption() 不插 truehdr（方案 §8.1）→
+    // 上变换不可能发生，OSD 的内容标记必须跟着关掉（否则声称 SDR → HDR10 却
+    // 没有帧被处理）。frucOrderPre 只由 CLI 决定，此刻已是终值。
+    hdr::setUpconvertInChain(!frucOrderPre());
+    hdr::setUpconvertOptIn(upHdrEnabled_);
+    hdr::setUpconvertLuminanceOverride(upHdrLumOverride_, upHdrLuminance_);
+    MLOG_INFO("truehdr: 参数 = %s，saturation=%d contrast=%d middle-gray=%d "
+              "debanding=%s，峰值=%s", upHdrEnabled_ ? "on" : "off",
+              upHdrSaturation_, upHdrContrast_, upHdrMiddleGray_,
+              upHdrDebanding_ ? "on" : "off(diagnostic)",
+              upHdrLumOverride_ ? "用户覆盖" : "自动跟面板");
+}
+
+void PlayerViewModel::setUpHdrEnabled(bool on) {
+    if (upHdrEnabled_ == on) return;
+    upHdrEnabled_ = on;
+    emit upHdrEnabledChanged();
+    saveSettings("upHdrEnabled", on);
+    MLOG_INFO("truehdr: 用户开关 → %s", on ? "on" : "off");
+    // 策略重算 → 目标模式可能随之切换（SDR 内容 × HDR 屏 × opt-in → Hdr10），
+    // 最终 enable 由策略回调 setUpconvert 下发。
+    hdr::setUpconvertOptIn(on);
+}
+
+void PlayerViewModel::setUpHdrLuminanceOverride(bool on) {
+    if (upHdrLumOverride_ == on) return;
+    upHdrLumOverride_ = on;
+    // 打开覆盖时把滑块**种子**成当前自动值：避免"一开覆盖画面就跳"
+    //（用户拖动前不改变生效值）。
+    if (on && upHdrAutoNits_ >= truehdr_params::kLuminanceMin)
+        upHdrLuminance_ = (int)lroundf(upHdrAutoNits_);
+    emit upHdrLuminanceOverrideChanged();
+    emit upHdrLuminanceChanged();
+    saveSettings("upHdrLumOverride", on);
+    saveSettings("upHdrLuminance", upHdrLuminance_);
+    // 声明里的内容峰值也要跟着变（HdrOutput 单一事实源）→ 它会回调钩子
+    hdr::setUpconvertLuminanceOverride(on, upHdrLuminance_);
+}
+
+void PlayerViewModel::setUpHdrLuminance(int nits) {
+    using namespace truehdr_params;
+    nits = clampInt(nits, kLuminanceMin, kLuminanceMax);
+    if (upHdrLuminance_ == nits) return;
+    upHdrLuminance_ = nits;
+    emit upHdrLuminanceChanged();
+    saveSettings("upHdrLuminance", nits);
+    if (!upHdrLumOverride_) return;   // 覆盖关：值只暂存，不生效（也不下发）
+    hdr::setUpconvertLuminanceOverride(true, nits);
+}
+
+void PlayerViewModel::setUpHdrSaturation(int v) {
+    using namespace truehdr_params;
+    v = clampInt(v, kSaturationMin, kSaturationMax);
+    if (upHdrSaturation_ == v) return;
+    upHdrSaturation_ = v;
+    emit upHdrSaturationChanged();
+    saveSettings("upHdrSaturation", v);
+    pushVf("truehdr", "saturation", std::to_string(v));
+}
+
+void PlayerViewModel::setUpHdrContrast(int v) {
+    using namespace truehdr_params;
+    v = clampInt(v, kContrastMin, kContrastMax);
+    if (upHdrContrast_ == v) return;
+    upHdrContrast_ = v;
+    emit upHdrContrastChanged();
+    saveSettings("upHdrContrast", v);
+    pushVf("truehdr", "contrast", std::to_string(v));
+}
+
+void PlayerViewModel::setUpHdrMiddleGray(int v) {
+    using namespace truehdr_params;
+    v = clampInt(v, kMiddleGrayMin, kMiddleGrayMax);
+    if (upHdrMiddleGray_ == v) return;
+    upHdrMiddleGray_ = v;
+    emit upHdrMiddleGrayChanged();
+    saveSettings("upHdrMiddleGray", v);
+    pushVf("truehdr", "middle-gray", std::to_string(v));
+}
+
+void PlayerViewModel::setUpHdrDebanding(bool on) {
+    if (upHdrDebanding_ == on) return;
+    upHdrDebanding_ = on;
+    emit upHdrDebandingChanged();
+    saveSettings("upHdrDebanding", on);
+    MLOG_INFO("truehdr: 抗色带 → %s（默认开；关闭会让带色带的镜头暴露，"
+              "引擎耗时约 1.6–4.3×）", on ? "on" : "off");
+    pushVf("truehdr", "debanding-off", on ? "0" : "1");
+}
+
 void PlayerViewModel::syncVfOptions() {
     if (!mpv_) return;
     int fruc = frucFps_.load();
@@ -1666,6 +1887,14 @@ void PlayerViewModel::syncVfOptions() {
     pushVf("vsr", "scale", scaleStr());
     pushVf("vsr", "quality", qualityStr());
     pushVf("vsr", "denoise", denoiseStr());
+    // SDR→HDR10 上变换（VFX TrueHDR）：vf-command 只改 filter 实例 opts，
+    // 链重建（stop/换片）后回到链串默认 enable=no → 必须重放策略状态，
+    // 否则"上变换开了但重播就没了"。
+    pushVf("truehdr", "enable", upconvertOn_ ? "1" : "0");
+    pushTrueHdrParams();   // 5 个参数全量重放（链重建后回到链串默认值）
+    MLOG_INFO("syncVfOptions: truehdr enable=%d lum=%d sat=%d contrast=%d mg=%d deband=%d",
+              int(upconvertOn_), effectiveUpHdrLuminance(), upHdrSaturation_,
+              upHdrContrast_, upHdrMiddleGray_, int(upHdrDebanding_));
 }
 
 // ── 主线程状态更新（值由事件线程传入，不调 mpv API）─────────────────
@@ -1780,8 +2009,13 @@ std::string PlayerViewModel::osdTextString() {
     // 标签走翻译（Source→源 等，.ts 提供）。对齐按**显示宽度**补空格：
     // 非 Latin-1 字符（中文）monospace 下约占 2 个英文字符宽——按字符数
     // leftJustified 会错位（"源"+7 空格 ≠ "解码器"+5 空格）。
-    auto tag = [](const char *t) {
-        QString s = tr(t);
+    // ⚠ `tr()` 的参数必须是**字面量**，否则 lupdate 扫不到：历史上这里写成
+    // `tr(t)`（t 是形参）→ 所有标签条目被 lupdate 标成 `type="vanished"` →
+    // lrelease 不把它们编进 .qm → 运行时 tr() 查不到 → **整个 OSD 标签全英文**
+    //（2026-10-18 实测：lconvert 反查 .qm 里没有 <source>Source</source>）。
+    // 因此标签在**调用点** tr("Source")，本 lambda 只负责宽度对齐。
+    auto tag = [](const QString &label) {
+        QString s = label;
         int w = 0;
         for (QChar c : s)
             w += (c.unicode() > 0xFF) ? 2 : 1;
@@ -1798,7 +2032,7 @@ std::string PlayerViewModel::osdTextString() {
 
     // Source：源信息（解码尺寸/codec/色深/容器帧率/总帧数）；无视频显示占位
     if (videoWidth_.load() <= 0) {
-        lines << tag("Source") + QStringLiteral("–");
+        lines << tag(tr("Source")) + QStringLiteral("–");
     } else {
         double fps = videoFps_.load();
         QString fpsStr = fps > 0 ? QString::number(fps, 'f', 2)
@@ -1806,7 +2040,7 @@ std::string PlayerViewModel::osdTextString() {
         int bd = videoBitDepth_.load();
         QString bdStr = bd > 0 ? QStringLiteral("%1bit").arg(bd)
                                : QStringLiteral("–");
-        lines << tag("Source") + QStringLiteral("%1×%2 %3 %4 %5fps · %6f")
+        lines << tag(tr("Source")) + QStringLiteral("%1×%2 %3 %4 %5fps · %6f")
             .arg(videoWidth_.load()).arg(videoHeight_.load())
             .arg(videoCodec_).arg(bdStr).arg(fpsStr).arg(decodedFrames_.load());
     }
@@ -1822,16 +2056,24 @@ std::string PlayerViewModel::osdTextString() {
             renderFps_.store((rendered - fpsPrevRendered_) * 1000.0 / dtMs);
         }
         fpsPrevRendered_ = rendered;
-        lines << tag("Output") + QStringLiteral("%1×%2 %3fps")
+        QString out = QStringLiteral("%1×%2 %3fps")
             .arg(viewportWidth_.load()).arg(viewportHeight_.load())
             .arg(renderFps_.load(), 0, 'f', 1);
+        // 实际输出模式（HDR10/SDR，来自 hdr::outputText() = 真实 swapchain 格式）
+        // 并入本行——语义 = "输出到显示的是什么"（HDR 行讲的是内容侧状态）。
+        {
+            std::lock_guard<std::mutex> lk(hdrOutputMtx_);
+            if (!hdrOutput_.empty())
+                out += QStringLiteral(" · ") + QString::fromStdString(hdrOutput_);
+        }
+        lines << tag(tr("Output")) + out;
     }
 
     // HDR：上屏状态（SDR / HDR10 + 显示峰值 + 内容峰值/未上屏原因）。
     // 文本由 hdr::statusText() 给出（英文，不翻译），平台无关地反映实际状态。
     {
         std::lock_guard<std::mutex> lk(hdrStatusMtx_);
-        lines << tag("HDR") + QString::fromStdString(hdrStatus_);
+        lines << tag(tr("HDR")) + QString::fromStdString(hdrStatus_);
     }
 
     // VSR：设定 | 状态（原 Render 行合并：输出帧尺寸——倍率由设定段
@@ -1859,7 +2101,7 @@ std::string PlayerViewModel::osdTextString() {
             if (!vsrStatus_.empty())
                 st << QString::fromStdString(vsrStatus_);
         }
-        QString line = tag("VSR") +
+        QString line = tag(tr("VSR")) +
             (parts.isEmpty() ? QStringLiteral("off") : parts.join(" "));
         if (!st.isEmpty())
             line += " | " + st.join(" ");
@@ -1880,7 +2122,7 @@ std::string PlayerViewModel::osdTextString() {
             target = QStringLiteral("%1×").arg(fruc);
         else if (fruc > 0)
             target = QStringLiteral("%1 fps").arg(fruc);
-        QString line = tag("FRUC") + target;
+        QString line = tag(tr("FRUC")) + target;
         if (fruc != -1) {
             std::lock_guard<std::mutex> lk(frucStatusMtx_);
             if (!frucStatus_.empty())
@@ -1897,30 +2139,30 @@ std::string PlayerViewModel::osdTextString() {
     if (hwDecoding_.load()) {
         QString hd = hwdecName_;
         hd.remove("-copy");   // nvdec-copy → nvdec（copy 模式无信息价值）
-        lines << tag("Decoder") + QStringLiteral("%1 %2 %3")
+        lines << tag(tr("Decoder")) + QStringLiteral("%1 %2 %3")
             .arg(decoderName_.isEmpty() ? QStringLiteral("NVDEC") : decoderName_,
                  hd.isEmpty() ? QStringLiteral("NVDEC") : hd,
                  hwPixelFormat_.isEmpty() ? decoderPixelFormat_ : hwPixelFormat_);
     } else {
-        lines << tag("Decoder") + QStringLiteral("%1 %2")
+        lines << tag(tr("Decoder")) + QStringLiteral("%1 %2")
             .arg(decoderName_.isEmpty() ? QStringLiteral("Software") : decoderName_,
                  hwPixelFormat_.isEmpty() ? decoderPixelFormat_ : hwPixelFormat_);
     }
 
-    lines << tag("Speed") + QStringLiteral("%1×").arg(speed_.load(), 0, 'f', 2);
+    lines << tag(tr("Speed")) + QStringLiteral("%1×").arg(speed_.load(), 0, 'f', 2);
 
-    lines << tag("Time") + QStringLiteral("%1 / %2")
+    lines << tag(tr("Time")) + QStringLiteral("%1 / %2")
         .arg(fmtTime(currentTime_.load())).arg(fmtTime(duration_.load()));
 
     // Frames：段内统计（rendered 客户端计数 / dropped 差值）
-    lines << tag("Frames") + QStringLiteral("rendered %1  dropped %2")
+    lines << tag(tr("Frames")) + QStringLiteral("rendered %1  dropped %2")
         .arg(renderedFrames_.load()).arg(droppedFrames());
 
     if (!gpuName_.isEmpty())
-        lines << tag("GPU") + gpuName_;
+        lines << tag(tr("GPU")) + gpuName_;
 
     if (audioSampleRate_.load() > 0)
-        lines << tag("Audio") + QStringLiteral("%1Hz %2ch")
+        lines << tag(tr("Audio")) + QStringLiteral("%1Hz %2ch")
             .arg(audioSampleRate_.load()).arg(audioChannels_.load());
 
     return lines.join('\n').toStdString();

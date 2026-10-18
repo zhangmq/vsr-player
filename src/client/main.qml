@@ -46,8 +46,8 @@ Item {
                 if (_popups[i] !== exclude) _popups[i].close()
         }
         Component.onCompleted: {
-            _popups = [volumePopup, qualityPopup, speedPopup, aspectPopup, contextMenu,
-                       tracksPopup, openMenu, urlPopup]
+            _popups = [volumePopup, qualityPopup, trueHdrAdvancedPopup, speedPopup,
+                       aspectPopup, contextMenu, tracksPopup, openMenu, urlPopup]
             // 启动即按当前状态应用 auto-hide（onShowUiChanged 只在翻转时触发）
             viewModel.overlaysVisible = showUi
         }
@@ -159,7 +159,36 @@ Item {
             onDenoiseQualityPicked: function(v) { viewModel.setDenoiseQuality(v) }
             onFrucFpsPicked: function(v) { viewModel.setFrucFps(v) }
             onFrucQualityPicked: function(v) { viewModel.setFrucQuality(v) }
+            upHdrEnabled: viewModel.upHdrEnabled
+            upHdrEffective: viewModel.upHdrEffective
+            onUpHdrEnabledPicked: function(v) { viewModel.setUpHdrEnabled(v) }
+            // 高级参数独立弹框（modal 居中）：打开时**关掉 QualityPopup**
+            onAdvancedRequested: {
+                uiLayer.closeOtherPopups(trueHdrAdvancedPopup)
+                trueHdrAdvancedPopup.open()
+            }
             onOpened: uiLayer.closeOtherPopups(qualityPopup)
+        }
+
+        // ── TrueHDR（SDR→HDR10）参数弹框 ─────────────────────────────
+        TrueHdrAdvancedPopup {
+            id: trueHdrAdvancedPopup
+            upHdrOn: viewModel.upHdrEnabled
+            upHdrEffective: viewModel.upHdrEffective
+            lumOverride: viewModel.upHdrLuminanceOverride
+            lum: viewModel.upHdrLuminance
+            lumAuto: viewModel.upHdrAutoLuminance
+            saturation: viewModel.upHdrSaturation
+            contrast: viewModel.upHdrContrast
+            middleGray: viewModel.upHdrMiddleGray
+            debanding: viewModel.upHdrDebanding
+            limits: viewModel.upHdrLimits
+            onLumOverrideToggled: function(on) { viewModel.setUpHdrLuminanceOverride(on) }
+            onLumMoved: function(v) { viewModel.setUpHdrLuminance(v) }
+            onSaturationMoved: function(v) { viewModel.setUpHdrSaturation(v) }
+            onContrastMoved: function(v) { viewModel.setUpHdrContrast(v) }
+            onMiddleGrayMoved: function(v) { viewModel.setUpHdrMiddleGray(v) }
+            onDebandingToggled: function(on) { viewModel.setUpHdrDebanding(on) }
         }
 
         SpeedPopup {

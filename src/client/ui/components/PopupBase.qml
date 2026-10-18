@@ -17,6 +17,11 @@ Popup {
     modal: false
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
+    /// **不加背景遮罩**（用户 2026-10-18 要求）：弹窗里的参数要能立刻看到画面
+    /// 效果，半透明遮罩会干扰判断。`modal: true` 的子类（TracksPopup、TrueHDR
+    /// 高级弹框）仍然保留"挡住外部点击"的语义，只是把默认的调暗层换成空 Item。
+    Overlay.modal: Item {}
+
     background: Rectangle {
         color: "#d9111111"; radius: 8
         border { width: 1; color: "#22ffffff" }

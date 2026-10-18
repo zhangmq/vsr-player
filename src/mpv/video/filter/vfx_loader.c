@@ -131,22 +131,31 @@ bool vfx_load_libraries(void) {
         "libnvngxruntime.so", "libnvidia-ngx-vsr.so",
         "libVideoFXLocal.so", "libVideoFX.so",
         "libnvVFXVideoSuperRes.so",
+        // TrueHDR（VFX 1.3 的 SDR→HDR10 上变换 effect）：libnvVFXTrueHDR.so
+        // 依赖同代的 libnvidia-ngx-truehdr.so（NGX 后端）。1.2 及以前没有
+        // 这两个库——存在性守卫见下（缺失属正常，VSR/VFG 照常工作），
+        // 不能让 dlopen 的失败文本刷屏。
+        "libnvidia-ngx-truehdr.so",
         // VFG（1.3 新增的 AI 插帧 effect）——VFX 1.1 目录内没有这个库，
         // 1.2 之前同样缺（1.3 wheel 0.2.0.0 才有）。存在性守卫见下：
         // 无守卫时每次启动都会多打一条误导性的 dlopen 失败。
         "libnvVFXVideoFrameGeneration.so",
+        "libnvVFXTrueHDR.so",
     };
     int nlibs = sizeof(libs) / sizeof(libs[0]);
     for (int i = 0; i < nlibs; i++) {
         char path[1024];
         snprintf(path, sizeof(path), "%s%s", nvvfx_dir, libs[i]);
-        // VFG 库先做可达性检查：旧代 SDK 没有它，缺失属正常（VSR 照常
-        // 工作），一条清晰说明即可——不能让 dlopen 的失败文本刷屏。
+        // 旧代 SDK 没有的库先做可达性检查（缺失＝功能不可用，不是错误）：
+        // 一条清晰说明即可——不能让 dlopen 的失败文本刷屏。
         // vfx_load_libraries 进程内幂等（g_vfx_lib 缓存）→ 只打一次。
-        if (strcmp(libs[i], "libnvVFXVideoFrameGeneration.so") == 0 &&
+        if ((strcmp(libs[i], "libnvVFXVideoFrameGeneration.so") == 0 ||
+             strcmp(libs[i], "libnvVFXTrueHDR.so") == 0 ||
+             strcmp(libs[i], "libnvidia-ngx-truehdr.so") == 0) &&
             access(path, R_OK) != 0) {
-            fprintf(stderr, "VSR: VFG 不可用（此 VFX SDK 无 "
-                            "libnvVFXVideoFrameGeneration.so）\n");
+            fprintf(stderr, "VSR: %s 不可用（此 VFX SDK 无 %s）\n",
+                    strcmp(libs[i], "libnvVFXVideoFrameGeneration.so") == 0
+                        ? "VFG" : "TrueHDR", libs[i]);
             continue;
         }
         void *h = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
@@ -187,6 +196,7 @@ bool vfx_load_libraries(void) {
     // 可能不同代，日志里必须能区分，否则"测的是哪版 SDK"无从追溯。
     // 代际判据：有 libnvVFXVideoFrameGeneration.so ⇒ 1.3+；无 ⇒ 旧版。
     bool has_vfg = false;
+    bool has_truehdr = false;
     char ngx_vsr_ver[256] = "";
     DIR *dir = opendir(nvvfx_dir);
     if (dir) {
@@ -194,6 +204,8 @@ bool vfx_load_libraries(void) {
         while ((ent = readdir(dir)) != NULL) {
             if (strcmp(ent->d_name, "libnvVFXVideoFrameGeneration.so") == 0)
                 has_vfg = true;
+            else if (strcmp(ent->d_name, "libnvVFXTrueHDR.so") == 0)
+                has_truehdr = true;
             else if (strncmp(ent->d_name, "libnvidia-ngx-vsr.so.",
                              sizeof("libnvidia-ngx-vsr.so.") - 1) == 0)
                 snprintf(ngx_vsr_ver, sizeof(ngx_vsr_ver), "%s", ent->d_name);
@@ -201,10 +213,11 @@ bool vfx_load_libraries(void) {
         closedir(dir);
     }
     char *resolved_dir = realpath(nvvfx_dir, NULL);   // 打印规范化绝对路径（否则是拼出来的 ".." 路径）
-    fprintf(stderr, "VSR: NvVFX libraries loaded (nvvfx dir=%s, gen=%s%s%s)\n",
+    fprintf(stderr, "VSR: NvVFX libraries loaded (nvvfx dir=%s, gen=%s%s%s%s)\n",
             resolved_dir ? resolved_dir : nvvfx_dir,
             has_vfg ? "1.3+ (VideoFrameGeneration present)"
                     : "legacy (no VideoFrameGeneration)",
+            has_truehdr ? ", TrueHDR" : "",
             ngx_vsr_ver[0] ? ", ngx-vsr=" : "", ngx_vsr_ver);
     free(resolved_dir);
     return true;

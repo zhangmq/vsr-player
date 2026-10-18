@@ -109,6 +109,7 @@ const struct mp_user_filter_entry *vf_list[] = {
     &vf_hwup,
     &vf_vsr,
     &vf_vfg,
+    &vf_truehdr,
 #if HAVE_FRUC_RIFE
     &vf_rife,
 #endif

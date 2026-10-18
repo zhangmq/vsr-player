@@ -211,6 +211,8 @@ int main(int argc, char *argv[]) {
     viewModel.initFruc(opts.fruc, opts.benchmark);
     viewModel.initFrucOrder(opts.fruc_order);   // vf 链序（仅 VFG 可切换）
     viewModel.initFrucQuality(opts.fruc_quality);  // 插帧质量档（仅 VFG 可选）
+    viewModel.initTrueHdr();  // SDR→HDR10 上变换参数（持久化 + env 默认；须在
+                              // installPolicy 前——策略的首次 reevaluate 要用它们）
     std::string vf = viewModel.vfOption();
 
     // ── mpv ─────────────────────────────────────────────────────────────
@@ -415,11 +417,23 @@ int main(int argc, char *argv[]) {
                     mpvPtr->setHdrTarget(true, 0.0f, 1000.0f);
                 }
             };
+            // SDR→HDR10 上变换（VFX TrueHDR，链上位于 vsr 之后）：
+            // 判定在 HdrOutput 内（内容 SDR ∧ `VSR_UPHDR` opt-in ∧ 策略非 off ∧
+            // 链上有滤镜；**与显示能力无关**——面板非 HDR 时输出仍是 SDR，帧由
+            // mpv tone map 回 SDR），这里只转发到 `vf-command truehdr
+            // enable|luminance`；被调的
+            // setUpconvert 同时记住状态供 FILE_LOADED 重放（链重建后 vf-command
+            // 状态会回到链串默认 enable=0）。
+            hooks.updateUpconvert = [&viewModel](bool on, float autoNit, float effectiveNit) {
+                viewModel.setUpconvert(on, autoNit, effectiveNit);
+            };
             // OSD 的 HDR 状态行（SDR / HDR10 + 显示峰值 + 内容峰值/未上屏原因）：
             // 模式、显示能力、内容元数据任一变化都会回调 → 刷新到 OSD 文本源。
             hooks.statusChanged = [&viewModel] {
                 const QString s = hdr::statusText();
                 viewModel.setHdrStatus(s.toStdString());
+                // OSD 的"输出"行：**实际**输出模式（真实 swapchain 格式，不是策略意图）
+                viewModel.setHdrOutput(hdr::outputText().toStdString());
                 // 状态变更才打日志（INFO = 状态变更；便于无 UI 时核对 OSD 来源）
                 static QString last;
                 if (last != s) {
@@ -509,6 +523,10 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "[mpv status] %s", text);
             } else if (strncmp(text, "vsr-status:", 11) == 0) {
                 viewModel.setVsrStatus(text + 11);
+                fprintf(stderr, "[mpv status] %s", text);
+            } else if (strncmp(text, "truehdr-status:", 15) == 0) {
+                // SDR→HDR10 上变换状态行（诊断/验尸用：mode + cost/fps + 输出
+                // PQ 采样 nit）。OSD 的 HDR 行已带 upconvert 标记，不另设状态段。
                 fprintf(stderr, "[mpv status] %s", text);
             } else if (strstr(text, "Cannot seek")) {
                 // 直播/线性流：mpv 拿上次保存的位置去 seek 广播流的滑动窗口

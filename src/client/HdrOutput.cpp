@@ -88,6 +88,30 @@ Mode requestedModeFromEnv() {   // 兼容旧接口：强制 hdr10 → Hdr10，�
     return policyFromEnv() == Policy::ForceHdr10 ? Mode::Hdr10 : Mode::Sdr;
 }
 
+// SDR→HDR10 上变换（VFX TrueHDR）的总开关状态。
+//  · 默认值 = env `VSR_UPHDR=on|1|true`（无持久化设置时生效）
+//  · UI（QualityPopup 的开关）经 setUpconvertOptIn() 覆盖，并以持久化设置为准
+// 定义在文件作用域（不放在函数 static 里：UI 需要**可写**）。UI 线程访问。
+static bool g_upconvertOptIn = false;
+static bool g_upconvertOptInEnvRead = false;
+// 目标峰值的手动覆盖（UI）：off = 自动跟面板物理峰值
+static bool  g_lumOverride = false;
+static int   g_lumOverrideNits = 650;
+
+bool upconvertOptedIn() {
+    if (!g_upconvertOptInEnvRead) {
+        g_upconvertOptInEnvRead = true;
+        const QByteArray v = qgetenv("VSR_UPHDR").trimmed().toLower();
+        const bool e = (v == "on" || v == "1" || v == "true" || v == "yes");
+        if (!v.isEmpty() && !e) {
+            MLOG_ERR("hdr: VSR_UPHDR=%s 无法识别（支持 on|1|true）→ 上变换保持关闭",
+                     v.constData());
+        }
+        g_upconvertOptIn = e;
+    }
+    return g_upconvertOptIn;
+}
+
 static QString backendName(QSGRendererInterface::GraphicsApi api) {
     switch (api) {
     case QSGRendererInterface::Vulkan:      return QStringLiteral("Vulkan");
@@ -267,10 +291,100 @@ struct PolicyState {
     DisplayInfo  display;          ///< 最近一次合成器快照
     Mode         applied = Mode::Sdr;
     bool         haveApplied = false;
+    /// **实际** swapchain 格式（探测/应用成功的真实值，OSD"输出"行用）。
+    Mode         actualSwapchain = Mode::Sdr;
+    bool         haveActual = false;
     QString      shortReason;      ///< 简短原因（OSD；英文，不翻译）
+    // ── SDR→HDR10 上变换（VFX TrueHDR；opt-in，默认关）─────────────────
+    bool         upconvert = false;      ///< 当前是否应开启（策略判定，单一事实源）
+    float        upconvertNits = 650.f;  ///< 生效目标峰值 nit（覆盖/面板，声明用）
+    float        upconvertAutoNits = 650.f; ///< 面板自动峰值 nit（UI 显示"自动 Nnit"）
+    bool         upconvertInChain = true;   ///< vf 链里是否真有 truehdr（--fruc-order pre）
 };
 
 PolicyState &policyState() { static PolicyState s; return s; }
+
+/// 记录**实际** swapchain 格式（OSD 的"输出"行用）。两个来源：
+///  ① `applyMode` 成功后——setFormat + createOrResize 刚成功，实际就是它；
+///  ② 首帧 / 换屏的只读探测（`probeSwapchain().current`）——能抓到 Qt 的**静默
+///     回退**（`installSwapchainVerification` 报 ERR 的那种：策略说 HDR10、实际 SDR）。
+/// 与 `st.applied`（策略目标）区分开：正常时两者一致，回退时以探测值为准。
+void noteActualSwapchain(Mode m) {
+    PolicyState &st = policyState();
+    if (st.haveActual && st.actualSwapchain == m)
+        return;
+    st.actualSwapchain = m;
+    st.haveActual = true;
+    MLOG_INFO("hdr output: 实际输出 = %s", modeName(m));
+}
+
+/// 上变换的**自动**目标峰值：面板物理峰值（合成器 preferred 的 maxLuma，与 OSD
+/// `display Xnit` 同口径），夹到 SDK 的 Luminance 合法区间 [400,2000]；
+/// 读不到显示能力时用 SDK 默认 650。
+/// **默认永远跟面板**；`VSR_UPHDR_NITS=<400..2000>` 只作调试覆盖（非法值忽略）；
+/// UI 的手动覆盖走 setUpconvertLuminanceOverride（优先级最高，见 effective 版）。
+/// `VSR_UPHDR_NITS` 调试覆盖（0 = 未设置/非法）。**优先级最高**：连 UI 的
+/// 手动覆盖也压过——调试时应当能强制任意峰值（含验证"UI 覆盖是否真的生效"）。
+static float upconvertDebugNits() {
+    static const float envOverride = [] {
+        const QByteArray v = qgetenv("VSR_UPHDR_NITS").trimmed();
+        if (v.isEmpty())
+            return 0.0f;
+        bool ok = false;
+        const float n = v.toFloat(&ok);
+        if (!ok || n < 400.0f || n > 2000.0f) {
+            MLOG_ERR("hdr: VSR_UPHDR_NITS=%s 非法（SDK 只接受 400–2000 nit）"
+                     "→ 忽略，按面板峰值", v.constData());
+            return 0.0f;
+        }
+        MLOG_INFO("hdr upconvert: 目标峰值被 VSR_UPHDR_NITS 覆盖为 %.0f nit"
+                  "（调试用；正常路径 = 面板物理峰值）", n);
+        return n;
+    }();
+    return envOverride;
+}
+
+float upconvertLuminance(const DisplayInfo &d) {
+    const float envOverride = upconvertDebugNits();
+    float n = envOverride > 0.0f ? envOverride
+            : (d.valid && d.maxLuma > 0) ? d.maxLuma : 650.0f;
+    if (n < 400.0f)  n = 400.0f;
+    if (n > 2000.0f) n = 2000.0f;
+    return n;
+}
+
+/// 上变换**实际生效**的目标峰值：UI 覆盖开关打开时用其值，否则 = 面板自动值。
+/// 它同时是过滤器的 Luminance 参数与声明给合成器的内容峰值。
+float upconvertEffectiveLuminance(const DisplayInfo &d) {
+    const float debug = upconvertDebugNits();
+    if (debug > 0.0f)
+        return debug;                 // 调试覆盖 > UI 覆盖 > 自动
+    if (g_lumOverride) {
+        float n = (float)g_lumOverrideNits;
+        if (n < 400.0f)  n = 400.0f;
+        if (n > 2000.0f) n = 2000.0f;
+        return n;
+    }
+    return upconvertLuminance(d);
+}
+
+/// 下发给合成器的**有效**内容静态元数据：上变换生效时，内容峰值不是源片源的
+/// （SDR 源没有元数据），而是 TrueHDR 输出的实际峰值（= Luminance）——不下发
+/// 它合成器只能按主色体积上限（PQ 名义 10000nit）压 → 上变换的画面会发暗/发平
+/// （与 §20 记录的真实 HDR 片源同一机制）。
+ContentMeta effectiveContentMeta() {
+    const PolicyState &st = policyState();
+    if (!st.upconvert)
+        return st.contentMeta;
+    ContentMeta cm;
+    cm.valid = true;
+    cm.minMastering = 0;
+    cm.maxMastering = st.upconvertNits;
+    cm.maxCll = st.upconvertNits;
+    cm.maxFall = 0;          // 未定义（合成器只用 max_cll → mastering max）
+    return cm;
+}
+
 
 QRhiSwapChain::Format rhiFormatForMode(Mode m) {
     switch (m) {
@@ -329,6 +443,10 @@ void syncTargets(Mode mode) {
     PolicyState &st = policyState();
     if (st.hooks.updateMpvTarget)
         st.hooks.updateMpvTarget(mode, st.display);
+    // 上变换开关：与 mpv target 同一批调用点（模式/显示/内容任一变化）。
+    // 判定已在 reevaluate 里算好（单一事实源）——这里只转发 + 保证幂等。
+    if (st.hooks.updateUpconvert)
+        st.hooks.updateUpconvert(st.upconvert, st.upconvertAutoNits, st.upconvertNits);
     if (mode == Mode::Hdr10) {
         // Qt 自己的 UI 编码用 QSurfaceFormat::colorSpace；这里只在 platform window
         // **已存在**（首帧后）时设置 → Qt 不会再建 `wp_color_management_surface_v1`
@@ -360,8 +478,9 @@ int declareHdr10Surface(QQuickWindow *window) {
     ColorModule &m = colorModule();
     if (!m.declarePq || ensureModule(window) != 0)
         return -1;
-    // 内容静态元数据（没有则传 NULL → 合成器按主色体积上限 10000nit 处理）
-    const ContentMeta &cm = policyState().contentMeta;
+    // 内容静态元数据（没有则传 NULL → 合成器按主色体积上限 10000nit 处理）；
+    // 上变换生效时用 TrueHDR 输出的实际峰值（见 effectiveContentMeta）。
+    const ContentMeta cm = effectiveContentMeta();
     struct vsr_hdr_meta meta {};
     if (cm.valid) {
         meta.valid = 1;
@@ -470,6 +589,17 @@ void reevaluate(const char *why) {
             reason = QStringLiteral("合成器 preferred 非宽色域（SDR 屏或 WCG-only）"
                                     " gamut_area=%1").arg(st.display.gamutArea, 0, 'f', 4);
             st.shortReason = QStringLiteral("display SDR/WCG-only");
+        } else if (!st.contentHdr && upconvertOptedIn() && st.upconvertInChain) {
+            // SDR 内容 × HDR 屏 × opt-in → HDR10 输出 + TrueHDR 上变换
+            //（docs/vfx-truehdr-investigation.md §8.2 真值表）
+            // ⚠ 只在这里（面板是 HDR 时）才切输出；面板 SDR 时输出保持 SDR，
+            //   上变换仍会跑（见下面 up_want）——"面板非 HDR 也允许开启"。
+            want = Mode::Hdr10;
+            reason = QStringLiteral("SDR 内容上变换（VSR_UPHDR opt-in）× 显示 HDR"
+                                    "（gamut_area=%1，peak=%2 nit）")
+                         .arg(st.display.gamutArea, 0, 'f', 4)
+                         .arg(st.display.peakNits, 0, 'f', 1);
+            st.shortReason = QStringLiteral("SDR upconvert x display HDR");
         } else if (!st.contentHdr) {
             reason = QStringLiteral("内容非 HDR（video-params/gamma 非 pq/hlg）");
             st.shortReason = QStringLiteral("content SDR");
@@ -488,6 +618,30 @@ void reevaluate(const char *why) {
         break;
     }
 
+    // 上变换状态必须在 applyMode（内含色彩描述下发）**之前**定好：描述里的
+    // 内容峰值要用它（effectiveContentMeta）。真值表（§8.2）：
+    //   Enable = opt-in ∧ 内容 SDR ∧ 策略 ≠ off ∧ 链上有 truehdr 滤镜
+    // **与显示能力无关**（2026-10-18 用户要求"面板非 HDR 也允许开启"）：
+    // 面板 SDR 时输出仍是 SDR（不动 swapchain / 不下发色彩描述），TrueHDR 产出的
+    // HDR10 帧由 mpv 按其 target（`target-trc=auto` = SDR）tone map 回 SDR 写进
+    // 现有 8-bit 面 —— 即改动前所有 HDR 片源走的那条通路。
+    // HDR 内容恒 off——过滤器里还有一层按帧 transfer 的自守卫（防二次转换）。
+    const bool up_want = upconvertOptedIn() && !st.contentHdr
+                      && st.policy != Policy::Off && st.upconvertInChain;
+    const float up_auto = upconvertLuminance(st.display);
+    const float up_nits = upconvertEffectiveLuminance(st.display);
+    if (up_want != st.upconvert || fabsf(up_nits - st.upconvertNits) >= 0.5f)
+        MLOG_INFO("hdr upconvert: %s（输出 %s；面板峰值 %.0f nit，生效峰值 %.0f nit%s；"
+                  "策略=%s 内容=%s opt-in=%d）",
+                  up_want ? "on" : "off", modeName(want), up_auto, up_nits,
+                  g_lumOverride ? " = 用户覆盖" : "",
+                  st.policy == Policy::Auto ? "auto"
+                                            : st.policy == Policy::Off ? "off" : "hdr10",
+                  st.contentHdr ? "HDR" : "SDR", int(upconvertOptedIn()));
+    st.upconvert = up_want;
+    st.upconvertNits = up_nits;
+    st.upconvertAutoNits = up_auto;
+
     if (st.haveApplied && want == st.applied) {
         // 模式未变，但钩子的输入（显示能力/内容元数据）可能变了 → 仍要同步
         // （强制模式 `VSR_HDR=hdr10` 的 mpv target/声明就靠这里补上）。
@@ -505,12 +659,18 @@ void reevaluate(const char *why) {
     }
     st.applied = want;
     st.haveApplied = true;
+    // 实际 swapchain 格式 = 刚应用成功的这个（`applyMode` 里 setFormat +
+    // createOrResize 成功；`cur == mode` 时是从 sc->format() 反查出来的）。
+    noteActualSwapchain(want);
     MLOG_INFO("hdr policy[%s]: → %s（%s）", why, modeName(want),
               reason.toUtf8().constData());
     if (st.hooks.rebuildRenderPath)
         st.hooks.rebuildRenderPath(want);
-    if (st.hooks.updateMpvTarget)
-        st.hooks.updateMpvTarget(want, st.display);
+    // 模式切换路径也走 syncTargets（updateMpvTarget + 上变换 + 色彩描述）——
+    // 单一路径，避免"钩子漏调"（强制模式的 target-trc 缺失就是这类缺陷）。
+    // applyMode 里已下发过一次描述；这里再下一次是幂等的（协议允许替换，
+    // 且上变换的内容峰值必须在这一刻生效）。
+    syncTargets(want);
     if (st.hooks.statusChanged)
         st.hooks.statusChanged();
 }
@@ -524,9 +684,41 @@ void installPolicy(QQuickWindow *window, Policy policy, Mode initialMode, ApplyH
     st.applied = initialMode;
     st.haveApplied = true;   // 启动模式已经生效（show 前设的），无需重复应用
     st.hooks = std::move(hooks);
-    MLOG_INFO("hdr: 策略=%s（auto = 内容 HDR × 显示能力 HDR；off/hdr10 见文档）",
-              policy == Policy::Auto ? "auto" : policy == Policy::Off ? "off" : "hdr10");
+    MLOG_INFO("hdr: 策略=%s（auto = 内容 HDR × 显示能力 HDR；off/hdr10 见文档）"
+              "；SDR→HDR10 上变换 opt-in=%d（VSR_UPHDR，默认关）",
+              policy == Policy::Auto ? "auto" : policy == Policy::Off ? "off" : "hdr10",
+              int(upconvertOptedIn()));
     reevaluate("install");
+}
+
+void setUpconvertOptIn(bool on) {
+    const bool cur = upconvertOptedIn();   // 首次调用会把 env 默认值读进来
+    if (cur == on)
+        return;
+    g_upconvertOptIn = on;
+    MLOG_INFO("hdr upconvert: 用户开关 → %s（重算目标模式）", on ? "on" : "off");
+    reevaluate("upconvert opt-in");
+}
+
+void setUpconvertInChain(bool in) {
+    PolicyState &st = policyState();
+    if (st.upconvertInChain == in)
+        return;
+    st.upconvertInChain = in;
+    MLOG_INFO("hdr upconvert: vf 链上%s truehdr 滤镜（重算）", in ? "有" : "**没有**");
+    reevaluate("upconvert chain");
+}
+
+void setUpconvertLuminanceOverride(bool on, int nits) {
+    const int n = nits < 400 ? 400 : (nits > 2000 ? 2000 : nits);
+    if (g_lumOverride == on && g_lumOverrideNits == n)
+        return;
+    g_lumOverride = on;
+    g_lumOverrideNits = n;
+    MLOG_INFO("hdr upconvert: 目标峰值 → %s（%d nit）",
+              on ? "用户覆盖" : "自动（面板物理峰值）", on ? n : 0);
+    // 声明里的内容峰值必须跟着变（effectiveContentMeta）→ 重算 + 重下发
+    reevaluate("upconvert luminance");
 }
 
 void setContentHdr(bool hdr) {
@@ -573,6 +765,21 @@ void setContentMeta(const ContentMeta &meta) {
 
 Mode targetMode() { return policyState().applied; }
 
+QString outputText() {
+    const PolicyState &st = policyState();
+    // 探测到的真实格式优先；还没探测过（首帧前）退策略已应用的模式。
+    return QString::fromLatin1(modeName(st.haveActual ? st.actualSwapchain : st.applied));
+}
+
+/// 上变换生效时 OSD 的**内容标记**：内容本身是 SDR，信号被 TrueHDR 变成 HDR10
+/// （`manual` = 峰值用用户覆盖值，否则跟面板）。OSD 不翻译，与其余状态段一致。
+static QString upconvertContentTag() {
+    const PolicyState &st = policyState();
+    return QStringLiteral("SDR → HDR10(%1nit%2)")
+        .arg(st.upconvertNits, 0, 'f', 0)
+        .arg(g_lumOverride ? QStringLiteral(", manual") : QString());
+}
+
 QString statusText() {
     PolicyState &st = policyState();
     const ContentMeta &cm = st.contentMeta;
@@ -588,16 +795,25 @@ QString statusText() {
         parts << QStringLiteral("HDR10 · BT.2020/PQ");
         if (st.display.valid && st.display.maxLuma > 0)
             parts << QStringLiteral("display %1nit").arg(st.display.maxLuma, 0, 'f', 0);
-        parts << (st.contentHdr ? QStringLiteral("content %1").arg(contentStr)
-                                : QStringLiteral("content SDR"));
+        // 内容状态：真 HDR 片源 → content Xnit；SDR 内容经上变换 → content SDR → HDR10
+        parts << QStringLiteral("content %1")
+                     .arg(st.contentHdr ? contentStr
+                          : st.upconvert ? upconvertContentTag()
+                                         : QStringLiteral("SDR"));
         if (st.policy == Policy::ForceHdr10)
             parts << QStringLiteral("(forced)");
         return parts.join(QStringLiteral(" · "));
     }
-    // SDR 输出
-    if (!st.contentHdr)
-        return QStringLiteral("SDR · content SDR%1").arg(
-            st.policy == Policy::ForceHdr10 ? QStringLiteral(" (forced)") : QString());
+    // SDR 输出。上变换在跑时内容标记同样是 `SDR → HDR10`——**面板非 HDR 的那一格**
+    //（此时输出面仍是 SDR，末端由 mpv 把 HDR10 帧 tone map 回 SDR）。
+    if (!st.contentHdr) {
+        QString s = QStringLiteral("SDR · content %1")
+                        .arg(st.upconvert ? upconvertContentTag()
+                                          : QStringLiteral("SDR"));
+        if (st.policy == Policy::ForceHdr10)
+            s += QStringLiteral(" (forced)");
+        return s;
+    }
     return QStringLiteral("SDR · content HDR not displayed (%1)")
         .arg(st.shortReason.isEmpty() ? QStringLiteral("?") : st.shortReason);
 }
@@ -660,6 +876,14 @@ void installCapabilityProbe(QQuickWindow *window) {
 
     // 首帧探测：swapchain 在这里才绑定到窗口（m_window 非空），
     // 之前调用 isFormatSupported 会打 Qt 警告且查不到 surface。
+    // ⚠ 本回调在 **renderSceneGraph 里**（basic 渲染循环 = GUI 线程）：只允许
+    // 只读探测。任何**同步的 mpv API**（target-trc/target-prim 设置、色彩描述
+    // 下发）都**不能**在这里做——mpv core 线程此刻可能正等 VO 直渲图像
+    //（软解 + DR：core → VO → dr_helper → 渲染线程），同步 mpv 调用要等 core
+    // 的 dispatch lock → **循环等待死锁**（2026-10-18 实测：软解 ffv1 +
+    // vo=libmpv，gdb 栈 Thread1 mpv_set_property/mp_dispatch_lock ↔ core
+    // avcodec_send_packet/get_buffer2_direct/dr_helper_get_image）。改成排队到
+    // GUI 线程（离开渲染回调后再做），顺序/语义不变。
     auto *firstDone = new bool(false);
     QObject::connect(window, &QQuickWindow::afterRendering, window,
                      [window, firstDone]() {
@@ -667,10 +891,12 @@ void installCapabilityProbe(QQuickWindow *window) {
         *firstDone = true;
         logCapabilities(probeSwapchain(window), "initial");
         logDisplayInfo(window, "initial");
-        notifyDisplayInfo(window);
-        // 首帧后 wl_surface 一定存在 → 强制模式（启动即 Hdr10，没走 applyMode）
-        // 在这里补一次 mpv target + HDR10 描述下发（幂等）。
-        reevaluate("first-frame");
+        QMetaObject::invokeMethod(window, [window] {
+            // 首帧后 wl_surface 一定存在 → 强制模式（启动即 Hdr10，没走
+            // applyMode）在这里补一次 mpv target + HDR10 描述下发（幂等）。
+            notifyDisplayInfo(window);
+            reevaluate("first-frame");
+        }, Qt::QueuedConnection);
         // hdrInfo() 在 Linux 是 Qt 硬编码默认值——记录下来证明"不能用它当选屏依据"。
         if (QRhiSwapChain *sc = window->swapChain()) {
             const QRhiSwapChainHdrInfo hi = sc->hdrInfo();
@@ -695,7 +921,15 @@ void installCapabilityProbe(QQuickWindow *window) {
     // 换屏重探：isFormatSupported 是 per-surface，显示能力也随屏变化。
     QObject::connect(window, &QWindow::screenChanged, window,
                      [window](QScreen *) {
-        logCapabilities(probeSwapchain(window), "screen changed");
+        const Capabilities c = probeSwapchain(window);
+        logCapabilities(c, "screen changed");
+        // 换屏后 Qt 可能重建 swapchain（per-surface 格式）→ 实际输出要跟着更新，
+        // 并刷新 OSD（"输出"行读的就是这个值）。
+        if (c.probed) {
+            noteActualSwapchain(c.current);
+            if (policyState().hooks.statusChanged)
+                policyState().hooks.statusChanged();
+        }
         logDisplayInfo(window, "screen changed");
         notifyDisplayInfo(window);
     });
@@ -710,6 +944,10 @@ void installSwapchainVerification(QQuickWindow *window, Mode expected) {
         const Capabilities c = probeSwapchain(window);
         if (!c.probed) return;   // swapchain 还没绑定：等下一帧（不刷屏）
         *done = true;
+        // 首帧的真实格式就是"实际输出"的权威值（策略意图 ≠ 实际时以它为准）。
+        noteActualSwapchain(c.current);
+        if (policyState().hooks.statusChanged)
+            policyState().hooks.statusChanged();
         if (c.current == expected) {
             MLOG_INFO("hdr verify: swapchain=%s == 期望 %s ✔（screen=%s）",
                       modeName(c.current), modeName(expected),

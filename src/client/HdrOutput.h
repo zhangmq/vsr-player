@@ -99,7 +99,8 @@ VkFormat renderTargetFormatForMode(Mode m);
 /// 撤下自定义色彩描述（HDR10 → SDR 回落；回到合成器默认解释）。
 int unsetSurfaceDescription(QQuickWindow *window);
 
-/// 输出策略（`VSR_HDR=off|auto|hdr10`；auto = 内容 HDR × 显示能力 HDR 才切）。
+/// 输出策略（`VSR_HDR=off|auto|hdr10`；auto = 内容 HDR × 显示能力 HDR 才切，
+/// 另有 SDR 内容 × HDR 显示 × 上变换 opt-in 一格）。
 enum class Policy { Off, Auto, ForceHdr10 };
 Policy policyFromEnv();
 
@@ -140,6 +141,16 @@ struct ApplyHooks {
     std::function<void(Mode)> rebuildRenderPath;
     /// 更新 mpv 的 FBO 色彩空间目标（亮度取 DisplayInfo，参考白口径）。
     std::function<void(Mode, const DisplayInfo &)> updateMpvTarget;
+    /// SDR→HDR10 **上变换**（VFX TrueHDR，接在 vf_vsr 之后）的状态与峰值
+    /// （nit，物理峰值口径）。判定在 HdrOutput 内（单一事实源），客户端只转发到
+    /// `vf-command truehdr enable|luminance`；与 `updateMpvTarget` 同一批调用点。
+    ///   on            = 内容 SDR ∧ 总开关（opt-in）∧ 策略≠off ∧ 链上有滤镜
+    ///                   —— **与显示能力无关**：面板非 HDR 时输出仍是 SDR，帧由
+    ///                   mpv tone map 回 SDR（用户 2026-10-18 定的语义）
+    ///   autoNit       = 面板物理峰值（合成器 preferred maxLuma；UI 显示"自动"）
+    ///   effectiveNit  = 实际生效峰值（用户覆盖打开时是其值，否则 = autoNit）——
+    ///                   同时也是给合成器的**内容峰值**（声明用）
+    std::function<void(bool, float, float)> updateUpconvert;
     /// HDR 状态可能变化（模式/显示能力/内容元数据）→ 刷新 OSD 等展示层。
     /// 幂等、无参数；展示内容用 `statusText()` 取。
     std::function<void()> statusChanged;
@@ -160,9 +171,39 @@ Mode targetMode();
 /// 当前 HDR 状态的一行文本（OSD 用；**不翻译**，与 OSD 其余状态段一致）。
 /// 形如：
 ///   `HDR10 · BT.2020/PQ · display 400nit · content 758nit`（正在 HDR10 上屏）
+///   `HDR10 · BT.2020/PQ · display 400nit · content SDR → HDR10(400nit[, manual])`
+///     （HDR 面板：SDR 内容经 TrueHDR 上变换成 HDR10 信号后上屏）
+///   `SDR · content SDR → HDR10(400nit[, manual])`
+///     （**面板非 HDR**：上变换照跑，输出面仍是 SDR，末端由 mpv tone map 回 SDR）
 ///   `SDR · content HDR not displayed (display SDR)`（HDR 片源但未上屏 + 原因）
-///   `SDR · content SDR`（SDR 片源）
+///   `SDR · content SDR`（SDR 片源、无上变换）
 QString statusText();
+
+/// **实际输出**模式的一行短文本（OSD 的"输出"行用，不翻译）：`HDR10` / `SDR`。
+/// 与 `statusText()` 的区别：那是**内容侧**状态（内容是不是 HDR、有没有上变换），
+/// 这里报的是**显示输出侧**实际生效的 swapchain 格式——取值来源 = 首帧/换屏的
+/// 真实探测（`QRhiSwapChain::format()`）+ 每次 `applyMode` 成功后的落地值，
+/// **不是策略意图**：Qt 静默回退时（`installSwapchainVerification` 报 ERR）
+/// 两者会不同，OSD 显示实际的那个。
+QString outputText();
+
+/// SDR→HDR10 上变换的总开关（opt-in）。**默认取 env `VSR_UPHDR=on|1|true`**；
+/// UI（QualityPopup 的开关）经 `setUpconvertOptIn()` 覆盖并以持久化设置为准。
+/// 它只是"用户允许"，是否真的在跑见 ApplyHooks::updateUpconvert 的判定。
+bool upconvertOptedIn();
+/// 设置总开关（UI 调）；变化即触发策略重算（可能切换输出模式）。
+void setUpconvertOptIn(bool on);
+
+/// 链上是否真的会插入 truehdr 滤镜：`--fruc-order pre`（仅 VFG 可选）下
+/// `vfOption()` 不插（方案 §8.1，按输出帧计费）→ 上变换不可能发生。
+/// OSD 的内容标记必须与实际链路一致，否则会声称 `SDR → HDR10` 而帧没被处理。
+/// 默认 true；`PlayerViewModel::initTrueHdr` 按 `frucOrderPre()` 设置（须在
+/// installPolicy 之前，首次 reevaluate 就要看到）。
+void setUpconvertInChain(bool in);
+
+/// 目标峰值的手动覆盖（UI 调；关 = 自动跟面板物理峰值）。作为**声明给合成器的
+/// 内容峰值**与过滤器的 Luminance 参数（口径见 effectiveContentMeta）。
+void setUpconvertLuminanceOverride(bool on, int nits);
 
 /// 只读探测：不改变任何窗口/swapchain 状态。必须在场景图就绪后调用
 /// （afterRendering 第一帧），否则 swapchain 还没绑定窗口 → probed=false。

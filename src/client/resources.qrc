@@ -14,7 +14,10 @@
         <file>ui/OpenMenu.qml</file>
         <file>ui/UrlPopup.qml</file>
         <file>ui/PlaylistPanel.qml</file>
+        <file>ui/TrueHdrAdvancedPopup.qml</file>
         <file>ui/components/IconButton.qml</file>
         <file>ui/components/PopupBase.qml</file>
+        <file>ui/components/SegToggle.qml</file>
+        <file>ui/components/ParamSliderRow.qml</file>
     </qresource>
 </RCC>

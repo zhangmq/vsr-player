@@ -1871,6 +1871,9 @@ if features['vsr']
         # 注册项在 filters/user_filters.c。
         'video/filter/vfg_proc.c',
         'video/filter/vf_vfg.c',
+        # TrueHDR（VFX SDK 的 SDR→HDR10 上变换）接在 vf_vsr 之后；
+        # 与 VSR/VFG 共用 vfx_loader 的库加载层。注册项在 filters/user_filters.c。
+        'video/filter/vf_truehdr.c',
     )
     message('VSR filter: enabled')
 else

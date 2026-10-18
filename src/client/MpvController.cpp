@@ -319,12 +319,26 @@ void MpvController::setHdrTarget(bool hdr, float minLuma, float maxLuma) {
     // fbo csp，正是 mpv 自己的做法。
     // target-peak 保持 auto：**不预 tone map**，把 PQ 信号交给合成器映射到面板
     //（与 mpv --target-colorspace-hint 实测行为一致；填 203nit 会暗 2.4 倍）。
-    if (hdr) {
-        setPropertyString("target-trc", "pq");
-        setPropertyString("target-prim", "bt.2020");
-    } else {
-        setPropertyString("target-trc", "auto");
-        setPropertyString("target-prim", "auto");
+    //
+    // ⚠ **必须幂等**：`mpv_set_property_string` 是**同步**调用（内部
+    // `mp_dispatch_lock` 等 mpv core 到达锁点）。软解 + vo=libmpv 直渲时 core
+    // 可能正卡在 `get_buffer2_direct → vo_get_image → dr_helper_get_image` 等
+    // **渲染线程**交 DR 图像；GUI 线程若在此同步等 core 就成循环等待 —— 死锁
+    //（2026-10-18 gdb 实证：Thread1 setHdrTarget/mp_dispatch_lock ↔ core
+    // avcodec_send_packet/get_buffer2_direct ↔ dr_helper 等渲染）。
+    // 策略重算会反复用**相同值**调本函数（首帧探测/显示能力到达/元数据变化），
+    // 判等后绝大多数调用退化为 no-op，既省冗余属性写也避开上述窗口。
+    // 目标只与 hdr 有关（nit 经 hdrMinLuma_/hdrMaxLuma_ 走 render 参数，不经属性）。
+    const int want_trc = hdr ? 1 : 0;
+    if (hdrTrcApplied_ != want_trc) {
+        if (hdr) {
+            setPropertyString("target-trc", "pq");
+            setPropertyString("target-prim", "bt.2020");
+        } else {
+            setPropertyString("target-trc", "auto");
+            setPropertyString("target-prim", "auto");
+        }
+        hdrTrcApplied_ = want_trc;
     }
     MLOG_INFO("mpv HDR target: %s (min=%.3f nit max=%.1f nit; target-trc/prim=%s)",
               hdr ? "HDR10 (PQ/BT.2020)" : "SDR", minLuma, maxLuma,

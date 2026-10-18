@@ -131,4 +131,7 @@ private:
     bool  hdrTarget_ = false;
     float hdrMinLuma_ = 0.0f;
     float hdrMaxLuma_ = 0.0f;
+    // target-trc/target-prim 属性的**已下发**状态（-1=未知/未设，0=auto，1=pq）：
+    // 幂等判等用，避免反复发同步属性写（见 setHdrTarget 的死锁说明）。
+    int   hdrTrcApplied_ = -1;
 };

@@ -17,6 +17,36 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 3. **字体样式冻结**——不主动改 font family/size/bold，除非用户点名。
 4. **日志纪律**——默认只输出 info 及以上（`all=info`）；级别语义对齐 mpv（INFO=状态变更/VERBOSE=低频诊断/DBG=帧级）；调试用 `--msg-level all=v`（帧级 `all=dbg`），benchmark 用 `all=no`。**不要用 `log-file`**（下限 MSGL_DEBUG 会绕过 msg-level 刷屏）。
 5. **视觉瑕疵先排除编码**——任何"涂抹/色块"先出 PNG 帧序列/444 编码对照，再归因模型/引擎（yuv420p 色度下采样曾致 3 个引擎全被误判）。
+6. **不假设画面里"没有 X"**（2026-10-18 用户纠正）——我们处理的是视频，逐帧逐镜头变化：**条件触发的处理项**（抗色带/去抖/去噪/去块等）必须常开，恒定成本+条件收益是设计意图；"样本上看不出差别/逐位无差异"**不构成**关闭或省略的依据。要动这类项，只能用**最坏帧**（已知有该缺陷的素材）+ 目标显示条件下的并排结果来判。
+7. **UI 不自由发挥**（2026-10-18 用户要求）——做界面只用项目里**已有**的设计语言/组件/配色：弹窗用 `PopupBase`、
+   两态开关用分段按钮（本项目没有 Switch）、滑块配色照 `ProgressSlider.qml`（轨道 `#44ffffff`／已填充
+   `#e0e0e0`／滑块 `#ffffff` 14×14 r7）、图标用项目图标字体里**已存在**的字形（先查 cmap 再选）。
+   项目里没有的形态**先和用户沟通**，不要自行发明；"仅调配色"就是只动颜色，不要顺手改几何/交互。
+   ⚠ **弹窗一律不加背景遮罩**（用户 2026-10-18 要求）：`PopupBase` 里 `Overlay.modal: Item {}` ——
+   调参弹窗必须随时能看到画面效果，半透明调暗层会干扰判断；`modal: true`（挡外部点击）保留。
+   ⚠ **码点写成字面字符**：`\uXXXX` 只吃 **4 位**十六进制，而 MDI 码点普遍 > 0xFFFF
+   （`mdi-tune` = U+F062E）→ 写 `"\uF062E"` 会解析成 U+F062 + 字母 "E"（现象：按钮里
+   一个豆腐块 + E）。查图标用 `docs/icon-cheatsheet.html`（MDI v7.4.47 全表，可搜索/复制字形）。
+   ⚠ **组件宽度按内容算**：`SegToggle` 内部是两个 56 宽按钮（+6 间距 = 118），调用处写
+   `width: 88` 会让视觉内容**溢出到相邻控件**（实测：高级图标按钮与开关重叠）。
+   ⚠ **弹窗里不写说明文案**（用户 2026-10-18）：项目其它选项也都没有解释性文字——
+   只留控件标签/标题/单位；"SDK default xx"、"following panel"、状态解释句这类全部去掉，
+   参数含义与默认值写在代码注释/文档里。tooltip 也保持项目风格的一句话（如 "Advanced"）。
+   ⚠ **新增 UI 文案必须走 i18n**：QML 里一律 `qsTr()`；改完跑
+   `/usr/lib/qt6/bin/lupdate <main.qml ui/*.qml ui/components/*.qml PlayerViewModel.cpp> -ts
+   src/client/translations/vsr-player_{en,zh_CN}.ts`，再补两份译文并 `ninja -C build`
+   （meson 的 custom_target 跑 `lrelease` → `<build>/src/client/*.qm`，`main.cpp` 按 locale
+   经 `VSR_TRANSLATIONS_DIR` 载入；日志会打 `translation: vsr-player_zh_CN`）。
+   ⚠ 别漏 `ui/components/*.qml`：新组件（SegToggle/ParamSliderRow）是**独立 context**，
+   lupdate 不给这些文件就永远没有译文。lupdate 会顺带刷新所有 `<location line=…>`（diff 大是正常）。
+   ⚠ **`tr()` 的参数必须是字面量**：写成 `tr(t)`（t 是形参）lupdate 扫不到 → 该条目被标
+   `type="vanished"` → **lrelease 不编进 .qm** → 运行时 `tr()` 查不到 → 回退英文。
+   2026-10-18 实测（用户报"插帧的 UI 国际化没做干净"）：`osdTextString()` 的 `tag()` 用
+   `tr(t)` 收标签 → 整个 OSD 标签（源/输出/超分/**插帧**/解码器…）全英文，而 .ts 里译文
+   其实一直有（只是 vanished）。修法 = 在**调用点**写 `tag(tr("FRUC"))`，lambda 只做宽度对齐；
+   改完必须跑 lupdate（条目会从 vanished 复活并保留原译文）+ lrelease，用
+   `lconvert -i x.qm -o -` 反查确认译文真进了 .qm（**不能只看 .ts**）。
+
 
 ## 技术现状（已对照 master 代码修正）
 
@@ -177,6 +207,13 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
     ⚠ 切 HDR10 与静态元数据到达可能同瞬间 → **`setContentMeta()` 里必须刷新状态文本**
     （否则 OSD 停在 `content ?`）；内容 HDR 但元数据未到时显示 `content HDR`。
     无参数启动→恢复播放列表→点播放（上次记录续播）路径已实测同样正确。
+    ⚠ **`Output` 行带实际输出模式**（2026-10-18 用户："OSD 缺少实际输出的信息，HDR10/SDR"
+    → 追问后定为"实际输出合并进输出行，HDR 行信息完备"）：`输出  2560×1440 148.1fps · HDR10`
+    / `· SDR`。数据源 `hdr::outputText()`，取值 = **真实 swapchain 格式**（首帧
+    `installSwapchainVerification` 的 `probeSwapchain().current` + 换屏重探 + 每次
+    `applyMode` 成功后），**不是策略意图**——Qt 静默回退时以探测值为准（回退本身由
+    `installSwapchainVerification` 报 ERR）。分工：**HDR 行 = 内容侧**（内容 HDR？上变换？），
+    **Output 行 = 显示输出侧**。推送同 `hdrStatus_`（GUI 线程写/事件线程读 + 锁）。
   - **`VSR_HDR=hdr10` 的定位 = 诊断/覆盖，非观看模式**（§22.1）：只用三类场景
     （机制验收/回归、auto 判据失灵时的逃生舱、分离"谁做 tone mapping"）；
     播 SDR 内容会更暗（SDR 白 203nit vs 面板 400nit，且无反相 tone mapping）；
@@ -191,6 +228,119 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
   是 **bt709**、与真 HDR 的 bt2020 可分 → 判据不误判；**内容驱动**（只有 HDR 片源用
   HDR10，SDR 片源保持 8-bit 现状）+ 运行期切换（切换代价已实测：一次 swapchain 重建，
   无新校验错误、帧继续）。
+
+### SDR→HDR10 上变换（VFX TrueHDR，2026-10-18 第一轮，**默认关**）
+
+调研/方案/验收全文见 `docs/vfx-truehdr-investigation.md` §8；要点：
+
+- **位置**：链上**恒在 `vf_vsr` 之后**（post 序 `hwup → vsr → truehdr → vfg`；RIFE 链尾）。
+  `--fruc-order pre` **不插**（那等于放 VSR 之前，按输出帧计费 = 最贵方案）→ 记一行日志。
+- **开关**：链串里恒 `@truehdr:truehdr:enable=no`（占位，直通成本≈0）；实际状态由 HDR 策略经
+  `vf-command truehdr enable|luminance` 下发。**opt-in 环境变量 `VSR_UPHDR=on|1|true`**
+  （默认关：收益未证实 + 成本吃紧）。⚠ 链串里 **`enable=no` 不能写 `enable=0`**——
+  `OPT_BOOL` 只认 yes/no，写错会让**整条 `vf` 选项解析失败**（所有滤镜失效，现象是 VO 直通
+  + A/V 不同步，mpv 只在 stderr 打一行）。
+- **判定（真值表，单一事实源在 `HdrOutput`）**：
+  `Enable = 内容 SDR ∧ opt-in ∧ 策略≠off ∧ 链上有 truehdr 滤镜`。
+  ⚠ **2026-10-18 改（用户："面板非 hdr 也允许开启 sdr -> hdr10"）**：判据里**去掉**了
+  "目标模式 = Hdr10"——上变换**与显示能力解耦**。面板非 HDR 时输出面仍是 SDR
+  （不动 swapchain、不下发色彩描述），TrueHDR 产出的 HDR10 帧由 mpv 按其 target
+  （`target-trc=auto` = SDR）tone map 回 SDR 写进现有 8-bit 面 = 改动前所有 HDR 片源
+  走的那条通路。用户在两方案里选了 A（**不**放宽 swapchain/声明；B = 非 HDR 面板也
+  强制 HDR10 上屏，未采纳）。auto 策略因此两格都通：**SDR 内容 × HDR 屏 × opt-in → Hdr10**
+  （顺带切 HDR10 上屏）与 **SDR 内容 × SDR 屏 × opt-in → Sdr**（只跑上变换）。
+  "链上有滤镜"一项由 `hdr::setUpconvertInChain()` 承担（`initTrueHdr` 按 `frucOrderPre()`
+  设，**须在 installPolicy 前**）——`--fruc-order pre` 不插滤镜，不停这一步 OSD 会声称
+  `SDR → HDR10` 而帧根本没被处理。
+  过滤器里还有**第二层按帧 transfer 的自守卫**（`pl_color_space_is_hdr()` → 直通），
+  所以内容 HDR 时即使客户端误开也不会二次转换。
+- **OSD 的内容标记**（`HdrOutput::statusText()`，英文不翻译）：
+  `HDR10 · BT.2020/PQ · display 400nit · content SDR → HDR10(400nit[, manual])`（HDR 输出 + 上变换）
+  / `SDR · content SDR → HDR10(400nit[, manual])`（**面板非 HDR**：上变换在跑、输出仍 SDR）
+  / `content 758nit`（真 HDR 片源，形态不变）/ `SDR · content HDR not displayed (<原因>)`。
+  `manual` = 峰值用用户覆盖值。**内容状态必须反映真实链路**（用户 2026-10-18 要求
+  "OSD 正确显示 content 状态"）：上变换关 / 链上没有滤镜时不能带 `→ HDR10`。
+- **接口**：输入 chunky RGB——RGBA8 / **X2BGR10**（10-bit SDR 源，`NvCVImage_Transfer` 落 8-bit）
+  / YUV（VSR 直通或软解+hwup：NV12/P010 走共用 `yuv_to_rgba` 内核）；输出
+  **`IMGFMT_X2BGR10` + `pl_color_space_hdr10` + `hdr.max_luma = Luminance`**
+  （口径对齐 mpv 自己的 `vf_d3d11vpp.c` NVIDIA True HDR 路径），下游全是既有 10-bit 通路。
+- **参数**：`luminance` = 面板**物理峰值**（合成器 preferred `maxLuma`，夹到 400–2000，兜底 650）
+  ——客户端下发；`saturation/contrast/middle-gray` 默认 100/100/50；
+  **`debanding-off` 恒 0（抗色带常开，铁律 6）**，选项只作诊断 A/B。
+  **参数变化走 `NvVFX_SetU32` 热更新（零重建）**——实测（`build/scratch/truehdr_setu32.c`，
+  1920×1080 合成图、同一引擎只 SetU32 后重跑）：Saturation 100→200 采样色度 0.1627→0.2377、
+  MiddleGray 50→80 均值 24.1→38.7 nit、Luminance 400→1000 灰阶带均值 74.6→88.0 nit，且
+  **与 destroy+create+Load 同参数的结果逐位相同**。只有 ①帧尺寸变化 ②`DebandingOff` 变化
+  （改 pass 图，未实测是否 Load 期决定 → 不假设）③SetU32 失败 才重建引擎（≈25 ms）。
+  ⚠ **`VSR_UPHDR_NITS=<400..2000>` = 仅调试的峰值覆盖**（非法值忽略并记 error）；
+  默认路径**永远**跟面板能力走（用户 2026-10-18 定："默认按面板能力算，env 只用于调试"）。
+  `Luminance` 有**双重作用**：① TrueHDR 的目标峰值参数；② 我们声明给合成器的内容峰值
+  （`effectiveContentMeta()` 的 `max_cll`/mastering max）——改它两个后果都会动。
+- **TrueHDR 的全部可调参数 = 5 个**（证据 = `strings libnvVFXTrueHDR.so` 里的参数文档串，
+  逐条照抄）：`Contrast` 100（0–200）/ `Saturation` 100（0–200）/ `MiddleGray` 50（**10–100**，
+  ⚠ 初版我写成 0–100，已修）/ `Luminance` 650（400–2000）/ `DebandingOff` 0（0|1）；
+  另有 `BatchSize`（只支持 1，非用户参数）。**没有**质量档/色域/transfer/强度类旋钮
+  （VSR 有 `QualityLevel`、VFG 有 `mode`，TrueHDR 没有对应物）。同两串还证实接口假设：
+  `SrcImage0` = "RGBA U8 interleaved, CUDA/CPU_PINNED"、`DstImage0` = "RGB10A2 P32 packed,
+  HDR10 PQ encoded"。5 个参数全部能用 `vf-command truehdr <name> <value>` 运行期改。
+- **⚠ 参数区间是硬约束，且越界是静默的**（2026-10-18 实测，回答"luminance 最低只能 400 吗"）：
+  探针 `build/scratch/truehdr_lumrange.c` 逐值新建引擎实测（SetU32 → Load → Run → 读回灰阶
+  PQ nit + 字节哈希）：`Luminance` 399/300/200/100/50 与 2500/4000 的
+  `NvVFX_SetU32` 全返回 **-7**（invalid parameter value），而 `Load()`/`Run()` 仍返回 0
+  → **拒绝不报错、值不生效**；被拒后引擎**保持当前值**（先设 1000 再发 100 → 输出仍 = 1000；
+  从未成功设过则停在 SDK 默认 650）。输出展开量随 Luminance 单调上升（灰阶带峰值
+  250.6 nit@400 → 318.5@650 → 375.5@1000 → 450.6@2000）→ **400 = SDK 能给的"最小展开"**，
+  想更接近原 SDR 只能在下游（mpv tone mapping）调。
+  含义：三处同区间夹取（`TrueHdrParams.h`、`vf_truehdr.c` 的 `M_RANGE`、`HdrOutput` 的 clamp）
+  是必须的；`engine_params_apply()` 检查 SetU32 返回码（失败 → 重建）是必要防线。
+- **成本**：4K 实测 **4.9–5.8 ms/源帧**（探针 CUDA-event 的 2.04 ms 只覆盖引擎 Run，
+  不含两次 D2D 拷贝 + 逐帧 `cuMemAlloc/Free`(33 MB) + 同步）。1080p→4K + VFG@60fps
+  稳态 22 s **丢帧 0**。
+- **声明**：上变换生效时给合成器的内容峰值 = TrueHDR 的 Luminance（`effectiveContentMeta()`）——
+  不发它合成器按 10000 nit 口径压，画面会发暗发平（同 §20 的机制）。
+- ⚠ **同步 mpv API 死锁（本轮踩到并修，仍然是既有脆弱点）**：`mpv_set_property` 是**同步**的
+  （内部等 core 的 dispatch lock）。**软解 + `vo=libmpv` 直渲**时 core 可能卡在
+  `get_buffer2_direct → vo_get_image → dr_helper_get_image` **等渲染线程交 DR 图像**；GUI 线程
+  若在此同步等 core = 循环等待死锁（gdb 实证；3/3 必现）。修法：① `setHdrTarget` **幂等**
+  （值未变不发属性写）；② 首帧 `reevaluate` 从 `afterRendering` **排队到 GUI 线程**
+  （渲染回调只留只读探测）。**残余**：目标真的切换时（SDR↔HDR10 运行期切换）仍是同步写，
+  若恰有 DR 在等仍可能死锁 → 彻底修法 = 异步属性写（`mpv_command_async` 的 `set`）。
+  **软解片源做 HDR 切换相关验收必须覆盖这一格。**
+- **UI（2026-10-18 第二轮，用户定的结构）**：`QualityPopup` 里只放 **SDR→HDR10 开关**
+  + **Advanced** 图标按钮（`mdi-tune`）；点开 **`TrueHdrAdvancedPopup`**（modal 居中，新文件）
+  放参数：Luminance / Saturation / Contrast / MiddleGray 各一条 **slider + Reset**，
+  Debanging 是两态开关（无 Reset——两态本身就能回到默认 On）。组件：`ui/components/ParamSliderRow.qml`（单参数行）、
+  `ui/components/SegToggle.qml`（Off/On 分段开关）；新 QML 必须登记进
+  `src/client/resources.qrc`（QML 走 **qrc**，`view.setSource("qrc:/main.qml")`——漏登记
+  的报错是 `Type Xxx unavailable` + `"components": no such directory` 这类）。
+  - **滑块实时提交但节流**（`throttleMs` 默认 120 ms，leading+trailing，尾值必发）：
+    滤镜侧改参数走 SetU32 热更新（零重建），所以不需要"松手才生效"；节流只为限制
+    vf-command 频率。（初版做的是松手才提交，用户 2026-10-18 纠正："做 throttle，
+    不要做松手才生效"。）
+  - **高级入口是图标按钮**（`mdi-tune` U+F062E，size 16 = 与左侧分段开关同高 32）；
+    打开高级弹框时 `uiLayer.closeOtherPopups(trueHdrAdvancedPopup)` **关掉 QualityPopup**。
+  - 滑块配色照 `ProgressSlider.qml`（只改配色，不动几何/交互）；高级入口 = `mdi-tune`
+    （U+F062E，`docs/icon-cheatsheet.html` 可查）字面字符。弹窗**无背景遮罩**（PopupBase 统一）。
+  - ⚠ **初始化赋值不得触发提交**：`ParamSliderRow` 的 `Component.onCompleted` 赋值必须包在
+    `_syncing` 里——否则弹窗一实例化就把"显示值"当用户输入写回 VM 并落盘
+    （实测：启动即把 `upHdrLuminance` 写成 400）。
+  - **Reset 语义 = 回 SDK 默认值**（`TrueHdrParams.h` 的 `*Def`）；**Luminance 例外**：
+    回**当前面板峰值**（该参数默认就是"自动跟面板"，用户按 Reset 想要的是自动结果）。
+  - **Luminance 覆盖开关**（Auto/Manual）：默认 Auto = 跟面板物理峰值；打开后滑块/Reset
+    才可用，且**打开瞬间把滑块种子成当前自动值**（避免一开覆盖画面就跳）。手动值同时是
+    声明给合成器的**内容峰值**（`effectiveContentMeta` 的 max_cll），所以 HdrOutput 持有
+    该覆盖状态（`hdr::setUpconvertLuminanceOverride`），VM 只是 UI/持久化的拥有者。
+  - 持久化键（QSettings）：`upHdrEnabled / upHdrLumOverride / upHdrLuminance /
+    upHdrSaturation / upHdrContrast / upHdrMiddleGray / upHdrDebanding`；手改越界值会被
+    **夹回区间**而不是整份丢弃。`VSR_UPHDR=on` 降级为 `upHdrEnabled` 的**默认值**
+    （无持久化设置时生效），benchmark 不读设置 → 仍只认 env。
+  - 区间/默认值的客户端单一来源 = `src/client/TrueHdrParams.h`（数值 = SDK 参数文档串）；
+    C 侧镜像在 `vf_truehdr.c` 的选项表——**跨构建目标无法共享头文件，改动两处同步**。
+- **未做**：观感门槛（与 `mpv --inverse-tone-mapping` 并排，决定是否默认开）；输入缓冲 wrap
+  优化（省一次拷贝）；`--fruc-order pre` 支持；RPC 侧没有 `set-uphdr`（UI 之外只能走
+  `vf-command truehdr …` 直发滤镜）；**引擎 `Load()` 失败时 OSD 仍按策略显示 `→ HDR10`**
+  （过滤器永久直通 + 一条 WARN，但 OSD 不读过滤器的 `mode=`——要彻底准确需给状态行加
+  `mode=failed` 并反馈给 `HdrOutput`，2026-10-18 记）。
 
 ### 渲染循环（Qt Quick）
 
@@ -235,6 +385,9 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 - RPC 热切换：`{"command":["command","vf-command","rife","fps","X"]}`、seek（socket `/tmp/vsr-player.sock`）
 - VSR 帧对截图（正式调试命令）：`vf-command @vsr dump-both <in.png>|<out.png>`——同一处理帧的 VSR 输入/输出双侧 PNG（mpv 自带 screenshot 只截 filter 后帧，不能截 VSR 输入）
 - 渲染节拍：`VSR_LOG_VIDEO=1` + stderr 时间戳；帧序列提取：untimed benchmark + each-frame 截图（暂停+截图不可靠，retained 旧帧）
+- **读回真实 OSD 文本**（无需截图/目检）：`--benchmark` 启动会调 `showOsd()` → OSD 文本被推给 mpv 的
+  `osd-msg1`（普通模式只在 OSD 可见时推）→ `{"command":["get_property","osd-msg1"]}` 经 RPC 读回。
+  2026-10-18 用它验证 OSD 标签 i18n（中文/英文标签一眼可见）
 - 关键文件：`src/mpv/video/filter/`（vf_vsr.c/vf_rife.c/vf_hwup.c/vsr_proc.c/rife_proc.c/rife_trt.cpp/cuda_shared.h/yuv_to_rgba.*）；`src/client/`（main.cpp/MpvController/PlayerViewModel/Video.cpp/Options.cpp/RpcServer.cpp）
 - 视觉问题数值化：`tests/verify_frames.sh`（baseline/test 两阶段 PSNR）——无 baseline 不改代码
 - **gdb 调试**（C/C++ 崩溃/卡死）：`gdb -batch -ex run -ex bt <binary>`（崩溃看调用栈；卡死看线程）——SIGSEGV→bt 定位非法访问；SIGABRT→bt+寄存器看 assert 条件；卡死→bt 看所有线程在等什么。通用排查流程见 `~/.dsh/AGENTS.md` 调试方法论

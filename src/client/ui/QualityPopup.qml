@@ -47,6 +47,13 @@ PopupBase {
     property var frucQualityModel: []
     property bool frucQualityAvailable: true
 
+    // ── SDR→HDR10 上变换（VFX TrueHDR）：这里只放**总开关 + 高级入口** ——
+    // 参数细节（峰值/饱和/对比/中灰/抗色带）在 TrueHdrAdvancedPopup.qml。
+    property bool upHdrEnabled: false
+    property bool upHdrEffective: false
+    signal upHdrEnabledPicked(bool v)
+    signal advancedRequested()
+
     Column {
         spacing: 12; anchors { left: parent.left; right: parent.right }
 
@@ -157,6 +164,34 @@ PopupBase {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: { root.frucQualityPicked(modelData.value); } }
                 }
+            }
+        }
+
+        // ── SDR→HDR10（VFX TrueHDR 上变换）─────────────────────────────
+        // 只暴露总开关 + 高级入口（用户定的 UI 结构）：参数判断不该由我们代劳，
+        // 但总量控制留在一级弹窗。生效条件 = 总开关 ∧ HDR10 上屏 ∧ 内容 SDR，
+        // 所以开关打开后在 SDR 屏/SDR 输出下也不会有画面变化 —— 用下面一行小字
+        // 说清"现在到底有没有在跑"。
+        Rectangle { width: parent.width; height: 1; color: "#0fffffff" }
+
+        Text { text: qsTr("SDR → HDR10"); color: "#b0b0b0"; font.pixelSize: 13 }
+        Row {
+            spacing: 6
+            anchors { left: parent.left; right: parent.right }
+            SegToggle {
+                value: root.upHdrEnabled
+                onToggled: function(v) { root.upHdrEnabledPicked(v) }
+            }
+            // 高级参数入口：图标按钮（mdi-tune，见 docs/icon-cheatsheet.html）。
+            // ⚠ 码点必须写**字面字符**：QML/JS 的 `\uXXXX` 只吃 4 位十六进制，
+            // MDI 码点普遍 > 0xFFFF（tune = U+F062E）——写 "\uF062E" 会解析成
+            // U+F062 + 字母 E（实测：按钮显示成豆腐块 + E）。项目其余图标同样
+            // 直接写字形。size 16 → 隐式高 32，与左侧分段开关同高。
+            IconButton {
+                size: 16
+                codepoint: "󰘮"   // mdi-tune (U+F062E)
+                tooltip: qsTr("Advanced")
+                onClicked: root.advancedRequested()
             }
         }
     }

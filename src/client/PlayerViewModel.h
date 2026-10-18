@@ -58,6 +58,26 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(QVariantList frucQualityModel READ frucQualityModel CONSTANT)
     // 该排是否可见/可用：VFG true / RIFE false（编译期常量，CONSTANT）。
     Q_PROPERTY(bool frucQualityAvailable READ frucQualityAvailable CONSTANT)
+    // ── SDR→HDR10 上变换（VFX TrueHDR，链上位于 vsr 之后；参数/证据见
+    //    docs/vfx-truehdr-investigation.md §8 与 src/client/TrueHdrParams.h）──
+    // 总开关 = HDR 策略的 opt-in（默认取 `VSR_UPHDR` env；UI 改后以持久化值为准）。
+    Q_PROPERTY(bool upHdrEnabled READ upHdrEnabled NOTIFY upHdrEnabledChanged)
+    // 策略**实际**是否在跑上变换（= Hdr10 上屏 ∧ 内容 SDR ∧ 总开关；过滤器
+    // 还有一层按帧 transfer 的自守卫）——UI 只读展示。
+    Q_PROPERTY(bool upHdrEffective READ upHdrEffective NOTIFY upHdrEffectiveChanged)
+    // 面板自动峰值（合成器 preferred maxLuma，策略下发；只读，UI 显示"自动 Nnit"）
+    Q_PROPERTY(int upHdrAutoLuminance READ upHdrAutoLuminance NOTIFY upHdrAutoLuminanceChanged)
+    // Luminance 覆盖开关：关 = 自动跟面板（默认）；开 = 用 upHdrLuminance
+    Q_PROPERTY(bool upHdrLuminanceOverride READ upHdrLuminanceOverride
+               NOTIFY upHdrLuminanceOverrideChanged)
+    Q_PROPERTY(int upHdrLuminance READ upHdrLuminance NOTIFY upHdrLuminanceChanged)
+    Q_PROPERTY(int upHdrSaturation READ upHdrSaturation NOTIFY upHdrSaturationChanged)
+    Q_PROPERTY(int upHdrContrast READ upHdrContrast NOTIFY upHdrContrastChanged)
+    Q_PROPERTY(int upHdrMiddleGray READ upHdrMiddleGray NOTIFY upHdrMiddleGrayChanged)
+    // 抗色带（true = 开 = SDK DebandingOff 0；默认开）
+    Q_PROPERTY(bool upHdrDebanding READ upHdrDebanding NOTIFY upHdrDebandingChanged)
+    // UI 用的区间/默认值（单一来源 TrueHdrParams.h，reset 目标取这里的 *Def）
+    Q_PROPERTY(QVariantMap upHdrLimits READ upHdrLimits CONSTANT)
     // Speed
     Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
     // Aspect ratio（mpv video-aspect-override：-1=auto, no=不覆盖, 或 16:9 等）
@@ -99,6 +119,18 @@ class PlayerViewModel : public QObject {
     // currentIndex 由 PlaylistModel 自带 currentIndexChanged，切歌不再
     // 触发列表 reset（旧实现 QStringList 属性 + 共用 NOTIFY 全量重建）。
     Q_PROPERTY(PlaylistModel* playlistModel READ playlistModel CONSTANT)
+
+    // ── TrueHDR 参数（getter；setter 见 public slots）──────────────────
+    bool upHdrEnabled() const { return upHdrEnabled_; }
+    bool upHdrEffective() const { return upconvertOn_; }
+    int  upHdrAutoLuminance() const { return (int)lroundf(upHdrAutoNits_); }
+    bool upHdrLuminanceOverride() const { return upHdrLumOverride_; }
+    int  upHdrLuminance() const { return upHdrLuminance_; }
+    int  upHdrSaturation() const { return upHdrSaturation_; }
+    int  upHdrContrast() const { return upHdrContrast_; }
+    int  upHdrMiddleGray() const { return upHdrMiddleGray_; }
+    bool upHdrDebanding() const { return upHdrDebanding_; }
+    QVariantMap upHdrLimits() const;
 
 public:
     explicit PlayerViewModel(QObject *parent = nullptr);
@@ -304,6 +336,29 @@ public slots:
     /// HDR 上屏状态行（`hdr::statusText()`，OSD 显示）。
     /// 由 GUI 线程在 hdr 策略钩子里设置；osdTextString 在事件线程读 → 加锁。
     void setHdrStatus(const std::string &s);
+    /// **实际输出**模式（`hdr::outputText()` = HDR10/SDR，OSD 的"输出"行用）。
+    /// 同 `setHdrStatus`：GUI 线程写、事件线程读 → 加锁。
+    void setHdrOutput(const std::string &s);
+    /// SDR→HDR10 上变换（VFX TrueHDR，链上位于 vsr 之后）的开关与峰值 —— 由
+    /// HDR 策略钩子（hdr::ApplyHooks.updateUpconvert）在 GUI 线程调用。
+    ///   autoNit      = 面板物理峰值（合成器 preferred maxLuma；UI 显示"自动 Nnit"）
+    ///   effectiveNit = 实际生效峰值（覆盖开关打开时是用户值，否则 = autoNit）
+    /// 内部记住状态（FILE_LOADED 重放用）＋ 下发 `vf-command truehdr enable|luminance`。
+    /// 两个值都夹到 SDK 合法区间 [400,2000]。
+    void setUpconvert(bool on, float autoNit, float effectiveNit);
+    /// TrueHDR 参数的**用户入口**（UI/RPC 调，GUI 线程）：夹取 → 存 → 持久化 →
+    /// 下发 `vf-command truehdr <param>`。`luminance` 只在覆盖开关打开时生效
+    ///（关 = 自动跟面板，见 setUpconvert 的 peakNit）。幂等（值未变只存不重发）。
+    void setUpHdrEnabled(bool on);
+    void setUpHdrLuminanceOverride(bool on);
+    void setUpHdrLuminance(int nits);
+    void setUpHdrSaturation(int v);
+    void setUpHdrContrast(int v);
+    void setUpHdrMiddleGray(int v);
+    void setUpHdrDebanding(bool on);
+    /// 持久化 TrueHDR 参数 → 成员 + 通知策略（main.cpp 在 loadSettings 后调；
+    /// benchmark 不读设置 → 只按 env 默认）。
+    void initTrueHdr();
     void toggleLoop();
     void setLoopMode(int m);   // 0=none, 1=file, 2=playlist（applyPlaybackSettings/toggleLoop 共用）
     void loadFile(const QString &path);
@@ -345,6 +400,16 @@ signals:
     void denoiseQualityChanged();
     void frucFpsChanged();
     void frucQualityChanged();
+    // TrueHDR（SDR→HDR10 上变换）参数
+    void upHdrEnabledChanged();
+    void upHdrEffectiveChanged();
+    void upHdrAutoLuminanceChanged();
+    void upHdrLuminanceOverrideChanged();
+    void upHdrLuminanceChanged();
+    void upHdrSaturationChanged();
+    void upHdrContrastChanged();
+    void upHdrMiddleGrayChanged();
+    void upHdrDebandingChanged();
     void speedChanged();
     void aspectChanged();
     void hwDecodingChanged();
@@ -414,6 +479,8 @@ private:
     /// 下一帧自动重配（scale→effective_scale 重算 / quality→ensure_vsr
     /// 检测 / denoise→passthrough 判定）。参数调用时同步复制，无需保活。
     void pushVf(const char *filter, const char *param, const std::string &value);
+
+    bool upconvertOn() const { return upconvertOn_; }
     /// FRUC 滤镜名（编译期分支的单一出口：vf 串 label、vf-command 目标）。
     /// 定义见 FrucBackend.h（VFG "vfg" / RIFE "rife"）。
     const char *frucFilterName() const;
@@ -426,6 +493,12 @@ private:
     /// 链已就绪，重放当前 UI 状态使新链与 UI 一致（filter 常驻 +
     /// 直通切换语义不变，不重建链；判等 no-op 防冗余）。
     void syncVfOptions();
+    /// 当前**生效**的 TrueHDR 目标峰值：覆盖开关打开 → 用户值；否则面板自动值
+    ///（读取不到时退 SDK 默认 650）。
+    int effectiveUpHdrLuminance() const;
+    /// 把 5 个 TrueHDR 参数全部下发（`vf-command truehdr …`；enable 另经策略钩子）。
+    /// 参数变化、FILE_LOADED 重放（链重建后回到链串默认值）都经此。
+    void pushTrueHdrParams();
     std::string scaleStr() const;
     std::string qualityStr() const;
     std::string denoiseStr() const;
@@ -461,6 +534,28 @@ private:
     QString decoderPixelFormat_;
     bool videoHdr_ = false;   // video-params/gamma = pq|hlg（主线程持有）
     HdrMeta hdrMeta_;         // video-params 的 HDR10 静态元数据（主线程持有）
+    // SDR→HDR10 上变换（VFX TrueHDR）状态：
+    //  · upconvertOn_ = HDR 策略**实际**判定（Hdr10 ∧ 内容 SDR ∧ 总开关）→ enable
+    //  · upHdrAutoNits_ = 面板物理峰值（策略经 setUpconvert 传入，运行期量，不持久化）
+    //  · 其余 = 用户在 UI 里设定的参数（持久化；syncVfOptions/vfOption 重放）
+    bool  upconvertOn_ = false;
+    bool  upHdrEnabled_ = false;
+    bool  upHdrLumOverride_ = false;
+    int   upHdrLuminance_ = 650;
+    int   upHdrSaturation_ = 100;
+    int   upHdrContrast_ = 100;
+    int   upHdrMiddleGray_ = 50;
+    bool  upHdrDebanding_ = true;      // true = 抗色带开（SDK DebandingOff=0）
+    float upHdrAutoNits_ = 0.0f;       // 面板峰值（显示用）
+    float upHdrEffectiveNits_ = 650.0f; // 实际生效峰值（策略算好传进来）
+    // 持久化中转（loadSettings 读、initTrueHdr 用；benchmark 下不读设置）
+    bool  persistUpHdrEnabled_ = false;
+    bool  persistUpHdrLumOverride_ = false;
+    int   persistUpHdrLuminance_ = 650;
+    int   persistUpHdrSaturation_ = 100;
+    int   persistUpHdrContrast_ = 100;
+    int   persistUpHdrMiddleGray_ = 50;
+    bool  persistUpHdrDebanding_ = true;
     std::atomic<int64_t> droppedBase_{0};      // frame-drop-count 段起始基准
     std::atomic<int64_t> droppedCache_{0};     // frame-drop-count 最新值（事件线程写）
     std::atomic<int> audioSampleRate_{0}, audioChannels_{0};
@@ -497,6 +592,8 @@ private:
     std::mutex  vsrStatusMtx_;
     std::string hdrStatus_;             // HDR 上屏状态行（OSD 显示）
     std::mutex  hdrStatusMtx_;
+    std::string hdrOutput_;             // 实际输出模式 HDR10/SDR（OSD"输出"行）
+    std::mutex  hdrOutputMtx_;
     int loopMode_ = 0;           // 0 none, 1 loop-file, 2 loop-playlist
     PlaylistModel playlistModel_;   // 播放列表镜像（观察器 setSnapshot 增量喂入）
     QString gpuName_;
