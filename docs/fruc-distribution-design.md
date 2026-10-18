@@ -2,6 +2,9 @@
 
 日期：2026-08-12
 分支：feat/dist-packaging
+状态（2026-10-18 追加）：**RIFE 后端已冻结**，预编译 `-rife` 包自 v0.4.0 起**停发**；
+本文档里 rife 引擎/TensorRT 的分发设计保留为历史记录，`--fruc-backend=rife` 仍可用于自建
+（见 README「预编译包」一节）。对外发布的只有默认的 VFG 包。
 
 ## 背景
 

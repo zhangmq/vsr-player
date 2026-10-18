@@ -9,6 +9,8 @@
 #                TensorRT 库（libnvinfer*）也不含 engines/ —— 这是预期布局，不是缺件。
 #   rife        ：RIFE + TensorRT 11 引擎；捆绑 libnvinfer(+plugin).so.11，并打入
 #                engines/rife_full_fp16.engine（用 --engine= 可跳过 trtexec 复用）。
+#                ⚠ 2026-10-18（v0.4.0）起 RIFE 后端冻结，**对外只发布 vfg 包**：
+#                rife 这个选项保留给想自建的用户，不再进入 GitHub release。
 #
 # 产物结构（安装后 $ORIGIN 相对 RPATH 成立）：
 #   vsr-player-<ver>[-full]/
