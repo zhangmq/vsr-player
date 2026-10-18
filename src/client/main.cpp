@@ -2,7 +2,10 @@
 #include <clocale>
 #include <cstdio>
 #include <chrono>
+#include <fstream>
+#include <iostream>
 #include <string>
+#include <vector>
 
 #include "Log.h"
 
@@ -49,6 +52,44 @@ VkResult vkDeviceWaitIdle(VkDevice);
 // VO 合成阶段渲染（不经 Qt 场景图，不竞争主线程渲染循环）。
 // 主线程调 mpv API 更新 osd-msg1 会与 untimed 渲染死锁（实测卡死）。
 
+// ── 命令行输入展开（mpv 语义）────────────────────────────────────────
+// 位置参数与 `--playlist <file|->` 按出现顺序拼接；`--playlist` 的内容
+// 追加在它出现的位置（mpv 的 `--playlist` 就是"把列表文件追加进参数列表"）。
+// 播放列表文件 = m3u/纯文本：跳过空行与 `#` 注释行（mpv 的 playlist
+// demuxer 同样处理），去掉行尾 CR；`-` = 从 stdin 读到 EOF。
+// 返回 false = 播放列表文件打不开（对齐 mpv 的 "Error reading playlist"）。
+static bool expandInputs(const Options &opts, std::vector<std::string> *out) {
+    for (const auto &in : opts.inputs) {
+        if (!in.is_playlist) {
+            out->push_back(in.value);
+            continue;
+        }
+        const size_t before = out->size();
+        std::ifstream file;
+        std::istream *is = nullptr;
+        if (in.value == "-") {
+            is = &std::cin;              // mpv `--playlist=-` 语义
+        } else {
+            file.open(in.value);
+            if (!file) {
+                MLOG_ERR("playlist: cannot open '%s'", in.value.c_str());
+                return false;
+            }
+            is = &file;
+        }
+        std::string line;
+        while (std::getline(*is, line)) {
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            if (line.empty() || line[0] == '#')
+                continue;                // 空行 / m3u 注释与 #EXTINF
+            out->push_back(line);
+        }
+        MLOG_INFO("playlist: %s → %zu 条", in.value.c_str(), out->size() - before);
+    }
+    return true;
+}
+
 int main(int argc, char *argv[]) {
     setbuf(stdout, nullptr); setbuf(stderr, nullptr);
     MLOG_INFO("=== vsr-player ===");
@@ -60,6 +101,18 @@ int main(int argc, char *argv[]) {
     // benchmark 全静默（与 mpv msg-level all=no 对齐，日志不干扰测量）
     vsr_log_set_quiet(opts.benchmark);
     MLOG_INFO("video: %s (benchmark=%d)", opts.video_file.c_str(), opts.benchmark);
+
+    // ── 输入列表展开（位置参数 + --playlist；mpv 语义）──────────────────
+    // 读 stdin（`--playlist=-`）会阻塞到 EOF——mpv 同语义（wrapper 写完
+    // URL 即关 stdin；交互式终端下别写 `--playlist=-`）。
+    std::vector<std::string> entries;
+    if (!expandInputs(opts, &entries)) return 1;
+    if (!opts.inputs.empty())
+        MLOG_INFO("inputs: %zu 条（命令行 %zu 项）", entries.size(), opts.inputs.size());
+    if (opts.benchmark && entries.empty()) {
+        MLOG_ERR("benchmark: 输入列表为空");
+        return 1;
+    }
 
     // ── 冷启动预热：引擎内核缓存为空时，后台先把内核编译掉 ───────────────
     // 超分/插帧引擎的首次 Load 要现编译内核，缓存落在 $HOME/.nv/ComputeCache；
@@ -228,7 +281,7 @@ int main(int argc, char *argv[]) {
     //   `-- --pause=yes` 仍是命令行优先（mpv 选项语义）：照旧载入并停在
     //     暂停态（海报可见）——这正是用户显式要求的。
     bool idleStart = false;
-    if (!opts.benchmark && opts.video_file.empty()) {
+    if (!opts.benchmark && opts.inputs.empty()) {
         bool explicitPause = false;
         for (const auto &kv : opts.passthrough)
             if (kv.first == "pause") explicitPause = true;
@@ -628,16 +681,28 @@ int main(int argc, char *argv[]) {
         auto loadMedia = [&]() {
             if (mediaLoaded) return;
             mediaLoaded = true;
-            if (opts.benchmark || !opts.video_file.empty()) {
-                mpv.loadFile(opts.video_file.c_str());   // CLI 文件优先
+            if (!entries.empty()) {
+                // CLI/播放列表（mpv 语义）：首条 replace 载入并播放，其余
+                // append（不打断首条；列表整体落进 mpv 的 playlist 属性，
+                // 后续由 UI/RPC 正常管理并照常持久化）
+                mpv.loadFile(entries[0].c_str());
+                for (size_t i = 1; i < entries.size(); i++)
+                    mpv.appendFile(entries[i].c_str());
+                MLOG_INFO("%zu 条输入（首个 %s），entering app.exec()",
+                          entries.size(), entries[0].c_str());
             } else if (idleStart) {
                 viewModel.restorePlaylistIdle();         // 只填列表，不载入媒体
+                MLOG_INFO("playlist restored (idle start, no media load), "
+                          "entering app.exec()");
+            } else if (!opts.inputs.empty()) {
+                // 显式给了输入但列表为空（空播放列表文件/空 stdin）：
+                // 不载入媒体、也不恢复上次列表（对齐 mpv 空列表 → idle）
+                MLOG_WARN("输入列表为空 → 不载入媒体");
+                MLOG_INFO("empty input list, entering app.exec()");
             } else {
                 viewModel.restorePlaylist();             // 无参数 → 恢复上次列表
+                MLOG_INFO("playlist restored, entering app.exec()");
             }
-            MLOG_INFO("%s, entering app.exec()",
-                      idleStart ? "playlist restored (idle start, no media load)"
-                                : "loadFile");
         };
 
         if (idleStart) {

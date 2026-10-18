@@ -351,6 +351,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 
 ### 启动与会话行为（2026-10-17）
 
+- **命令行输入 = 播放列表（mpv 语义，2026-10-18）**：位置参数与 `--playlist <file|->` 按**出现顺序**登记（`Options::Input`）；`--playlist` 的内容在展开时插入它出现的位置。多条 → 首条 `loadfile`（replace + 播放）+ 其余 `loadfile … append`（`MpvController::appendFile`）。播放列表文件 = m3u/纯文本（跳过空行与 `#` 注释，去行尾 CR），`-` = 从 stdin 读到 **EOF**（ff2mpv wrapper 的 `--playlist=-` 就是这条；交互式终端下别用，会一直等）。给了输入就**不**走 idle 恢复、也不恢复上次列表；展开后为空 → 不载入媒体（对齐 mpv 空列表 → idle）。展开在读入时做（`main.cpp: expandInputs()`），`Options::parse` 保持纯字符串解析、不做 I/O。
 - **无参数启动 = idle**：只恢复上次播放列表（`restorePlaylistIdle()` 全 `loadfile … append`，mpv 无 current 条目 → 不解码、不建滤镜链、不 Load 引擎、不做续播 seek），按播放才 `resumeLastPath()` → `playlist-play-index` 载入，mpv 用 watch_later 自动恢复上次进度。命令行给了文件、或显式 `-- --pause=yes` → 立即载入（mpv 语义）。
 - 起因：曾有"启动暂停"实现（`pause=yes` 选项 + 启动即载入），但 mpv 精确 seek 会把"关键帧→目标位置"的帧**过完滤镜链再丢掉**（实测 `start=12.302`/关键帧 6.25s → 142 源帧、VFG 570 输出帧白跑、海报晚 1.6s）；日志里那批 `vfg-status` 是丢弃帧不是播放。完整测量与被否方案：`docs/memory/startup-idle-policy.md`。
 - idle 时 mpv 的 `pause` 初值为 false → `pause` 观察器按 `updatePlaying(!p && fileLoaded_)` 判定，否则 UI 未载入就显示"播放中"。
@@ -360,7 +361,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 - `scripts/install.sh` 装应用菜单入口：入口内容 = **`data/vsr-player.desktop.in`**（单一事实源，中英 Name/Comment；`@EXEC@` 由脚本替换为安装后绝对路径，不依赖 PATH），图标 = `data/vsr-player.svg` + `.png` → hicolor `scalable`/`512x512`，之后 best-effort 刷新 `update-desktop-database`/`gtk-update-icon-cache`/`kbuildsycoca6`。打包脚本把 `data/` 放进 tarball 根（`build_release.sh` staging）。
 - `main.cpp` 里 `QGuiApplication::setDesktopFileName("vsr-player")`：Wayland app_id / X11 WM_CLASS 钉成与 `.desktop` 同名，否则任务栏图标与窗口分组会失配。
 - ⚠️ **图标是占位**（用户 2026-10-17："后续做个像样的"）：正式图标只需替换 `data/vsr-player.svg`（矢量单一事实源）并跑 `scripts/render-icon.sh` 重生成 PNG。
-- `Exec=… %f`（单文件/目录）**不是** `%U`：`Options::parse` 只接受一个位置参数，多文件会 `error: multiple video files`。
+- `Exec=… %f`（单文件/目录）：2026-10-18 起 `Options::parse` 接受多个位置参数（= 播放列表条目，见上），所以 `%U` 已经可用；当前**没有**改 `data/vsr-player.desktop.in`（改它等于让"文件管理器多选"变成播放列表，需要时再定）。
 
 ### 构建
 

@@ -378,7 +378,14 @@ void MpvController::reportSwap() {
 }
 
 void MpvController::loadFile(const char *path) {
+    // 无 flags = mpv 默认 replace（清空列表 + 载入该条并播放，见
+    // command.c get_load_action：type 0 → LOAD_TYPE_REPLACE）
     const char *cmd[] = {"loadfile", path, nullptr};
+    mpv_command(mpv_, cmd);
+}
+
+void MpvController::appendFile(const char *path) {
+    const char *cmd[] = {"loadfile", path, "append", nullptr};
     mpv_command(mpv_, cmd);
 }
 

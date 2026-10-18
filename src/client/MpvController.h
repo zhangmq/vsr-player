@@ -51,6 +51,10 @@ public:
     void skipRender(VkImage img, VkFormat fmt, int w, int h);
     void reportSwap();
     void loadFile(const char *path);
+    /// 追加播放列表条目（`loadfile <path> append`，不开始播放）。启动时
+    /// 载入多条输入（mpv 语义的位置参数/--playlist）用：首条 loadFile
+    ///（replace + 播放），其余逐条 appendFile。
+    void appendFile(const char *path);
     void setUpdateCallback(void (*cb)(void*), void *data);
     /// 摘除 update 回调（mpv VO 线程在锁下检查 null，摘除即安全）。
     /// teardown 时必须先摘除——否则 VO 线程仍可能触发回调，invokeMethod

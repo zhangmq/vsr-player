@@ -24,7 +24,8 @@ static void printUsage(FILE *out, const char *prog) {
         "[--scale off|auto|2|3|4] [--denoise off|low|medium|high|ultra] "
         "[--quality low|medium|high|ultra] "
         "[--fruc %s] %s%s"
-        "[--lang <locale>] [--screenshot-dir <dir>] [-- mpv-opt ...] <video>\n",
+        "[--lang <locale>] [--screenshot-dir <dir>] [--playlist <file|->] "
+        "[-- mpv-opt ...] <video ...>\n",
         prog, frucVals.c_str(), orderOpt.c_str(), qualityOpt.c_str());
 }
 
@@ -32,12 +33,13 @@ bool Options::parse(int argc, char *argv[], Options *out) {
     Options o;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--") == 0) {
-            // `--` 之后的所有参数透传给 mpv（键值对，支持 = 与空格分隔）
+            // `--` 之后的所有参数透传给 mpv（键值对，支持 = 与空格分隔）；
+            // 非选项参数与前面一样是播放列表条目（mpv 语义：位置参数即条目）
             for (int j = i + 1; j < argc; j++) {
                 const char *a = argv[j];
                 if (a[0] != '-' || a[1] != '-') {
-                    // 非 --xxx 形式：最后一个非选项是视频文件
-                    if (j == argc - 1 && o.video_file.empty()) { o.video_file = a; break; }
+                    o.inputs.push_back({false, a});
+                    if (o.video_file.empty()) o.video_file = a;
                     continue;
                 }
                 a += 2;
@@ -104,12 +106,16 @@ bool Options::parse(int argc, char *argv[], Options *out) {
             o.screenshot_dir = argv[++i];
         } else if (strncmp(argv[i], "--screenshot-dir=", 17) == 0) {
             o.screenshot_dir = argv[i] + 17;
+        } else if (strcmp(argv[i], "--playlist") == 0 && i + 1 < argc) {
+            // 播放列表文件（"-" = stdin）。展开在读入时做（main.cpp）。
+            o.inputs.push_back({true, argv[++i]});
+        } else if (strncmp(argv[i], "--playlist=", 11) == 0) {
+            o.inputs.push_back({true, argv[i] + 11});
         } else if (argv[i][0] != '-') {
-            if (!o.video_file.empty()) {
-                fprintf(stderr, "error: multiple video files\n");
-                return false;
-            }
-            o.video_file = argv[i];
+            // 位置参数 = 播放列表条目（mpv 语义：`vsr-player a b` 两条，
+            // 不再报 "multiple video files"）
+            o.inputs.push_back({false, argv[i]});
+            if (o.video_file.empty()) o.video_file = argv[i];
         } else {
             fprintf(stderr, "error: unknown option: %s\n", argv[i]);
             return false;
@@ -121,13 +127,13 @@ bool Options::parse(int argc, char *argv[], Options *out) {
         *out = o;
         return true;
     }
-    if (o.video_file.empty()) {
+    if (o.inputs.empty()) {
         if (o.benchmark) {
             printUsage(stderr, argv[0]);
             return false;
         }
         // 无参数正常启动：恢复上次播放列表（main.cpp restorePlaylist 分支）。
-        // benchmark 必须显式给文件——测量无列表可恢复。
+        // benchmark 必须显式给输入——测量无列表可恢复。
     }
     *out = o;
     return true;

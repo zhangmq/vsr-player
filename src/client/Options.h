@@ -29,6 +29,17 @@ struct Options {
     // PlayerViewModel::initFrucQuality；合法值见 FrucBackend.h）。
     std::string fruc_quality;
     std::vector<std::pair<std::string, std::string>> passthrough;  // (key, value) from `--`
+    // ── 输入列表（mpv 语义）────────────────────────────────────────────
+    // 位置参数与 `--playlist <file|->` 按**出现顺序**登记；多个位置参数 =
+    // 多条播放列表项（不再报 "multiple video files"）。`--playlist` 的展开
+    //（读文件/stdin）在 main 里做——本层保持纯字符串解析（不做 I/O）。
+    struct Input {
+        bool is_playlist = false;   // true: value = 播放列表路径（"-" = stdin）
+        std::string value;
+    };
+    std::vector<Input> inputs;
+    // 第一个非 playlist 输入（兼容旧调用点：无 --playlist 时的 `<video>`）；
+    // 只给了 --playlist 时为空。
     std::string video_file;
     std::string lang;           // UI language override (e.g. "zh_CN", "en"); empty = system locale
     std::string screenshot_dir; // screenshot output dir; empty = mpv default

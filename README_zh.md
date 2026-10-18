@@ -295,6 +295,12 @@ first run on this HOME: engine kernel cache is empty (<path>) — the first supe
 | `--benchmark` | — | — | 无 UI 吞吐测量（`all=no` 日志） |
 | `--vsync` | — | off | FIFO present（默认非阻塞；wayland 无撕裂问题） |
 | `--no-rpc` | — | — | 关闭 JSON IPC 服务 |
+| `--playlist` | `<文件>`、`-` | — | 播放列表文件（m3u/纯文本；空行与 `#` 注释跳过）；`-` = 从 stdin 读列表（同 mpv） |
+| `--` | — | — | 其后的参数全部作为 mpv 选项透传（如 `-- --terminal=yes --ytdl-raw-options=cookies=c.txt`） |
+
+位置参数即播放列表条目（同 mpv）：`vsr-player a.mkv b.mkv` 播放 `a.mkv` 并把
+`b.mkv` 排进列表。应用自管的选项（`vo`、`vf`、`hwdec`、`msg-level`）不要写在
+`--` 之后。
 
 ### 快捷键
 

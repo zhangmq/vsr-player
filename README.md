@@ -296,6 +296,12 @@ first run on this HOME: engine kernel cache is empty (<path>) — the first supe
 | `--benchmark` | — | — | Headless throughput measurement (no UI, `all=no` logging) |
 | `--vsync` | — | off | FIFO present (non-blocking by default; Wayland has no tearing) |
 | `--no-rpc` | — | — | Disable JSON IPC server |
+| `--playlist` | `<file>`, `-` | — | Playlist file (m3u/plain text; blank lines and `#` comments skipped). `-` reads the list from stdin, like mpv |
+| `--` | — | — | Everything after it is passed to mpv as options (e.g. `-- --terminal=yes --ytdl-raw-options=cookies=c.txt`) |
+
+Positional arguments are playlist entries, like mpv: `vsr-player a.mkv b.mkv`
+plays `a.mkv` and queues `b.mkv`. Options the app owns (`vo`, `vf`, `hwdec`,
+`msg-level`) must not be passed after `--`.
 
 ### Keyboard Shortcuts
 
