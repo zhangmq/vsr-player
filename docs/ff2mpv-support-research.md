@@ -360,3 +360,67 @@ Playing: http://127.0.0.1:8931/catlove_480p.webm
 $ mpv … --input-terminal=no --length=3 input/goose_480p.webm 2>/dev/null   ← stdout 监控行
 AV: 00:00:00 / 00:05:05 (0%) A-V:  0.000
 ```
+
+## 10. 接入方式：首选纯配置，wrapper 可选（2026-10-20 实测）
+
+**结论先行**：不需要 wrapper。把 mpv 选项放在 `--` 之后、并打开 ytdl hook 的播放列表支持，两行配置就能做到"点一下播整个列表"。wrapper 只在两种需求下还有价值：长列表逐条看（省 cookie 解密时间）、解析失败要有人通知。
+
+### 10.1 首选配置（零代码）
+
+`~/.config/ff2mpv-rust.json`：
+
+```json
+{
+    "player_command": "/home/<用户>/.local/bin/vsr-player",
+    "player_args": [
+        "--",
+        "--ytdl-raw-options=cookies-from-browser=chrome,yes-playlist="
+    ]
+}
+```
+
+ff2mpv 拼出的 argv：`vsr-player -- --ytdl-raw-options=… <URL>`。应用侧 `Options.cpp:35-56` 把 `--` 之后的 `--k=v` 交给 libmpv、非选项参数登记为播放条目，所以 URL 落在末尾没问题。
+
+- `cookies-from-browser=chrome`：yt-dlp 直接读浏览器登录态（私有列表/会员内容必需）。
+- `yes-playlist=`：hook 默认在 yt-dlp 命令里加 `--no-playlist`，只解析当前视频；显式给此项才展开列表。
+
+不需要 `--terminal=yes`（那是 wrapper 读状态行用的）。
+
+### 10.2 实测（libmpv + 真实 B 站收藏夹 39 条，需登录）
+
+| 场景 | 结果 |
+|---|---|
+| 单个视频页（地址无列表参数） | 1 条，正常播放 |
+| 列表页，不加 `yes-playlist=` | 1 条，只播当前视频 |
+| 列表页，加 `yes-playlist=` | **39 条**，约 2.0–2.4 s 展开完 |
+| 同实例重复载入同一列表 | 先回 1 条、再重新展开 39 条，不叠加 |
+| 展开出的条目起播（`playlist-pos=1`） | 3/3 成功，约 3.9–4.2 s 出画面 |
+
+机制（libmpv 日志）：hook 拼 `memory://#EXTM3U…` → mpv 按 m3u 展开成条目。
+
+按 yt-dlp 语义，`yes-playlist=` 下"视频 + 所属列表"式地址（YouTube `watch?v=…&list=…`）会解析出整个列表。
+
+### 10.3 纯配置的三项代价
+
+1. **失败静默**。快速连打 10 次时出现 1 次 `Unable to extract initial state`（站点反爬）：hook 把页面 URL 当单条继续播，不重试、不回报，只有日志一行 stderr。
+2. **每条解析重读浏览器**。`--cookies-from-browser chrome` 每次 1.87–1.98 s；读导出文件 1.06–1.21 s，每条多约 0.8 s。
+3. **启动**。到首帧：单视频 3.2–3.5 s；列表页 5.1–5.6 s（展开 + 首条解析各跑一次带浏览器 cookie 的 yt-dlp）。
+
+### 10.4 wrapper 何时值得（gist，不随包分发）
+
+<https://gist.github.com/zhangmq/3f9df36b91214bdcd82f417ba9e50619>
+
+- **长列表逐条看**：一次导出 cookie 文件后，每条解析走 `--cookies <文件>`。已抓 argv 确认：每条解析都是 `--cookies /path`，不再读浏览器（浏览器只在开头读一次）。
+- **需要失败提示**：wrapper 能看到 yt-dlp 结果，0/1 条时退回直接打开 URL 并通知，不会"列表悄悄少一半"。
+- **启动代价**：单视频约 +3 s、列表页约 +1 s；主要花在导出（现实现单独对 `https://httpbin.org/ip` 跑一次 yt-dlp，2.4–3.7 s）。把导出挂在第一次真实抓取上可降到约 1 s。
+
+### 10.5 复现
+
+```bash
+URL='https://www.bilibili.com/list/ml279411643?spm_id_from=333.1387.0.0&oid=117340687765549&bvid=BV1umab62E1E'
+# yt-dlp 侧对照
+yt-dlp -J --flat-playlist --no-playlist  --cookies-from-browser chrome -- "$URL" | jq -r ._type  # video
+yt-dlp -J --flat-playlist --yes-playlist --cookies-from-browser chrome -- "$URL" | jq -r ._type  # playlist（39 条）
+# libmpv 侧：C 程序 loadfile 后轮询 playlist 属性，ytdl-raw-options=cookies-from-browser=chrome,yes-playlist=
+# 每条解析的 argv 观察：msg-level=all=v + terminal=yes，抓 "Starting subprocess" 行
+```
