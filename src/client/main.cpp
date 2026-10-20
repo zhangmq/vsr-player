@@ -264,6 +264,7 @@ int main(int argc, char *argv[]) {
     viewModel.initFruc(opts.fruc, opts.benchmark);
     viewModel.initFrucOrder(opts.fruc_order);   // vf 链序（仅 VFG 可切换）
     viewModel.initFrucQuality(opts.fruc_quality);  // 插帧质量档（仅 VFG 可选）
+    viewModel.initFrucMaxFps(opts.fruc_max_fps);   // 输出帧率上限（仅 VFG 可选）
     viewModel.initTrueHdr();  // SDR→HDR10 上变换参数（持久化 + env 默认；须在
                               // installPolicy 前——策略的首次 reevaluate 要用它们）
     std::string vf = viewModel.vfOption();

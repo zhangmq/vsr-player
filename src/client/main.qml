@@ -154,11 +154,15 @@ Item {
             frucQuality: viewModel.frucQuality
             frucQualityModel: viewModel.frucQualityModel  // 同上（仅 VFG 分支有档）
             frucQualityAvailable: viewModel.frucQualityAvailable  // RIFE 分支隐藏该排
+            frucMaxFps: viewModel.frucMaxFps
+            frucMaxFpsModel: viewModel.frucMaxFpsModel    // 48/60/120 fps
+            frucMaxFpsAvailable: viewModel.frucMaxFpsAvailable  // RIFE 分支隐藏该排
             onScalPicked: function(v) { viewModel.setScale(v) }
             onQualityPicked: function(v) { viewModel.setQuality(v) }
             onDenoiseQualityPicked: function(v) { viewModel.setDenoiseQuality(v) }
             onFrucFpsPicked: function(v) { viewModel.setFrucFps(v) }
             onFrucQualityPicked: function(v) { viewModel.setFrucQuality(v) }
+            onFrucMaxFpsPicked: function(v) { viewModel.setFrucMaxFps(v) }
             upHdrEnabled: viewModel.upHdrEnabled
             upHdrEffective: viewModel.upHdrEffective
             onUpHdrEnabledPicked: function(v) { viewModel.setUpHdrEnabled(v) }

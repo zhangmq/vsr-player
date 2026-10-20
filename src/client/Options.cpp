@@ -7,9 +7,10 @@
 // --fruc 合法值列表来自编译期分支（FrucBackend.h 单一事实源）：
 // VFG = off|2|3|4（倍率）；RIFE = off|40|48|60|2|3|4（目标帧率 + benchmark
 // 倍率）。--fruc-order 仅 VFG 可切换（RIFE 链序固定），故只在 VFG 分支列出；
-// --fruc-quality 同理仅 VFG 可选（RIFE 无质量档）。
+// --fruc-quality 同理仅 VFG 可选（RIFE 无质量档）；--fruc-max-fps 同理
+//（RIFE 的 --fruc 本身就是目标输出帧率，没有"倍率顶过头"的问题）。
 // 值本身的合法性不在本层校验（与 --fruc 同模式：字符串搬运，语义/兜底在
-// PlayerViewModel::initFruc/initFrucOrder/initFrucQuality）。
+// PlayerViewModel::initFruc/initFrucOrder/initFrucQuality/initFrucMaxFps）。
 static void printUsage(FILE *out, const char *prog) {
     const std::string frucVals = fruc::cliValuesHelp();
     std::string orderOpt;
@@ -18,15 +19,19 @@ static void printUsage(FILE *out, const char *prog) {
     std::string qualityOpt;
     if (fruc::kModeSelectable)
         qualityOpt = "[--fruc-quality " + fruc::modeValuesHelp() + "] ";
+    std::string maxFpsOpt;
+    if (fruc::kMaxFpsSelectable)
+        maxFpsOpt = "[--fruc-max-fps " + fruc::maxFpsValuesHelp() + "] ";
     fprintf(out,
         "Usage: %s [--benchmark] [--no-hwaccel] [--vsync] "
         "[--no-rpc] [--rpc-socket <path>] "
         "[--scale off|auto|2|3|4] [--denoise off|low|medium|high|ultra] "
         "[--quality low|medium|high|ultra] "
-        "[--fruc %s] %s%s"
+        "[--fruc %s] %s%s%s"
         "[--lang <locale>] [--screenshot-dir <dir>] [--playlist <file|->] "
         "[-- mpv-opt ...] <video ...>\n",
-        prog, frucVals.c_str(), orderOpt.c_str(), qualityOpt.c_str());
+        prog, frucVals.c_str(), orderOpt.c_str(), qualityOpt.c_str(),
+        maxFpsOpt.c_str());
 }
 
 bool Options::parse(int argc, char *argv[], Options *out) {
@@ -98,6 +103,10 @@ bool Options::parse(int argc, char *argv[], Options *out) {
             o.fruc_quality = argv[++i];
         } else if (strncmp(argv[i], "--fruc-quality=", 15) == 0) {
             o.fruc_quality = argv[i] + 15;
+        } else if (strcmp(argv[i], "--fruc-max-fps") == 0 && i + 1 < argc) {
+            o.fruc_max_fps = argv[++i];
+        } else if (strncmp(argv[i], "--fruc-max-fps=", 15) == 0) {
+            o.fruc_max_fps = argv[i] + 15;
         } else if (strcmp(argv[i], "--lang") == 0 && i + 1 < argc) {
             o.lang = argv[++i];
         } else if (strncmp(argv[i], "--lang=", 7) == 0) {

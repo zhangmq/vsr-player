@@ -75,6 +75,9 @@ inline constexpr Preset kPresets[] = {
 };
 /// CLI --fruc 合法值（VFG：倍率即正常语义，无 benchmark 特殊档）。
 inline constexpr const char *kCliValues[] = { "off", "2", "3", "4" };
+/// 输出帧率上限（max-fps）仅 VFG 有意义：RIFE 的 --fruc 本身就是目标输出
+/// 帧率（40/48/60），不存在"倍率把输出帧率顶过头"的问题。
+inline constexpr bool kMaxFpsSelectable = true;
 #else
 inline constexpr bool kIsVfg = false;
 inline constexpr bool kOrderSelectable = false;
@@ -91,6 +94,8 @@ inline constexpr Preset kPresets[] = {
 };
 /// CLI --fruc 合法值（RIFE：2/3/4 = benchmark 倍率硬跑，40/48/60 = 目标帧率）。
 inline constexpr const char *kCliValues[] = { "off", "40", "48", "60", "2", "3", "4" };
+/// RIFE 无输出帧率上限（目标帧率即输出帧率，见上面 VFG 分支的说明）。
+inline constexpr bool kMaxFpsSelectable = false;
 #endif
 
 /// 滤镜名（vf 串 label / vf-command 目标 / 日志模块名，同源 FRUC_FILTER_NAME）。
@@ -231,6 +236,45 @@ inline std::string presetValuesHelp()
         if (i)
             s += '|';
         s += std::to_string(kPresets[i].value);
+    }
+    return s;
+}
+
+// ── 输出帧率上限（VFG max-fps；--fruc-max-fps / set-fruc-max-fps）──────
+// 语义：以当前倍率插帧后的输出帧率 k×src_fps **超过**上限 → 该帧直通
+// （vfg-status: mode=passthrough reason=max-fps）；等于上限照常插帧。
+// 为什么需要：源帧率 × 倍率的输出帧率是 VFG 成本的直接乘数（超分也按输出
+// 帧计费），60fps 源 ×2 = 120fps 就会把整链压垮——用户要的是一个**显式**
+// 天花板，而不是性能监测自动降级（PR #19 已移除，别为这个功能复活它）。
+// 默认 60（2026-10-20 用户定："对于视频来说，60 已经很高了"）：24×2=48、
+// 30×2=60 放行；24×3/×4、60×2 及以上直通。想更高由用户显式选 120。
+// 档位=48/60/120 对应常见输出：48=24×2、60=30×2、120=60×2 / 30×4。
+inline constexpr int kMaxFpsDefault = 60;
+inline constexpr Preset kMaxFpsPresets[] = {
+    { 48,  QT_TRANSLATE_NOOP("PlayerViewModel", "48 fps") },
+    { 60,  QT_TRANSLATE_NOOP("PlayerViewModel", "60 fps") },
+    { 120, QT_TRANSLATE_NOOP("PlayerViewModel", "120 fps") },
+};
+inline constexpr std::size_t kMaxFpsPresetCount =
+    sizeof(kMaxFpsPresets) / sizeof(kMaxFpsPresets[0]);
+
+/// 上限合法性（UI setFrucMaxFps / RPC / loadSettings）。
+inline bool isValidMaxFps(int v)
+{
+    for (std::size_t i = 0; i < kMaxFpsPresetCount; ++i)
+        if (kMaxFpsPresets[i].value == v)
+            return true;
+    return false;
+}
+
+/// CLI/RPC 合法值列表文本（单一事实源 = kMaxFpsPresets）。
+inline std::string maxFpsValuesHelp()
+{
+    std::string s;
+    for (std::size_t i = 0; i < kMaxFpsPresetCount; ++i) {
+        if (i)
+            s += '|';
+        s += std::to_string(kMaxFpsPresets[i].value);
     }
     return s;
 }

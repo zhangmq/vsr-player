@@ -320,6 +320,31 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                 response = formatResponse("success");
             }
         }
+    } else if (cmd == "set-fruc-max-fps") {
+        // 输出帧率上限（VFG 倍率语义的补丁；viewModel 单一来源，与 UI 同
+        // 路径）。VFG 48|60|120；RIFE 分支无此概念——与 CLI --fruc-max-fps
+        // 一致（接受但忽略 + 警告）。
+        if (args.empty()) {
+            response = formatResponse("missing value");
+        } else if (!vm) {
+            response = formatResponse("no view model");
+        } else if (!fruc::kMaxFpsSelectable) {
+            MLOG_WARN("set-fruc-max-fps %s ignored: VFG-only (this is the RIFE backend)",
+                      args[0].c_str());
+            response = formatResponse("success");
+        } else {
+            char *end = nullptr;
+            long v = strtol(args[0].c_str(), &end, 10);
+            if (end == args[0].c_str() || *end != '\0' ||
+                !fruc::isValidMaxFps((int)v)) {
+                response = formatResponse("invalid value (" +
+                                          fruc::maxFpsValuesHelp() + ")");
+            } else {
+                QMetaObject::invokeMethod(vm, "setFrucMaxFps", Qt::QueuedConnection,
+                                          Q_ARG(int, (int)v));
+                response = formatResponse("success");
+            }
+        }
     } else if (cmd == "dump-vsr") {
         // VSR-specific screenshot: one frame, input (original) + output (Nx).
         // Paths auto-generated as [videoname]_[frameno]_[original|Nx].png

@@ -37,9 +37,17 @@
  *   - 非整数倍率的绝对网格路径（VFG 只做整数倍率；Timestep 模式未验证）
  *   - 目标帧率接近源帧率的直通保护（倍率语义 ≥2×，无 1.00x 情形）
  *
+ * 输出帧率上限（max-fps，2026-10-20）：**用户显式设定的上限**，不是性能自动
+ * 降级——`k * src_fps > max_fps` 时本节点直通（reason=max-fps），源帧率回落
+ * （换片/逐帧重估）后自动恢复插帧。src_fps 未知（<=0，直播流）时无法判定，
+ * 不因上限直通（与"不因 src_fps<=0 直通"同一条理由：插值本身不依赖它）。
+ * 判据用 cur->nominal_fps（VFR 源 = 容器给的平均帧率，够用；不做逐段估算）。
+ * 上限在**引擎初始化之前**判定，所以被限制时既不建引擎也不耗 CUDA。
+ *
  * Filter options:
  *   fps:  off | 2 | 3 | 4                (default: off)  整数倍率 K
  *   mode: low | medium | high            (default: medium)
+ *   max-fps: 0..240                      (default: 0 = 不限) 输出帧率上限
  *
  * mode **只有三档、没有 auto**（2026-10-16 决定：不要自动档）——档位是用户的显式
  * 选择，客户端总是发显式值，滤镜侧不再有任何"自动挑档"的语义。
@@ -95,6 +103,9 @@
 // 被接受并真的按 k=5 输出 150fps）。
 #define VFG_FPS_OPT_MIN 2
 #define VFG_FPS_OPT_MAX 4
+// 输出帧率上限（max-fps）：0 = 不限（默认，直接 --vf 的旧用法不受影响）；
+// 客户端（UI）只会下发 48/60/120，上限放宽到 240 只为让手工调参有余量。
+#define VFG_MAX_FPS_LIMIT_MAX 240
 
 static double vfg_now_ms(void)
 {
@@ -108,8 +119,9 @@ static void f_reset(struct mp_filter *f);   // 定义在调度段之后（vf-com
 // ── Options ────────────────────────────────────────────────────────────────
 
 struct vf_vfg_opts {
-    int fps;    // -1=off, 2/3/4=整数倍率 K
-    int mode;   // 0=low, 1=medium, 2=high（默认 1=medium，无 auto）
+    int fps;      // -1=off, 2/3/4=整数倍率 K
+    int mode;     // 0=low, 1=medium, 2=high（默认 1=medium，无 auto）
+    int max_fps;  // 输出帧率上限（0=不限）；k*src_fps 超过即直通
 };
 
 #define OPT_BASE_STRUCT struct vf_vfg_opts
@@ -198,12 +210,15 @@ static const struct m_option vf_opts_fields[] = {
     {"mode", OPT_CHOICE(mode,
         {"low", 0}, {"medium", 1}, {"high", 2}),
         M_RANGE(0, 2)},
+    // 输出帧率上限：0 = 不限；客户端（UI/RPC）下 48/60/120。
+    {"max-fps", OPT_INT(max_fps), M_RANGE(0, VFG_MAX_FPS_LIMIT_MAX)},
     {0}
 };
 
 static const struct vf_vfg_opts vf_vfg_opts_def = {
-    .fps  = -1,
-    .mode = VFG_MODE_MEDIUM,
+    .fps     = -1,
+    .mode    = VFG_MODE_MEDIUM,
+    .max_fps = 0,
 };
 
 // ── Filter private state ───────────────────────────────────────────────────
@@ -769,6 +784,11 @@ static void f_process(struct mp_filter *f)
     if (p->opts->fps == -1)                          reason = "off";
     else if (p->opts->fps < VFG_MULT_MIN ||
              p->opts->fps > VFG_MULT_MAX)            reason = "k-range";
+    // 输出帧率上限（用户显式设定，非自动降级；见文件头）。恰好等于上限
+    // （如 30×2=60、cap=60）**允许插帧**；src_fps 未知时不判定。
+    else if (p->opts->max_fps > 0 && p->src_fps > 0 &&
+             p->opts->fps * p->src_fps > p->opts->max_fps)
+                                                     reason = "max-fps";
     else if (sw_input)                               reason = "sw";
     else if (p->engine_failed)                       reason = "engine";
     else if (cur->pts == MP_NOPTS_VALUE && !p->have_prev)
@@ -912,6 +932,16 @@ static bool parse_mode_arg(const char *arg, int *out)
     return *out >= 0 && *out <= 2;   // 无 auto：非法值（含 "auto"）一律拒绝
 }
 
+static bool parse_max_fps_arg(const char *arg, int *out)
+{
+    char *end = NULL;
+    long v = strtol(arg, &end, 10);
+    if (!end || *end || v < 0 || v > VFG_MAX_FPS_LIMIT_MAX)
+        return false;
+    *out = (int)v;
+    return true;
+}
+
 static bool vfg_command(struct mp_filter *f, struct mp_filter_command *cmd)
 {
     struct priv *p = f->priv;
@@ -937,6 +967,19 @@ static bool vfg_command(struct mp_filter *f, struct mp_filter_command *cmd)
             MP_INFO(f, "vfg: mode %d -> %d (vf-command)\n", p->opts->mode, v);
             p->opts->mode = v;
             // Mode 需重新 Load：下一帧 ensure_vfg 检测 vfg_mode 不一致 → 重建
+        }
+        return true;
+    }
+    if (strcmp(cmd->cmd, "max-fps") == 0) {
+        int v;
+        if (!parse_max_fps_arg(cmd->arg, &v))
+            return false;
+        if (p->opts->max_fps != v) {
+            MP_INFO(f, "vfg: max-fps %d -> %d (vf-command)\n",
+                    p->opts->max_fps, v);
+            p->opts->max_fps = v;
+            // 无需重置：下一帧直通判定重估；若从 passthrough 恢复，have_prev
+            // 已在直通分支里清空，会按"新的一对"重新起算（无缝）。
         }
         return true;
     }

@@ -267,13 +267,13 @@
         <translation type="vanished">%1Hz %2ch</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2024"/>
-        <location filename="../PlayerViewModel.cpp" line="2032"/>
+        <location filename="../PlayerViewModel.cpp" line="2097"/>
+        <location filename="../PlayerViewModel.cpp" line="2105"/>
         <source>Source</source>
         <translation>源</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2048"/>
+        <location filename="../PlayerViewModel.cpp" line="2131"/>
         <source>Output</source>
         <translation>输出</translation>
     </message>
@@ -282,48 +282,48 @@
         <translation type="vanished">渲染</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2057"/>
+        <location filename="../PlayerViewModel.cpp" line="2138"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2085"/>
+        <location filename="../PlayerViewModel.cpp" line="2166"/>
         <source>VSR</source>
         <translation>超分</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2106"/>
+        <location filename="../PlayerViewModel.cpp" line="2187"/>
         <source>FRUC</source>
         <translation>插帧</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2123"/>
-        <location filename="../PlayerViewModel.cpp" line="2128"/>
+        <location filename="../PlayerViewModel.cpp" line="2204"/>
+        <location filename="../PlayerViewModel.cpp" line="2209"/>
         <source>Decoder</source>
         <translation>解码器</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2133"/>
+        <location filename="../PlayerViewModel.cpp" line="2214"/>
         <source>Speed</source>
         <translation>速度</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2135"/>
+        <location filename="../PlayerViewModel.cpp" line="2216"/>
         <source>Time</source>
         <translation>时间</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2139"/>
+        <location filename="../PlayerViewModel.cpp" line="2220"/>
         <source>Frames</source>
         <translation>帧数</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2143"/>
+        <location filename="../PlayerViewModel.cpp" line="2224"/>
         <source>GPU</source>
         <translation>显卡</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2146"/>
+        <location filename="../PlayerViewModel.cpp" line="2227"/>
         <source>Audio</source>
         <translation>音频</translation>
     </message>
@@ -420,87 +420,92 @@
 <context>
     <name>QualityPopup</name>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="21"/>
-        <location filename="../ui/QualityPopup.qml" line="34"/>
+        <location filename="../ui/QualityPopup.qml" line="23"/>
+        <location filename="../ui/QualityPopup.qml" line="36"/>
         <source>Off</source>
         <translation>关闭</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="22"/>
+        <location filename="../ui/QualityPopup.qml" line="24"/>
         <source>Auto</source>
         <translation>自动</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="23"/>
+        <location filename="../ui/QualityPopup.qml" line="25"/>
         <source>2×</source>
         <translation>2×</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="24"/>
+        <location filename="../ui/QualityPopup.qml" line="26"/>
         <source>3×</source>
         <translation>3×</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="25"/>
+        <location filename="../ui/QualityPopup.qml" line="27"/>
         <source>4×</source>
         <translation>4×</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="28"/>
-        <location filename="../ui/QualityPopup.qml" line="35"/>
+        <location filename="../ui/QualityPopup.qml" line="30"/>
+        <location filename="../ui/QualityPopup.qml" line="37"/>
         <source>Low</source>
         <translation>低</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="29"/>
-        <location filename="../ui/QualityPopup.qml" line="36"/>
+        <location filename="../ui/QualityPopup.qml" line="31"/>
+        <location filename="../ui/QualityPopup.qml" line="38"/>
         <source>Medium</source>
         <translation>中</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="30"/>
-        <location filename="../ui/QualityPopup.qml" line="37"/>
+        <location filename="../ui/QualityPopup.qml" line="32"/>
+        <location filename="../ui/QualityPopup.qml" line="39"/>
         <source>High</source>
         <translation>高</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="31"/>
-        <location filename="../ui/QualityPopup.qml" line="38"/>
+        <location filename="../ui/QualityPopup.qml" line="33"/>
+        <location filename="../ui/QualityPopup.qml" line="40"/>
         <source>Ultra</source>
         <translation>超高</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="60"/>
+        <location filename="../ui/QualityPopup.qml" line="66"/>
         <source>Scale</source>
         <translation>缩放</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="81"/>
+        <location filename="../ui/QualityPopup.qml" line="87"/>
         <source>Upscale quality</source>
         <translation>超分质量</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="102"/>
+        <location filename="../ui/QualityPopup.qml" line="108"/>
         <source>Force denoise (active when scale=1)</source>
         <translation>强制降噪（scale=1时生效）</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="123"/>
+        <location filename="../ui/QualityPopup.qml" line="129"/>
         <source>Frame interpolation</source>
         <translation>帧插值</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="149"/>
+        <location filename="../ui/QualityPopup.qml" line="155"/>
         <source>Interpolation quality</source>
         <translation>插帧质量</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="177"/>
+        <location filename="../ui/QualityPopup.qml" line="182"/>
+        <source>Max interpolation frame rate</source>
+        <translation>插帧最大帧率</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="210"/>
         <source>SDR → HDR10</source>
         <translation>SDR → HDR10</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="193"/>
+        <location filename="../ui/QualityPopup.qml" line="226"/>
         <source>Advanced</source>
         <translation>高级</translation>
     </message>
@@ -734,39 +739,39 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="325"/>
+        <location filename="../main.qml" line="329"/>
         <source>Open media</source>
         <translation>打开媒体</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="332"/>
+        <location filename="../main.qml" line="336"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>媒体文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="333"/>
+        <location filename="../main.qml" line="337"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</source>
         <translation>视频文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="334"/>
+        <location filename="../main.qml" line="338"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>音频文件 (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="329"/>
-        <location filename="../main.qml" line="335"/>
+        <location filename="../main.qml" line="333"/>
+        <location filename="../main.qml" line="339"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>字幕文件 (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="318"/>
+        <location filename="../main.qml" line="322"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="330"/>
-        <location filename="../main.qml" line="336"/>
+        <location filename="../main.qml" line="334"/>
+        <location filename="../main.qml" line="340"/>
         <source>All files (*)</source>
         <translation>所有文件 (*)</translation>
     </message>

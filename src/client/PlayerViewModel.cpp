@@ -14,6 +14,7 @@
 #include <QLocale>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -617,6 +618,33 @@ void PlayerViewModel::initFrucQuality(const std::string &quality) {
     MLOG_INFO("FRUC quality: mode=%s (%d)", fruc::modeName(v), v);
 }
 
+void PlayerViewModel::initFrucMaxFps(const std::string &max_fps) {
+    if (!fruc::kMaxFpsSelectable) {
+        // 输出帧率上限是 VFG 倍率语义的补丁：RIFE 的 --fruc 本身就是目标
+        // 输出帧率（40/48/60），没有"倍率把帧率顶过头"的问题 → 接受但忽略。
+        if (!max_fps.empty())
+            MLOG_WARN("--fruc-max-fps %s ignored: VFG-only (this is the RIFE backend)",
+                      max_fps.c_str());
+        return;
+    }
+    if (max_fps.empty()) {
+        // 空 = CLI 未显式指定 → 持久化值（loadSettings 已清洗）。
+        frucMaxFps_ = persistFrucMaxFps_;
+        return;
+    }
+    char *end = nullptr;
+    long v = strtol(max_fps.c_str(), &end, 10);
+    if (end == max_fps.c_str() || *end != '\0' || !fruc::isValidMaxFps((int)v)) {
+        MLOG_WARN("--fruc-max-fps %s invalid (expect %s): using %d",
+                  max_fps.c_str(), fruc::maxFpsValuesHelp().c_str(),
+                  fruc::kMaxFpsDefault);
+        frucMaxFps_ = fruc::kMaxFpsDefault;
+        return;
+    }
+    frucMaxFps_ = (int)v;
+    MLOG_INFO("FRUC max output fps: %d", (int)v);
+}
+
 bool PlayerViewModel::parseScale(const std::string &s, double *out) {
     if (s == "off")      { *out = -1.0; return true; }
     if (s == "auto" || s.empty()) { *out = 0.0; return true; }
@@ -667,6 +695,9 @@ void PlayerViewModel::loadSettings() {
     persistFrucQuality_ = settings_.value("frucQuality", fruc::kModeDefault).toInt();
     if (!fruc::isValidMode(persistFrucQuality_))
         persistFrucQuality_ = fruc::kModeDefault;   // 非法值（手改配置）→ medium
+    persistFrucMaxFps_ = settings_.value("frucMaxFps", fruc::kMaxFpsDefault).toInt();
+    if (!fruc::isValidMaxFps(persistFrucMaxFps_))
+        persistFrucMaxFps_ = fruc::kMaxFpsDefault;  // 非法值（手改配置）→ 120
 
     // ── TrueHDR（SDR→HDR10 上变换）参数 ────────────────────────────────
     // 区间/默认值单一来源 = TrueHdrParams.h（= SDK 文档串）；手改配置越界 →
@@ -1067,6 +1098,32 @@ QVariantList PlayerViewModel::frucQualityModel() const {
 }
 
 bool PlayerViewModel::frucQualityAvailable() const { return fruc::kModeSelectable; }
+
+// 输出帧率上限热切换（仅 VFG）：vf-command `vfg max-fps <n>`——filter 下一帧
+// 直通判定重估（超过上限 → 直通，reason=max-fps；没超过就照常插帧）。
+void PlayerViewModel::setFrucMaxFps(int v) {
+    if (!mpv_) return;
+    if (!fruc::kMaxFpsSelectable) return;
+    if (!fruc::isValidMaxFps(v)) return;
+    if (frucMaxFps_ != v) { frucMaxFps_ = v; emit frucMaxFpsChanged(); }
+    saveSettings("frucMaxFps", v);
+    pushVf(frucFilterName(), "max-fps", std::to_string(v));
+}
+
+// 上限 UI 模型（同 frucQualityModel：label 走 tr()，context = PlayerViewModel；
+// RIFE 分支该排隐藏，模型照常产出但不消费）。
+QVariantList PlayerViewModel::frucMaxFpsModel() const {
+    QVariantList out;
+    for (std::size_t i = 0; i < fruc::kMaxFpsPresetCount; ++i) {
+        QVariantMap m;
+        m["label"] = tr(fruc::kMaxFpsPresets[i].label);
+        m["value"] = fruc::kMaxFpsPresets[i].value;
+        out.append(m);
+    }
+    return out;
+}
+
+bool PlayerViewModel::frucMaxFpsAvailable() const { return fruc::kMaxFpsSelectable; }
 
 // 剥离 mpv 日志消息的尾随换行与前导空格（mpv 的 log text 以 \n 结尾——
 // 原样存入会让 OSD 行内嵌 \n → 行距异常/提前折行；"vsr-status:" 前缀后
@@ -1620,10 +1677,12 @@ std::string PlayerViewModel::vfOption() const {
 #ifdef FRUC_BACKEND_VFG
     // VFG 倍率语义：fps=off|2|3|4 直通/整数倍率；mode 恒发显式值
     // low|medium|high（默认 medium——依据见 FrucBackend.h kModeDefault；
-    // 滤镜的 auto 仅作兜底，客户端不再发送）。
+    // 滤镜的 auto 仅作兜底，客户端不再发送）。max-fps = 输出帧率上限
+    //（48|60|120，默认 120）：k×src_fps 超过它 → 滤镜直通。
     const std::string vfg = std::string("@") + frucFilterName() + ":" + frucFilterName()
                           + ":fps=" + (fruc > 0 ? std::to_string(fruc) : "off")
-                          + ":mode=" + fruc::modeName(frucQuality_.load());
+                          + ":mode=" + fruc::modeName(frucQuality_.load())
+                          + ":max-fps=" + std::to_string(frucMaxFps_.load());
     if (frucOrderPre()) {
         // pre 序下"vsr 之后"= 链尾 = 按输出帧计费（k× 成本）→ 本轮不支持
         // （方案 §8.1）：不插入，日志一次。策略侧同步关掉上变换
@@ -1884,6 +1943,9 @@ void PlayerViewModel::syncVfOptions() {
     // 质量档（仅 VFG 有此参数；RIFE 无 mode——发送会得到 vf-command 失败）。
     if (fruc::kModeSelectable)
         pushVf(frucFilterName(), "mode", fruc::modeName(frucQuality_.load()));
+    // 输出帧率上限（仅 VFG；理由同上）。
+    if (fruc::kMaxFpsSelectable)
+        pushVf(frucFilterName(), "max-fps", std::to_string(frucMaxFps_.load()));
     pushVf("vsr", "scale", scaleStr());
     pushVf("vsr", "quality", qualityStr());
     pushVf("vsr", "denoise", denoiseStr());

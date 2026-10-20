@@ -290,6 +290,7 @@ first run on this HOME: engine kernel cache is empty (<path>) — the first supe
 | `--fruc` | `off`、`2`、`3`、`4`（默认 VFG 后端）；`off`、`40`、`48`、`60`、`2`、`3`、`4`（RIFE 源码构建） | 持久化 | 插帧：整数倍率（VFG）或目标帧率 40/48/60（RIFE） |
 | `--fruc-quality` | `low`、`medium`、`high` | `medium` | VFG 模型质量档（可热切换；RIFE 后端接受但忽略） |
 | `--fruc-order` | `pre`、`post` | `post` | VFG 链序：`post` = 超分之后，`pre` = 超分之前（RIFE 固定） |
+| `--fruc-max-fps` | `48`、`60`、`120` | `60` | 插帧输出帧率上限：源帧率 × 倍率超过它就直通（RIFE 后端接受但忽略） |
 | `--no-hwaccel` | — | — | 关闭 NVDEC，使用软解 |
 | `--lang` | 如 `en`、`zh_CN` | 系统 locale | 界面语言 |
 | `--benchmark` | — | — | 无 UI 吞吐测量（`all=no` 日志） |
@@ -301,6 +302,24 @@ first run on this HOME: engine kernel cache is empty (<path>) — the first supe
 位置参数即播放列表条目（同 mpv）：`vsr-player a.mkv b.mkv` 播放 `a.mkv` 并把
 `b.mkv` 排进列表。应用自管的选项（`vo`、`vf`、`hwdec`、`msg-level`）不要写在
 `--` 之后。
+
+### 竖屏视频与插帧质量档
+
+NVIDIA VFG 引擎对**竖屏/窄幅**输入会走一条明显更慢的内部路径（VFX SDK 1.3 的行为，
+不是本项目的代码）：
+
+| 输入（`--fruc-quality medium`） | 引擎单次插帧 |
+|---|---|
+| 1920×1080 横屏 | ≈2.5 ms |
+| 3840×2160 横屏 | ≈3.4 ms |
+| 1920×3328 竖屏 | ≈15–28 ms |
+
+而且竖屏下三档的顺序会反转：同一 1920×3328 输入，LOW ≈4 ms、**MEDIUM ≈15–28 ms**、
+**HIGH ≈5.5 ms**。所以竖屏内容建议在画质弹窗里把 **Interpolation quality 选 High**
+（更快，画质也更好），或者选 Low；**避开 Medium**。换算成播放器里的实测：该竖屏源
+30fps ×2 时 MEDIUM ≈15 ms/输出帧、HIGH ≈5.5 ms、LOW ≈4 ms。
+
+数据可用 `tests/vfg/vfg_timing_probe.c` 复现（纯 NvVFX 探针，不经过播放器）。
 
 ### 快捷键
 

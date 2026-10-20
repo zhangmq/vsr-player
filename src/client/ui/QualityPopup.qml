@@ -9,11 +9,13 @@ PopupBase {
     property int denoiseQuality: -1
     property int frucFps: -1
     property int frucQuality: 1
+    property int frucMaxFps: 120
     signal scalPicked(int v)
     signal qualityPicked(int v)
     signal denoiseQualityPicked(int v)
     signal frucFpsPicked(int v)
     signal frucQualityPicked(int v)
+    signal frucMaxFpsPicked(int v)
 
     width: 360
 
@@ -46,6 +48,10 @@ PopupBase {
     // frucQualityAvailable=false → 该排隐藏（后端无此参数）。
     property var frucQualityModel: []
     property bool frucQualityAvailable: true
+    // 输出帧率上限（VFG）：模型来自 C++（48/60/120 fps）；RIFE 分支隐藏
+    //（其 --fruc 本身就是输出帧率，无此概念）。
+    property var frucMaxFpsModel: []
+    property bool frucMaxFpsAvailable: true
 
     // ── SDR→HDR10 上变换（VFX TrueHDR）：这里只放**总开关 + 高级入口** ——
     // 参数细节（峰值/饱和/对比/中灰/抗色带）在 TrueHdrAdvancedPopup.qml。
@@ -163,6 +169,33 @@ PopupBase {
                     MouseArea { id: fqHover; anchors.fill: parent; hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: { root.frucQualityPicked(modelData.value); } }
+                }
+            }
+        }
+
+        // ── 输出帧率上限（仅 VFG 分支可见）：markup/样式复用上面的
+        // "Interpolation quality" 排。语义 = 以当前倍率插帧后帧率超过它就
+        // 直通（不是性能自动降级）；RIFE 无此概念 → 整排隐藏。
+        Rectangle { width: parent.width; height: 1; color: "#0fffffff"
+            visible: root.frucMaxFpsAvailable }
+
+        Text { text: qsTr("Max interpolation frame rate"); color: "#b0b0b0"; font.pixelSize: 13
+            visible: root.frucMaxFpsAvailable }
+        Row { spacing: 6; anchors { left: parent.left; right: parent.right }
+            visible: root.frucMaxFpsAvailable
+            Repeater {
+                model: root.frucMaxFpsModel
+                delegate: Rectangle {
+                    width: 70; height: 32; radius: 4
+                    color: fmHover.containsMouse ? "#33ffffff"
+                         : (root.frucMaxFps === modelData.value ? "#33ffcc00" : "transparent")
+                    Text { anchors.centerIn: parent
+                        text: modelData.label
+                        color: root.frucMaxFps === modelData.value ? "#ffcc00" : "#e0e0e0"
+                        font.pixelSize: 13 }
+                    MouseArea { id: fmHover; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: { root.frucMaxFpsPicked(modelData.value); } }
                 }
             }
         }

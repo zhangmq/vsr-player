@@ -28,6 +28,11 @@ struct Options {
     //（与 --fruc-order 同模式：此处只搬字符串，语义/兜底在
     // PlayerViewModel::initFrucQuality；合法值见 FrucBackend.h）。
     std::string fruc_quality;
+    // 输出帧率上限 --fruc-max-fps："48"|"60"|"120"（默认 120）。仅 VFG
+    // 分支可选（倍率插帧后帧率超过上限 → 直通）；RIFE 分支接受但忽略。
+    // 同 --fruc-order 模式：此处只搬字符串，语义/兜底在
+    // PlayerViewModel::initFrucMaxFps；合法值见 FrucBackend.h。
+    std::string fruc_max_fps;
     std::vector<std::pair<std::string, std::string>> passthrough;  // (key, value) from `--`
     // ── 输入列表（mpv 语义）────────────────────────────────────────────
     // 位置参数与 `--playlist <file|->` 按**出现顺序**登记；多个位置参数 =

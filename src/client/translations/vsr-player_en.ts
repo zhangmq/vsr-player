@@ -307,59 +307,59 @@
         <translation type="vanished">High</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2024"/>
-        <location filename="../PlayerViewModel.cpp" line="2032"/>
+        <location filename="../PlayerViewModel.cpp" line="2097"/>
+        <location filename="../PlayerViewModel.cpp" line="2105"/>
         <source>Source</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2048"/>
+        <location filename="../PlayerViewModel.cpp" line="2131"/>
         <source>Output</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2057"/>
+        <location filename="../PlayerViewModel.cpp" line="2138"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2085"/>
+        <location filename="../PlayerViewModel.cpp" line="2166"/>
         <source>VSR</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2106"/>
+        <location filename="../PlayerViewModel.cpp" line="2187"/>
         <source>FRUC</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2123"/>
-        <location filename="../PlayerViewModel.cpp" line="2128"/>
+        <location filename="../PlayerViewModel.cpp" line="2204"/>
+        <location filename="../PlayerViewModel.cpp" line="2209"/>
         <source>Decoder</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2133"/>
+        <location filename="../PlayerViewModel.cpp" line="2214"/>
         <source>Speed</source>
         <translation>Speed</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2135"/>
+        <location filename="../PlayerViewModel.cpp" line="2216"/>
         <source>Time</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2139"/>
+        <location filename="../PlayerViewModel.cpp" line="2220"/>
         <source>Frames</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2143"/>
+        <location filename="../PlayerViewModel.cpp" line="2224"/>
         <source>GPU</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2146"/>
+        <location filename="../PlayerViewModel.cpp" line="2227"/>
         <source>Audio</source>
         <translation>Audio</translation>
     </message>
@@ -380,87 +380,92 @@
 <context>
     <name>QualityPopup</name>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="21"/>
-        <location filename="../ui/QualityPopup.qml" line="34"/>
+        <location filename="../ui/QualityPopup.qml" line="23"/>
+        <location filename="../ui/QualityPopup.qml" line="36"/>
         <source>Off</source>
         <translation>Off</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="22"/>
+        <location filename="../ui/QualityPopup.qml" line="24"/>
         <source>Auto</source>
         <translation>Auto</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="23"/>
+        <location filename="../ui/QualityPopup.qml" line="25"/>
         <source>2×</source>
         <translation>2×</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="24"/>
+        <location filename="../ui/QualityPopup.qml" line="26"/>
         <source>3×</source>
         <translation>3×</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="25"/>
+        <location filename="../ui/QualityPopup.qml" line="27"/>
         <source>4×</source>
         <translation>4×</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="28"/>
-        <location filename="../ui/QualityPopup.qml" line="35"/>
+        <location filename="../ui/QualityPopup.qml" line="30"/>
+        <location filename="../ui/QualityPopup.qml" line="37"/>
         <source>Low</source>
         <translation>Low</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="29"/>
-        <location filename="../ui/QualityPopup.qml" line="36"/>
+        <location filename="../ui/QualityPopup.qml" line="31"/>
+        <location filename="../ui/QualityPopup.qml" line="38"/>
         <source>Medium</source>
         <translation>Medium</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="30"/>
-        <location filename="../ui/QualityPopup.qml" line="37"/>
+        <location filename="../ui/QualityPopup.qml" line="32"/>
+        <location filename="../ui/QualityPopup.qml" line="39"/>
         <source>High</source>
         <translation>High</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="31"/>
-        <location filename="../ui/QualityPopup.qml" line="38"/>
+        <location filename="../ui/QualityPopup.qml" line="33"/>
+        <location filename="../ui/QualityPopup.qml" line="40"/>
         <source>Ultra</source>
         <translation>Ultra</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="60"/>
+        <location filename="../ui/QualityPopup.qml" line="66"/>
         <source>Scale</source>
         <translation>Scale</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="81"/>
+        <location filename="../ui/QualityPopup.qml" line="87"/>
         <source>Upscale quality</source>
         <translation>Upscale quality</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="102"/>
+        <location filename="../ui/QualityPopup.qml" line="108"/>
         <source>Force denoise (active when scale=1)</source>
         <translation>Force denoise (active when scale=1)</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="123"/>
+        <location filename="../ui/QualityPopup.qml" line="129"/>
         <source>Frame interpolation</source>
         <translation>Frame interpolation</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="149"/>
+        <location filename="../ui/QualityPopup.qml" line="155"/>
         <source>Interpolation quality</source>
         <translation>Interpolation quality</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="177"/>
+        <location filename="../ui/QualityPopup.qml" line="182"/>
+        <source>Max interpolation frame rate</source>
+        <translation>Max interpolation frame rate</translation>
+    </message>
+    <message>
+        <location filename="../ui/QualityPopup.qml" line="210"/>
         <source>SDR → HDR10</source>
         <translation>SDR → HDR10</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="193"/>
+        <location filename="../ui/QualityPopup.qml" line="226"/>
         <source>Advanced</source>
         <translation>Advanced</translation>
     </message>
@@ -690,39 +695,39 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="325"/>
+        <location filename="../main.qml" line="329"/>
         <source>Open media</source>
         <translation>Open media</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="332"/>
+        <location filename="../main.qml" line="336"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="333"/>
+        <location filename="../main.qml" line="337"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</source>
         <translation>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="334"/>
+        <location filename="../main.qml" line="338"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="329"/>
-        <location filename="../main.qml" line="335"/>
+        <location filename="../main.qml" line="333"/>
+        <location filename="../main.qml" line="339"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="318"/>
+        <location filename="../main.qml" line="322"/>
         <source>Open folder</source>
         <translation>Open folder</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="330"/>
-        <location filename="../main.qml" line="336"/>
+        <location filename="../main.qml" line="334"/>
+        <location filename="../main.qml" line="340"/>
         <source>All files (*)</source>
         <translation>All files (*)</translation>
     </message>

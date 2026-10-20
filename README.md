@@ -291,6 +291,7 @@ first run on this HOME: engine kernel cache is empty (<path>) — the first supe
 | `--fruc` | `off`, `2`, `3`, `4` (default VFG backend); `off`, `40`, `48`, `60`, `2`, `3`, `4` (RIFE source build) | persisted | Frame interpolation: integer ×multiplier (VFG) or target fps 40/48/60 (RIFE) |
 | `--fruc-quality` | `low`, `medium`, `high` | `medium` | VFG model quality (hot-switchable; accepted but ignored by the RIFE backend) |
 | `--fruc-order` | `pre`, `post` | `post` | VFG chain order: `post` = after VSR, `pre` = before VSR (RIFE is fixed) |
+| `--fruc-max-fps` | `48`, `60`, `120` | `60` | Output frame-rate cap for interpolation: source fps × multiplier above it → passthrough (ignored by the RIFE backend) |
 | `--no-hwaccel` | — | — | Disable NVDEC, use software decode |
 | `--lang` | e.g. `en`, `zh_CN` | system locale | UI language |
 | `--benchmark` | — | — | Headless throughput measurement (no UI, `all=no` logging) |
@@ -302,6 +303,25 @@ first run on this HOME: engine kernel cache is empty (<path>) — the first supe
 Positional arguments are playlist entries, like mpv: `vsr-player a.mkv b.mkv`
 plays `a.mkv` and queues `b.mkv`. Options the app owns (`vo`, `vf`, `hwdec`,
 `msg-level`) must not be passed after `--`.
+
+### Portrait Video and the Interpolation Quality Tier
+
+NVIDIA's VFG engine takes a noticeably slower internal path for **portrait / narrow**
+inputs (this is VFX SDK 1.3 behavior, not code from this project):
+
+| Input (`--fruc-quality medium`) | Engine time per interpolation |
+|---|---|
+| 1920×1080 landscape | ≈2.5 ms |
+| 3840×2160 landscape | ≈3.4 ms |
+| 1920×3328 portrait | ≈15–28 ms |
+
+The tier ordering also inverts for portrait: with the same 1920×3328 input, LOW ≈4 ms,
+**MEDIUM ≈15–28 ms**, **HIGH ≈5.5 ms**. So for portrait content pick **High** in the
+quality popup's "Interpolation quality" row (faster *and* better looking), or Low;
+**avoid Medium**. In-player numbers for the same portrait clip (30 fps ×2): MEDIUM
+≈15 ms per output frame, HIGH ≈5.5 ms, LOW ≈4 ms.
+
+Reproducible with `tests/vfg/vfg_timing_probe.c` (a plain NvVFX probe, no player involved).
 
 ### Keyboard Shortcuts
 
