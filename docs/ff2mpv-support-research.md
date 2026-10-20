@@ -1,7 +1,7 @@
 # ff2mpv 接入调研（vsr-player × ff2mpv-rust）
 
-- 日期：2026-10-18
-- 分支：`investigate/ff2mpv-support`（基线 `3fee0af` / v0.4.0）
+- 日期：2026-10-18（2026-10-20 收尾）
+- 分支：`investigate/ff2mpv-support`（基线 `3fee0af` / v0.4.0）→ 已合并 master（#33），随 **v0.4.1** 发布
 - 目标：搞清"浏览器里点 ff2mpv → 用 vsr-player 播放"缺什么，给出接入方案与改动点
 - 现状一句话：**单条 URL 今天就能播**；用户现有 wrapper（mpv CLI 参数表 + `--playlist=-` + stdout 监控）**一条都喂不进去**
 
@@ -225,7 +225,7 @@ README 现状：只在"启动"那行举了 `-- --pause=yes` 一个例子，`-- <
 - 单 URL：`base_args() + [url] + mpv_args()`；播放列表：`base_args() + ["--playlist=-"] + mpv_args()`（`--playlist` 必须在 `--` **之前**）。
 - `_monitor_mpv` **未改**（`AV:` 与 `[ytdl_hook] ERROR` 靠 `--terminal=yes` 原样出现）。
 - ⚠ 改动前的版本没留副本（我的疏漏）：事后按"反向替换 + round-trip 一致性校验"重建 → **`~/.local/bin/mpv-vsr-wrapper.py.orig`**（10233 B = 会话开始时 `ls` 报的原大小；不需要就删掉）。要回滚就 `cp` 回去。
-- ⚠ **本机 `~/.local/bin/vsr-player` 仍是 v0.4.0**：安装版还没这个构建 → 在那之前 wrapper 的**播放列表**路径会失败（未知选项 `--playlist`），单 URL 路径仍可用。部署新构建后才能全通。
+- 部署状态：调研当时本机安装版还是 v0.4.0（wrapper 的**播放列表**路径会因未知选项 `--playlist` 失败，单 URL 路径仍可用）；**v0.4.1 起该能力随正式包发布**，装上即全通（含本机安装）。
 
 ## 9. 附录：证据命令与输出
 
