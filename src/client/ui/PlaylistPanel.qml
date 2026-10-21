@@ -162,8 +162,12 @@ Drawer {
         }
     }
 
-    // 拖入文件 → 一律追加到列表（不打断当前播放；DropArea 在 ListView
-    // 之后声明，z 更高，拖放优先于 delegate 的点击命中）
+    // 拖放区 B（追加）= 本面板：拖入一律追加到列表、不打断当前播放（mode 1）。
+    // 它是两个拖放区里的"追加"区，窗口级 DropArea = "完全重置"（mode 0）；
+    // 面板打开时本区在 popup overlay 里、叠在窗口区之上，Qt 的拖放只交给
+    // 最上层接受者，因此两个区不会同时触发。目录不展开、作为条目留在列表，
+    // 点击才由 mpv 展开（详见 PlayerViewModel::openFiles 注释）。
+    // DropArea 在 ListView 之后声明，z 更高，拖放优先于 delegate 的点击命中。
     DropArea {
         anchors.fill: parent
         onEntered: function(drag) { drag.accepted = true }

@@ -120,7 +120,7 @@ Item {
             id: openMenu
             anchorTarget: topBar.openBtn
             onFileRequested: function() { fileDialog.mode = 0; fileDialog.open() }
-            onFolderRequested: folderDialog.open()
+            onFolderRequested: function() { folderDialog.mode = 0; folderDialog.open() }
             onUrlRequested: urlPopup.open()
             onOpened: uiLayer.closeOtherPopups(openMenu)
         }
@@ -232,9 +232,10 @@ Item {
         ContextMenu {
             id: contextMenu
             onOpenFilesRequested: function() { fileDialog.mode = 0; fileDialog.open() }
-            onOpenFolderRequested: folderDialog.open()
+            onOpenFolderRequested: function() { folderDialog.mode = 0; folderDialog.open() }
             onOpenUrlRequested: urlPopup.open()
             onAppendFilesRequested: function() { fileDialog.mode = 1; fileDialog.open() }
+            onAppendFolderRequested: function() { folderDialog.mode = 1; folderDialog.open() }
             onQuitRequested: Qt.quit()   // 走标准退出路径（watch-later 落盘）
         }
 
@@ -297,7 +298,7 @@ Item {
                 if (event.modifiers === Qt.ControlModifier) {
                     fileDialog.mode = 0; fileDialog.open(); event.accepted = true
                 } else if (event.modifiers === (Qt.ControlModifier | Qt.ShiftModifier)) {
-                    folderDialog.open(); event.accepted = true
+                    folderDialog.mode = 0; folderDialog.open(); event.accepted = true
                 }
                 break
             case Qt.Key_L:
@@ -315,12 +316,16 @@ Item {
         }
     }
 
-    // ── 文件夹打开（FolderDialog：原生文件夹选择 → 扫描媒体文件入列表，
-    //     右键菜单 / Ctrl+Shift+O 触发）───────────────────────────
+    // ── 文件夹对话框（同一实例服务"打开文件夹"与"追加文件夹到播放列表"：
+    //     mode 0 = replace（打开，与拖入窗口同通路）；mode 1 = append（追加，
+    //     目录作为条目留在列表、点击才由 mpv 展开）；目录路径都不扫描）──────
     FolderDialog {
         id: folderDialog
-        title: qsTr("Open folder")
-        onAccepted: viewModel.openFiles([folderDialog.selectedFolder.toString()], 3)
+        property int mode: 0
+        title: folderDialog.mode === 1 ? qsTr("Add folder to playlist")
+                                       : qsTr("Open folder")
+        onAccepted: viewModel.openFiles([folderDialog.selectedFolder.toString()],
+                                        folderDialog.mode)
     }
 
     // ── 文件打开（FileDialog，TopBar 按钮 / Ctrl+O 触发）──────────
@@ -350,7 +355,11 @@ Item {
         }
     }
 
-    // ── 拖放（窗口级）：字幕文件 → sub-add；其余 → 播放（多文件排队）──
+    // ── 拖放区 A（窗口级）= 完全重置播放列表：首条 replace 载入并播放，
+    //    其余 append 排队（mode 0）。字幕文件仍按扩展名走 sub-add。
+    //    拖放区 B（追加）= PlaylistPanel 的 DropArea（mode 1）——面板打开时
+    //    它在 popup overlay 里、叠在本区之上，Qt 只把 drop 交给最上层接受者，
+    //    所以拖到面板=追加、拖到面板外=重置。两个区的差别只在 mode。
     DropArea {
         id: dropArea
         anchors.fill: parent

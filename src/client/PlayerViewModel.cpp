@@ -1292,24 +1292,11 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
         }
         return;
     }
-    if (mode == 3) {   // 打开文件夹：扫描其中媒体文件 → replace + queue（同 mode 0）
-        QStringList media;
-        for (const QString &p : paths) {
-            QFileInfo fi(p);
-            if (!fi.isDir()) continue;   // FolderDialog 单选文件夹；防御忽略
-            QDir dir(p);
-            const QStringList exts = {"*.mp4", "*.mkv", "*.webm", "*.avi",
-                                      "*.mov", "*.ts", "*.flv", "*.wmv",
-                                      "*.mp3", "*.flac", "*.wav", "*.ogg", "*.m4a"};
-            const QStringList names = dir.entryList(exts, QDir::Files, QDir::Name);
-            for (const QString &n : names) media.append(dir.filePath(n));
-        }
-        if (media.isEmpty()) return;
-        mpv_->commandV({"loadfile", media[0].toUtf8().constData(), nullptr});
-        for (int i = 1; i < media.size(); i++)
-            mpv_->commandV({"loadfile", media[i].toUtf8().constData(), "append", nullptr});
-        return;
-    }
+    // 文件夹不在此扫描：目录路径原样交给 mpv 的 loadfile，由 mpv 的
+    // demux_playlist 展开（--directory-mode 默认 lazy）——顶层媒体按 mpv
+    // 的扩展名表（video/audio/image/archive/playlist）展开，子目录作为
+    // 条目留在列表里、点击时才再展开。与拖放（mode 0/1）同一条通路，
+    // 所以"打开文件夹"与拖入文件夹的行为一致。
     // 混拖分类：字幕文件 → sub-add，其余 → loadfile（混合目录场景）
     bool first = true;
     for (const QString &p : paths) {

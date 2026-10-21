@@ -380,6 +380,9 @@ public slots:
     void loadFile(const QString &path);
     /// 打开文件/追加/字幕（mode: 0=replace+queue, 1=append, 2=subs）。
     /// 路径分类（字幕扩展名 → sub-add）在 C++ 单一入口。
+    /// 目录路径不扫描，原样交给 mpv `loadfile`（mpv 原生目录展开：
+    /// 顶层媒体展开成条目、子目录留作可点击展开的条目）——打开文件夹
+    /// 与拖入文件夹因此走同一条通路（main.qml FolderDialog 用 mode 0）。
     void openFiles(const QStringList &paths, int mode);
     /// 轨道选择（type: "audio"/"video"/"sub"；sub 且 id<0 = 关闭字幕）
     void selectTrack(const QString &type, qlonglong id);

@@ -12,6 +12,7 @@ PopupBase {
     signal openFolderRequested()
     signal openUrlRequested()
     signal appendFilesRequested()
+    signal appendFolderRequested()
     signal quitRequested()
 
     /// 在 item 坐标系 (x,y)（即鼠标位置）弹出，屏幕边缘钳制
@@ -32,7 +33,8 @@ PopupBase {
                 {icon: "󰉋", text: qsTr("Open file"),          hint: "Ctrl+O", sig: "openFilesRequested"},
                 {icon: "󰉖", text: qsTr("Open folder"), hint: "Ctrl+Shift+O", sig: "openFolderRequested"},
                 {icon: "󰌷", text: qsTr("Open URL"), hint: "Ctrl+L", sig: "openUrlRequested"},
-                {icon: "󰐒", text: qsTr("Add to playlist"),    hint: "",       sig: "appendFilesRequested"},
+                {icon: "󰐒", text: qsTr("Add files to playlist"),    hint: "", sig: "appendFilesRequested"},
+                {icon: "󰉗", text: qsTr("Add folder to playlist"),   hint: "", sig: "appendFolderRequested"},
                 {sep: true},
                 {icon: "󰐥", text: qsTr("Quit"),               hint: "Ctrl+Q", sig: "quitRequested"}
             ]

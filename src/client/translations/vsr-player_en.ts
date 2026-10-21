@@ -129,29 +129,34 @@
 <context>
     <name>ContextMenu</name>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="32"/>
+        <location filename="../ui/ContextMenu.qml" line="33"/>
         <source>Open file</source>
         <translation>Open file</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="33"/>
+        <location filename="../ui/ContextMenu.qml" line="34"/>
         <source>Open folder</source>
         <translation>Open folder</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="34"/>
+        <location filename="../ui/ContextMenu.qml" line="35"/>
         <source>Open URL</source>
         <translation>Open URL</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="37"/>
-        <source>Quit</source>
-        <translation>Quit</translation>
+        <location filename="../ui/ContextMenu.qml" line="36"/>
+        <source>Add files to playlist</source>
+        <translation>Add files to playlist</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="35"/>
-        <source>Add to playlist</source>
-        <translation>Add to playlist</translation>
+        <location filename="../ui/ContextMenu.qml" line="37"/>
+        <source>Add folder to playlist</source>
+        <translation>Add folder to playlist</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="39"/>
+        <source>Quit</source>
+        <translation>Quit</translation>
     </message>
     <message>
         <source>Load subtitles</source>
@@ -307,59 +312,59 @@
         <translation type="vanished">High</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2097"/>
-        <location filename="../PlayerViewModel.cpp" line="2105"/>
+        <location filename="../PlayerViewModel.cpp" line="2084"/>
+        <location filename="../PlayerViewModel.cpp" line="2092"/>
         <source>Source</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2131"/>
+        <location filename="../PlayerViewModel.cpp" line="2118"/>
         <source>Output</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2138"/>
+        <location filename="../PlayerViewModel.cpp" line="2125"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2166"/>
+        <location filename="../PlayerViewModel.cpp" line="2153"/>
         <source>VSR</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2187"/>
+        <location filename="../PlayerViewModel.cpp" line="2174"/>
         <source>FRUC</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2204"/>
-        <location filename="../PlayerViewModel.cpp" line="2209"/>
+        <location filename="../PlayerViewModel.cpp" line="2191"/>
+        <location filename="../PlayerViewModel.cpp" line="2196"/>
         <source>Decoder</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2214"/>
+        <location filename="../PlayerViewModel.cpp" line="2201"/>
         <source>Speed</source>
         <translation>Speed</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2216"/>
+        <location filename="../PlayerViewModel.cpp" line="2203"/>
         <source>Time</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2220"/>
+        <location filename="../PlayerViewModel.cpp" line="2207"/>
         <source>Frames</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2224"/>
+        <location filename="../PlayerViewModel.cpp" line="2211"/>
         <source>GPU</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2227"/>
+        <location filename="../PlayerViewModel.cpp" line="2214"/>
         <source>Audio</source>
         <translation>Audio</translation>
     </message>
@@ -695,39 +700,44 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="329"/>
+        <location filename="../main.qml" line="334"/>
         <source>Open media</source>
         <translation>Open media</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="336"/>
+        <location filename="../main.qml" line="341"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="337"/>
+        <location filename="../main.qml" line="342"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</source>
         <translation>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="338"/>
+        <location filename="../main.qml" line="343"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="333"/>
-        <location filename="../main.qml" line="339"/>
+        <location filename="../main.qml" line="338"/>
+        <location filename="../main.qml" line="344"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="322"/>
+        <location filename="../main.qml" line="325"/>
+        <source>Add folder to playlist</source>
+        <translation>Add folder to playlist</translation>
+    </message>
+    <message>
+        <location filename="../main.qml" line="326"/>
         <source>Open folder</source>
         <translation>Open folder</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="334"/>
-        <location filename="../main.qml" line="340"/>
+        <location filename="../main.qml" line="339"/>
+        <location filename="../main.qml" line="345"/>
         <source>All files (*)</source>
         <translation>All files (*)</translation>
     </message>
