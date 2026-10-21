@@ -97,8 +97,15 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
     // Aspect ratio（mpv video-aspect-override：-1=auto, no=不覆盖, 或 16:9 等）
     Q_PROPERTY(QString aspect READ aspect NOTIFY aspectChanged)
-    // Info
+    // Info（解码器状态分三个概念，别混用）：
+    //  · hwDecoding        = **实际**是否在硬解（= mpv `hwdec-current` != no）
+    //  · hwDecodeEnabled   = **用户偏好**（我们下发给 mpv 的 hwdec 开关；
+    //                        当前文件能否硬解**不影响**它——软解回退不得篡改）
+    //  · hwDecodeAvailable = 当前文件是否**能**硬解（偏好=硬解却拿到软解 →
+    //                        false；UI 据此显示"软解"并禁用切换按钮）
     Q_PROPERTY(bool hwDecoding READ hwDecoding NOTIFY hwDecodingChanged)
+    Q_PROPERTY(bool hwDecodeEnabled READ hwDecodeEnabled NOTIFY hwDecodeEnabledChanged)
+    Q_PROPERTY(bool hwDecodeAvailable READ hwDecodeAvailable NOTIFY hwDecodeAvailableChanged)
     Q_PROPERTY(QString videoInfo READ videoInfo NOTIFY videoInfoChanged)
     // OSD 数据源（观察器填充，主线程持有）
     Q_PROPERTY(int videoWidth READ videoWidth NOTIFY osdDataChanged)
@@ -280,6 +287,8 @@ public:
     double speed() const        { return speed_.load(); }
     QString aspect() const      { return aspect_; }
     bool hwDecoding() const     { return hwDecoding_.load(); }
+    bool hwDecodeEnabled() const   { return hwDecodeEnabled_.load(); }
+    bool hwDecodeAvailable() const { return hwDecodeAvailable_.load(); }
     QString videoInfo() const   { return videoInfo_; }
     int videoWidth() const { return videoWidth_.load(); }
     int videoHeight() const { return videoHeight_.load(); }
@@ -464,6 +473,8 @@ signals:
     void speedChanged();
     void aspectChanged();
     void hwDecodingChanged();
+    void hwDecodeEnabledChanged();
+    void hwDecodeAvailableChanged();
     void videoInfoChanged();
     void osdDataChanged();
     void videoHdrChanged();
@@ -487,6 +498,9 @@ private:
     void updateVolume(double v);
     void updateSpeed(double s);
     void updateHwDecoding(bool hw);
+    /// 由 hwdec-current / 解码器 / video-params 观察器与 FILE_LOADED 调用：
+    /// 刷新"当前文件能否硬解"（偏好=硬解 ∧ 解码器已就绪 ∧ 实际软解 → 不可）。
+    void refreshHwDecodeAvailability();
     void updateVideoInfo(const QString &f);
     void updateLoopMode(int m);
     /// idle 重播 lastPath：列表保留（stop keep-playlist）→ 查
@@ -559,7 +573,6 @@ private:
 
     MpvController *mpv_ = nullptr;
     std::string hwdecInit_;      // 启动时 hwdec 值（切换硬解时恢复）
-    double pendingResumeSeek_ = -1.0;  // hwdec 切换重载后要恢复的位置（秒，<0=无）
     bool playing_ = false;
     std::atomic<int64_t> currentTime_{0};
     std::atomic<int64_t> duration_{0};
@@ -572,7 +585,9 @@ private:
     double savedVolume_ = 0.5;   // 静音前音量（toggle mute 恢复用；未静音过则 0.5）
     std::atomic<double> speed_{1.0};
     QString aspect_ = QStringLiteral("no");    // no=容器比例（mpv 0.41 -1 已弃用，no 等价无警告）
-    std::atomic<bool> hwDecoding_{false};
+    std::atomic<bool> hwDecoding_{false};      // 实际（hwdec-current != no）
+    std::atomic<bool> hwDecodeEnabled_{true};  // 用户偏好（我们下发的 hwdec 开关）
+    std::atomic<bool> hwDecodeAvailable_{true};// 当前文件能否硬解（UI 禁用依据）
     QString videoInfo_;
     // ── OSD 数据源（主线程观察器 post 写；事件线程 osdTextString 拉取读；
     //    数值成员原子化，QString 隐式共享线程安全）─────────────────

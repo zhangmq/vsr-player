@@ -12,9 +12,11 @@ Item {
     implicitWidth: label ? label.length * 12 + 20 : size + 16
     implicitHeight: size + 16
 
+    // 禁用态（`enabled: false`，如"该文件只能软解"时的解码切换按钮）：
+    // 不响应点击/悬停、文字转灰。用 QQuickItem 内置 enabled，不新增属性。
     Rectangle {
         id: ibBg; anchors.fill: parent; radius: 4
-        color: ibHover.hovered || root.highlighted ? "#33ffffff" : "transparent"
+        color: root.enabled && (ibHover.hovered || root.highlighted) ? "#33ffffff" : "transparent"
         Behavior on color { ColorAnimation { duration: 150 } }
     }
     Text {
@@ -22,12 +24,15 @@ Item {
         font.family: label ? "" : iconFont
         font.pixelSize: label ? 13 : size   // label 固定 13（统一字号）；字形随 size
         text: label ? label : codepoint
-        color: ibHover.hovered || root.highlighted ? "#ffffff" : "#c8c8c8"
+        color: !root.enabled ? "#6a6a6a"
+                             : (ibHover.hovered || root.highlighted ? "#ffffff" : "#c8c8c8")
         Behavior on color { ColorAnimation { duration: 150 } }
         renderType: Text.NativeRendering
     }
     MouseArea {
-        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+        anchors.fill: parent
+        enabled: root.enabled
+        cursorShape: root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
         hoverEnabled: true; onClicked: root.clicked()
     }
     HoverHandler { id: ibHover }

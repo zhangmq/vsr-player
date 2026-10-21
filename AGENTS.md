@@ -81,6 +81,18 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
   `AFGX_FLOW_RESOLUTION` 是编译期常量、**不是环境变量**（试 1..64 无任何变化）。
   → 竖屏内容应避开 MEDIUM：**HIGH 更快且质量更高**（少数"免费的午餐"），LOW 最省。
   尚未做：按宽高比自动选档（属于"按局部信息决策"，需用户点头）。
+- **丢帧分支必须 `mark_progress`（2026-10-22 修：坏时间戳老片源卡死）**：`vf_vfg.c` 里
+  "重复/倒序/缺 PTS → 丢弃 cur、保留 prev" 的分支原先 `talloc_free(cur); return;` ——
+  **消费了输入却没写出输出、也没 `mp_filter_internal_mark_progress(f)`**：mpv 的 process()
+  只由 pin 事件驱动（`filters/filter.h`：filter 内消费但无输出必须手动 mark_progress），
+  于是本滤镜永远不会被再次调用 → 下游永远等不到帧。现象＝**画面定格在某一帧、
+  `seeking` 一直为 true、`core-idle=yes`、没有任何 `<滤镜>-status` 行、seek 后能出画面
+  但播放不走**。触发条件是坏时间戳片源：实测 `/home/zmq/视频/2.avi`（实为 **Ogg 容器
+  装 mpeg4/XVID 640×480**，包里有大量重复 pts 与 `pts=N/A`，mpv 打 `Invalid video
+  timestamp`）在第二个重复 pts 帧上必卡；`--fruc off`（VFG 直通）与 `--scale off`
+  都正常，**只有 VFG 活跃时卡**。修后全链（VSR 2× + VFG 2×）正常播放、seek 0/30/90 s
+  全部 `seeking=no`、丢帧 0。对照：`vf_rife.c` 的同款分支在 `for(;;)` 预取循环里
+  `continue`（不返回），所以不受影响；`vf_vsr` 的 seek 丢弃是 drop loop，同理。
 - 其他机制：场景切换直通（复制时间较近端点）；预取模型（vf_vapoursynth buffered-frames，每 process() 调用输出 1 帧）；EOF flush 最后帧；模式降级时丢弃预取帧防顺序倒挂；`syncVfOptions` 在 FILE_LOADED 后重放 vf 状态（链重建后 UI 修改不丢）。
 - **无性能自动降级**（2026-10-15 移除旧的分级降级：曾是"cost 超预算先降档 60→48→40→30，全档超才直通"）。移除理由：判据是**节点内自测**，只能看到 RIFE 自身 GPU 耗时，而真实短缺通常在该节点下游——VSR 按**输出帧**计费（k=out/src 次/对），加上 VO/渲染通路；实测 1080p29.97 + `fps=60` + `scale=auto` 实际上屏 17.5fps、丢帧 +52/s，而判据报 `cost=16.0ms < budget=21.4ms` 全程沉默。目前 `fruc-status` 的 `cost=` 仅作观测保留。⚠️ 移除的代价：4K 纯 RIFE 过载场景失去唯一有效的回退（24fps → 7.3fps）。**完整记录（现象/根因/同族缺陷/vf 节点能力边界/统一方案的待定问题/复现方法）见 `docs/memory/fruc-auto-degrade-removal.md`**；统一的跨节点性能自适应方案（覆盖 rife/vsr/VFX 新版插帧，以实际达成率判定）**待设计，2026-10-15 搁置**。
 - 插帧历史决策：NVOFA 硬件光流降级备选（repeat 率太高，有运动对成功率 9.7% vs RIFE 96.3%）；Nano = 两帧平均器已否决（flow 恒零实证）。
@@ -105,10 +117,30 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 - **验证证据**：合成 BT.2020/PQ 三色条（420）ours vs mpv 原生路径逐通道吻合（148.0/0/40.8 vs 145/0/39.7 等）；SDR 8-bit 仍是 `cuda[rgba]`、HDR/10-bit SDR 是 `cuda[x2bgr10]`。脚本：`build/scratch/{vsr10_probe.c,hwf_test.c,pixdesc.c}` + `hdr_bars420.mp4`/`hdr1080p_test.mp4`（均为 gitignore 的临时产物）。⚠ 上述"逐通道吻合"是**修 limited-range 之前**的截图口径（8-bit 屏幕截图会把码域差异压缩）；修正后对**参考值**重新对账见 §19（旧内核 vs ffmpeg 参考 mean|Δ|=23.8/max=79 10-bit LSB，新内核 0.98/3）。
 - **已知遗留（未修，均有实测证据）**：① ~~`yuv_to_rgba` 的色度按亮度 span 归一化~~ **limited-range 归一化已修（2026-10-17，见 `docs/hdr-pipeline-investigation.md` §19）**——此前 luma **与**色度都用满幅跨度（8-bit 239、P010 61439）而非 limited 跨度（219/224、56064/57344），白位只送到满幅的 91.6%（8-bit 白 234/255、P010 白 934/1023、HDR 条红 941 vs 参考 1010）。⚠ 该修正**同样改变 SDR limited 片源的观感**（白位 234→255），属预期（对齐 mpv/ffmpeg，非回归）；② 4:4:4/4:2:2 hw 帧被 kernel 当 4:2:0 半平面读（合成测试暴露，8-bit 同样存在）；③ `-Dfruc_backend=rife` 分支的 RIFE 冻结在 8-bit（`yuv_to_rgba_init(..., VFX_BITS_8)`），RIFE 链（rife→vsr）因此恒 8-bit——VFG 链才走 10-bit。
 - **"软解 10-bit 偏暗"已证伪**（2026-10-17 用户目检 + 数值复核）：同一 app 内软/硬解逐像素一致——`dump-vsr` 的 VSR 输入/输出 PNG 对比 `mean|Δ|=0`、PSNR 138 dB。此前记录的"红 173 vs 235"是**口径错配**（`vo=image` 的原始 PQ dump vs GPU 截图已 tonemap）。注意 CLI 侧的假象：`--vo=gpu --hwdec=no` 时 VO 无 CUDA interop → 退回 hwdownload，会把 10-bit 帧按 hwframes 的 sw_format(RGBA) 解释 → 画面接近全白；app 的自建 VO 有 interop，不出现。
+- **硬解偏好 vs 实际解码（2026-10-22）**：`PlayerViewModel` 分三个概念，别混用——
+  `hwDecoding` = **实际**（= mpv `hwdec-current` != no）、`hwDecodeEnabled` = **用户偏好**
+  （我们下发给 mpv 的 `hwdec` 开关）、`hwDecodeAvailable` = **当前文件能否硬解**
+  （偏好=硬解 ∧ 解码器就绪 ∧ 实际软解 → false）。以前只有 `hwDecoding` 一个变量，
+  软解回退（mpeg4/XVID 这类只能软解的片子）会把它冲成软解 = **用户的硬解设置被
+  视频文件篡改**；现在 `toggleHwaccel()` 只翻偏好、实际值只由 `hwdec-current`
+  观察器回写，换到支持硬解的片源自动恢复硬解。UI（`BottomBar` 的 HW/SW 按钮）显示
+  **实际**状态并按 `hwDecodeAvailable` 禁用（`IconButton` 用 QQuickItem 内置
+  `enabled`：不响应点击/悬停、文字转 `#6a6a6a`），tooltip = `Software decoding only`
+  （zh_CN「此文件仅支持软解」）。实测：`/tmp/sw_test.avi`（mpeg4 640×480）→
+  `hwdec=nvdec`（偏好保持）而 `hwdec-current=no`，按钮显示「软解」且为灰色禁用；
+  换成 Jellyfish（h264）→ `hwdec-current=nvdec`、按钮恢复「硬解」。
+  ⚠ `hwDecodeAvailable` 的"解码器就绪"判据用 `decoderName_`（`current-tracks/video/
+  decoder`）非空：解码器还没起来时 `refreshHwDecodeAvailability()` **直接 return、
+  保持原值**（否则换片瞬间会出现 可用↔禁用 抖动）。
+  **状态只靠日志验证，不靠截图/读图**（用户 2026-10-22 要求）：两处 INFO——
+  `decoder: 实际 软解 → 硬解（偏好=… hwdec=nvdec）`（有效状态翻转）与
+  `decoder: 解码切换禁用：该文件只能软解（偏好=… 实际=… 解码器=mpeg4）` /
+  `decoder: 解码切换可用（…）`（可切换性翻转）。实测序列（mpeg4 → h264 → mpeg4）：
+  `禁用：该文件只能软解(实际=软解,mpeg4)` → `实际 软解 → 硬解` + `可用` →
+  `实际 硬解 → 软解` + `禁用`，偏好在全程恒为"硬解"。
 - **运行中切 hwdec（软↔硬）的连环坑（2026-10-17 修）**：
   - 引擎/转换器/流/out_buf 都绑定在**创建它的 CUDA context** 上。旧 `ensure_cuda` 换 context 时只销毁流 → 复用旧 `CUmodule`/engine 句柄 → `cuLaunchKernel` 返回 400（CUDA_ERROR_INVALID_VALUE）→ 滤镜自己报错被 mpv 禁用（"切软解后不插帧、切回也不恢复"的根因）。修法：在旧 context 内 `vsr_destroy`/`vfg_destroy` + `yuv_to_rgba_destroy` + `cuMemFree(out_buf)` + 销毁流，下帧在新 context 重建（`vf_vsr.c`/`vf_vfg.c` 的 ensure_cuda）。
-  - `toggleHwaccel()` 原先把位置塞进 `loadfile` 第 4 参数（`start=+5.000`）。mpv 0.41 的第 4 参数是 key/value **列表**（`cmd_loadfile` 里 `cmd->args[3].v.str_list`），`mpv_command` 只能传 char* → 被当 index 解析失败（"The loadfile option must be an integer"）→ **重载从未发生**，而 `set hwdec` 已在当前流中途换解码器（新解码器无参考帧 → HEVC "Could not find ref with POC"）。修法：记 `pendingResumeSeek_` → `loadfile … replace` → `onFileLoadedFromEventThread` 里 seek 回原位置。
-  - 残留：属性一改 mpv 立刻换解码器，重载生效前有短暂解码错误抖动。彻底消除需 per-entry hwdec（`mpv_command_node` 传 `["loadfile",url,"replace",-1,["hwdec",…,"start",…]]`）或 stop→set→reload（会动播放列表，未采用）。
+  - `toggleHwaccel()` 曾用 `loadfile … replace` 重载当前文件让 hwdec 生效（还试过把位置塞进 loadfile 第 4 参数——那是 key/value **列表**，`mpv_command` 传不进，被当 index 解析失败）。**2026-10-22 更正：这是多余的，而且有害**——mpv 原生支持运行期切 hwdec：`hwdec` 选项 flags = `UPDATE_HWDEC`，`player/command.c:8315` 的处理是 `mp_decoder_wrapper_control(dec, VDCTRL_REINIT)`（重建解码器，所以不会有"新解码器缺参考帧 → POC 错误"）**+ `queue_seek(last_pts, MPSEEK_EXACT)`**（自己精确 seek 回原位置）。`replace` 反而会 `playlist_clear`：用户报"切软解/硬解会清空播放列表"就是这个（还顺带丢外部字幕/轨道记忆）。现在 `toggleHwaccel()` **只写 `hwdec` 选项**，播放列表与位置都由 mpv 自己保住；`pendingResumeSeek_` 已删除。
 
 
 ### HDR 上屏（spike 结论，2026-10-17）

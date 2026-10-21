@@ -88,6 +88,7 @@ Item {
             playing: viewModel.playing
             fullscreen: viewModel.fullscreen
             hwDecoding: viewModel.hwDecoding
+            hwDecodeAvailable: viewModel.hwDecodeAvailable
             muted: viewModel.muted
             currentTime: viewModel.currentTime
             duration: viewModel.duration

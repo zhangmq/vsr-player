@@ -816,11 +816,20 @@ static void f_process(struct mp_filter *f)
     p->passthrough = false;
     p->k = p->opts->fps;
 
-    // 重复/倒序/缺 PTS：丢弃 cur、保留 prev（vf_rife 同款）
+    // 重复/倒序/缺 PTS：丢弃 cur、保留 prev（vf_rife 同款语义）
+    // ⚠ 这里**消耗了输入却没有写出输出**，必须 mark_progress 让框架再调一次
+    // process()：否则该 pin 不再有事件，本滤镜永远不会被再次调用 → 下游
+    // 永远等不到帧，整条链卡死（现象＝画面定格在某一帧、seek 后 seeking
+    // 一直为 true、core-idle=yes）。
+    // 触发条件就是坏时间戳的老片源（Ogg/VBR 容器里大量重复 pts / pts=N/A，
+    // mpv 打 `Invalid video timestamp`）——实测 /home/zmq/视频/2.avi
+    //（Ogg 装 XVID，640x480）在第二个重复 pts 帧上直接卡死。
+    // 对照：vf_rife 的同款分支在 for(;;) 预取循环里 `continue`，所以不需要。
     double t_cur = cur->pts;
     if (p->have_prev && (t_cur == MP_NOPTS_VALUE || t_cur <= p->prev_pts)) {
         MP_DBG(f, "vfg: drop frame pts=%.3f (prev=%.3f)\n", t_cur, p->prev_pts);
         talloc_free(cur);
+        mp_filter_internal_mark_progress(f);
         return;
     }
 

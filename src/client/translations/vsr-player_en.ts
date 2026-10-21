@@ -21,107 +21,112 @@
 <context>
     <name>BottomBar</name>
     <message>
-        <location filename="../ui/BottomBar.qml" line="88"/>
+        <location filename="../ui/BottomBar.qml" line="89"/>
         <source>Previous (B)</source>
         <translation>Previous (B)</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="91"/>
+        <location filename="../ui/BottomBar.qml" line="92"/>
         <source>Pause (Space)</source>
         <translation>Pause (Space)</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="91"/>
+        <location filename="../ui/BottomBar.qml" line="92"/>
         <source>Play (Space)</source>
         <translation>Play (Space)</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="93"/>
+        <location filename="../ui/BottomBar.qml" line="94"/>
         <source>Next (N)</source>
         <translation>Next (N)</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="95"/>
+        <location filename="../ui/BottomBar.qml" line="96"/>
         <source>Stop</source>
         <translation>Stop</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="126"/>
+        <location filename="../ui/BottomBar.qml" line="127"/>
         <source>Volume</source>
         <translation>Volume</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="129"/>
+        <location filename="../ui/BottomBar.qml" line="130"/>
         <source>Quality</source>
         <translation>Quality</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="132"/>
+        <location filename="../ui/BottomBar.qml" line="135"/>
         <source>HW</source>
         <translation>HW</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="132"/>
+        <location filename="../ui/BottomBar.qml" line="135"/>
         <source>SW</source>
         <translation>SW</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="133"/>
+        <location filename="../ui/BottomBar.qml" line="137"/>
+        <source>Software decoding only</source>
+        <translation>Software decoding only</translation>
+    </message>
+    <message>
+        <location filename="../ui/BottomBar.qml" line="138"/>
         <source>Switch to SW decode</source>
         <translation>Switch to SW decode</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="133"/>
+        <location filename="../ui/BottomBar.qml" line="138"/>
         <source>Switch to HW decode</source>
         <translation>Switch to HW decode</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="135"/>
+        <location filename="../ui/BottomBar.qml" line="140"/>
         <source>Speed</source>
         <translation>Speed</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="135"/>
+        <location filename="../ui/BottomBar.qml" line="140"/>
         <source>Playback speed</source>
         <translation>Playback speed</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="139"/>
+        <location filename="../ui/BottomBar.qml" line="144"/>
         <source>Aspect ratio</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="149"/>
+        <location filename="../ui/BottomBar.qml" line="154"/>
         <source>Loop file</source>
         <translation>Loop file</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="150"/>
+        <location filename="../ui/BottomBar.qml" line="155"/>
         <source>Loop playlist</source>
         <translation>Loop playlist</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="150"/>
+        <location filename="../ui/BottomBar.qml" line="155"/>
         <source>No loop</source>
         <translation>No loop</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="153"/>
+        <location filename="../ui/BottomBar.qml" line="158"/>
         <source>Exit fullscreen</source>
         <translation>Exit fullscreen</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="153"/>
+        <location filename="../ui/BottomBar.qml" line="158"/>
         <source>Fullscreen</source>
         <translation>Fullscreen</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="155"/>
+        <location filename="../ui/BottomBar.qml" line="160"/>
         <source>Playlist (P)</source>
         <translation>Playlist (P)</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="119"/>
+        <location filename="../ui/BottomBar.qml" line="120"/>
         <source>Tracks</source>
         <translation>Tracks</translation>
     </message>
@@ -335,59 +340,59 @@
         <translation type="vanished">High</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2193"/>
-        <location filename="../PlayerViewModel.cpp" line="2201"/>
+        <location filename="../PlayerViewModel.cpp" line="2214"/>
+        <location filename="../PlayerViewModel.cpp" line="2222"/>
         <source>Source</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2227"/>
+        <location filename="../PlayerViewModel.cpp" line="2248"/>
         <source>Output</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2234"/>
+        <location filename="../PlayerViewModel.cpp" line="2255"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2262"/>
+        <location filename="../PlayerViewModel.cpp" line="2283"/>
         <source>VSR</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2283"/>
+        <location filename="../PlayerViewModel.cpp" line="2304"/>
         <source>FRUC</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2300"/>
-        <location filename="../PlayerViewModel.cpp" line="2305"/>
+        <location filename="../PlayerViewModel.cpp" line="2321"/>
+        <location filename="../PlayerViewModel.cpp" line="2326"/>
         <source>Decoder</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2310"/>
+        <location filename="../PlayerViewModel.cpp" line="2331"/>
         <source>Speed</source>
         <translation>Speed</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2312"/>
+        <location filename="../PlayerViewModel.cpp" line="2333"/>
         <source>Time</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2316"/>
+        <location filename="../PlayerViewModel.cpp" line="2337"/>
         <source>Frames</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2320"/>
+        <location filename="../PlayerViewModel.cpp" line="2341"/>
         <source>GPU</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2323"/>
+        <location filename="../PlayerViewModel.cpp" line="2344"/>
         <source>Audio</source>
         <translation>Audio</translation>
     </message>
@@ -723,44 +728,44 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="387"/>
+        <location filename="../main.qml" line="388"/>
         <source>Open media</source>
         <translation>Open media</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="394"/>
+        <location filename="../main.qml" line="395"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="395"/>
+        <location filename="../main.qml" line="396"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</source>
         <translation>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="396"/>
+        <location filename="../main.qml" line="397"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="391"/>
-        <location filename="../main.qml" line="397"/>
+        <location filename="../main.qml" line="392"/>
+        <location filename="../main.qml" line="398"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="378"/>
+        <location filename="../main.qml" line="379"/>
         <source>Add folder to playlist</source>
         <translation>Add folder to playlist</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="379"/>
+        <location filename="../main.qml" line="380"/>
         <source>Open folder</source>
         <translation>Open folder</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="392"/>
-        <location filename="../main.qml" line="398"/>
+        <location filename="../main.qml" line="393"/>
+        <location filename="../main.qml" line="399"/>
         <source>All files (*)</source>
         <translation>All files (*)</translation>
     </message>

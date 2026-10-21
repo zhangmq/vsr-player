@@ -148,6 +148,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
         std::string s = mpv_->propertyString("hwdec-current");
         post([this, s] {
             updateHwDecoding(!s.empty() && s != "no");
+            refreshHwDecodeAvailability();
             if (hwdecName_ != QString::fromStdString(s)) {
                 hwdecName_ = QString::fromStdString(s);
                 emit osdDataChanged();
@@ -251,6 +252,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
         postData([this, d] {
             if (decoderName_ != QString::fromStdString(d)) {
                 decoderName_ = QString::fromStdString(d);
+                refreshHwDecodeAvailability();
                 emit osdDataChanged();
             }
         });
@@ -741,6 +743,18 @@ void PlayerViewModel::applyPlaybackSettings() {
     setLoopMode(settings_.value("loopMode", 0).toInt());
     setAspect(settings_.value("aspect", QStringLiteral("no")).toString());
     applyDeinterlace();   // mpv 选项（非 vf）——链重建后也由 FILE_LOADED 重放
+
+    // 解码偏好初值 = mpv 当前的 `hwdec` 选项（含 `-- --hwdec=no` 透传）。
+    // 之后由 toggleHwaccel() 翻转；**实际**状态另走 hwdec-current 观察器。
+    if (hwdecInit_.empty()) {
+        hwdecInit_ = mpv_->propertyString("hwdec");
+        bool hwOn = !hwdecInit_.empty() && hwdecInit_ != "no";
+        if (hwDecodeEnabled_.load() != hwOn) {
+            hwDecodeEnabled_.store(hwOn);
+            emit hwDecodeEnabledChanged();
+        }
+    }
+    refreshHwDecodeAvailability();
 }
 
 void PlayerViewModel::restorePlaylist() {
@@ -1046,30 +1060,27 @@ void PlayerViewModel::toggleMute() {
 
 void PlayerViewModel::toggleHwaccel() {
     if (!mpv_) return;
-    // 乐观翻转（mpv 的 hwdec 属性修改只在新文件加载时生效 → replace
-    // 重载当前文件保持进度；hwdec-active 观察事件随后回写权威值）
-    bool target = !hwDecoding_;
-    hwDecoding_.store(target);
-    emit hwDecodingChanged();
-    std::string path = mpv_->propertyString("path");
-    if (path.empty()) return;
-    double pos = mpv_->propertyDouble("time-pos");
+    // 当前文件只能软解时按钮在 UI 里是禁用状态（hwDecodeAvailable=false），
+    // 这里再兜一层：不因为一次点击把偏好改掉。
+    if (!hwDecodeAvailable_.load()) return;
     if (hwdecInit_.empty())
         hwdecInit_ = mpv_->propertyString("hwdec");
-    // async（主线程 UI 操作——同步 set 会等 dispatch 队列清空，
-    // 与 decode DR 分配任务互等死锁，2026-08-10 根因同款）
-    // ⚠ 必须**重载文件**让 hwdec 生效：单改属性会让 mpv 在当前流中途换解码器，
-    // 新解码器没有参考帧 → "Could not find ref with POC / Error constructing
-    // the frame RPS"（2026-10-17 实测）。
-    // ⚠ 不能把位置塞进 loadfile 的第 4 参数：mpv 0.41 的 `loadfile <url>
-    // [<flags> [<index> [<options>]]]` 第 4 项是 key/value **列表**（字符串
-    // 数组），而 mpv_command 只能传 char* → "start=+5.000" 会被当成 index
-    // （整数）解析失败："The loadfile option must be an integer" → 命令整体
-    // 不执行，重载从未发生（本 bug 自 2026-08 一直存在，2026-10-17 查明）。
-    // 正确做法：重载后在 FILE_LOADED 里 seek 回原位置（pendingResumeSeek_）。
-    pendingResumeSeek_ = pos > 0 ? pos : -1.0;
+    bool target = !hwDecodeEnabled_;
+    // ⚠ 只翻**偏好**，不改 `hwDecoding_`（实际状态）：实际值只由
+    // hwdec-current 观察器回写。软解回退（本文件不支持硬解）因此不会把
+    // 用户的"硬解"设置冲成软解——换到支持硬解的文件时自动恢复硬解。
+    hwDecodeEnabled_.store(target);
+    emit hwDecodeEnabledChanged();
+    // **只改选项，不重载文件**：mpv 原生支持运行期切 hwdec——该选项
+    // flags = UPDATE_HWDEC，player/command.c 的处理是
+    // `mp_decoder_wrapper_control(dec, VDCTRL_REINIT)`（重建解码器，
+    // 因此不会有"新解码器缺参考帧 → Could not find ref with POC"）
+    // + `queue_seek(last_pts, MPSEEK_EXACT)`（自己精确 seek 回原位置）。
+    // ⚠ 2026-10-22 更正：旧的 `loadfile <path> replace` 实现会
+    //   playlist_clear（播放列表只剩当前文件——用户报"切软解/硬解会清空
+    //   播放列表"），还会丢掉外部字幕/轨道记忆；mpv 本来就不需要它。
+    // async：主线程同步写会等 dispatch 队列清空，与 decode DR 分配任务互等死锁。
     mpv_->setPropertyStringAsync("hwdec", target ? hwdecInit_ : "no");
-    mpv_->commandV({"loadfile", path.c_str(), "replace", nullptr});
 }
 
 // ── Video settings ───────────────────────────────────────────────────
@@ -2084,7 +2095,39 @@ void PlayerViewModel::updateSpeed(double s) {
 }
 
 void PlayerViewModel::updateHwDecoding(bool hw) {
-    if (hwDecoding_.load() != hw) { hwDecoding_.store(hw); emit hwDecodingChanged(); }
+    if (hwDecoding_.load() != hw) {
+        hwDecoding_.store(hw);
+        MLOG_INFO("decoder: 实际 %s → %s（偏好=%s hwdec=%s）",
+                  hw ? "软解" : "硬解", hw ? "硬解" : "软解",
+                  hwDecodeEnabled_.load() ? "硬解" : "软解",
+                  hwdecInit_.empty() ? "?" : hwdecInit_.c_str());
+        emit hwDecodingChanged();
+    }
+}
+
+// 当前文件能否硬解：
+//   - 用户偏好 = 软解（hwDecodeEnabled_=false）→ 视为"可切换"（随时能切回
+//     硬解，只是这个文件能不能硬解要切了才知道）
+//   - 解码器尚未就绪（decoderName_ 空）→ 保持原值，避免加载瞬间误禁用
+//   - 偏好=硬解、解码器已就绪、但 hwdec-current = no → **mpv 回退了**，
+//     即该文件只能软解 → false（UI 显示"软解"并禁用切换按钮）
+void PlayerViewModel::refreshHwDecodeAvailability() {
+    bool avail;
+    if (!hwDecodeEnabled_.load())        // 用户偏好=软解 → 随时可切回硬解
+        avail = true;
+    else if (decoderName_.isEmpty())     // 解码器还没起来（加载中）→ 保持原值
+        return;
+    else                                 // 偏好=硬解却实际软解 → 该文件只能软解
+        avail = hwDecoding_.load();
+    if (hwDecodeAvailable_.load() != avail) {
+        hwDecodeAvailable_.store(avail);
+        MLOG_INFO("decoder: 解码切换%s（偏好=%s 实际=%s 解码器=%s）",
+                  avail ? "可用" : "禁用：该文件只能软解",
+                  hwDecodeEnabled_.load() ? "硬解" : "软解",
+                  hwDecoding_.load() ? "硬解" : "软解",
+                  decoderName_.isEmpty() ? "-" : decoderName_.toUtf8().constData());
+        emit hwDecodeAvailableChanged();
+    }
 }
 
 void PlayerViewModel::updateVideoInfo(const QString &f) {
@@ -2138,14 +2181,10 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
             mpv_->setPropertyFlagAsync("save-position-on-quit", true);   // 普通文件恢复位置记忆
         restoreTrackMemory(lastPath_); // 按文件恢复轨道/字幕记忆（再次打开对应文件才恢复）
         syncVfOptions();               // 链重建后重放运行时 vf 状态（fps/vsr 防 UI 修改丢失）
+        refreshHwDecodeAvailability(); // 换片后重算"该文件能否硬解"（软解回退不改偏好）
         applyDeinterlace();            // 覆盖 watch_later 里按文件记的 deinterlace
                                        //（mpv 把它列在 watch_later_options → 换片时会
                                        //  用该文件上次的值复位，全局开关必须盖回去）
-        if (pendingResumeSeek_ >= 0) { // hwdec 切换重载：回到切换前的位置
-            int64_t ms = (int64_t)(pendingResumeSeek_ * 1000.0);
-            pendingResumeSeek_ = -1.0;
-            seekAbsolute(ms);
-        }
     }, Qt::QueuedConnection);
 }
 
