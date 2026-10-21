@@ -345,6 +345,32 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                 response = formatResponse("success");
             }
         }
+    } else if (cmd == "set-deinterlace") {
+        // 反交错三态（mpv --deinterlace 的 off/auto/force；viewModel 单一
+        // 来源，与右键菜单同路径）。映射到的 mpv 值是 no/auto/yes。
+        if (args.empty()) {
+            response = formatResponse("missing value (off|auto|force)");
+        } else if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            int m = PlayerViewModel::parseDeintMode(args[0]);
+            if (m < 0) {
+                response = formatResponse("invalid value (off|auto|force)");
+            } else {
+                QMetaObject::invokeMethod(vm, "setDeintMode", Qt::QueuedConnection,
+                                          Q_ARG(int, m));
+                response = formatResponse("success");
+            }
+        }
+    } else if (cmd == "get-deinterlace") {
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            static const char *names[3] = {"off", "auto", "force"};
+            int m = vm->deintMode();
+            if (m < 0 || m > 2) m = 0;
+            response = formatResponse("success", std::string("\"") + names[m] + "\"");
+        }
     } else if (cmd == "dump-vsr") {
         // VSR-specific screenshot: one frame, input (original) + output (Nx).
         // Paths auto-generated as [videoname]_[frameno]_[original|Nx].png

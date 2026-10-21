@@ -727,6 +727,11 @@ void PlayerViewModel::loadSettings() {
     persistUpHdrMiddleGray_ = clampInt(settings_.value("upHdrMiddleGray", kMiddleGrayDefault).toInt(),
                                        kMiddleGrayMin, kMiddleGrayMax);
     persistUpHdrDebanding_ = settings_.value("upHdrDebanding", kDebandingDefault).toBool();
+
+    // ── 反交错（0=Off / 1=Auto / 2=Force）─────────────────────────────
+    // 手改越界 → 夹回 0..2（不整份丢弃）。CLI `-- --deinterlace=…` 优先，
+    // 见 initDeinterlace()（在 applyPlaybackSettings 之前调用）。
+    persistDeintMode_ = clampInt(settings_.value("deintMode", 0).toInt(), 0, 2);
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -735,6 +740,7 @@ void PlayerViewModel::applyPlaybackSettings() {
     setSpeed(settings_.value("speed", 1.0).toDouble());
     setLoopMode(settings_.value("loopMode", 0).toInt());
     setAspect(settings_.value("aspect", QStringLiteral("no")).toString());
+    applyDeinterlace();   // mpv 选项（非 vf）——链重建后也由 FILE_LOADED 重放
 }
 
 void PlayerViewModel::restorePlaylist() {
@@ -1173,6 +1179,53 @@ QVariantList PlayerViewModel::frucMaxFpsModel() const {
 }
 
 bool PlayerViewModel::frucMaxFpsAvailable() const { return fruc::kMaxFpsSelectable; }
+
+// ── 反交错（mpv `--deinterlace` 的三态开关）────────────────────────────
+// 全部实现由 mpv 输出链的 `deint` 前置节点承担（filters/f_auto_filters.c：
+// 按帧的 interlaced 标志决定、按像素格式选 bwdif_cuda/bwdif_vulkan/bwdif），
+// 位置在 user_filters（`--vf`，即我们的 hwup→vsr→truehdr→vfg）**之前**。
+// 这里只做三件事：把模式映射成 mpv 值、下发、持久化。
+
+int PlayerViewModel::parseDeintMode(const std::string &s) {
+    if (s == "off" || s == "no")
+        return 0;
+    if (s == "auto")
+        return 1;
+    if (s == "force" || s == "yes")
+        return 2;
+    return -1;
+}
+
+namespace {
+const char *deintMpvValue(int mode) {
+    return mode == 1 ? "auto" : (mode == 2 ? "yes" : "no");
+}
+}  // namespace
+
+void PlayerViewModel::initDeinterlace(int cliMode) {
+    // CLI 显式指定 → 本会话以它为准（不写回 QSettings：命令行不该改持久化）；
+    // 否则用持久化值（loadSettings 已夹到 0..2）。
+    deintMode_.store(cliMode >= 0 ? cliMode : persistDeintMode_);
+}
+
+void PlayerViewModel::applyDeinterlace() {
+    if (!mpv_) return;
+    // `options/<name>` 是 mpv 暴露选项的通用属性路径（DOCS/man/input.rst
+    // "options/<name> (RW)"）；deint 节点每帧 m_config_cache_update() 读它，
+    // 所以切换即时生效、不重建用户滤镜链（VSR/VFG 引擎保留）。
+    mpv_->commandAsync({"set", "options/deinterlace",
+                        deintMpvValue(deintMode_.load()), nullptr});
+}
+
+void PlayerViewModel::setDeintMode(int mode) {
+    if (mode < 0 || mode > 2) return;
+    if (deintMode_.load() != mode) {
+        deintMode_.store(mode);
+        emit deintModeChanged();
+    }
+    applyDeinterlace();
+    saveSettings("deintMode", mode);
+}
 
 // 剥离 mpv 日志消息的尾随换行与前导空格（mpv 的 log text 以 \n 结尾——
 // 原样存入会让 OSD 行内嵌 \n → 行距异常/提前折行；"vsr-status:" 前缀后
@@ -2085,6 +2138,9 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
             mpv_->setPropertyFlagAsync("save-position-on-quit", true);   // 普通文件恢复位置记忆
         restoreTrackMemory(lastPath_); // 按文件恢复轨道/字幕记忆（再次打开对应文件才恢复）
         syncVfOptions();               // 链重建后重放运行时 vf 状态（fps/vsr 防 UI 修改丢失）
+        applyDeinterlace();            // 覆盖 watch_later 里按文件记的 deinterlace
+                                       //（mpv 把它列在 watch_later_options → 换片时会
+                                       //  用该文件上次的值复位，全局开关必须盖回去）
         if (pendingResumeSeek_ >= 0) { // hwdec 切换重载：回到切换前的位置
             int64_t ms = (int64_t)(pendingResumeSeek_ * 1000.0);
             pendingResumeSeek_ = -1.0;

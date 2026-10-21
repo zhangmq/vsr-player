@@ -236,6 +236,7 @@ Item {
             onOpenUrlRequested: urlPopup.open()
             onAppendFilesRequested: function() { fileDialog.mode = 1; fileDialog.open() }
             onAppendFolderRequested: function() { folderDialog.mode = 1; folderDialog.open() }
+            onDeinterlaceSelected: function(mode) { viewModel.setDeintMode(mode) }
             onQuitRequested: Qt.quit()   // 走标准退出路径（watch-later 落盘）
         }
 

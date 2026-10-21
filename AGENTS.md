@@ -399,6 +399,58 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 - **不改用关键帧 seek（实测否决）**：mpv 原生相对 seek（`seek +5 relative`，即其方向键语义）在按住 25 Hz 时**累加**目标，3 s 内位置 +439 s（画面整段飞过），60 Hz 直接冲到文件尾并回绕；它的"每帧看着正常"只是因为画面在整段跳。门控 + 精确绝对 seek（每步严格 +5 s、落点精确）在修好 marker 之后速度已与关键帧同级，因此保留现语义。
 
 
+### 反交错（mpv 原生 `--deinterlace`，2026-10-22）
+
+**mpv 怎么做的**（全部在它的输出链里，**不经过 `--vf`**）：
+
+- 选项 `--deinterlace=no|yes|auto`（默认 **no**）+ `--deinterlace-field-parity=tff|bff|auto`
+  （`options/options.c:467` 的 `filter_conf`）；同时列在 `watch_later_options`
+  （`options/options.c:1174`）→ **按文件记忆**。
+- 实现 = 输出链里固定的 `deint` **pre-filter 节点**（`filters/f_auto_filters.c:56`，
+  插入点 `filters/f_output_chain.c:705`）。链序 `pre_filters(userdeint) →
+  user_filters(--vf) → post_filters(autorotate)`，即
+  **`decode → deint → hwup → vsr → truehdr → vfg → VO`**。
+- 反交错器按像素格式选（`f_auto_filters.c:100-160`）：`IMGFMT_CUDA`（我们
+  `hwdec=nvdec`）→ **`bwdif_cuda`**（全程显存，不回读）；`IMGFMT_VULKAN` →
+  `bwdif_vulkan`；VDPAU/D3D11/VAAPI → 各自 VPP；其余 → 自动转软件格式 + `bwdif`。
+- 参数 `mode=send_field` → **每个场输出一帧 → 帧率翻倍**（25i→50p）；`yes` 时
+  `deint=0`（逐帧都处理），`auto` 时 `deint=1`（bwdif 按帧标志决定）。
+- `auto` 判据 = `img->fields & MP_IMGFIELD_INTERLACED`（ffmpeg 解码器给的标志）。
+  滤镜一旦插入就保持（`|| p->sub.filter`），只有像素格式变化才销毁重建；文档明确
+  警告 `auto` 会误判（标了隔行但其实逐行）。
+- 运行期切换 = `set options/deinterlace no|yes|auto`（`options/<name>` 是 mpv
+  暴露选项的通用属性路径，`DOCS/man/input.rst`）。`deint` 节点每帧
+  `m_config_cache_update()` 读值，`no` 立即 `mp_subfilter_destroy()`；选项
+  change flag = `UPDATE_IMGPAR`（只 reset 解码器参数 + 强制刷新），**不重建用户
+  滤镜链**（VSR/VFG 引擎保留）。只读状态 `deinterlace-active`（`player/command.c:1441`）。
+
+**本项目的接入（三态开关，右键**二级菜单**）**：
+
+- 语义 = mpv 的三档，**不是** toggle：`0=Off(no)` / `1=Auto(auto)` / `2=Force(yes)`。
+  `PlayerViewModel::deintMode`（int 属性）+ `setDeintMode()`（RPC
+  `set-deinterlace off|auto|force` 走同一条路径，`get-deinterlace` 读回）。
+- UI：右键菜单 `ContextMenu` 的"Deinterlace"条目 → 右侧二级面板（Off/Auto/Force，
+  当前项打勾 ▸ 用 `mdi-check`，条目**不配图标**——用户 2026-10-22 定）。菜单条目
+  支持 `submenu: [{label, value}]` 的一般机制见 `ContextMenu.qml`。
+- **二级面板画在同一个 Popup 里**（打开时 popup 加宽、面板占右半边：
+  `width: menuWidth + (subOpen ? gap + subMenuWidth : 0)`，背景用两条 Rectangle
+  分别画主菜单/面板）。⚠ 不要改成嵌套 Popup：两个 popup 各自抢 grab，点面板会被
+  外层判成"点击 outside"→ 菜单自己关掉。`showAt()` 的横向钳制按**展开后的宽度**
+  算，否则面板会顶到屏幕外。
+- 时机：`loadSettings()` 读 `deintMode`（夹 0..2）→ `applyPlaybackSettings()` 下发 →
+  **`FILE_LOADED` 里再下发一次**（mpv 把 `deinterlace` 记进 watch_later，换片时会
+  用该文件上次的值复位，全局开关必须盖回去）。`-- --deinterlace=no|yes|auto`
+  优先于持久化值（本会话生效、不写回设置），见 `main.cpp` 的 passthrough 解析。
+- 实测（合成的 25i TFF h264，1280×720；另一个 1080p59.94 逐行素材）：
+  `no` → `deinterlace-active=no`、帧率 25（VFG×2→50）；`auto`/`yes` → active=yes、
+  **deint 输出 50**（`vsr-status fps=50`，超分成本×2）、VFG 再×2→100；
+  逐行素材强制 `yes` 也会跑 bwdif（软化细节，所以默认 no）。切换即时生效、
+  `hwdec-current`/`pixelformat` 始终 `nvdec`/`cuda`（= bwdif_cuda，无
+  `creating deinterlacer failed`）。个别切换会触发一次解码器重置（日志多一行
+  `● Video` + `vsr: init`，~300 ms 级），多数切换不重建链。
+- Toggle 与 `send_field` 的连带影响：反交错在链最前面 → VSR 按翻倍后的帧数计费；
+  VFG 按 `k × 反交错后帧率` 判 `max-fps`（默认 60：50p 源 ×2 = 100 > 60 → 直通）。
+
 ### 桌面集成（2026-10-17）
 
 - `scripts/install.sh` 装应用菜单入口：入口内容 = **`data/vsr-player.desktop.in`**（单一事实源，中英 Name/Comment；`@EXEC@` 由脚本替换为安装后绝对路径，不依赖 PATH），图标 = `data/vsr-player.svg` + `.png` → hicolor `scalable`/`512x512`，之后 best-effort 刷新 `update-desktop-database`/`gtk-update-icon-cache`/`kbuildsycoca6`。打包脚本把 `data/` 放进 tarball 根（`build_release.sh` staging）。

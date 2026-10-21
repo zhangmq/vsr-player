@@ -267,6 +267,22 @@ int main(int argc, char *argv[]) {
     viewModel.initFrucMaxFps(opts.fruc_max_fps);   // 输出帧率上限（仅 VFG 可选）
     viewModel.initTrueHdr();  // SDR→HDR10 上变换参数（持久化 + env 默认；须在
                               // installPolicy 前——策略的首次 reevaluate 要用它们）
+    // 反交错：CLI `-- --deinterlace=no|auto|yes` 优先于持久化值（本会话生效，
+    // 不写回设置）；mpv 侧仍是它自己的 `deinterlace` 选项，我们只负责下发。
+    {
+        int deintCli = -1;
+        for (const auto &kv : opts.passthrough) {
+            if (kv.first != "deinterlace") continue;
+            int m = PlayerViewModel::parseDeintMode(kv.second);
+            if (m >= 0) {
+                deintCli = m;
+            } else {
+                MLOG_WARN("invalid --deinterlace=%s (no|yes|auto)，忽略",
+                          kv.second.c_str());
+            }
+        }
+        viewModel.initDeinterlace(deintCli);
+    }
     std::string vf = viewModel.vfOption();
 
     // ── mpv ─────────────────────────────────────────────────────────────

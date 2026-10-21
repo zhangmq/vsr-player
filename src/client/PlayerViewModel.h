@@ -64,6 +64,15 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(int frucMaxFps READ frucMaxFps NOTIFY frucMaxFpsChanged)
     Q_PROPERTY(QVariantList frucMaxFpsModel READ frucMaxFpsModel CONSTANT)
     Q_PROPERTY(bool frucMaxFpsAvailable READ frucMaxFpsAvailable CONSTANT)
+    // ── 反交错（mpv `--deinterlace` 的三态开关）───────────────────────
+    // 0=Off（mpv `no`，默认）、1=Auto（mpv `auto`，只处理解码器标记为隔行
+    // 的帧）、2=Force（mpv `yes`，逐帧都处理）。实现完全交给 mpv 输出链的
+    // `deint` 前置节点（filters/f_auto_filters.c）：该节点排在所有 `--vf`
+    // 之前 → 我们的 hwup→vsr→truehdr→vfg 拿到的已经是逐行帧，不新增滤镜、
+    // 不改链序。hwdec=nvdec（IMGFMT_CUDA）时用 bwdif_cuda（全程显存内）。
+    // ⚠ send_field 语义 = 每个场一帧 → 帧率翻倍（25i→50p），下游 VSR/VFG
+    // 按翻倍后的帧数工作（README/AGENTS 有实测）。
+    Q_PROPERTY(int deintMode READ deintMode NOTIFY deintModeChanged)
     // ── SDR→HDR10 上变换（VFX TrueHDR，链上位于 vsr 之后；参数/证据见
     //    docs/vfx-truehdr-investigation.md §8 与 src/client/TrueHdrParams.h）──
     // 总开关 = HDR 策略的 opt-in（默认取 `VSR_UPHDR` env；UI 改后以持久化值为准）。
@@ -182,6 +191,16 @@ public:
     /// （默认 120）；RIFE 分支无此概念，仅记日志提示忽略。空 → 持久化值。
     void initFrucMaxFps(const std::string &max_fps);
 
+    /// 反交错初始值（CLI `-- --deinterlace=no|auto|yes` 优先于持久化值；
+    /// cliMode < 0 = 未指定 → 用 QSettings 的 deintMode）。须在
+    /// applyPlaybackSettings 之前调用。
+    void initDeinterlace(int cliMode);
+    /// 把当前模式下发给 mpv（`set options/deinterlace …`）。运行期切换由
+    /// deint 节点逐帧读选项生效，不重建滤镜链（VSR 引擎保留）。
+    void applyDeinterlace();
+    /// "off"/"no"→0、"auto"→1、"force"/"yes"→2，非法→-1（RPC/CLI 共用）。
+    static int parseDeintMode(const std::string &s);
+
     void setGpuName(const QString &name);
     /// 持久化：启动时读（须在 initVsr 前调用——scale/quality/denoise
     /// 决定 vf 字符串）；各 setter 写入。benchmark 模式不调用（测量口径）。
@@ -255,6 +274,7 @@ public:
     bool frucQualityAvailable() const;
     /// 输出帧率上限（仅 VFG；RIFE 分支恒默认值且该排隐藏）。
     int frucMaxFps() const      { return frucMaxFps_.load(); }
+    int deintMode() const       { return deintMode_.load(); }
     QVariantList frucMaxFpsModel() const;
     bool frucMaxFpsAvailable() const;
     double speed() const        { return speed_.load(); }
@@ -353,6 +373,8 @@ public slots:
     /// 输出帧率上限（仅 VFG：48|60|120）。vf-command `vfg max-fps <n>` +
     /// 持久化；filter 下一帧重估直通（超过上限 → reason=max-fps）。
     void setFrucMaxFps(int v);
+    /// 反交错三态（0/1/2，见 deintMode）：下发 mpv + 持久化。
+    Q_INVOKABLE void setDeintMode(int mode);
     /// FRUC 状态行（事件线程从 mpv status 日志提取；前缀随后端：
     /// VFG "vfg-status:" / RIFE "fruc-status:"，见 FrucBackend.h）
     void setFrucStatus(const std::string &s);
@@ -428,6 +450,7 @@ signals:
     void frucFpsChanged();
     void frucQualityChanged();
     void frucMaxFpsChanged();
+    void deintModeChanged();
     // TrueHDR（SDR→HDR10 上变换）参数
     void upHdrEnabledChanged();
     void upHdrEffectiveChanged();
@@ -674,4 +697,6 @@ private:
     int persistFruc_ = -1;        // 持久化插帧目标 fps（initFruc 用）
     int persistFrucQuality_ = 1;  // 持久化插帧质量档（initFrucQuality 用；1=medium）
     int persistFrucMaxFps_ = fruc::kMaxFpsDefault;  // 持久化输出帧率上限（initFrucMaxFps 用）
+    int persistDeintMode_ = 0;    // 持久化反交错模式（initDeinterlace 用）
+    std::atomic<int> deintMode_{0};   // 当前反交错模式（0/1/2；RPC 线程读）
 };
