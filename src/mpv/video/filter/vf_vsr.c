@@ -237,6 +237,16 @@ struct priv {
     double status_cost_ms;
     int    status_emit;        // passthrough 分支输出计数（每 30 帧）
     bool   sw_warned;          // 软解输入直通只警告一次（同 vf_rife.sw_warned）
+    // seek 目标前的帧直接丢弃（0 = 关闭）：mpv 的 hr-seek framedrop 只在
+    // 解码器层按 packet 丢弃，某些流（packet pts 被判 broken 等）会把
+    // 关键帧→目标之间的帧送进滤镜链；它们最终在 VO 被丢弃，跑 VSR 是白费
+    //（实测一次 seek 白跑 ~28 帧 × 6 ms）。客户端发起绝对 seek 前用
+    // `vf-command vsr seek-target <秒>` 告知目标，pts 小于目标的帧一律丢弃，
+    // 标记 3 s 后自动过期（或下一次 seek 覆盖）。
+    double skip_before_pts;
+    double skip_expire_ms;     // 标记过期时刻（seek 失败时避免永久丢帧）
+    int    skip_count;         // 本次标记丢弃了多少帧（诊断日志用）
+    bool   skip_passed;        // 已越过目标（只让"reached"日志打一次）
 };
 
 // ── compute_adaptive_scale ─────────────────────────────────────────────────
@@ -489,7 +499,7 @@ static bool ensure_vsr(struct mp_filter *f, struct priv *p,
     }
 
     // 引擎不存在（filter 新建 / 尺寸变化重建 / passthrough 回切）：init
-    MP_VERBOSE(f, "vsr: init %dx%d -> %dx%d quality=%d bits=%d\n",
+    MP_INFO(f, "vsr: init %dx%d -> %dx%d quality=%d bits=%d\n",
                in_w, in_h, out_w, out_h, quality, bits);
     if (!vsr_init(&p->vsr, in_w, in_h, out_w, out_h, quality, bits,
                   p->cuda_stream)) {
@@ -622,21 +632,68 @@ static void f_process(struct mp_filter *f)
     if (!mp_pin_can_transfer_data(f->ppins[1], f->ppins[0]))
         return;
 
-    struct mp_frame frame = mp_pin_out_read(f->ppins[0]);
+    struct mp_frame frame;
+    struct mp_image *mpi;
 
-    if (mp_frame_is_signaling(frame)) {
-        mp_pin_in_write(f->ppins[1], frame);
-        return;
+    // seek 目标前的帧（关键帧→目标）直接丢弃，不跑引擎、不写输出。
+    // ⚠ 必须在**同一次 process() 里连续拉取**（drop loop）：早先每丢一帧就
+    // mark_progress + return、让 filter graph 再调一次本函数，实测每帧
+    // ~0.3 ms 框架开销；长 GOP 素材一次 seek 可达 1500 帧（25 s @60fps）
+    // → 450 ms。循环内丢弃后每帧只剩解码成本（~0.1 ms）。
+    // ⚠ marker **不在首个 >= 目标的帧上清除**：mpv 在一次 seek 里会先喂目标
+    // 之前的帧、再在链 reset 之后**又喂一遍**（实测首个达标帧之后 0–100 ms
+    // 内跟来 1–2 s 的量，即 60–130 帧）。marker 早清 → 这一批重新进引擎
+    //（2.8 ms/帧）→ 单次 seek 多 200–400 ms，正是按住方向键"偶发特别慢"
+    // 的另一半来源。所以 marker 一直留到过期：它只丢弃 pts < 目标的帧，
+    // 正常播放零影响（每帧只多一次比较）。
+    for (;;) {
+        if (!mp_pin_can_transfer_data(f->ppins[1], f->ppins[0]))
+            return;
+        frame = mp_pin_out_read(f->ppins[0]);
+
+        if (mp_frame_is_signaling(frame)) {
+            mp_pin_in_write(f->ppins[1], frame);
+            return;
+        }
+
+        if (frame.type != MP_FRAME_VIDEO) {
+            MP_ERR(f, "vsr: non-video frame received\n");
+            mp_frame_unref(&frame);
+            mp_filter_internal_mark_failed(f);
+            return;
+        }
+
+        mpi = frame.data;
+        if (p->skip_before_pts <= 0.0)
+            break;
+
+        // 兜底：marker 设了但一直没有 >= 目标的帧（seek 失败/直播流）→ 3 s 后
+        // 自动失效，避免后续正常播放的帧被一直丢掉。
+        if (vsr_now_ms() > p->skip_expire_ms) {
+            if (p->skip_count > 0)
+                MP_VERBOSE(f, "vsr: seek-target expired after %d skipped frames\n",
+                           p->skip_count);
+            p->skip_before_pts = 0.0;
+            p->skip_count = 0;
+            p->skip_passed = false;
+            break;
+        }
+
+        if (mpi->pts != MP_NOPTS_VALUE && mpi->pts < p->skip_before_pts - 0.005) {
+            p->skip_count++;
+            mp_frame_unref(&frame);
+            continue;
+        }
+
+        // 首个 >= 目标的帧（或目标之后的迟到帧）：照常处理，marker 继续留着。
+        if (!p->skip_passed) {
+            p->skip_passed = true;
+            MP_VERBOSE(f, "vsr: seek-target reached, skipped %d frames\n",
+                       p->skip_count);
+        }
+        break;
     }
 
-    if (frame.type != MP_FRAME_VIDEO) {
-        MP_ERR(f, "vsr: non-video frame received\n");
-        mp_frame_unref(&frame);
-        mp_filter_internal_mark_failed(f);
-        return;
-    }
-
-    struct mp_image *mpi = frame.data;
     p->frame_count++;
     double t0 = vsr_now_ms();   // 处理计时起点
 
@@ -1001,6 +1058,19 @@ static bool vsr_command(struct mp_filter *f, struct mp_filter_command *cmd)
             }
             return true;
         }
+        if (strcmp(cmd->cmd, "seek-target") == 0) {
+            // 客户端绝对 seek 前调用：pts < 目标的帧直接丢弃（0 = 清除）。
+            char *end = NULL;
+            double t = strtod(cmd->arg, &end);
+            if (end == cmd->arg || *end != '\0' || !isfinite(t) || t < 0)
+                return false;
+            p->skip_before_pts = t;
+            p->skip_count = 0;
+            p->skip_passed = false;
+            p->skip_expire_ms = vsr_now_ms() + 3000.0;
+            MP_VERBOSE(f, "vsr: seek-target %.3f\n", p->skip_before_pts);
+            return true;
+        }
         if (strcmp(cmd->cmd, "quality") == 0) {
             if (!parse_quality_arg(cmd->arg, &v))
                 return false;
@@ -1041,13 +1111,16 @@ static void f_reset(struct mp_filter *f)
 {
     struct priv *p = f->priv;
 
-    if (p->cuda_ref && p->cuda_ref->ctx) cuCtxPushCurrent(p->cuda_ref->ctx);
-    vsr_destroy(&p->vsr);
-    if (p->cuda_ref && p->cuda_ref->ctx) cuCtxPopCurrent(NULL);
-    p->vsr_configured = false;
+    // 只清每次 seek 的簿记，**引擎保留**（与 vf_vfg / vf_rife 的 f_reset 同款）：
+    // mpv 每次 seek 都会 reset_playback_state → mp_filter_reset → 本回调，而
+    // VFX 引擎 destroy + 重新 Load 是 ~300 ms 的固定成本（实测 1080p 精确 seek：
+    // 无滤镜 35 ms、仅 VSR 330 ms，且与"跳多远"无关）——按住方向键逐帧步进时
+    // 每一步都要白付一次。VSR 是逐帧空间操作、没有跨帧状态，跨 seek 复用安全：
+    // 位深/输入尺寸变化仍由 ensure_vsr 的检查触发重建，CUDA context 变化仍由
+    // ensure_cuda 处理（那条路径会主动 vsr_destroy）。
     p->frame_count = 0;
-    MP_INFO(f, "vsr: reset (%s)\n",
-            p->vsr_configured ? "engine kept" : "engine destroyed");
+    p->status_emit = 0;
+    MP_INFO(f, "vsr: reset (engine kept)\n");
 }
 
 // ── f_destroy ──────────────────────────────────────────────────────────────

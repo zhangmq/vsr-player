@@ -600,6 +600,13 @@ int main(int argc, char *argv[]) {
                 viewModel.onFileLoadedFromEventThread();
                 return;
             }
+            // seek 完成（目标帧已显示）→ 连续快进/快退门控放行下一步。
+            // 必须走事件而非 `seeking` 属性观察：libmpv 对观察属性做值去重，
+            // 连续 seek 时完成通知可能被吞（拖进度条后方向键卡死的根因）。
+            if (ev->event_id == MPV_EVENT_PLAYBACK_RESTART) {
+                viewModel.notePlaybackRestart();
+                return;
+            }
             if (ev->event_id != MPV_EVENT_END_FILE)
                 return;
             auto *ef = (mpv_event_end_file *)ev->data;

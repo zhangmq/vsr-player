@@ -153,6 +153,14 @@ public:
     ///（曲目切换的 path 清空窗口会让状态短暂错位，此回调兜底收敛）。
     void onFileLoadedFromEventThread();
 
+    /// 事件线程：MPV_EVENT_PLAYBACK_RESTART（一次 seek / 加载完成、目标帧已
+    /// 显示）后调用。连续快进/快退门控的完成信号——**必须用这个事件，不能用
+    /// `seeking` 属性观察**：libmpv 对观察属性做**值去重**（`send_client_
+    /// property_changes` 只在值与上次下发的不同时才发），连续 seek 时
+    /// true/false 相互抵消，最后一次完成通知可能根本不会送达（实测：拖进度条
+    /// 后方向键永久卡住）。事件流不去重，逐次到达。
+    void notePlaybackRestart();
+
     /// Initialize VSR parameters from CLI strings
     /// ("off"/"auto"/"2"/"3"/"4", "low"/"medium"/"high"/"ultra").
     void initVsr(const std::string &scale, const std::string &quality,
@@ -582,6 +590,14 @@ private:
     std::atomic<double> renderFps_{0.0};
     std::atomic<int64_t> renderedFrames_{0};
     bool seekingPrev_ = false;       // seeking 观察器翻转检测
+    // 连续快进/快退门控（2026-10-21）：mpv 在一次 seek 尚未出帧时会合并/丢弃
+    // 后续 seek，按住方向键时表现为整段跳画面。改为：上一次 seek 明确成功
+    // （mpv restart complete，帧已显示）之后才触发下一次；在途期间到达的
+    // 步进一律丢弃（不排队、不累加）。
+    //  · seekInFlight_ = 有 seek 在途（发出即置位，PLAYBACK_RESTART 清除）
+    //  · seekIssueMs_  = 发出时刻（steady clock ms，仅作不可 seek 流的放行兜底）
+    std::atomic<bool> seekInFlight_{false};
+    std::atomic<int64_t> seekIssueMs_{0};
     bool pausePrev_ = false;         // pause 观察器翻转检测，初始通知 false→false 不触发
     // 渲染帧率差值基准：(renderedFrames_ 增量 / Δt)，osdTextString 计算用
     // （osdTextString 在事件线程调用——fpsTimer_/fpsPrevRendered_ 仅事件线程访问）

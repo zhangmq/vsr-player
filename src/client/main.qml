@@ -250,69 +250,121 @@ Item {
             } }
 
         focus: true
-        Keys.onPressed: function(event) {
-            switch (event.key) {
-            case Qt.Key_Escape:
-                // 全屏 → 退全屏；播放列表打开 → 关闭；其余不响应。
-                // Esc 不控制播放停止。
+
+        // ── 窗口级快捷键（Shortcut，与焦点无关）────────────────────
+        // 不能用 Keys.onPressed 做全局快捷键：Keys 只投递给 activeFocusItem，
+        // 任何可聚焦控件被点中就会把按键全部吃掉（进度条 Slider 在非 macOS 上
+        // focusPolicy = StrongFocus，点一下它，方向键就进了 Slider 自己的
+        // keyPressEvent——stepSize=0 时只改 0.1 ms，松手还会触发 seeked，
+        // 现象是"画面原地跳、快进快退失效"）。
+        // Shortcut 走 QShortcutMap：qguiapplication.cpp 的 processKeyEvent →
+        // handleShortcutEvent 在**把按键投递给焦点项之前**匹配，因此换焦点
+        // 不影响快捷键。
+        // 弹窗打开时整体禁用：URL 输入框里要能正常打字，弹窗内控件保留自己的
+        // 按键（Esc 由弹窗自己处理；播放列表 Drawer 不在 _popups 里，照常）。
+        readonly property bool shortcutsEnabled: !uiLayer.anyPopupOpen
+
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Escape"
+            onActivated: {
+                // 全屏 → 退全屏；播放列表打开 → 关闭；其余不响应。Esc 不控制播放停止。
                 if (viewModel.fullscreen) viewModel.toggleFullscreen()
                 else if (playlistPanel.visible) playlistPanel.close()
-                event.accepted = true
-                break
-            case Qt.Key_Space:
-                viewModel.togglePlayPause(); event.accepted = true; break
-            case Qt.Key_Left:
-                viewModel.seekRelative(event.modifiers & Qt.ShiftModifier ? -10000 : -5000)
-                event.accepted = true; break
-            case Qt.Key_Right:
-                viewModel.seekRelative(event.modifiers & Qt.ShiftModifier ? 10000 : 5000)
-                event.accepted = true; break
-            case Qt.Key_Up:
-                viewModel.setVolume(viewModel.volume + 0.05); event.accepted = true; break
-            case Qt.Key_Down:
-                viewModel.setVolume(viewModel.volume - 0.05); event.accepted = true; break
-            case Qt.Key_S:
-                viewModel.screenshot(); event.accepted = true; break
-            case Qt.Key_Period:
-                // 单帧步进（调试插帧帧序）：暂停态前进 1 帧
-                viewModel.frameStep(1); event.accepted = true; break
-            case Qt.Key_Comma:
-                viewModel.frameStep(-1); event.accepted = true; break
-            case Qt.Key_Tab:
-                viewModel.toggleOsd(); event.accepted = true; break
-            case Qt.Key_Q:
-                // Ctrl+Q 退出（与右键菜单 Quit 一致；走标准退出路径）
-                if (event.modifiers & Qt.ControlModifier) { Qt.quit(); event.accepted = true }
-                break
-            case Qt.Key_N:
-                viewModel.playlistNext(); event.accepted = true; break
-            case Qt.Key_B:
-                viewModel.playlistPrev(); event.accepted = true; break
-            case Qt.Key_BracketLeft:
-                viewModel.setSpeed(0.5); event.accepted = true; break
-            case Qt.Key_BracketRight:
-                viewModel.setSpeed(2.0); event.accepted = true; break
-            case Qt.Key_Backslash:
-                viewModel.setSpeed(1.0); event.accepted = true; break
-            case Qt.Key_O:
-                if (event.modifiers === Qt.ControlModifier) {
-                    fileDialog.mode = 0; fileDialog.open(); event.accepted = true
-                } else if (event.modifiers === (Qt.ControlModifier | Qt.ShiftModifier)) {
-                    folderDialog.mode = 0; folderDialog.open(); event.accepted = true
-                }
-                break
-            case Qt.Key_L:
-                if (event.modifiers === Qt.ControlModifier) {
-                    urlPopup.open(); event.accepted = true
-                }
-                break
-            case Qt.Key_V:
-                viewModel.toggleSubtitles(); event.accepted = true; break
-            case Qt.Key_P:
-                root.togglePlaylist(); event.accepted = true; break
-            case Qt.Key_F:
-                viewModel.toggleFullscreen(); event.accepted = true; break
             }
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Space"
+            onActivated: viewModel.togglePlayPause()
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Left"
+            onActivated: viewModel.seekRelative(-5000)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Shift+Left"
+            onActivated: viewModel.seekRelative(-10000)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Right"
+            onActivated: viewModel.seekRelative(5000)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Shift+Right"
+            onActivated: viewModel.seekRelative(10000)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Up"
+            onActivated: viewModel.setVolume(viewModel.volume + 0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Down"
+            onActivated: viewModel.setVolume(viewModel.volume - 0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "S"
+            onActivated: viewModel.screenshot()
+        }
+        Shortcut {
+            // 单帧步进（调试插帧帧序）：暂停态前进 1 帧
+            enabled: root.shortcutsEnabled; sequence: "."
+            onActivated: viewModel.frameStep(1)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: ","
+            onActivated: viewModel.frameStep(-1)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Tab"
+            onActivated: viewModel.toggleOsd()
+        }
+        Shortcut {
+            // Ctrl+Q 退出（与右键菜单 Quit 一致；走标准退出路径）
+            enabled: root.shortcutsEnabled; sequence: "Ctrl+Q"
+            onActivated: Qt.quit()
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "N"
+            onActivated: viewModel.playlistNext()
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "B"
+            onActivated: viewModel.playlistPrev()
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "["
+            onActivated: viewModel.setSpeed(0.5)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "]"
+            onActivated: viewModel.setSpeed(2.0)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "\\"
+            onActivated: viewModel.setSpeed(1.0)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Ctrl+O"
+            onActivated: { fileDialog.mode = 0; fileDialog.open() }
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Ctrl+Shift+O"
+            onActivated: { folderDialog.mode = 0; folderDialog.open() }
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Ctrl+L"
+            onActivated: urlPopup.open()
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "V"
+            onActivated: viewModel.toggleSubtitles()
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "P"
+            onActivated: root.togglePlaylist()
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "F"
+            onActivated: viewModel.toggleFullscreen()
         }
     }
 

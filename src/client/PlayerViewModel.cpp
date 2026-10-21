@@ -16,8 +16,18 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 
 namespace {
+
+// seek 门控失败兜底（ms）：不可 seek 的流上 mpv 不会发 seeking 翻转，
+// 超时后放行下一步，避免方向键永久失效（正常 seek 远快于此）。
+constexpr int64_t kSeekGateTimeoutMs = 5000;
+
+int64_t steadyNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 // 静音前音量下限：进入静音时音量低于此值则记录此值——
 // 退出静音后保证可听（不记录 0/微小的 slider 残值）。
@@ -450,6 +460,9 @@ void PlayerViewModel::attach(MpvController *mpv) {
 
     mpv_->observeProperty("seeking", MPV_FORMAT_FLAG, [this, postData] {
         bool seeking = mpv_->propertyFlag("seeking");
+        // 注意：连续快进/快退的门控**不在这里**做。libmpv 的属性观察对值去重
+        // （连续 seek 时 true/false 互相抵消，最后一条完成通知可能不送达），
+        // 完成信号用 MPV_EVENT_PLAYBACK_RESTART（见 notePlaybackRestart）。
         int64_t drops = mpv_->propertyInt64("frame-drop-count");
         postData([this, seeking, drops] {
             if (!seeking && seekingPrev_)   // true→false：seek 完成
@@ -936,21 +949,57 @@ void PlayerViewModel::stop() {
 
 void PlayerViewModel::seekAbsolute(int64_t ms) {
     if (!mpv_) return;
+    // 标记 seek 在途（门控见 seekRelative）：完成信号 = MPV_EVENT_PLAYBACK_RESTART
+    // （notePlaybackRestart 清除）；seekIssueMs_ 只用于失败兜底。
+    seekInFlight_.store(true);
+    seekIssueMs_.store(steadyNowMs());
     currentTime_.store(ms);
     emit currentTimeChanged();
     // %.3f 保留亚秒精度（ms/1000 整数除会丢 0.5s → "seek 0 absolute" 从头重启）。
     // 参数必须分解传递：commandAsync 不做整行解析（整串会被当 target 解析失败）。
     char buf[64];
     snprintf(buf, sizeof(buf), "%.3f", ms / 1000.0);
+    // 先告知 vf_vsr 目标：目标之前的帧（关键帧→目标）在滤镜里直接丢弃。
+    // mpv 的 hr-seek framedrop 只在解码器层按 packet 丢，某些流上不生效 →
+    // 这些注定被 VO 丢弃的帧会逐帧跑 VSR（实测一次 seek 白跑 ~28 帧 × 6 ms）。
+    // 命令队列有序：标记先于 seek 生效。滤镜侧只在 3 s 过期或下一次
+    // seek-target（即下一步）时清除——**不能在首个 >= 目标的帧上清**：mpv
+    // 会在链 reset 之后把目标之前的帧再喂一遍（实测 60–130 帧），早清会让
+    // 这批帧重新进引擎（2.8 ms/帧 → 单次 seek 多 200–400 ms）。
+    if (!isLiveSource())   // 直播流 seek 本来就会失败，标记只会在原地丢帧
+        mpv_->commandAsync({"vf-command", "vsr", "seek-target", buf, nullptr});
     mpv_->commandAsync({"seek", buf, "absolute", nullptr});   // async：主线程不阻塞 core-lock
 }
 
 void PlayerViewModel::seekRelative(int64_t offsetMs) {
     if (!mpv_) return;
+    // 连续快进/快退门控：上一次 seek 还没明确成功（mpv 尚未 restart complete，
+    // 即帧还没显示出来）时，本次步进直接丢弃——不排队、不累加。按住方向键
+    // 时每次只在前一步真正出帧后才推进，避免 mpv 内部合并成整段跳画面。
+    // 兜底：不可 seek 的流上 mpv 不会发 seeking，超过 kSeekGateTimeoutMs 放行，
+    // 避免方向键被永久锁死。直播流（isLiveSource）本来每次 seek 都会被 mpv
+    // 拒绝，不参与门控——否则按下后 5 s 内的按键全被丢掉。
+    if (!isLiveSource() && seekInFlight_.load()) {
+        if (steadyNowMs() - seekIssueMs_.load() < kSeekGateTimeoutMs)
+            return;
+        seekInFlight_.store(false);
+    }
     int64_t target = currentTime_ + offsetMs;
     if (target < 0) target = 0;
     if (duration_ > 0 && target > duration_) target = duration_;
     seekAbsolute(target);
+}
+
+void PlayerViewModel::notePlaybackRestart() {
+    // 事件线程：MPV_EVENT_PLAYBACK_RESTART = 一次 seek（或加载）完成、目标帧
+    // 已显示。这是门控的完成信号（属性观察会被 libmpv 值去重，连续 seek 时
+    // 最后一条 true/false 可能不送达，见 header 注释）。
+    bool seeking = mpv_ && mpv_->propertyFlag("seeking");
+    if (!seekInFlight_.load()) return;
+    // 迟到的旧 seek 完成事件：新 seek 已经开始（seeking 仍为真）时忽略，
+    // 否则会把新 seek 误判成已完成、提前放行下一步。
+    if (seeking) return;
+    seekInFlight_.store(false);
 }
 
 // ── Audio（乐观更新）────────────────────────────────────────────────
