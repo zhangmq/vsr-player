@@ -238,6 +238,20 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                 }
             }
         }
+    } else if (cmd == "remove-current") {
+        // 从播放列表移除当前条目（不碰磁盘）。
+        if (!vm) response = formatResponse("no view model");
+        else {
+            QMetaObject::invokeMethod(vm, "removeCurrentFromPlaylist", Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "delete-current") {
+        // 删除当前文件（移入回收站）+ 前进到下一个条目。
+        if (!vm) response = formatResponse("no view model");
+        else {
+            QMetaObject::invokeMethod(vm, "deleteCurrentFile", Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
     } else if (cmd == "set_property") {
         if (args.size() < 2)
             response = formatResponse("missing arguments");

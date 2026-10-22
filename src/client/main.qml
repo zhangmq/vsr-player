@@ -240,6 +240,8 @@ Item {
             onOpenUrlRequested: urlPopup.open()
             onAppendFilesRequested: function() { fileDialog.mode = 1; fileDialog.open() }
             onAppendFolderRequested: function() { folderDialog.mode = 1; folderDialog.open() }
+            onRemoveFromPlaylistRequested: viewModel.removeCurrentFromPlaylist()
+            onDeleteFileRequested: viewModel.deleteCurrentFile()
             onDeinterlaceSelected: function(mode) { viewModel.setDeintMode(mode) }
             onQuitRequested: Qt.quit()   // 走标准退出路径（watch-later 落盘）
         }
@@ -280,6 +282,16 @@ Item {
         Shortcut {
             enabled: root.shortcutsEnabled; sequence: "Space"
             onActivated: viewModel.togglePlayPause()
+        }
+        // 当前条目操作：Delete = 仅从列表移除；Shift+Delete = 连同文件移入回收站
+        //（破坏性操作不设确认弹窗，但回收站可恢复）。
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Delete"
+            onActivated: viewModel.removeCurrentFromPlaylist()
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Shift+Delete"
+            onActivated: viewModel.deleteCurrentFile()
         }
         Shortcut {
             enabled: root.shortcutsEnabled; sequence: "Left"

@@ -483,6 +483,37 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 - **两个拖放区（2026-10-21 确认）**：A = 窗口级 `DropArea`（`main.qml`）→ mode 0，**完全重置**播放列表（首条 replace 播放、其余 append 排队）；B = `PlaylistPanel` 的 `DropArea` → mode 1，**追加**（不打断当前播放）。面板打开时 B 在 popup overlay（`QQuickOverlay` 是 contentItem 的子项、创建在 QML 根之后）里叠在 A 之上，Qt 的拖放投递按 `paintOrderChildItems()` **从上到下找第一个接受者**（`qquickdeliveryagent.cpp: deliverDragEvent`），所以两个区不会同时触发。**追加目录**同样走 mpv 原生语义：`loadfile <dir> append` 只留一个目录条目、点击才展开（实测：追加后列表 = `[/tmp/vsr-dir-test]`，点击 → 4 条目并播放首条）。
   菜单侧同语义（2026-10-21）：右键菜单 = "Add files to playlist"（FileDialog mode 1）+ "Add folder to playlist"（FolderDialog mode 1，同一 `folderDialog` 实例靠 `mode` 属性区分标题与 `onAccepted`）；"打开文件/文件夹"仍分开（平台对话框不能同时选文件与目录），但两者与追加共用 `openFiles` 单一入口，目录路径一律交给 mpv。
 
+### 当前条目的移除 / 删除（2026-10-23）
+
+两类动作共享同一套"前进"语义，**只差一条 `gio trash`**：
+
+| 动作 | 快捷键 | 菜单项 | 是否动磁盘 |
+|---|---|---|---|
+| 从播放列表移除当前条目 | `Delete` | Remove from playlist（从播放列表移除） | 否 |
+| 删除当前文件 | `Shift+Delete` | Delete file（删除文件） | 移到回收站 |
+
+**前进语义全部由 mpv 的 `playlist-remove` 决定**（`player/command.c: cmd_playlist_remove`
+→ `common/playlist.c: playlist_remove`；2026-10-23 实测四条）：
+
+- 移除**当前**条目：`current` 指向后一条 + `PT_NEXT_ENTRY` → mpv 自己载入下一个；
+- `pause` 是**全局属性、跨曲目保持** → 暂停状态下新条目载入但不播放（`time-pos` 不动），
+  正是"当前暂停时下一个不立即播放"；
+- 没有后继且 `loop-playlist=no` → `count=0 / pos=-1 / idle-active=yes`（停止并保持 idle）；
+- `loop-playlist=inf` 且移除最后一个 → 回到剩余第一条继续（不 idle）。
+
+因此客户端只发一条 `playlist-remove <playlist-pos>`，**不自己判断"有没有下一条/要不要停"**。
+实现：`PlayerViewModel::removeCurrentFromPlaylist()`（读 `playlist-pos`，-1 则忽略）、
+`deleteCurrentFile()`（先 `gio trash -- <path>`，成功才移除；失败保持列表不动并记 ERR）。
+
+**可删条件**（`canDeleteCurrentFile`）：`path` 非空、不含 `://`（URL/流没有"文件"可删）、
+`QFileInfo` 为常规文件且可写；相对路径按当前工作目录解析。菜单里 delete 项用
+`hasMedia && canDeleteCurrentFile` 控制可见（`ContextMenu` 新增 `visibleWhen` 支持，
+隐藏行**不占高度**，二级菜单 `subY` 的累加也要跳过隐藏行）。
+
+⚠ **`gio trash` 在 tmpfs（`/tmp`）上会失败**（"不支持在系统内部挂载上的丢弃到回收站操作"）
+——此时按设计**不改播放列表**（文件还在），只记 ERR。测试要用 `$HOME` 下的文件。
+⚠ RPC 同步提供 `remove-current` / `delete-current`（测试与脚本用）。
+
 ### 快进/快退（连续 seek 门控，2026-10-21）
 
 - **键位**：Qt Quick 自己处理（`main.qml` 的 `Keys.onPressed`，**从不把按键喂给 mpv 的 input 层**）：`←/→` = ±5 s，`Shift` = ±10 s；mpv 默认是 `seek ∓5`（相对、**关键帧**精度）+ `Shift` = ±1 s exact + `↑/↓` = ±60 s（`third_party/mpv/etc/input.conf`，编译时嵌入）。

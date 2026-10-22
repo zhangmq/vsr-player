@@ -1,4 +1,7 @@
 #include "PlayerViewModel.h"
+#include <QDir>
+#include <QFileInfo>
+#include <QProcess>
 #include "MpvController.h"
 #include "FrucBackend.h"
 #include "HdrOutput.h"        // hdr::setUpconvertOptIn / setUpconvertLuminanceOverride
@@ -164,6 +167,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
         post([this, p] {
             if (!p.empty())
                 lastPath_ = QString::fromStdString(p);
+            refreshCanDeleteCurrentFile();   // 换文件 → "能否删除"跟着变
         });
     });
 
@@ -173,6 +177,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
         bool idle = mpv_->propertyFlag("idle-active");
         int64_t drops = mpv_->propertyInt64("frame-drop-count");
         post([this, idle, drops] {
+            if (fileLoaded_ != !idle) emit hasMediaChanged();
             fileLoaded_ = !idle;
             if (idle) {
                 updatePlaying(false);
@@ -1523,6 +1528,72 @@ void PlayerViewModel::playlistRemove(int index) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%d", index);
     mpv_->commandAsync({"playlist-remove", buf, nullptr});
+}
+
+// ── 当前条目：从列表移除 / 删除文件 ─────────────────────────────────
+// 前进语义完全交给 mpv 的 `playlist-remove`（2026-10-23 实测）：
+//  · 移除**当前**条目 → playlist_remove 把 current 指向后一条 + PT_NEXT_ENTRY，
+//    mpv 自己载入下一条；
+//  · `pause` 是全局属性，跨曲目保持 → 暂停状态下新条目载入但不播放
+//    （time-pos 不动），符合"当前暂停时下一个不立即播放"；
+//  · 没有后继且 loop-playlist=no → 列表清空（count=0 / pos=-1 /
+//    idle-active=yes），即"停止并保持 idle"；
+//  · loop-playlist=inf 且移除最后一个 → mpv 回到剩余第一条继续（不 idle）。
+// 所以这里不需要自己判断"有没有下一条/要不要停"。
+
+void PlayerViewModel::removeCurrentFromPlaylist() {
+    if (!mpv_) return;
+    // 用 mpv 的 playlist-pos（-1 = 无当前条目）；不用 lastPath_（曲目切换
+    // 期间 path 属性会被清空，见上方 path 观察器注释）。
+    const int pos = atoi(mpv_->propertyString("playlist-pos").c_str());
+    if (pos < 0) {
+        MLOG_INFO("playlist: no current entry to remove");
+        return;
+    }
+    playlistRemove(pos);
+    MLOG_INFO("playlist: removed current entry %d", pos);
+}
+
+void PlayerViewModel::deleteCurrentFile() {
+    const QString path = QString::fromStdString(mpv_->propertyString("path"));
+    if (!canDeleteCurrentFile_) {
+        MLOG_WARN("file: delete refused (not a local writable file): %s",
+                  path.isEmpty() ? "(none)" : path.toUtf8().constData());
+        return;
+    }
+    // 移到回收站（XDG trash spec；gio 在 KDE/GNOME 都可用）。失败则**不动播放
+    // 列表**——文件还在，列表条目不该凭空消失。
+    QProcess proc;
+    proc.start(QStringLiteral("gio"), {QStringLiteral("trash"), QStringLiteral("--"), path});
+    const bool finished = proc.waitForFinished(5000);
+    if (!finished || proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
+        MLOG_ERR("file: failed to move to trash: %s (%s)", path.toUtf8().constData(),
+                 finished ? proc.readAllStandardError().constData() : "timeout");
+        return;
+    }
+    MLOG_INFO("file: moved to trash: %s", path.toUtf8().constData());
+    removeCurrentFromPlaylist();
+}
+
+void PlayerViewModel::refreshCanDeleteCurrentFile() {
+    QString path;
+    bool can = false;
+    if (mpv_) {
+        path = QString::fromStdString(mpv_->propertyString("path"));
+        // 只允许本地常规可写文件：URL/流（含 http(s)/ytdl）没有"文件"可删；
+        // 相对路径（命令行 `input/foo.mkv`）按当前工作目录解析。
+        if (!path.isEmpty() && !path.contains(QStringLiteral("://"))) {
+            QFileInfo fi(path);
+            const QFileInfo abs(fi.isAbsolute() ? path : QDir::current().absoluteFilePath(path));
+            can = abs.isFile() && abs.isWritable();
+        }
+    }
+    if (canDeleteCurrentFile_ != can) {
+        canDeleteCurrentFile_ = can;
+        MLOG_INFO("file: delete availability = %s (%s)", can ? "yes" : "no",
+                  path.isEmpty() ? "(no media)" : path.toUtf8().constData());
+        emit canDeleteCurrentFileChanged();
+    }
 }
 
 // ── 外部字幕扫描（轨道弹窗"字幕"页签数据源）────────────────────────

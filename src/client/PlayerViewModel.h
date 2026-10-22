@@ -114,6 +114,11 @@ class PlayerViewModel : public QObject {
     // **UUID 相同的 CUDA 设备**——我们的链是 CUDA 产出 + Vulkan 零拷贝导入，
     // 两张卡的组合只会黑屏。false 时整个 vf 链不插入（直通），AI 相关 UI 禁用。
     Q_PROPERTY(bool aiAvailable READ aiAvailable NOTIFY aiAvailableChanged)
+    /// 当前播放条目能否"删除文件"（只允许本地常规可写文件；URL/流/只读一律
+    /// false → 右键菜单里该项隐藏）。
+    Q_PROPERTY(bool canDeleteCurrentFile READ canDeleteCurrentFile NOTIFY canDeleteCurrentFileChanged)
+    /// 是否已载入媒体（右键菜单"移除/删除当前条目"只在有当前条目时显示）。
+    Q_PROPERTY(bool hasMedia READ hasMedia NOTIFY hasMediaChanged)
     Q_PROPERTY(QString videoInfo READ videoInfo NOTIFY videoInfoChanged)
     // OSD 数据源（观察器填充，主线程持有）
     Q_PROPERTY(int videoWidth READ videoWidth NOTIFY osdDataChanged)
@@ -307,6 +312,8 @@ public:
     bool hwDecodeAvailable() const { return hwDecodeAvailable_.load(); }
     int hwDecodeReason() const { return hwDecodeReason_.load(); }
     bool aiAvailable() const { return aiAvailable_.load(); }
+    bool canDeleteCurrentFile() const { return canDeleteCurrentFile_; }
+    bool hasMedia() const { return fileLoaded_; }
     QString videoInfo() const   { return videoInfo_; }
     int videoWidth() const { return videoWidth_.load(); }
     int videoHeight() const { return videoHeight_.load(); }
@@ -461,6 +468,10 @@ public slots:
     void playlistNext();
     void playlistPrev();
     void playlistPlayIndex(int index);
+    /// 从播放列表移除**当前**条目（Delete）：只动列表，不碰磁盘。
+    Q_INVOKABLE void removeCurrentFromPlaylist();
+    /// 删除**当前文件**（Shift+Delete）：移入回收站，再按上面的语义前进。
+    Q_INVOKABLE void deleteCurrentFile();
 
 signals:
     void playingChanged();
@@ -494,6 +505,8 @@ signals:
     void hwDecodeEnabledChanged();
     void hwDecodeAvailableChanged();
     void aiAvailableChanged();
+    void canDeleteCurrentFileChanged();
+    void hasMediaChanged();
     void videoInfoChanged();
     void osdDataChanged();
     void videoHdrChanged();
@@ -613,6 +626,9 @@ private:
     std::string aiCudaUuid_;                   // 选中 Vulkan 设备的 UUID（32 hex）
     /// AI 相关设置入口的统一守卫：不可用时**拒绝**（返回 false）并记一次 WARN。
     bool aiAllowed(const char *what);
+    /// 重算 canDeleteCurrentFile_（path 变化时调用）。
+    void refreshCanDeleteCurrentFile();
+    bool canDeleteCurrentFile_ = false;
     QString videoInfo_;
     // ── OSD 数据源（主线程观察器 post 写；事件线程 osdTextString 拉取读；
     //    数值成员原子化，QString 隐式共享线程安全）─────────────────

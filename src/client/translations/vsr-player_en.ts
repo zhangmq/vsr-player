@@ -140,55 +140,65 @@
 <context>
     <name>ContextMenu</name>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="51"/>
-        <location filename="../ui/ContextMenu.qml" line="61"/>
+        <location filename="../ui/ContextMenu.qml" line="60"/>
+        <location filename="../ui/ContextMenu.qml" line="70"/>
         <source>Auto</source>
         <translation>Auto</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="52"/>
-        <location filename="../ui/ContextMenu.qml" line="62"/>
+        <location filename="../ui/ContextMenu.qml" line="61"/>
+        <location filename="../ui/ContextMenu.qml" line="71"/>
         <source>Force</source>
         <translation>Force</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="50"/>
-        <location filename="../ui/ContextMenu.qml" line="63"/>
+        <location filename="../ui/ContextMenu.qml" line="59"/>
+        <location filename="../ui/ContextMenu.qml" line="72"/>
         <source>Off</source>
         <translation>Off</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="41"/>
+        <location filename="../ui/ContextMenu.qml" line="45"/>
         <source>Open file</source>
         <translation>Open file</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="42"/>
+        <location filename="../ui/ContextMenu.qml" line="46"/>
         <source>Open folder</source>
         <translation>Open folder</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="43"/>
+        <location filename="../ui/ContextMenu.qml" line="47"/>
         <source>Open URL</source>
         <translation>Open URL</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="44"/>
+        <location filename="../ui/ContextMenu.qml" line="48"/>
         <source>Add files to playlist</source>
         <translation>Add files to playlist</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="45"/>
+        <location filename="../ui/ContextMenu.qml" line="49"/>
         <source>Add folder to playlist</source>
         <translation>Add folder to playlist</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="47"/>
+        <location filename="../ui/ContextMenu.qml" line="51"/>
+        <source>Remove from playlist</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="53"/>
+        <source>Delete file</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="56"/>
         <source>Deinterlace</source>
         <translation>Deinterlace</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="55"/>
+        <location filename="../ui/ContextMenu.qml" line="64"/>
         <source>Quit</source>
         <translation>Quit</translation>
     </message>
@@ -280,59 +290,59 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2291"/>
-        <location filename="../PlayerViewModel.cpp" line="2299"/>
+        <location filename="../PlayerViewModel.cpp" line="2362"/>
+        <location filename="../PlayerViewModel.cpp" line="2370"/>
         <source>Source</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2325"/>
+        <location filename="../PlayerViewModel.cpp" line="2396"/>
         <source>Output</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2332"/>
+        <location filename="../PlayerViewModel.cpp" line="2403"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2360"/>
+        <location filename="../PlayerViewModel.cpp" line="2431"/>
         <source>VSR</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2385"/>
+        <location filename="../PlayerViewModel.cpp" line="2456"/>
         <source>FRUC</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2404"/>
-        <location filename="../PlayerViewModel.cpp" line="2409"/>
+        <location filename="../PlayerViewModel.cpp" line="2475"/>
+        <location filename="../PlayerViewModel.cpp" line="2480"/>
         <source>Decoder</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2414"/>
+        <location filename="../PlayerViewModel.cpp" line="2485"/>
         <source>Speed</source>
         <translation>Speed</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2416"/>
+        <location filename="../PlayerViewModel.cpp" line="2487"/>
         <source>Time</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2420"/>
+        <location filename="../PlayerViewModel.cpp" line="2491"/>
         <source>Frames</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2424"/>
+        <location filename="../PlayerViewModel.cpp" line="2495"/>
         <source>GPU</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2427"/>
+        <location filename="../PlayerViewModel.cpp" line="2498"/>
         <source>Audio</source>
         <translation>Audio</translation>
     </message>
@@ -648,44 +658,44 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="391"/>
+        <location filename="../main.qml" line="403"/>
         <source>Open media</source>
         <translation>Open media</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="398"/>
+        <location filename="../main.qml" line="410"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="399"/>
+        <location filename="../main.qml" line="411"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</source>
         <translation>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="400"/>
+        <location filename="../main.qml" line="412"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="395"/>
-        <location filename="../main.qml" line="401"/>
+        <location filename="../main.qml" line="407"/>
+        <location filename="../main.qml" line="413"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="382"/>
+        <location filename="../main.qml" line="394"/>
         <source>Add folder to playlist</source>
         <translation>Add folder to playlist</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="383"/>
+        <location filename="../main.qml" line="395"/>
         <source>Open folder</source>
         <translation>Open folder</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="396"/>
-        <location filename="../main.qml" line="402"/>
+        <location filename="../main.qml" line="408"/>
+        <location filename="../main.qml" line="414"/>
         <source>All files (*)</source>
         <translation>All files (*)</translation>
     </message>

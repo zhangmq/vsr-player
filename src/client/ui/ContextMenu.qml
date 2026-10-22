@@ -30,6 +30,10 @@ PopupBase {
     signal openUrlRequested()
     signal appendFilesRequested()
     signal appendFolderRequested()
+    /// 从播放列表移除当前条目（不碰磁盘）。
+    signal removeFromPlaylistRequested()
+    /// 删除当前文件（移到回收站）。仅本地可写文件时可见。
+    signal deleteFileRequested()
     /// 二级菜单里选中了某个反交错档位（0=Off / 1=Auto / 2=Force）。
     signal deinterlaceSelected(int mode)
     signal quitRequested()
@@ -43,6 +47,11 @@ PopupBase {
         {icon: "󰌷", text: qsTr("Open URL"), hint: "Ctrl+L", sig: "openUrlRequested"},
         {icon: "󰐒", text: qsTr("Add files to playlist"),    hint: "", sig: "appendFilesRequested"},
         {icon: "󰉗", text: qsTr("Add folder to playlist"),   hint: "", sig: "appendFolderRequested"},
+        {sep: true},
+        {icon: "󰐓", text: qsTr("Remove from playlist"), hint: "Del", sig: "removeFromPlaylistRequested",
+         visibleWhen: function() { return viewModel.hasMedia }},
+        {icon: "󰆴", text: qsTr("Delete file"), hint: "Shift+Del", sig: "deleteFileRequested",
+         visibleWhen: function() { return viewModel.hasMedia && viewModel.canDeleteCurrentFile }},
         {sep: true},
         {icon: "󰉸", text: qsTr("Deinterlace"),
          hint: function() { return root.deintLabel() },
@@ -64,12 +73,19 @@ PopupBase {
         }
     }
 
-    /// 二级面板的 y：与所属条目行对齐（行高/分隔线逐个累加）。
+    /// 条目是否显示（`visibleWhen` 缺省 = 恒显示；不满足条件的条目不占高度）。
+    function itemShown(it) {
+        return it.visibleWhen === undefined ? true : it.visibleWhen()
+    }
+
+    /// 二级面板的 y：与所属条目行对齐（行高/分隔线逐个累加，跳过隐藏条）。
     readonly property real subY: {
         var y = root.padY
         for (var i = 0; i < items.length; i++) {
-            if (items[i].submenu !== undefined) return y
-            y += items[i].sep === true ? 1 : rowH
+            var it = items[i]
+            if (!itemShown(it)) continue
+            if (it.submenu !== undefined) return y
+            y += it.sep === true ? 1 : rowH
         }
         return y
     }
@@ -133,8 +149,10 @@ PopupBase {
                     property bool hasSub: modelData.submenu !== undefined
                     property var hintSrc: modelData.hint
                     property string hintText: typeof hintSrc === "function" ? hintSrc() : (hintSrc || "")
+                    property bool shown: root.itemShown(modelData)
                     width: parent.width
-                    height: isSep ? 1 : root.rowH
+                    height: !shown ? 0 : (isSep ? 1 : root.rowH)
+                    visible: shown
 
                     Rectangle {
                         anchors.fill: parent
