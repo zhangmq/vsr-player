@@ -21,112 +21,122 @@
 <context>
     <name>BottomBar</name>
     <message>
-        <location filename="../ui/BottomBar.qml" line="89"/>
+        <location filename="../ui/BottomBar.qml" line="91"/>
         <source>Previous (B)</source>
         <translation>上一个 (B)</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="92"/>
+        <location filename="../ui/BottomBar.qml" line="94"/>
         <source>Pause (Space)</source>
         <translation>暂停 (Space)</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="92"/>
+        <location filename="../ui/BottomBar.qml" line="94"/>
         <source>Play (Space)</source>
         <translation>播放 (Space)</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="94"/>
+        <location filename="../ui/BottomBar.qml" line="96"/>
         <source>Next (N)</source>
         <translation>下一个 (N)</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="96"/>
+        <location filename="../ui/BottomBar.qml" line="98"/>
         <source>Stop</source>
         <translation>停止</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="127"/>
+        <location filename="../ui/BottomBar.qml" line="129"/>
         <source>Volume</source>
         <translation>音量</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="130"/>
+        <location filename="../ui/BottomBar.qml" line="133"/>
         <source>Quality</source>
         <translation>画质</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="135"/>
+        <location filename="../ui/BottomBar.qml" line="134"/>
+        <source>Quality (AI unavailable on this GPU)</source>
+        <translation>画质（此 GPU 不支持 AI 处理）</translation>
+    </message>
+    <message>
+        <location filename="../ui/BottomBar.qml" line="139"/>
         <source>HW</source>
         <translation>硬解</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="135"/>
+        <location filename="../ui/BottomBar.qml" line="139"/>
         <source>SW</source>
         <translation>软解</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="137"/>
+        <location filename="../ui/BottomBar.qml" line="143"/>
+        <source>Hardware decoding unavailable on this device</source>
+        <translation>此设备无法硬解（CUDA 不可用）</translation>
+    </message>
+    <message>
+        <location filename="../ui/BottomBar.qml" line="144"/>
         <source>Software decoding only</source>
         <translation>此文件仅支持软解</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="138"/>
+        <location filename="../ui/BottomBar.qml" line="142"/>
         <source>Switch to SW decode</source>
         <translation>点击切换软解</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="138"/>
+        <location filename="../ui/BottomBar.qml" line="142"/>
         <source>Switch to HW decode</source>
         <translation>点击切换硬解</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="140"/>
+        <location filename="../ui/BottomBar.qml" line="146"/>
         <source>Speed</source>
         <translation>倍速</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="140"/>
+        <location filename="../ui/BottomBar.qml" line="146"/>
         <source>Playback speed</source>
         <translation>播放速度</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="144"/>
+        <location filename="../ui/BottomBar.qml" line="150"/>
         <source>Aspect ratio</source>
         <translation>画面比例</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="154"/>
+        <location filename="../ui/BottomBar.qml" line="160"/>
         <source>Loop file</source>
         <translation>单曲循环</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="155"/>
+        <location filename="../ui/BottomBar.qml" line="161"/>
         <source>Loop playlist</source>
         <translation>列表循环</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="155"/>
+        <location filename="../ui/BottomBar.qml" line="161"/>
         <source>No loop</source>
         <translation>不循环</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="158"/>
+        <location filename="../ui/BottomBar.qml" line="164"/>
         <source>Exit fullscreen</source>
         <translation>退出全屏</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="158"/>
+        <location filename="../ui/BottomBar.qml" line="164"/>
         <source>Fullscreen</source>
         <translation>全屏</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="160"/>
+        <location filename="../ui/BottomBar.qml" line="166"/>
         <source>Playlist (P)</source>
         <translation>播放列表 (P)</translation>
     </message>
     <message>
-        <location filename="../ui/BottomBar.qml" line="120"/>
+        <location filename="../ui/BottomBar.qml" line="122"/>
         <source>Tracks</source>
         <translation>轨道</translation>
     </message>
@@ -300,13 +310,13 @@
         <translation type="vanished">%1Hz %2ch</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2214"/>
-        <location filename="../PlayerViewModel.cpp" line="2222"/>
+        <location filename="../PlayerViewModel.cpp" line="2281"/>
+        <location filename="../PlayerViewModel.cpp" line="2289"/>
         <source>Source</source>
         <translation>源</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2248"/>
+        <location filename="../PlayerViewModel.cpp" line="2315"/>
         <source>Output</source>
         <translation>输出</translation>
     </message>
@@ -315,48 +325,48 @@
         <translation type="vanished">渲染</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2255"/>
+        <location filename="../PlayerViewModel.cpp" line="2322"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2283"/>
+        <location filename="../PlayerViewModel.cpp" line="2350"/>
         <source>VSR</source>
         <translation>超分</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2304"/>
+        <location filename="../PlayerViewModel.cpp" line="2375"/>
         <source>FRUC</source>
         <translation>插帧</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2321"/>
-        <location filename="../PlayerViewModel.cpp" line="2326"/>
+        <location filename="../PlayerViewModel.cpp" line="2394"/>
+        <location filename="../PlayerViewModel.cpp" line="2399"/>
         <source>Decoder</source>
         <translation>解码器</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2331"/>
+        <location filename="../PlayerViewModel.cpp" line="2404"/>
         <source>Speed</source>
         <translation>速度</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2333"/>
+        <location filename="../PlayerViewModel.cpp" line="2406"/>
         <source>Time</source>
         <translation>时间</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2337"/>
+        <location filename="../PlayerViewModel.cpp" line="2410"/>
         <source>Frames</source>
         <translation>帧数</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2341"/>
+        <location filename="../PlayerViewModel.cpp" line="2414"/>
         <source>GPU</source>
         <translation>显卡</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2344"/>
+        <location filename="../PlayerViewModel.cpp" line="2417"/>
         <source>Audio</source>
         <translation>音频</translation>
     </message>
@@ -503,42 +513,42 @@
         <translation>超高</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="66"/>
+        <location filename="../ui/QualityPopup.qml" line="72"/>
         <source>Scale</source>
         <translation>缩放</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="87"/>
+        <location filename="../ui/QualityPopup.qml" line="93"/>
         <source>Upscale quality</source>
         <translation>超分质量</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="108"/>
+        <location filename="../ui/QualityPopup.qml" line="114"/>
         <source>Force denoise (active when scale=1)</source>
         <translation>强制降噪（scale=1时生效）</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="129"/>
+        <location filename="../ui/QualityPopup.qml" line="135"/>
         <source>Frame interpolation</source>
         <translation>帧插值</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="155"/>
+        <location filename="../ui/QualityPopup.qml" line="161"/>
         <source>Interpolation quality</source>
         <translation>插帧质量</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="182"/>
+        <location filename="../ui/QualityPopup.qml" line="188"/>
         <source>Max interpolation frame rate</source>
         <translation>插帧最大帧率</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="210"/>
+        <location filename="../ui/QualityPopup.qml" line="216"/>
         <source>SDR → HDR10</source>
         <translation>SDR → HDR10</translation>
     </message>
     <message>
-        <location filename="../ui/QualityPopup.qml" line="226"/>
+        <location filename="../ui/QualityPopup.qml" line="232"/>
         <source>Advanced</source>
         <translation>高级</translation>
     </message>
@@ -772,44 +782,44 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="388"/>
+        <location filename="../main.qml" line="391"/>
         <source>Open media</source>
         <translation>打开媒体</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="395"/>
+        <location filename="../main.qml" line="398"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>媒体文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="396"/>
+        <location filename="../main.qml" line="399"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</source>
         <translation>视频文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="397"/>
+        <location filename="../main.qml" line="400"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>音频文件 (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="392"/>
-        <location filename="../main.qml" line="398"/>
+        <location filename="../main.qml" line="395"/>
+        <location filename="../main.qml" line="401"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>字幕文件 (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="379"/>
+        <location filename="../main.qml" line="382"/>
         <source>Add folder to playlist</source>
         <translation>追加文件夹到播放列表</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="380"/>
+        <location filename="../main.qml" line="383"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="393"/>
-        <location filename="../main.qml" line="399"/>
+        <location filename="../main.qml" line="396"/>
+        <location filename="../main.qml" line="402"/>
         <source>All files (*)</source>
         <translation>所有文件 (*)</translation>
     </message>

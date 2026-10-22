@@ -106,6 +106,14 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(bool hwDecoding READ hwDecoding NOTIFY hwDecodingChanged)
     Q_PROPERTY(bool hwDecodeEnabled READ hwDecodeEnabled NOTIFY hwDecodeEnabledChanged)
     Q_PROPERTY(bool hwDecodeAvailable READ hwDecodeAvailable NOTIFY hwDecodeAvailableChanged)
+    // 不能硬解时的**原因**（0=可切换、1=设备层：没有可用的 CUDA、2=文件层：
+    // codec 不支持硬解）。区分这两者很重要：设备层时把原因写成"该文件只能
+    // 软解"会误导（h264 明明能硬解，是这台设备解不了）。
+    Q_PROPERTY(int hwDecodeReason READ hwDecodeReason NOTIFY hwDecodeAvailableChanged)
+    // 当前 Vulkan 设备能否跑 AI 处理（超分/插帧/SDR→HDR10 上变换）：要求存在
+    // **UUID 相同的 CUDA 设备**——我们的链是 CUDA 产出 + Vulkan 零拷贝导入，
+    // 两张卡的组合只会黑屏。false 时整个 vf 链不插入（直通），AI 相关 UI 禁用。
+    Q_PROPERTY(bool aiAvailable READ aiAvailable NOTIFY aiAvailableChanged)
     Q_PROPERTY(QString videoInfo READ videoInfo NOTIFY videoInfoChanged)
     // OSD 数据源（观察器填充，主线程持有）
     Q_PROPERTY(int videoWidth READ videoWidth NOTIFY osdDataChanged)
@@ -208,6 +216,14 @@ public:
     /// "off"/"no"→0、"auto"→1、"force"/"yes"→2，非法→-1（RPC/CLI 共用）。
     static int parseDeintMode(const std::string &s);
 
+    /// AI 可用性（启动时由 VulkanContext UUID × CUDA 设备判一次；见 CudaProbe）。
+    /// available=false → 日志一条 WARN，`vfOption()` 返回空（不插任何滤镜），
+    /// 所有 AI 设置入口拒绝生效（**不改用户持久化的设置**）。
+    /// uuidHex = 选中的 Vulkan 设备 UUID（32 hex，无分隔符），会透给
+    /// `@hwup:hwup:cuda-uuid=`，让滤镜按 UUID 选 CUDA 设备（多卡机器必需）。
+    void initAiAvailability(bool available, const std::string &reason,
+                            const std::string &uuidHex = std::string());
+
     void setGpuName(const QString &name);
     /// 持久化：启动时读（须在 initVsr 前调用——scale/quality/denoise
     /// 决定 vf 字符串）；各 setter 写入。benchmark 模式不调用（测量口径）。
@@ -289,6 +305,8 @@ public:
     bool hwDecoding() const     { return hwDecoding_.load(); }
     bool hwDecodeEnabled() const   { return hwDecodeEnabled_.load(); }
     bool hwDecodeAvailable() const { return hwDecodeAvailable_.load(); }
+    int hwDecodeReason() const { return hwDecodeReason_.load(); }
+    bool aiAvailable() const { return aiAvailable_.load(); }
     QString videoInfo() const   { return videoInfo_; }
     int videoWidth() const { return videoWidth_.load(); }
     int videoHeight() const { return videoHeight_.load(); }
@@ -475,6 +493,7 @@ signals:
     void hwDecodingChanged();
     void hwDecodeEnabledChanged();
     void hwDecodeAvailableChanged();
+    void aiAvailableChanged();
     void videoInfoChanged();
     void osdDataChanged();
     void videoHdrChanged();
@@ -500,7 +519,7 @@ private:
     void updateHwDecoding(bool hw);
     /// 由 hwdec-current / 解码器 / video-params 观察器与 FILE_LOADED 调用：
     /// 刷新"当前文件能否硬解"（偏好=硬解 ∧ 解码器已就绪 ∧ 实际软解 → 不可）。
-    void refreshHwDecodeAvailability();
+    void refreshHwDecodeAvailability(int forceReason = 0);
     void updateVideoInfo(const QString &f);
     void updateLoopMode(int m);
     /// idle 重播 lastPath：列表保留（stop keep-playlist）→ 查
@@ -588,6 +607,12 @@ private:
     std::atomic<bool> hwDecoding_{false};      // 实际（hwdec-current != no）
     std::atomic<bool> hwDecodeEnabled_{true};  // 用户偏好（我们下发的 hwdec 开关）
     std::atomic<bool> hwDecodeAvailable_{true};// 当前文件能否硬解（UI 禁用依据）
+    std::atomic<int> hwDecodeReason_{0};       // 0=可切换 1=设备无 CUDA 2=codec 限制
+    std::atomic<bool> aiAvailable_{true};      // 当前 Vulkan 设备能否跑 AI（启动时判定）
+    std::string aiUnavailableReason_;          // 诊断串（日志/OSD 用）
+    std::string aiCudaUuid_;                   // 选中 Vulkan 设备的 UUID（32 hex）
+    /// AI 相关设置入口的统一守卫：不可用时**拒绝**（返回 false）并记一次 WARN。
+    bool aiAllowed(const char *what);
     QString videoInfo_;
     // ── OSD 数据源（主线程观察器 post 写；事件线程 osdTextString 拉取读；
     //    数值成员原子化，QString 隐式共享线程安全）─────────────────

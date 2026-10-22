@@ -13,6 +13,7 @@ VkResult vkEnumerateInstanceExtensionProperties(const char*, uint32_t*, VkExtens
 VkResult vkEnumeratePhysicalDevices(VkInstance, uint32_t*, VkPhysicalDevice*);
 void vkDestroyInstance(VkInstance, const VkAllocationCallbacks*);
 void vkGetPhysicalDeviceProperties(VkPhysicalDevice, VkPhysicalDeviceProperties*);
+void vkGetPhysicalDeviceProperties2(VkPhysicalDevice, VkPhysicalDeviceProperties2*);
 void vkGetPhysicalDeviceFeatures2(VkPhysicalDevice, VkPhysicalDeviceFeatures2*);
 void vkGetDeviceQueue(VkDevice, uint32_t, uint32_t, VkQueue*);
 }
@@ -76,6 +77,21 @@ bool VulkanContext::init() {
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(pd_, &props);
     devName_ = props.deviceName;
+
+    // 物理设备 UUID：和 CUDA 设备做同一性判断的唯一可靠依据（nvdec + VSR
+    // 的零拷贝要求 CUDA 上下文与 Vulkan 设备是同一张卡）。mpv 自己的
+    // cuda_vk 也是按这个 16 字节 UUID 匹配的（hwdec_cuda_vk.c）。
+    {
+        VkPhysicalDeviceIDProperties idp = {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
+        VkPhysicalDeviceProperties2 p2 = {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &idp };
+        vkGetPhysicalDeviceProperties2(pd_, &p2);
+        static_assert(sizeof(uuid_) == sizeof(idp.deviceUUID), "uuid size");
+        memcpy(uuid_, idp.deviceUUID, sizeof(uuid_));
+        MLOG_INFO("GPU: %s uuid=%02x%02x%02x%02x…", devName_.c_str(),
+                  uuid_[0], uuid_[1], uuid_[2], uuid_[3]);
+    }
 
     vk12_.timelineSemaphore = VK_TRUE;
     vkGetPhysicalDeviceFeatures2(pd_, &f2_);

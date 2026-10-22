@@ -207,6 +207,32 @@ install.sh 从不把任何版本强加给你的系统——一切都在 `~/.loca
 
 ## 故障排查
 
+### 多显卡（核显 + 独显、或两张 NVIDIA）：黑屏 / 超分与插帧不可用 / 无法硬解
+
+本项目整条 AI 链是 **CUDA 产出 → Vulkan 零拷贝导入**，所以 **CUDA 设备与 Vulkan 设备必须是同一张卡**。下面两类症状都是"两张卡错位"：
+
+- 打开超分/插帧后画面**全黑**（音频、控件正常）；
+- 或日志出现 `AI 处理不可用：Vulkan 设备 … 没有 UUID 相同的 CUDA 设备` / `decoder: 解码切换禁用：此设备无法硬解（CUDA 不可用）`（这时是**明确降级**：不黑屏，但既没 AI 也没硬解）。
+
+**先看启动日志选的是哪张卡**：
+
+```
+[vsr] GPU: <设备名> uuid=<前 4 字节>…
+[vsr] AI 处理可用：<同一张卡> ↔ CUDA <同一张卡>        # 说明选对了
+```
+
+**让 Vulkan 与 CUDA 落在同一张卡**（两条都要指同一张，`uuid` 用 `nvidia-smi -L` 或 `vulkaninfo --summary` 的完整串）：
+
+```bash
+# ① 只让 Vulkan 看到 NVIDIA（笔记本核显+独显场景够用）
+VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json \
+# ② 让 CUDA 的 0 号就是这张卡（两张 NVIDIA 时必需）
+CUDA_VISIBLE_DEVICES=GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+vsr-player <视频>
+```
+
+⚠️ 两张 NVIDIA 时，Vulkan 侧没有可靠的"按设备"环境变量（`VK_LOADER_DEVICE_SELECT` 在很多 loader 上无效）；这时以日志里的 `GPU:` 行为准，把 `CUDA_VISIBLE_DEVICES` 钉到**同一张**即可。滤镜内部已按 Vulkan 设备 UUID 选 CUDA 设备（`vf_hwup` 的 `cuda-uuid` 选项），所以软解码路径也不会再选错卡；选不到时会打 WARN 并退回 0 号。
+
 ### 启动失败：`error while loading shared libraries: libXXX.so.NN`
 
 **根因**：系统库升级后 **soname 变了**（实测例子：libcdio `.so.19 → .so.21`、libbluray `.so.3 → .so.4`），而已构建的二进制仍链着旧名字。这不是应用 bug，而是"二进制与系统库版本错配"——几乎所有 Linux 原生程序都会遇到，源码构建路径的整个设计就是为了消除它。

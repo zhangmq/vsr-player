@@ -30,6 +30,7 @@
 #include "Options.h"
 #include "FrucBackend.h"
 #include "VulkanContext.h"
+#include "CudaProbe.h"
 #include "CompositePipeline.h"
 #include "Video.h"
 #include "MpvController.h"
@@ -162,6 +163,35 @@ int main(int argc, char *argv[]) {
     if (!vk.init()) return 1;
     MLOG_INFO("shared VkDevice ready (qfi=%u)", vk.queueFamilyIndex());
 
+    // ── AI 可用性：Vulkan 设备 × CUDA 设备必须是同一张卡 ────────────────
+    // 超分/插帧/上变换的输出是 CUDA 帧，经外部显存零拷贝交给本进程的 Vulkan
+    // VO 导入；两张卡时导入无效 = 黑屏（issue #25 的形态）。这里启动时判一次：
+    // 找不到 UUID 相同的 CUDA 设备就整条链直通（降级），**不改用户的设置**，
+    // 并在日志里说清楚原因与可选做法。
+    CudaProbeResult cuda = cuda_probe_for_vulkan_uuid(vk.deviceUuid());
+    const bool aiAvailable = cuda.matched;
+    std::string aiReason;
+    // 32 位十六进制（无分隔符）——透给 @hwup:hwup:cuda-uuid=
+    std::string aiUuidHex;
+    {
+        static const char *kHex = "0123456789abcdef";
+        for (int i = 0; i < 16; i++) {
+            aiUuidHex += kHex[vk.deviceUuid()[i] >> 4];
+            aiUuidHex += kHex[vk.deviceUuid()[i] & 0xF];
+        }
+    }
+    {
+        char reason[512];
+        if (aiAvailable) {
+            snprintf(reason, sizeof(reason), "%s ↔ CUDA %s",
+                     vk.deviceName(), cuda.matchedName.c_str());
+        } else {
+            snprintf(reason, sizeof(reason), "Vulkan 设备 %s 没有 UUID 相同的 CUDA 设备（%s）",
+                     vk.deviceName(), cuda.detail.c_str());
+        }
+        aiReason = reason;
+    }
+
     // ── 全依赖版：捆绑 Qt 的插件/QML 路径（标准版无此目录 → 无副作用）──
     // 布局镜像发行版：<prefix>/lib/qt6/{plugins,qml}，Qt 库在 <prefix>/lib/。
     // Qt 插件/QML 模块自带相对 RUNPATH（$ORIGIN/../../../ 等），镜像布局下
@@ -267,6 +297,17 @@ int main(int argc, char *argv[]) {
     viewModel.initFrucMaxFps(opts.fruc_max_fps);   // 输出帧率上限（仅 VFG 可选）
     viewModel.initTrueHdr();  // SDR→HDR10 上变换参数（持久化 + env 默认；须在
                               // installPolicy 前——策略的首次 reevaluate 要用它们）
+    viewModel.initAiAvailability(aiAvailable, aiReason, aiUuidHex);  // 须在 vfOption() 之前
+
+    // 多卡 + CUDA 0 号不是 Vulkan 那张卡：硬件解码没问题（mpv 按 UUID 匹配），
+    // 但**软解码**时 hwup 历史上会落在 CUDA 0 号 → 跨卡 → 黑屏。现在 hwup
+    // 已按 UUID 选卡（上面透下去的 cuda-uuid），这里只在配置可能踩坑时提醒。
+    if (cuda.driverOk && cuda.deviceCount >= 2 && !cuda.dev0Matches) {
+        MLOG_WARN("CUDA 可见 %d 张卡，0 号是「%s」而 Vulkan 设备是「%s」；"
+                  "若要让解码/AI 全在 Vulkan 那张上，建议 CUDA_VISIBLE_DEVICES=GPU-<uuid>"
+                  "（uuid 见上面 GPU: 行或 nvidia-smi -L）",
+                  cuda.deviceCount, cuda.dev0Name.c_str(), vk.deviceName());
+    }
     // 反交错：CLI `-- --deinterlace=no|auto|yes` 优先于持久化值（本会话生效，
     // 不写回设置）；mpv 侧仍是它自己的 `deinterlace` 选项，我们只负责下发。
     {
@@ -329,7 +370,10 @@ int main(int argc, char *argv[]) {
         // viewModel 声明于 main 作用域（见上方初始化处），析构晚于 mpv
         //（main 作用域先声明的对象后析构）；stopEvents 在块内显式停止，
         // 事件线程的 [this] lambda 捕获 viewModel 仍指向存活对象。
-        viewModel.setGpuName(vk.deviceName());
+        viewModel.setGpuName(aiAvailable
+                                 ? QString::fromUtf8(vk.deviceName())
+                                 : QStringLiteral("%1 · AI unavailable")
+                                       .arg(QString::fromUtf8(vk.deviceName())));
         viewModel.attach(&mpv);          // 注册属性观察（须在 startEvents 前）
         if (!opts.benchmark)
             viewModel.applyPlaybackSettings();   // 音量/倍速/循环（观察器回填 UI）

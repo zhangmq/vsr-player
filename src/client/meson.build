@@ -212,7 +212,7 @@ executable('vsr-player',
     'main.cpp', 'Options.cpp', 'VulkanContext.cpp',
     'CompositePipeline.cpp', 'MpvController.cpp', 'Video.cpp',
     'PlayerViewModel.cpp', 'PlaylistModel.cpp', 'RpcServer.cpp', 'Log.cpp',
-    'SessionIdle.cpp', 'HdrOutput.cpp',
+    'SessionIdle.cpp', 'HdrOutput.cpp', 'CudaProbe.cpp',
     c_vert_h, c_frag_h, translations_qm, processed,
     dependencies: [qt6_dep, vulkan_dep, libplacebo_dep, mpv_dep],
     include_directories: include_directories(

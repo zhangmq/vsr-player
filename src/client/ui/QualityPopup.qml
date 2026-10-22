@@ -56,12 +56,18 @@ PopupBase {
     // ── SDR→HDR10 上变换（VFX TrueHDR）：这里只放**总开关 + 高级入口** ——
     // 参数细节（峰值/饱和/对比/中灰/抗色带）在 TrueHdrAdvancedPopup.qml。
     property bool upHdrEnabled: false
+    /// 当前 Vulkan 设备能否跑 AI（超分/插帧/上变换都是 CUDA+Vulkan 同一张卡）。
+    /// false → 整个弹窗禁用+变淡（内容全是 AI 设置），并在 Quality 按钮的
+    /// tooltip 上说明原因；**不改用户设置**，换到可用设备启动即恢复。
+    property bool aiAvailable: true
     property bool upHdrEffective: false
     signal upHdrEnabledPicked(bool v)
     signal advancedRequested()
 
     Column {
         spacing: 12; anchors { left: parent.left; right: parent.right }
+        enabled: root.aiAvailable          // 禁用 = 子项收不到鼠标事件
+        opacity: root.aiAvailable ? 1.0 : 0.4
 
         Text { text: qsTr("Scale"); color: "#b0b0b0"; font.pixelSize: 13 }
         Row { spacing: 6; anchors { left: parent.left; right: parent.right }

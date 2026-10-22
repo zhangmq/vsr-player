@@ -208,6 +208,30 @@ done
 
 ## Troubleshooting
 
+### Multiple GPUs (iGPU + dGPU, or two NVIDIA cards): black picture / no AI / no hardware decoding
+
+The whole AI chain is **CUDA output → zero-copy Vulkan import**, so the **CUDA device and the Vulkan device must be the same card**. Both symptoms below come from a cross-GPU mismatch:
+
+- the picture goes **black** after enabling upscaling/interpolation (audio and controls keep working), or
+- the log says `AI 处理不可用：Vulkan 设备 … 没有 UUID 相同的 CUDA 设备` / `decoder: 解码切换禁用：此设备无法硬解（CUDA 不可用）` — that is the **explicit degraded mode**: no black screen, but neither AI nor hardware decoding.
+
+**First check which card the player picked** (startup log):
+
+```
+[vsr] GPU: <device name> uuid=<first 4 bytes>…
+[vsr] AI 处理可用：<same card> ↔ CUDA <same card>        # matched
+```
+
+**Make Vulkan and CUDA point at the same card** (both are needed; take the full `uuid` from `nvidia-smi -L` or `vulkaninfo --summary`):
+
+```bash
+VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json \
+CUDA_VISIBLE_DEVICES=GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+vsr-player <video>
+```
+
+⚠️ With two NVIDIA cards there is no reliable per-device Vulkan environment variable on many loaders (`VK_LOADER_DEVICE_SELECT` is ineffective in practice); take the `GPU:` line from the log as the source of truth and pin `CUDA_VISIBLE_DEVICES` to that same card. `vf_hwup` already selects its CUDA device by the Vulkan UUID (`cuda-uuid` option), so the software-decode path cannot pick the wrong card either; if no match is found it logs a warning and falls back to device 0.
+
 ### Won't start: `error while loading shared libraries: libXXX.so.NN`
 
 **Cause**: a system library was upgraded and its **soname changed** (measured examples: libcdio `.so.19 → .so.21`, libbluray `.so.3 → .so.4`), while the already-built binary still links the old name. This is not an application bug — it is a binary/system-library version mismatch that affects essentially every native Linux program. The whole point of the source-build path is to make it disappear.

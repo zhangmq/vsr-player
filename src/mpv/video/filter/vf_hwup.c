@@ -27,6 +27,7 @@
 #include "video/mp_image.h"
 #include "video/sws_utils.h"
 #include "common/msg.h"
+#include "options/m_option.h"
 
 #include <libavutil/buffer.h>
 #include <libavutil/hwcontext.h>
@@ -48,7 +49,18 @@
 // so frames that outlive the filter (pin teardown after f_destroy) can still
 // release their buffer on a live context.
 
+// ── Options ────────────────────────────────────────────────────────────────
+// cuda-uuid：期望使用的 CUDA 设备 UUID（32 位十六进制，可带 '-'）。
+// 客户端在启动时把选中的 **Vulkan** 物理设备 UUID 透下来——零拷贝要求
+// CUDA 上下文与 Vulkan 设备同一张卡，而 CUDA 的索引顺序与 Vulkan 枚举
+// 顺序无关（多卡机器、CUDA_VISIBLE_DEVICES 重映射时都会错位）。留空则
+// 退回历史上的 cuDeviceGet(0) 行为。
+struct vf_hwup_opts {
+    char *cuda_uuid;
+};
+
 struct priv {
+    struct vf_hwup_opts *opts;
     struct mp_cuda_ctx_ref *cuda_ref;
     CUstream  cuda_stream;
     bool      cuda_init_done;
@@ -98,6 +110,65 @@ static void free_cuda_buf(void *opaque, uint8_t *data)
 // lifetime: decode output is either all-HW or all-SW (no per-frame switching),
 // and HW frames pass through without touching CUDA at all.
 
+// "30a67003a20e3136a9b1cef1823e88b1" / "30a67003-a20e-…" → 16 字节
+static bool parse_uuid16(const char *s, unsigned char out[16])
+{
+    if (!s) return false;
+    int n = 0, hi = -1;
+    for (; *s; s++) {
+        int c = *s;
+        if (c == '-' || c == ':') continue;
+        int v;
+        if (c >= '0' && c <= '9') v = c - '0';
+        else if (c >= 'a' && c <= 'f') v = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') v = c - 'A' + 10;
+        else return false;
+        if (hi < 0) hi = v;
+        else {
+            if (n >= 16) return false;
+            out[n++] = (unsigned char)((hi << 4) | v);
+            hi = -1;
+        }
+    }
+    return n == 16 && hi < 0;
+}
+
+// 按 UUID 选 CUDA 设备；没有指定/找不到时退回 0 号（保持老行为）。
+static CUresult pick_cuda_device(struct mp_filter *f, struct priv *p, CUdevice *out)
+{
+    const char *want = p->opts ? p->opts->cuda_uuid : NULL;
+    unsigned char want_uuid[16];
+    if (!want || !*want || !parse_uuid16(want, want_uuid)) {
+        if (want && *want)
+            MP_WARN(f, "hwup: 无法解析 cuda-uuid=\"%s\"，退回 CUDA 0 号设备\n", want);
+        return cuDeviceGet(out, 0);
+    }
+    int count = 0;
+    if (cuDeviceGetCount(&count) == CUDA_SUCCESS) {
+        for (int i = 0; i < count; i++) {
+            CUdevice dev;
+            if (cuDeviceGet(&dev, i) != CUDA_SUCCESS)
+                continue;
+            CUuuid id;
+            if (cuDeviceGetUuid(&id, dev) != CUDA_SUCCESS)
+                continue;
+            if (memcmp(id.bytes, want_uuid, 16) == 0) {
+                const char *name = "?";
+                char buf[128] = {0};
+                if (cuDeviceGetName(buf, sizeof(buf) - 1, dev) == CUDA_SUCCESS)
+                    name = buf;
+                MP_INFO(f, "hwup: CUDA 设备按 UUID 匹配 = %s（index %d）\n", name, i);
+                *out = dev;
+                return CUDA_SUCCESS;
+            }
+        }
+    }
+    MP_WARN(f, "hwup: CUDA 里没有 UUID 匹配的设备（cuda-uuid=%s），退回 0 号——"
+               "两者不是同一张卡时下游导入会失败（黑屏），请用 "
+               "CUDA_VISIBLE_DEVICES=GPU-<同一张卡的 uuid> 钉住\n", want);
+    return cuDeviceGet(out, 0);
+}
+
 static bool ensure_cuda(struct mp_filter *f, struct priv *p)
 {
     if (p->cuda_ref)
@@ -109,7 +180,7 @@ static bool ensure_cuda(struct mp_filter *f, struct priv *p)
         return false;
     }
     CUdevice dev;
-    cr = cuDeviceGet(&dev, 0);
+    cr = pick_cuda_device(f, p, &dev);
     if (cr != CUDA_SUCCESS) {
         MP_ERR(f, "hwup: cuDeviceGet failed (%d)\n", cr);
         return false;
@@ -421,13 +492,27 @@ static struct mp_filter *vf_hwup_create(struct mp_filter *parent, void *options)
     }
     mp_filter_add_pin(f, MP_PIN_IN, "in");
     mp_filter_add_pin(f, MP_PIN_OUT, "out");
+
+    struct priv *p = f->priv;
+    p->opts = talloc_steal(p, options);
     return f;
 }
+
+#undef OPT_BASE_STRUCT
+#define OPT_BASE_STRUCT struct vf_hwup_opts
+
+static const struct m_option vf_hwup_fields[] = {
+    {"cuda-uuid", OPT_STRING(cuda_uuid)},
+    {0}
+};
 
 const struct mp_user_filter_entry vf_hwup = {
     .desc = {
         .name        = "hwup",
         .description = "SW→HW 一致化（SW YUV 上传为 CUDA 帧，前置 rife/vsr）",
+        .priv_size     = sizeof(OPT_BASE_STRUCT),
+        .priv_defaults = &(const struct vf_hwup_opts){0},
+        .options     = vf_hwup_fields,
     },
     .create = vf_hwup_create,
 };

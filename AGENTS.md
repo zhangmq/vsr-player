@@ -138,6 +138,62 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
   `decoder: 解码切换可用（…）`（可切换性翻转）。实测序列（mpeg4 → h264 → mpeg4）：
   `禁用：该文件只能软解(实际=软解,mpeg4)` → `实际 软解 → 硬解` + `可用` →
   `实际 硬解 → 软解` + `禁用`，偏好在全程恒为"硬解"。
+  ⚠ **不能硬解还要分清"设备层"与"文件层"**（`hwDecodeReason`：0=可切换 1=设备层
+  2=文件层，QML tooltip 分支两次 i18n）：设备层 = 这台机器的 Vulkan 设备没有可用的
+  CUDA（判据复用 `aiAvailable`；mpv 的 cuda_vk 要求解码设备 = 显示设备，按 UUID 匹配），
+  文件层 = CUDA 正常但 codec 不在 hwdec 列表（mpeg4/XVID 那类）。措辞分别是
+  `此设备无法硬解（CUDA 不可用）` / `该文件只能软解`——混用会误导（h264 明明能硬解，
+  只是这台设备解不了）。注意 `CUDA_VISIBLE_DEVICES=`（我们模拟多卡用的手段）会**同时**
+  让 nvdec 无卡可用 → 硬解按钮也被禁用，那是模拟的副作用，不是 hwdec 逻辑的问题。
+- **AI 可用性 = Vulkan 设备 × CUDA 设备同一性（2026-10-22）**：超分/插帧/上变换是
+  **CUDA 产出 + Vulkan 零拷贝导入**，两者必须是同一张卡（mpv 自己的 cuda_vk 也是按
+  16 字节 UUID 匹配的：`video/out/hwdec/hwdec_cuda_vk.c:313`，匹配不到报
+  `Could not match Vulkan display device in CUDA.`）。但客户端这边原来有两个未校验的
+  默认值：Vulkan 取 **`pds[0]`**（`VulkanContext.cpp`，枚举第一张，笔记本上通常不是
+  NVIDIA），我们自己建的 CUDA 上下文取 **`cuDeviceGet(0)`**（`vf_hwup.c:112`，受
+  `CUDA_VISIBLE_DEVICES` 影响）。多卡机器（笔记本 iGPU+dGPU、issue #25 那种
+  `CUDA_VISIBLE_DEVICES=1` 双 N 卡）上两者可能不是同一张 → 滤镜把"另一张卡"的 CUDA
+  帧交给本卡 VO → **黑屏**（音频/控件正常）。
+  **落地做法**（用户 2026-10-22 定：「默认留在当前设备 + 明确降级/提示」，不做隐式
+  切卡、不做跨卡拷贝）：
+  ① `VulkanContext` 取 `VkPhysicalDeviceIDProperties.deviceUUID` 并打 INFO
+     （`GPU: <name> uuid=xx…`）；② 新增 `src/client/CudaProbe.{h,cpp}`（客户端**不**
+     链接 libcuda，`dlopen("libcuda.so.1")` + `cuInit/cuDeviceGetCount/cuDeviceGet/
+     cuDeviceGetUuid(_v2)/cuDeviceGetName`）按 UUID 找同名 CUDA 设备；③ `main.cpp` 在
+     `vk.init()` 后判一次，`viewModel.initAiAvailability()` 必须早于 `vfOption()`。
+  **不可用时的降级**（`aiAvailable=false`）：`vfOption()` 返回**空串**——注意连 `hwup`
+  都不能留（它会在另一张卡建上下文并输出 CUDA 帧，正是黑屏来源）；`syncVfOptions()`
+  跳过；所有 AI setter（scale/quality/denoise/fruc/truehdr）经 `aiAllowed()` 守卫
+  **拒绝生效但不改写持久化设置**（换到可用设备启动即恢复）；`QualityPopup` 整块
+  `enabled:false` + `opacity 0.4`（内容全是 AI 设置），Quality 按钮 tooltip 变
+  `Quality (AI unavailable on this GPU)`（zh_CN「画质（此 GPU 不支持 AI 处理）」）；
+  OSD `显卡` 行加 `· AI unavailable`，`超分`/`插帧` 行**只在设定确实请求 AI 时**
+  追加 ` | AI unavailable`（off 时不加，避免噪音）。
+  **验证**（不用双显卡机器：`CUDA_VISIBLE_DEVICES=` 把 CUDA 藏起来即可模拟）：
+  `CUDA_VISIBLE_DEVICES=` → 日志 `GPU: … uuid=` + `AI 处理不可用：… cuInit 失败（100）`
+  + 一行"强制直通"说明；`vf` 为空、播放 2.00 s/2 s、丢帧 0（**不再黑屏**）；
+  `set-vsr scale 2` 被拒（WARN 一条）；OSD = `超分 auto High | AI unavailable` /
+  `插帧 off` / `显卡 … · AI unavailable`。正常机（UUID 匹配）→ `AI 处理可用：<同一张卡>`，
+  链照旧、4K60 + VFG 丢帧 0。
+  **hwup 按 UUID 选 CUDA 设备（2026-10-22，C 方案的一部分）**：`vf_hwup` 新增
+  `cuda-uuid=` 选项（32 hex），客户端把选中的 Vulkan 设备 UUID 拼进链串
+  （`@hwup:hwup=cuda-uuid=<hex>`，`vfOption()` 里拼、`initAiAvailability` 带下来）。
+  `ensure_cuda` 里 `pick_cuda_device()` 用 `cuDeviceGetUuid` 匹配；匹配不到退回
+  `cuDeviceGet(0)` 并打 WARN（提示 `CUDA_VISIBLE_DEVICES=GPU-<uuid>`）。
+  ⚠ 之前唯一的残留黑屏路径就是这里：`cuDeviceGet(0)` 与 Vulkan 设备不同卡（双 N 卡 +
+  软解码）。硬解码路径不受影响（帧本来就是 mpv 按 UUID 匹配的那张，hwup 直通、不建
+  context）。⚠ 滤镜选项必须是 `@hwup:hwup=cuda-uuid=…`（**`=`** 不是 `:`），且注册表
+  里要写 `.priv_size = sizeof(OPT_BASE_STRUCT)`——漏了它 `m_config_from_obj_desc_and_args`
+  失败 → `Creating filter 'hwup' failed.`（踩过）。
+  **启动 WARN**：CUDA 可见 ≥2 张且 0 号 UUID ≠ Vulkan UUID 时提示建议
+  `CUDA_VISIBLE_DEVICES=GPU-<uuid>`（不改行为）。README 中英各自的"故障排查"新增
+  "多显卡：黑屏 / AI 不可用 / 无法硬解"一节（含 `VK_DRIVER_FILES` + `CUDA_VISIBLE_DEVICES`
+  配方与"两条都要指同一张"的说明；两张 N 卡时 `VK_LOADER_DEVICE_SELECT` 实测无效）。
+  实测：硬解路径链串带 uuid、hwup 不建 context、播放 2.00 s/2 s 丢帧 0；软解路径打
+  `hwup: CUDA 设备按 UUID 匹配 = NVIDIA GeForce RTX 5060 Ti（index 0）`；伪造 UUID →
+  `hwup: CUDA 里没有 UUID 匹配的设备…退回 0 号`。
+  **未做/边界**：`--gpu` 选卡选项（讨论中，需要时再做）；"CUDA 算 + 另一张卡显示"的
+  零拷贝**不可能**，只能每帧回拷（已否决）。
 - **运行中切 hwdec（软↔硬）的连环坑（2026-10-17 修）**：
   - 引擎/转换器/流/out_buf 都绑定在**创建它的 CUDA context** 上。旧 `ensure_cuda` 换 context 时只销毁流 → 复用旧 `CUmodule`/engine 句柄 → `cuLaunchKernel` 返回 400（CUDA_ERROR_INVALID_VALUE）→ 滤镜自己报错被 mpv 禁用（"切软解后不插帧、切回也不恢复"的根因）。修法：在旧 context 内 `vsr_destroy`/`vfg_destroy` + `yuv_to_rgba_destroy` + `cuMemFree(out_buf)` + 销毁流，下帧在新 context 重建（`vf_vsr.c`/`vf_vfg.c` 的 ensure_cuda）。
   - `toggleHwaccel()` 曾用 `loadfile … replace` 重载当前文件让 hwdec 生效（还试过把位置塞进 loadfile 第 4 参数——那是 key/value **列表**，`mpv_command` 传不进，被当 index 解析失败）。**2026-10-22 更正：这是多余的，而且有害**——mpv 原生支持运行期切 hwdec：`hwdec` 选项 flags = `UPDATE_HWDEC`，`player/command.c:8315` 的处理是 `mp_decoder_wrapper_control(dec, VDCTRL_REINIT)`（重建解码器，所以不会有"新解码器缺参考帧 → POC 错误"）**+ `queue_seek(last_pts, MPSEEK_EXACT)`**（自己精确 seek 回原位置）。`replace` 反而会 `playlist_clear`：用户报"切软解/硬解会清空播放列表"就是这个（还顺带丢外部字幕/轨道记忆）。现在 `toggleHwaccel()` **只写 `hwdec` 选项**，播放列表与位置都由 mpv 自己保住；`pendingResumeSeek_` 已删除。

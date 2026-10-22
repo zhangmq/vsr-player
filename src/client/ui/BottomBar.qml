@@ -7,7 +7,9 @@ Item {
     property bool playing: false
     property bool fullscreen: false
     property bool hwDecoding: false          // 实际是否硬解（= hwdec-current）
-    property bool hwDecodeAvailable: true    // 当前文件能否硬解（false → 按钮禁用）
+    property bool hwDecodeAvailable: true    // 当前能否硬解（false → 按钮禁用）
+    property int hwDecodeReason: 0           // 0=可切换 1=设备无 CUDA 2=codec 限制
+    property bool aiAvailable: true          // 当前设备能否跑 AI（false → Quality 提示）
     property bool muted: false
     property real currentTime: 0
     property real duration: 0
@@ -127,15 +129,19 @@ Item {
                 codepoint: root.muted ? "󰖁" : "󰕾"; size: 22; tooltip: qsTr("Volume")
                 highlighted: root.volumePopupOpen
                 onClicked: root.volumeClicked() }
-            IconButton { id: qualBtn; codepoint: "󰐵"; size: 22; tooltip: qsTr("Quality")
+            IconButton { id: qualBtn; codepoint: "󰐵"; size: 22
+                tooltip: root.aiAvailable ? qsTr("Quality")
+                                          : qsTr("Quality (AI unavailable on this GPU)")
                 highlighted: root.qualityPopupOpen
                 onClicked: root.qualityClicked() }
             // 解码切换：显示**实际**状态（HW/SW）。当前文件只能软解时禁用
             // （但用户"硬解"偏好不变——换到支持硬解的文件会自动恢复）。
             IconButton { label: root.hwDecoding ? qsTr("HW") : qsTr("SW"); size: 22
                 enabled: root.hwDecodeAvailable
-                tooltip: !root.hwDecodeAvailable ? qsTr("Software decoding only")
-                       : (root.hwDecoding ? qsTr("Switch to SW decode") : qsTr("Switch to HW decode"))
+                tooltip: root.hwDecodeAvailable
+                       ? (root.hwDecoding ? qsTr("Switch to SW decode") : qsTr("Switch to HW decode"))
+                       : (root.hwDecodeReason === 1 ? qsTr("Hardware decoding unavailable on this device")
+                                                    : qsTr("Software decoding only"))
                 onClicked: root.hwaccelClicked() }
             IconButton { id: spdBtn; label: qsTr("Speed"); size: 22; tooltip: qsTr("Playback speed")
                 highlighted: root.speedPopupOpen

@@ -89,6 +89,8 @@ Item {
             fullscreen: viewModel.fullscreen
             hwDecoding: viewModel.hwDecoding
             hwDecodeAvailable: viewModel.hwDecodeAvailable
+            hwDecodeReason: viewModel.hwDecodeReason
+            aiAvailable: viewModel.aiAvailable
             muted: viewModel.muted
             currentTime: viewModel.currentTime
             duration: viewModel.duration
@@ -147,6 +149,7 @@ Item {
         QualityPopup {
             id: qualityPopup
             anchorTarget: bottomBar.qualityBtn
+            aiAvailable: viewModel.aiAvailable
             scal: viewModel.scale
             quality: viewModel.quality
             denoiseQuality: viewModel.denoiseQuality

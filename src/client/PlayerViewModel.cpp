@@ -1087,6 +1087,7 @@ void PlayerViewModel::toggleHwaccel() {
 
 void PlayerViewModel::setScale(double s) {
     if (!mpv_) return;
+    if (!aiAllowed("scale")) return;
     if (s < -1 || s > 4 || s == 1) return;
     // 请求倍率直接生效，无输入分辨率保护——引擎实际硬限制 = 输出 ≤8K
     //（实测 1080p 4×→7680×4320 成功），超出引擎能力的请求由引擎侧处理。
@@ -1100,6 +1101,7 @@ void PlayerViewModel::setScale(double s) {
 
 void PlayerViewModel::setQuality(int q) {
     if (!mpv_) return;
+    if (!aiAllowed("quality")) return;
     if (q < 1 || q > 4) return;
     if (quality_ != q) { quality_ = q; emit qualityChanged(); }
     saveSettings("quality", q);
@@ -1108,6 +1110,7 @@ void PlayerViewModel::setQuality(int q) {
 
 void PlayerViewModel::setDenoiseQuality(int d) {
     if (!mpv_) return;
+    if (!aiAllowed("denoise")) return;
     if (d != -1 && (d < 8 || d > 11)) return;
     bool wasActive = vsrActive();
     if (denoise_ != d) { denoise_ = d; emit denoiseQualityChanged(); }
@@ -1119,6 +1122,7 @@ void PlayerViewModel::setDenoiseQuality(int d) {
 
 void PlayerViewModel::setFrucFps(int v) {
     if (!mpv_) return;
+    if (!aiAllowed("fruc")) return;
     if (!fruc::isValidPreset(v)) return;
     if (frucFps_ != v) { frucFps_ = v; emit frucFpsChanged(); }
     saveSettings("frucFps", v);
@@ -1236,6 +1240,40 @@ void PlayerViewModel::setDeintMode(int mode) {
     }
     applyDeinterlace();
     saveSettings("deintMode", mode);
+}
+
+// ── AI 可用性（Vulkan 设备 × CUDA 设备同一性）──────────────────────────
+// 超分/插帧/上变换都是 CUDA 产出 + Vulkan 零拷贝导入，**必须同一张卡**。
+// 启动时用 UUID 判一次（CudaProbe），判不出来就整条链直通——多卡机器
+// （笔记本 iGPU+dGPU、CUDA_VISIBLE_DEVICES 只暴露一张）宁可降级，不要黑屏。
+
+void PlayerViewModel::initAiAvailability(bool available, const std::string &reason,
+                                        const std::string &uuidHex) {
+    aiUnavailableReason_ = available ? std::string() : reason;
+    aiCudaUuid_ = uuidHex;
+    if (aiAvailable_.load() != available) {
+        aiAvailable_.store(available);
+        emit aiAvailableChanged();
+    }
+    if (!available) {
+        MLOG_WARN("AI 处理不可用：%s", reason.c_str());
+        MLOG_WARN("  → 超分/插帧/SDR→HDR10 上变换本次运行强制直通（不改持久化设置）；"
+                  "要用请让 Vulkan 与 CUDA 落在同一张卡（笔记本通常需独显直连/"
+                  "PRIME 渲染卸载，或去掉 CUDA_VISIBLE_DEVICES）");
+    } else {
+        MLOG_INFO("AI 处理可用：%s", reason.c_str());
+    }
+}
+
+bool PlayerViewModel::aiAllowed(const char *what) {
+    if (aiAvailable_.load()) return true;
+    static bool warned = false;
+    if (!warned) {
+        warned = true;
+        MLOG_WARN("AI 不可用（%s）：忽略后续 %s 等设置请求",
+                  aiUnavailableReason_.c_str(), what);
+    }
+    return false;
 }
 
 // 剥离 mpv 日志消息的尾随换行与前导空格（mpv 的 log text 以 \n 结尾——
@@ -1745,6 +1783,11 @@ void PlayerViewModel::screenshot() {
 // ── vf string ────────────────────────────────────────────────────────
 
 std::string PlayerViewModel::vfOption() const {
+    // AI 不可用（Vulkan 设备没有匹配的 CUDA 设备）→ **不插任何滤镜**。
+    // 注意连 hwup 也不能留：它会在"另一张卡"上建 CUDA 上下文并输出 CUDA 帧，
+    // 交给本卡的 VO 导入只会黑屏（这正是 issue #25 / 笔记本核显场景的形态）。
+    if (!aiAvailable_.load())
+        return std::string();
     // 链序（编译期后端分支，见 FrucBackend.h）：
     //   VFG：decode → hwup（SW→HW 一致化）→ vsr（超分）→ vfg（插帧）→ VO
     //        为默认（--fruc-order post）；pre 时 vfg 在 vsr 之前处理。
@@ -1760,6 +1803,12 @@ std::string PlayerViewModel::vfOption() const {
     else if (s == 0)     scaleOpt = "0";
     else if (fabs(s - 4.0 / 3.0) < 0.01) scaleOpt = "1.3333";
     else { char buf[16]; snprintf(buf, sizeof buf, "%g", s); scaleOpt = buf; }
+    // hwup 按 UUID 选 CUDA 设备：多卡机器（双 N 卡 / CUDA_VISIBLE_DEVICES
+    // 重映射）上 CUDA 索引顺序与 Vulkan 枚举顺序无关，靠 0 号会选错卡 →
+    // 下游把"另一张卡"的 CUDA 帧交给本卡 VO → 黑屏。
+    const std::string hwup = aiCudaUuid_.empty()
+                                 ? std::string("@hwup:hwup")
+                                 : ("@hwup:hwup=cuda-uuid=" + aiCudaUuid_);
     const std::string vsr = "@vsr:vsr:scale=" + scaleOpt
                           + ":denoise=" + denoiseString()
                           + ":quality=" + qualityString();
@@ -1793,11 +1842,11 @@ std::string PlayerViewModel::vfOption() const {
             fprintf(stderr, "[truehdr] --fruc-order pre 下不支持上变换（方案 §8.1），"
                             "该序未插入 truehdr 滤镜\n");
         }
-        return "@hwup:hwup," + vfg + "," + vsr;
+        return hwup + "," + vfg + "," + vsr;
     }
-    return "@hwup:hwup," + vsr + "," + up + "," + vfg;
+    return hwup + "," + vsr + "," + up + "," + vfg;
 #else
-    std::string vf = "@hwup:hwup,";
+    std::string vf = hwup + ",";
     if (fruc == 2 || fruc == 3 || fruc == 4) {
         vf += std::string("@") + frucFilterName() + ":" + frucFilterName()
             + ":fps=off:scale=" + std::to_string(fruc) + ",";
@@ -1956,6 +2005,7 @@ void PlayerViewModel::initTrueHdr() {
 }
 
 void PlayerViewModel::setUpHdrEnabled(bool on) {
+    if (on && !aiAllowed("truehdr")) return;
     if (upHdrEnabled_ == on) return;
     upHdrEnabled_ = on;
     emit upHdrEnabledChanged();
@@ -2034,6 +2084,7 @@ void PlayerViewModel::setUpHdrDebanding(bool on) {
 
 void PlayerViewModel::syncVfOptions() {
     if (!mpv_) return;
+    if (!aiAvailable_.load()) return;   // 链上没插滤镜，vf-command 无处可发
     int fruc = frucFps_.load();
     // VFG 倍率模式与 RIFE benchmark 倍率（CLI 2/3/4）都只经 vfOption 配置
     // （fps/scale 参数），此处重放 fps 值即可（RIFE benchmark 分支忽略
@@ -2111,18 +2162,28 @@ void PlayerViewModel::updateHwDecoding(bool hw) {
 //   - 解码器尚未就绪（decoderName_ 空）→ 保持原值，避免加载瞬间误禁用
 //   - 偏好=硬解、解码器已就绪、但 hwdec-current = no → **mpv 回退了**，
 //     即该文件只能软解 → false（UI 显示"软解"并禁用切换按钮）
-void PlayerViewModel::refreshHwDecodeAvailability() {
+void PlayerViewModel::refreshHwDecodeAvailability(int forceReason) {
     bool avail;
+    int reason = 0;                      // 0=可切换 1=设备层 2=文件层
     if (!hwDecodeEnabled_.load())        // 用户偏好=软解 → 随时可切回硬解
         avail = true;
     else if (decoderName_.isEmpty())     // 解码器还没起来（加载中）→ 保持原值
         return;
-    else                                 // 偏好=硬解却实际软解 → 该文件只能软解
+    else {                               // 偏好=硬解却实际软解 → 不能硬解
         avail = hwDecoding_.load();
-    if (hwDecodeAvailable_.load() != avail) {
+        if (!avail)
+            // 原因分层：**设备**没有可用 CUDA（与我们 AI 可用性同源）优先于
+            // **文件** codec 不支持——否则 h264 这种明明能硬解的也会被说成
+            // "该文件只能软解"，徒增困惑。
+            reason = forceReason ? forceReason : (aiAvailable_.load() ? 2 : 1);
+    }
+    if (hwDecodeAvailable_.load() != avail || hwDecodeReason_.load() != reason) {
         hwDecodeAvailable_.store(avail);
+        hwDecodeReason_.store(reason);
         MLOG_INFO("decoder: 解码切换%s（偏好=%s 实际=%s 解码器=%s）",
-                  avail ? "可用" : "禁用：该文件只能软解",
+                  avail ? "可用"
+                        : (reason == 1 ? "禁用：此设备无法硬解（CUDA 不可用）"
+                                       : "禁用：该文件只能软解"),
                   hwDecodeEnabled_.load() ? "硬解" : "软解",
                   hwDecoding_.load() ? "硬解" : "软解",
                   decoderName_.isEmpty() ? "-" : decoderName_.toUtf8().constData());
@@ -2296,7 +2357,11 @@ std::string PlayerViewModel::osdTextString() {
         }
         QString line = tag(tr("VSR")) +
             (parts.isEmpty() ? QStringLiteral("off") : parts.join(" "));
-        if (!st.isEmpty())
+        // AI 不可用（本卡没有匹配的 CUDA 设备）：设定值仍然显示，但必须
+        // 明确标注没在跑——否则 OSD 会声称在做超分而链上根本没插滤镜。
+        if (!aiAvailable_.load() && !parts.isEmpty())
+            line += QStringLiteral(" | AI unavailable");
+        else if (!st.isEmpty())
             line += " | " + st.join(" ");
         lines << line;
     }
@@ -2316,7 +2381,9 @@ std::string PlayerViewModel::osdTextString() {
         else if (fruc > 0)
             target = QStringLiteral("%1 fps").arg(fruc);
         QString line = tag(tr("FRUC")) + target;
-        if (fruc != -1) {
+        if (!aiAvailable_.load() && fruc != -1) {
+            line += QStringLiteral(" | AI unavailable");
+        } else if (fruc != -1) {
             std::lock_guard<std::mutex> lk(frucStatusMtx_);
             if (!frucStatus_.empty())
                 line += " | " + QString::fromStdString(frucStatus_);

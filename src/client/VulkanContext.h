@@ -30,6 +30,10 @@ public:
     }
     /// Physical device name (for the OSD GPU line).
     const char *deviceName() const { return devName_.c_str(); }
+    /// 物理设备 UUID（VkPhysicalDeviceIDProperties.deviceUUID）。用于和 CUDA
+    /// 设备做同一性判断：我们的超分/插帧是 CUDA 产出 + Vulkan 零拷贝导入，
+    /// 两者必须是同一张卡（详见 main.cpp 的 AI 可用性检查）。
+    const uint8_t *deviceUuid() const { return uuid_; }
 
     /// VK_EXT_swapchain_colorspace 是否已在该 instance 上启用。false = 该环境
     /// 不可能枚举 HDR 色彩空间（Qt 的 isFormatSupported 恒 false）→ HDR 上屏
@@ -38,6 +42,7 @@ public:
 
 private:
     mutable std::string devName_;   // filled in init()
+    uint8_t uuid_[16] = {};         // filled in init()（VkPhysicalDeviceIDProperties）
 
 private:
     bool swapchainColorspaceExt_ = false;
