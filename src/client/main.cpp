@@ -270,8 +270,16 @@ int main(int argc, char *argv[]) {
         QString lang = opts.lang.empty()
             ? QLocale::system().name()
             : QString::fromStdString(opts.lang);
+        // 判据用**具体 .qm 是否存在**，而不是"目录存在"：开发机构建目录可能
+        // 被 clean 掉、或只生成了部分语言——只看目录会把空目录当成可用来源，
+        // 结果静默回退英文（用户侧表现为"UI 没翻译"）。两种语言变体
+        // （zh_CN / zh）任一存在即视为该目录可用。
+        auto has_qm = [](const QString &d, const QString &lang) {
+            return QFile::exists(d + "/vsr-player_" + lang + ".qm") ||
+                   QFile::exists(d + "/vsr-player_" + lang.left(2) + ".qm");
+        };
         QString dir = QString::fromLatin1(VSR_TRANSLATIONS_DIR);
-        if (!QFile::exists(dir))
+        if (!has_qm(dir, lang))
             dir = QCoreApplication::applicationDirPath() + "/translations";
         bool ok = translator.load("vsr-player_" + lang, dir)
                || translator.load("vsr-player_" + lang.left(2), dir);
