@@ -238,6 +238,13 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                 }
             }
         }
+    } else if (cmd == "clear-playlist") {
+        // 真正清空播放列表（mpv 的 playlist-clear 会保留当前项，见 VM 里说明）。
+        if (!vm) response = formatResponse("no view model");
+        else {
+            QMetaObject::invokeMethod(vm, "playlistClear", Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
     } else if (cmd == "remove-current") {
         // 从播放列表移除当前条目（不碰磁盘）。
         if (!vm) response = formatResponse("no view model");

@@ -221,6 +221,18 @@ void PlayerViewModel::attach(MpvController *mpv) {
         // current 行高亮，不重建列表——QStringList 属性全量 reset
         // 是大列表卡顿主因）
         post([this, files, cur] {
+            // 列表**变空**（移除最后一个条目 / 清空播放列表）→ 忘掉重播目标：
+            // 否则 play() 的 !fileLoaded_ 分支会走 resumeLastPath()，把刚被
+            // 移除的文件 append-play **重新加回列表**（用户实测："删了当前
+            // 文件，画面只是停住，再点播放又回来了"）。
+            if (files.isEmpty()) {
+                lastPath_.clear();
+                idlePlayIndex_ = -1;
+                if (!videoInfo_.isEmpty()) {   // 标题别停在已移除的文件上
+                    videoInfo_.clear();
+                    emit videoInfoChanged();
+                }
+            }
             // 启动 idle：列表只有排队条目、mpv 无 current（cur<0）→ 用记录的
             // 目标索引高亮"按播放将载入的那一条"（否则列表看起来没有选中项）。
             // 真正载入后 mpv 报 cur>=0，自然回到 mpv 的事实源。
@@ -871,7 +883,11 @@ bool PlayerViewModel::hasResumeState(const QString &path) {
 
 void PlayerViewModel::play() {
     if (!mpv_) return;
-    if (!fileLoaded_) resumeLastPath();
+    if (!fileLoaded_) {
+        // 没有任何重播目标（列表为空）→ 保持 idle，不要凭空载入/追加
+        if (lastPath_.isEmpty() && idlePlayIndex_ < 0) return;
+        resumeLastPath();
+    }
     playing_ = true;
     emit playingChanged();
     // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
@@ -1845,7 +1861,12 @@ void PlayerViewModel::clearSubtitleMemory() {
 
 void PlayerViewModel::playlistClear() {
     if (!mpv_) return;
+    // ⚠ mpv 的 `playlist-clear` **保留当前播放项**（command.c: "Supposed to
+    // clear the playlist, except the currently played item"）——那不是"清空"
+    // 的语义。先 clear（其余条目删掉、当前项归位 index 0），再移除它 →
+    // 真正清空 + 停止（idle）；配合"列表变空 → 忘掉 lastPath_"避免点播放复活。
     mpv_->commandAsync({"playlist-clear", nullptr});
+    mpv_->commandAsync({"playlist-remove", "0", nullptr});
 }
 
 void PlayerViewModel::screenshot() {

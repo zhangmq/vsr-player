@@ -510,6 +510,20 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 `hasMedia && canDeleteCurrentFile` 控制可见（`ContextMenu` 新增 `visibleWhen` 支持，
 隐藏行**不占高度**，二级菜单 `subY` 的累加也要跳过隐藏行）。
 
+⚠ **移除/清空后不能"复活"（2026-10-23 用户实测报的 bug）**：`play()` 的
+`!fileLoaded_` 分支会走 `resumeLastPath()`，而 `resumeLastPath()` 在列表里找不到
+`lastPath_` 时执行 `loadfile <lastPath_> append-play`——于是"移除最后一个条目/清空列表"
+之后点播放，**刚被移除的文件又被追加回列表并播放**（现象：画面只是停住，再点播放又回来）。
+修法：`playlist` 观察器在**列表变空**时清 `lastPath_` / `idlePlayIndex_` / `videoInfo_`，
+并让 `play()` 在"既无 lastPath_ 也无 idlePlayIndex_"时直接返回。
+
+⚠ **`playlist-clear` 不真清空**：mpv 的 `cmd_playlist_clear` 注释写明
+"Supposed to clear the playlist, **except the currently played item**"——它保留当前项
+（实测：2 条 → 清空后 count=1，当前文件继续播）。所以 `playlistClear()` 先
+`playlist-clear`（其余条目删掉、当前项归位 index 0）再 `playlist-remove 0`，
+才得到 count=0 + idle。面板的"清空"与条目 X 都走这条路径（X = `playlist-remove <index>`，
+作用于当前条目时与菜单"从播放列表移除"完全同一条命令）。
+
 ⚠ **`gio trash` 在 tmpfs（`/tmp`）上会失败**（"不支持在系统内部挂载上的丢弃到回收站操作"）
 ——此时按设计**不改播放列表**（文件还在），只记 ERR。测试要用 `$HOME` 下的文件。
 ⚠ RPC 同步提供 `remove-current` / `delete-current`（测试与脚本用）。
