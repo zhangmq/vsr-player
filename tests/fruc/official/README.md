@@ -11,6 +11,8 @@
 ## 构建官方 demo（二进制输出到 build/，不入库）
 
 ```bash
+# ⚠ third_party/cuda12/ 已于 2026-10-23 清理（约 400 MB，只被这套官方 demo 用到）。
+#   跑之前从 NVIDIA redist 重新下载并解到该路径（cuda_cudart 12.9.79 + cuda_nvcc 12.9.86）。
 C12=third_party/cuda12/cuda_cudart-linux-x86_64-12.9.79-archive
 cd tests/fruc/official
 nvcc -O2 -arch=sm_120 -I$C12/include -I. -o ../../build/tests/fruc/appofcuda \

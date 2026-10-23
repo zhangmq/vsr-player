@@ -6,9 +6,10 @@
 
 ## 项目是什么
 
-Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插帧**（TensorRT）。架构 = **libmpv**（demux/decode/AV 同步/timing/VO 全交给 mpv）+ 自定义 mpv 滤镜（`vf_vsr` 超分、`vf_rife` 插帧、`vf_hwup` 软解上传）+ Qt 6/QML 前端（Vulkan，`vo=libmpv` 渲染到 Qt 场景图共享 VkImage）。很可能是首个直接调 VFX SDK（非驱动级 RTX VSR）的开源 Linux 播放器。
+Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR→HDR10 上变换**（VSR / VFG / TrueHDR，默认链路）+ **冻结的 RIFE 插帧后端**（TensorRT，仅源码构建可选）。架构 = **libmpv**（demux/decode/AV 同步/timing/VO 全交给 mpv）+ 自定义 mpv 滤镜（`vf_hwup` 软解上传、`vf_vsr` 超分、`vf_truehdr` 上变换、`vf_vfg` 插帧）+ Qt 6/QML 前端（Vulkan，`vo=libmpv` 渲染到 Qt 场景图共享 VkImage）。很可能是首个直接调 VFX SDK（非驱动级 RTX VSR）的开源 Linux 播放器。
 
-滤镜链：`demux → decode → [vf_hwup] → [vf_rife] → [vf_vsr] → VO (libmpv) → Qt scene graph`
+滤镜链：`demux → decode → [deint] → [vf_hwup] → [vf_vsr] → [vf_truehdr] → [vf_vfg] → VO (libmpv) → Qt scene graph`
+（`deint` = mpv 自己的反交错 pre-filter；冻结的 RIFE 构建用 `hwup → rife → vsr`，链尾不加 vfg）
 
 ## 工作铁律（用户明确要求，违反会被纠正；通用方法论已迁移至 `~/.dsh/AGENTS.md`，此处仅项目特定规则）
 
@@ -61,7 +62,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 
 ## 技术现状（已对照 master 代码修正）
 
-### RIFE 插帧（重点，状态最新）
+### 插帧（VFG 默认；RIFE 冻结，仅源码构建）
 
 - **引擎 = RIFE full FP16 唯一引擎**（`rife_full_fp16.engine`，动态 shape 7ch）——lite 已彻底拆除（FP16 连续推理 ~6 次后 NaN 退化，实证与 TRT 版本无关）；`--rife-model` 参数已删；`vf_rife.c` 无 variant/lite 残留。
 - **模型 = RIFE 4.26 v2**（7ch `rife_v2` 变体，`third_party/rife/rife_v4.26_v2_fp16_all.onnx`）——**不是 4.25**（旧记忆仍写 4.25，过时）。切换理由：质量全档胜出（合成 GT PSNR +1~4.6dB，中位移优势最大）。构建：`bash tests/fruc/build_rife_full_engine.sh`（系统 trtexec，动态 profile FP16，`--hardware-compat on` 跨架构 ampere+）。
@@ -116,354 +117,38 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 
 ### 10-bit（HDR）通路（2026-10-17）
 
-**动机**：VFX 1.2 及以前只吃 8-bit，10-bit HDR 源被压成 8-bit 再进 AI（PQ 每个码步 ≈ 3.7–4% 亮度级，暗部单步近 10%，被 2–4× 超分放大成色带）。VFX 1.3 新增 RGB10A2 通路，本次接上；**typemap 全链 10-bit，末端仍由 mpv tonemap 到 8-bit SDR 输出**（HDR 上屏是另一件事，见 `docs/hdr-pipeline-investigation.md`）。
+**要点**：VFX 1.3 起支持 RGB10A2，10-bit 源不再被压成 8-bit 再进 AI；**typemap 全链 10-bit，末端仍由 mpv tonemap 到 8-bit SDR 输出**（HDR 上屏是另一件事）。完整实测（位序、探针、逐通道对账、limited-range 修正）见 `docs/hdr-pipeline-investigation.md` §17-§19。
 
-- **开关是自动的**：`vfx_bits_from_imgfmt()`（`yuv_to_rgba.h`）按**单个分量的存储字节数**判定——NV12/RGBA=1 字节→8-bit，P010/P016=2 字节→10-bit，X2BGR10=强制 10-bit。⚠ 不能用 `imgfmt_desc.bpp[0]`（那是整像素位宽：RGBA=32 → 会被误判成 10-bit，实测 SDR 8-bit 走 VFG 时引擎按 RGB10A2 解释 RGBA 字节 → 花屏）。8-bit SDR 内容零回归（仍是 RGBA8 端到端）。
-- **NvCV 常量**（反汇编 `NvVFXVideoSuperResImpl::CheckImageEncodingMode` + 探针实测）：`NVCV_RGB10A2=13`、`NVCV_P32=11`；`ImageEncodingMode=1` 必须在 `Load()` 前设，输入/输出格式必须一致。VFG 无开关，按图像格式自动判定（prev/cur/dst 必须同编码）。
-- **位序**：RGB10A2 打包字小端 `R bit0-9 / G 10-19 / B 20-29 / A 30-31`（实测 `NvCVImage_Transfer`: RGBA8(255,0,0)→`0xC00003FF`）= **mpv `IMGFMT_X2BGR10`** = `AV_PIX_FMT_X2BGR10` = `VK_FORMAT_A2B10G10R10_UNORM_PACK32`。⚠ **不是** `IMGFMT_X2RGB10`（那是 R 在最高位，R/B 会互换）。
-- **FFmpeg CUDA hwframes 不支持 x2rgb10/x2bgr10**（`build/scratch/hwf_test.c` 实测：rgba/bgra/rgb0 ok，x2*10 "Pixel format is not supported"）→ 自建 `hw_frames_ctx` 的 sw_format 恒用 `AV_PIX_FMT_RGBA`（两者都 4B/px、同 stride），10-bit 由**帧参数 `hw_subfmt`** 承载。代价：`hwdownload` 软路径会按 sw_format 解析成 8-bit（本应用 VO 有 CUDA interop，不走该路径）。
-- **mpv 的 ra 不认 X2BGR10**（`ra_get_imgfmt_desc` 失败 → CUDA interop 报 `Unsupported format: x2bgr10` → VO 退回 CPU hwdownload + convert，4K 每帧回读）。修法 = mpv overlay 补丁 `src/mpv/video/out/placebo/ra_pl.c`：把 libplacebo 的 `rgb10a2` 格式标成 `special_imgfmt = IMGFMT_X2BGR10` + `special_imgfmt_desc`（components {1,2,3}，同 `ra_gl.c` 对 GL rgb10_a2 的做法）。
-- **QualityLevel 语义**（库内错误串 `Valid values: 0-4, 8-19, 21, 23`）：**1–4 = upscale 档，8–11 = 1:1 denoise 档**；混用（如 2× 上采样传 10）→ `Run` 返回 -7 "invalid parameter value"。`vf_vsr` 的 `quality` 选项映射 1–4、`denoise` 映射 8–11，两者不可混。
-- **性能**：10-bit 与 8-bit 引擎耗时相同（探针 `build/scratch/vsr10_probe.c`：960x540→1080p 1.36 vs 1.43 ms，1080p→4K 5.39 vs 5.69 ms）；RGB10A2 与 RGBA8 都是 32bpp，拷贝/显存不变。GUI 实测 4K HDR：VSR 1:1 denoise 16.6 ms、VFG@4K 2.9 ms，源 24fps 跟得上。
-- **验证证据**：合成 BT.2020/PQ 三色条（420）ours vs mpv 原生路径逐通道吻合（148.0/0/40.8 vs 145/0/39.7 等）；SDR 8-bit 仍是 `cuda[rgba]`、HDR/10-bit SDR 是 `cuda[x2bgr10]`。脚本：`build/scratch/{vsr10_probe.c,hwf_test.c,pixdesc.c}` + `hdr_bars420.mp4`/`hdr1080p_test.mp4`（均为 gitignore 的临时产物）。⚠ 上述"逐通道吻合"是**修 limited-range 之前**的截图口径（8-bit 屏幕截图会把码域差异压缩）；修正后对**参考值**重新对账见 §19（旧内核 vs ffmpeg 参考 mean|Δ|=23.8/max=79 10-bit LSB，新内核 0.98/3）。
-- **已知遗留（未修，均有实测证据）**：① ~~`yuv_to_rgba` 的色度按亮度 span 归一化~~ **limited-range 归一化已修（2026-10-17，见 `docs/hdr-pipeline-investigation.md` §19）**——此前 luma **与**色度都用满幅跨度（8-bit 239、P010 61439）而非 limited 跨度（219/224、56064/57344），白位只送到满幅的 91.6%（8-bit 白 234/255、P010 白 934/1023、HDR 条红 941 vs 参考 1010）。⚠ 该修正**同样改变 SDR limited 片源的观感**（白位 234→255），属预期（对齐 mpv/ffmpeg，非回归）；② 4:4:4/4:2:2 hw 帧被 kernel 当 4:2:0 半平面读（合成测试暴露，8-bit 同样存在）；③ `-Dfruc_backend=rife` 分支的 RIFE 冻结在 8-bit（`yuv_to_rgba_init(..., VFX_BITS_8)`），RIFE 链（rife→vsr）因此恒 8-bit——VFG 链才走 10-bit。
-- **"软解 10-bit 偏暗"已证伪**（2026-10-17 用户目检 + 数值复核）：同一 app 内软/硬解逐像素一致——`dump-vsr` 的 VSR 输入/输出 PNG 对比 `mean|Δ|=0`、PSNR 138 dB。此前记录的"红 173 vs 235"是**口径错配**（`vo=image` 的原始 PQ dump vs GPU 截图已 tonemap）。注意 CLI 侧的假象：`--vo=gpu --hwdec=no` 时 VO 无 CUDA interop → 退回 hwdownload，会把 10-bit 帧按 hwframes 的 sw_format(RGBA) 解释 → 画面接近全白；app 的自建 VO 有 interop，不出现。
-- **硬解偏好 vs 实际解码（2026-10-22）**：`PlayerViewModel` 分三个概念，别混用——
-  `hwDecoding` = **实际**（= mpv `hwdec-current` != no）、`hwDecodeEnabled` = **用户偏好**
-  （我们下发给 mpv 的 `hwdec` 开关）、`hwDecodeAvailable` = **当前文件能否硬解**
-  （偏好=硬解 ∧ 解码器就绪 ∧ 实际软解 → false）。以前只有 `hwDecoding` 一个变量，
-  软解回退（mpeg4/XVID 这类只能软解的片子）会把它冲成软解 = **用户的硬解设置被
-  视频文件篡改**；现在 `toggleHwaccel()` 只翻偏好、实际值只由 `hwdec-current`
-  观察器回写，换到支持硬解的片源自动恢复硬解。UI（`BottomBar` 的 HW/SW 按钮）显示
-  **实际**状态并按 `hwDecodeAvailable` 禁用（`IconButton` 用 QQuickItem 内置
-  `enabled`：不响应点击/悬停、文字转 `#6a6a6a`），tooltip = `Software decoding only`
-  （zh_CN「此文件仅支持软解」）。实测：`/tmp/sw_test.avi`（mpeg4 640×480）→
-  `hwdec=nvdec`（偏好保持）而 `hwdec-current=no`，按钮显示「软解」且为灰色禁用；
-  换成 Jellyfish（h264）→ `hwdec-current=nvdec`、按钮恢复「硬解」。
-  ⚠ `hwDecodeAvailable` 的"解码器就绪"判据用 `decoderName_`（`current-tracks/video/
-  decoder`）非空：解码器还没起来时 `refreshHwDecodeAvailability()` **直接 return、
-  保持原值**（否则换片瞬间会出现 可用↔禁用 抖动）。
-  **状态只靠日志验证，不靠截图/读图**（用户 2026-10-22 要求）：两处 INFO——
-  `decoder: actual software -> hardware (preference=… hwdec=nvdec)`（有效状态翻转）与
-  `decoder: decode toggle disabled: this file is software-only (preference=… actual=… decoder=mpeg4)` /
-  `decoder: decode toggle available (…)`（可切换性翻转）。实测序列（mpeg4 → h264 → mpeg4）：
-  `disabled: this file is software-only(actual=software,mpeg4)` → `actual software -> hardware` + `available` →
-  `actual hardware -> software` + `disabled`，偏好在全程恒为"硬解"。
-  ⚠ **不能硬解还要分清"设备层"与"文件层"**（`hwDecodeReason`：0=可切换 1=设备层
-  2=文件层，QML tooltip 分支两次 i18n）：设备层 = 这台机器的 Vulkan 设备没有可用的
-  CUDA（判据复用 `aiAvailable`；mpv 的 cuda_vk 要求解码设备 = 显示设备，按 UUID 匹配），
-  文件层 = CUDA 正常但 codec 不在 hwdec 列表（mpeg4/XVID 那类）。措辞分别是
-  `此设备无法硬解（CUDA 不可用）` / `该文件只能软解`——混用会误导（h264 明明能硬解，
-  只是这台设备解不了）。注意 `CUDA_VISIBLE_DEVICES=`（我们模拟多卡用的手段）会**同时**
-  让 nvdec 无卡可用 → 硬解按钮也被禁用，那是模拟的副作用，不是 hwdec 逻辑的问题。
-- **AI 可用性 = Vulkan 设备 × CUDA 设备同一性（2026-10-22）**：超分/插帧/上变换是
-  **CUDA 产出 + Vulkan 零拷贝导入**，两者必须是同一张卡（mpv 自己的 cuda_vk 也是按
-  16 字节 UUID 匹配的：`video/out/hwdec/hwdec_cuda_vk.c:313`，匹配不到报
-  `Could not match Vulkan display device in CUDA.`）。但客户端这边原来有两个未校验的
-  默认值：Vulkan 取 **`pds[0]`**（`VulkanContext.cpp`，枚举第一张，笔记本上通常不是
-  NVIDIA），我们自己建的 CUDA 上下文取 **`cuDeviceGet(0)`**（`vf_hwup.c:112`，受
-  `CUDA_VISIBLE_DEVICES` 影响）。多卡机器（笔记本 iGPU+dGPU、issue #25 那种
-  `CUDA_VISIBLE_DEVICES=1` 双 N 卡）上两者可能不是同一张 → 滤镜把"另一张卡"的 CUDA
-  帧交给本卡 VO → **黑屏**（音频/控件正常）。
-  **落地做法**（用户 2026-10-22 定：「默认留在当前设备 + 明确降级/提示」，不做隐式
-  切卡、不做跨卡拷贝）：
-  ① `VulkanContext` 取 `VkPhysicalDeviceIDProperties.deviceUUID` 并打 INFO
-     （`GPU: <name> uuid=xx…`）；② 新增 `src/client/CudaProbe.{h,cpp}`（客户端**不**
-     链接 libcuda，`dlopen("libcuda.so.1")` + `cuInit/cuDeviceGetCount/cuDeviceGet/
-     cuDeviceGetUuid(_v2)/cuDeviceGetName`）按 UUID 找同名 CUDA 设备；③ `main.cpp` 在
-     `vk.init()` 后判一次，`viewModel.initAiAvailability()` 必须早于 `vfOption()`。
-  **不可用时的降级**（`aiAvailable=false`）：`vfOption()` 返回**空串**——注意连 `hwup`
-  都不能留（它会在另一张卡建上下文并输出 CUDA 帧，正是黑屏来源）；`syncVfOptions()`
-  跳过；所有 AI setter（scale/quality/denoise/fruc/truehdr）经 `aiAllowed()` 守卫
-  **拒绝生效但不改写持久化设置**（换到可用设备启动即恢复）；`QualityPopup` 整块
-  `enabled:false` + `opacity 0.4`（内容全是 AI 设置），Quality 按钮 tooltip 变
-  `Quality (AI unavailable on this GPU)`（zh_CN「画质（此 GPU 不支持 AI 处理）」）；
-  OSD `显卡` 行加 `· AI unavailable`，`超分`/`插帧` 行**只在设定确实请求 AI 时**
-  追加 ` | AI unavailable`（off 时不加，避免噪音）。
-  **验证**（不用双显卡机器：`CUDA_VISIBLE_DEVICES=` 把 CUDA 藏起来即可模拟）：
-  `CUDA_VISIBLE_DEVICES=` → 日志 `GPU: … uuid=` + `AI processing unavailable: … cuInit failed (100)`
-  + 一行"强制直通"说明；`vf` 为空、播放 2.00 s/2 s、丢帧 0（**不再黑屏**）；
-  `set-vsr scale 2` 被拒（WARN 一条）；OSD = `超分 auto High | AI unavailable` /
-  `插帧 off` / `显卡 … · AI unavailable`。正常机（UUID 匹配）→ `AI processing available: <same card>`，
-  链照旧、4K60 + VFG 丢帧 0。
-  **hwup 按 UUID 选 CUDA 设备（2026-10-22，C 方案的一部分）**：`vf_hwup` 新增
-  `cuda-uuid=` 选项（32 hex），客户端把选中的 Vulkan 设备 UUID 拼进链串
-  （`@hwup:hwup=cuda-uuid=<hex>`，`vfOption()` 里拼、`initAiAvailability` 带下来）。
-  `ensure_cuda` 里 `pick_cuda_device()` 用 `cuDeviceGetUuid` 匹配；匹配不到退回
-  `cuDeviceGet(0)` 并打 WARN（提示 `CUDA_VISIBLE_DEVICES=GPU-<uuid>`）。
-  ⚠ 之前唯一的残留黑屏路径就是这里：`cuDeviceGet(0)` 与 Vulkan 设备不同卡（双 N 卡 +
-  软解码）。硬解码路径不受影响（帧本来就是 mpv 按 UUID 匹配的那张，hwup 直通、不建
-  context）。⚠ 滤镜选项必须是 `@hwup:hwup=cuda-uuid=…`（**`=`** 不是 `:`），且注册表
-  里要写 `.priv_size = sizeof(OPT_BASE_STRUCT)`——漏了它 `m_config_from_obj_desc_and_args`
-  失败 → `Creating filter 'hwup' failed.`（踩过）。
-  **启动 WARN**：CUDA 可见 ≥2 张且 0 号 UUID ≠ Vulkan UUID 时提示建议
-  `CUDA_VISIBLE_DEVICES=GPU-<uuid>`（不改行为）。README 中英各自的"故障排查"新增
-  "多显卡：黑屏 / AI 不可用 / 无法硬解"一节（含 `VK_DRIVER_FILES` + `CUDA_VISIBLE_DEVICES`
-  配方与"两条都要指同一张"的说明；两张 N 卡时 `VK_LOADER_DEVICE_SELECT` 实测无效）。
-  实测：硬解路径链串带 uuid、hwup 不建 context、播放 2.00 s/2 s 丢帧 0；软解路径打
-  `hwup: CUDA 设备按 UUID 匹配 = NVIDIA GeForce RTX 5060 Ti（index 0）`；伪造 UUID →
-  `hwup: no CUDA device with UUID …; falling back to device 0`。
-  **未做/边界**：`--gpu` 选卡选项（讨论中，需要时再做）；"CUDA 算 + 另一张卡显示"的
-  零拷贝**不可能**，只能每帧回拷（已否决）。
-- **运行中切 hwdec（软↔硬）的连环坑（2026-10-17 修）**：
-  - 引擎/转换器/流/out_buf 都绑定在**创建它的 CUDA context** 上。旧 `ensure_cuda` 换 context 时只销毁流 → 复用旧 `CUmodule`/engine 句柄 → `cuLaunchKernel` 返回 400（CUDA_ERROR_INVALID_VALUE）→ 滤镜自己报错被 mpv 禁用（"切软解后不插帧、切回也不恢复"的根因）。修法：在旧 context 内 `vsr_destroy`/`vfg_destroy` + `yuv_to_rgba_destroy` + `cuMemFree(out_buf)` + 销毁流，下帧在新 context 重建（`vf_vsr.c`/`vf_vfg.c` 的 ensure_cuda）。
-  - `toggleHwaccel()` 曾用 `loadfile … replace` 重载当前文件让 hwdec 生效（还试过把位置塞进 loadfile 第 4 参数——那是 key/value **列表**，`mpv_command` 传不进，被当 index 解析失败）。**2026-10-22 更正：这是多余的，而且有害**——mpv 原生支持运行期切 hwdec：`hwdec` 选项 flags = `UPDATE_HWDEC`，`player/command.c:8315` 的处理是 `mp_decoder_wrapper_control(dec, VDCTRL_REINIT)`（重建解码器，所以不会有"新解码器缺参考帧 → POC 错误"）**+ `queue_seek(last_pts, MPSEEK_EXACT)`**（自己精确 seek 回原位置）。`replace` 反而会 `playlist_clear`：用户报"切软解/硬解会清空播放列表"就是这个（还顺带丢外部字幕/轨道记忆）。现在 `toggleHwaccel()` **只写 `hwdec` 选项**，播放列表与位置都由 mpv 自己保住；`pendingResumeSeek_` 已删除。
+- **开关自动**：`vfx_bits_from_imgfmt()` 按**单个分量的存储字节数**判定（NV12/RGBA=1B→8-bit，P010/P016=2B→10-bit，X2BGR10=强制 10-bit）。⚠ 不能用 `imgfmt_desc.bpp[0]`（整像素位宽，RGBA=32 会被误判 → 花屏）。
+- **NvCV 常量**：`NVCV_RGB10A2=13`、`NVCV_P32=11`；`ImageEncodingMode=1` 必须在 `Load()` 前设，输入/输出格式一致。
+- **位序**：打包字小端 `R bit0-9 / G 10-19 / B 20-29 / A 30-31` = `IMGFMT_X2BGR10` = `AV_PIX_FMT_X2BGR10` = `VK_FORMAT_A2B10G10R10_UNORM_PACK32`。⚠ 不是 `X2RGB10`（R/B 会互换）。
+- **FFmpeg CUDA hwframes 不支持 x2bgr10** → 自建 `hw_frames_ctx` 的 `sw_format` 恒用 `RGBA`，10-bit 由帧参数 `hw_subfmt` 承载（`hwdownload` 软路径会退化成 8-bit，本应用 VO 有 interop 不走）。
+- **mpv 的 ra 不认 X2BGR10** → 补丁 `src/mpv/video/out/placebo/ra_pl.c` 把 libplacebo 的 `rgb10a2` 标成 `special_imgfmt = IMGFMT_X2BGR10`（否则 CUDA interop 失败 → 4K 每帧回读）。
+- **QualityLevel 语义**：1–4 = upscale 档、8–11 = 1:1 denoise 档，混用返回 -7；`vf_vsr` 的 `quality`/`denoise` 分别映射。
+- **已知遗留**：① 4:4:4/4:2:2 hw 帧被 kernel 当 4:2:0 读；② `-Dfruc_backend=rife` 分支冻结在 8-bit（VFG 链才走 10-bit）。~~软解 10-bit 偏暗~~ 已证伪（同机逐像素 mean|Δ|=0）。
 
+### HDR 上屏（2026-10-17 落地，细节见 `docs/hdr-pipeline-investigation.md` §10-§22）
 
-### HDR 上屏（spike 结论，2026-10-17）
+**链路**：内容 HDR（mpv `video-params/gamma` ∈ pq/hlg）× 显示能力 HDR → 切 HDR10（rtImage / composite attachment / mpv wrap 全走 `A2B10G10R10_UNORM_PACK32`，mpv overlay 填 `ra_fbo.color_space`），否则保持 SDR。
 
-调研全文见 `docs/hdr-pipeline-investigation.md` §10。要点（**都与具体显示器无关**，
-本机 400nit 面板只用于验证机制）：
+- **只对 Vulkan RHI 生效**：Wayland 下 Qt 默认 OpenGL 时 `_qt_sg_hdr_format` 被静默忽略；本项目自建 Vulkan instance + 该动态属性。
+- **色彩空间声明**：`QSurfaceFormat::setColorSpace(Bt2020+ST2084)` + 自建 `wp_color_management` 模块（`WaylandColorFeedback.cpp`）下发 parametric 描述；⚠ 一个 wl_surface 只能有一个 color management surface（show 前设 colorSpace 会与模块冲突 → 连接断开），所以描述一律在首帧后由 `syncTargets()` 下发。
+- ⚠ **判据不能用 Qt**：`QRhiSwapChain::hdrInfo()` 在 Linux 是 Qt 硬编码默认值（1000nit/200）；`isFormatSupported()` 在 Wayland 是"合成器整体支持"（SDR 屏也 true）。**唯一可靠来源 = surface preferred 描述**：`gamut_area > 1.15×sRGB(0.112)` 或 transfer 是 PQ/HLG；读不到一律退 SDR。
+- ⚠ **PQ 下 `set_luminances` 的 max_lum 被协议忽略（恒 min+10000）** → 内容峰值必须经 `set_mastering_luminance` + `set_max_cll`/`max_fall` 下发（来源 mpv `video-params/*`，合法性照 `cm_metadata_sanitize()`）；缺了它 KWin 按 10000nit 压 → 对比度变平。
+- **目标色彩空间必须由宿主用 mpv 选项声明**（`target-trc=pq` / `target-prim=bt.2020`）：generic libmpv 路径自己拼 `ra_fbo` 会丢掉 backend 的 `color_space`，gl_video 把 PQ 烘成 gamma2.2 → 偏色。**不要**把合成器亮度填进 `ra_fbo.color_space.hdr.max_luma`（会预 tone map 到 203nit）。
+- **`VSR_HDR_DECLARE=0`（不自己声明）在本机画面发灰**，默认 1；`VSR_HDR=off|auto|hdr10` 默认 auto，`hdr10` 仅用于诊断/逃生舱（SDR 内容会更暗），不暴露 UI。
+- **OSD**：`HDR` 行 = 内容侧（`SDR · content SDR` / `... · content 758nit` / `SDR · content HDR not displayed (<原因>)`），`Output` 行 = 真实 swapchain 格式（`· HDR10` / `· SDR`，取自探测而非策略意图）。
+- **⚠ 运行期切换的已知坑**：`applyMode` 里模式未变也要 `syncTargets()`（幂等），否则漏设 `target-trc`；`CompositeRenderNode` 必须在渲染阶段从 Video 读 pipeline（缓存句柄会绑定已销毁对象）；SDR↔HDR10 切换仍是同步属性写，软解 + DR 等帧时理论上仍可能死锁（彻底修法 = 异步写）。
 
-- **前提：Qt 的 HDR swapchain 只在 Vulkan RHI 后端生效**。Wayland 下 Qt 默认
-  OpenGL(EGL) → `_qt_sg_hdr_format` 被静默忽略、`isFormatSupported(HDR10/scRGB/P3)` 全 0
-  （dmabuf fourcc 恒 AR24）——踩过这个坑并据此得出过错误结论。本项目 app 走 Vulkan ✔。
-- 入口是**动态窗口属性 `_qt_sg_hdr_format`**（"hdr10" / "scrgb" / "p3"，或 env
-  `QSG_RHI_HDR`），由 `QSGRhiSupport::applySwapChainFormat()` 在 swapchain 创建时读取；
-  Vulkan 后端实测 `isFormatSupported` 三项全 1、`QRhiSwapChain::format()==HDR10`。
-- **色彩空间声明走公开 API**：`QSurfaceFormat::setColorSpace(Bt2020+ST2084)` → Qt 发
-  `wp_color_management`（bt2020=6/st2084=11）→ KWin 回 `ready`；三种声明观感不同，
-  PQ 声明下 Qt 把 UI 按 PQ 编码、往返不偏色（sRGB 105.4 / PQ 102.8 / Linear 138.1）。
-- ⚠ **不要用 Qt 当显示能力的来源**：Linux 上 `QRhiSwapChain::hdrInfo()` 返回 Qt 硬编码
-  默认值（min 0 / max 1000 nit / sdrWhiteLevel 200），只有 Windows 有真实实现。峰值/色域必须
-  从合成器读（`wp_color_management` 的 output/surface feedback——mpv wayland 后端即此法），
-  需要我们自建协议客户端（已有 `WaylandIdleInhibit.cpp` 先例）或配置覆盖。
-- 格式选择要有 fallback 且逐屏判定：HDR10(`A2B10G10R10+HDR10_ST2084`) → scRGB
-  (`RGBA16F+EXTENDED_SRGB_LINEAR`) → SDR；`isFormatSupported()` 是 per-surface，
-  窗口换屏必须重新评估。自建 Vulkan instance 需加 `VK_EXT_swapchain_colorspace`。
-- 运行期开关：色彩空间声明可运行期改；**swapchain 格式**切换（SDR↔HDR10）需重建
-  swapchain + Qt 的 swapchain render pass + 我们的 composite render pass
-  （`applySwapChainFormat` 只在创建时调一次，要自己驱动或重建窗口）。
-- **探测链路已落地**（2026-10-17；数据见 `docs/hdr-pipeline-investigation.md` §12/§15）：
-  ① `VulkanContext` instance 加 `VK_EXT_swapchain_colorspace`（先枚举可用性，缺了只记
-  日志、不让 vkCreateInstance 失败）；② `src/client/HdrOutput.{h,cpp}` 首帧
-  （`afterRendering`）探测 `QRhiSwapChain`（`isFormatSupported/format/hdrInfo`）
-  + `screenChanged` 重探；③ `src/client/WaylandColorFeedback.{h,cpp}` →
-  `libvsr-color-feedback.so`：经 Qt 的 wayland 连接读 **surface preferred image
-  description**（`wp_color_manager_v1.get_surface_feedback`）→ 显示能力 + 异步变化
-  回调（转投 GUI 线程）。**旧的 output-description 模块
-  `WaylandColorManagement`/`libvsr-color-wayland.so` 已删除**。
-- ⚠ **两条被实测推翻的判据**（别再走回头路）：
-  1. `isFormatSupported()` 在 Wayland 上是"合成器整体支持"——SDR 屏（DP-2）也返回
-     HDR10=1，**不能**判断"这块屏是不是 HDR"。
-  2. **output image description 也分不出来**：同一块 LG 在 HDR 开与 WCG-only（HDR 关、
-     WCG 开）下，output description **逐字段相同**（bt2020/gamma2.2/0–400/ref400）。
-     能分辨的是 **surface preferred**：HDR 开 → `bt2020`（gamut_area 0.2119）；WCG-only
-     → `bt709`（0.1120）；SDR 屏 → `bt709`（0.1120）。`reference_lum` 还会在
-     `max/π` 与 `sdrBrightness` 之间漂（63/124 vs 200/400）→ mpv 的
-     `max_luma > ref_luma` 判据在本机不成立。
-  → 判据取 **"transfer 是 PQ/HLG 或 基色三角面积 > 1.15×sRGB(0.112)"**；读不到一律退 SDR。
-- ⚠ **Qt 的便利类没导出**：`QtWaylandClient::ColorManagementFeedback` /
-  `ImageDescriptionInfo` / `ColorManager` 无 export 宏（连 `staticMetaObject` 都拿不到）
-  → dlopen 会 `undefined symbol`。只能用**导出的协议封装**
-  (`QtWayland::wp_color_management_*`) 自己写 listener/解析。
-  ⚠ 初始 preferred **必须主动 `get_preferred()`**（协议只在变化时发事件）。
-  KWin 支持 PQ（`wp_color_management_v1 v2`，无 icc；`kscreen-doctor -o` 看真实状态）。
-- **运行期重新声明色彩空间已验证**：`QWindow::setFormat(colorSpace=BT2020/ST2084)` +
-  调 `QtWaylandClient::QWaylandWindow::initializeColorSpace()`（导出符号，模块里可调）
-  → `WAYLAND_DEBUG` 实测发出 `create_parametric_creator` + `set_primaries_named(6)` +
-  `set_tf_named(11)` + `ready` + `set_image_description`。swapchain 侧的运行期切换
-  （`sc->setFormat`+`newCompatibleRenderPassDescriptor`+`createOrResize`，Qt 的
-  per-frame RT 会在 createOrResize 里刷新）与自动决策**现已实现**（见下面"HDR10 上屏
-  已落地"与 §16）。
-- Qt `hdrInfo()` 在 Linux 恒为硬编码默认值（min 0 / max 1000 / sdrWhite 200），已实测
-  两屏一致 → 只能用于"证明它不可用"。
-- **HDR10 上屏已落地（含自动决策与运行期切换）**（2026-10-17；env
-  `VSR_HDR=off|auto|hdr10`，**默认 auto**；细节/证据见 `docs/hdr-pipeline-investigation.md`
-  §14/§16）：
-  - 渲染链路：rtImage/composite attachment/mpv wrap 全走
-    `A2B10G10R10_UNORM_PACK32`（`Video::setRenderFormat` +
-    `CompositePipeline::create(..., VkFormat)`，可重入）；mpv overlay 的
-    `mpv_vulkan_image` 加 `hdr/min_luma/max_luma` → 填 `ra_fbo.color_space`
-    （PQ/BT.2020 + 合成器亮度）；`vk_color_depth()` 按格式 10/16/8。
-  - **auto 判据**：内容 HDR（mpv `video-params/gamma` ∈ pq/hlg，`PlayerViewModel::videoHdr`）
-    × 显示能力 HDR（surface preferred 的 `gamut_area>1.15×sRGB` 或 PQ/HLG）→ 才切
-    HDR10；读不到 / SDR 屏 / WCG-only / SDR 内容 → 保持 SDR（**off 策略完全不碰
-    色彩空间声明，逐字节现状**）。
-  - **运行期切换 `hdr::applyMode`**：属性 + `QSurfaceFormat::colorSpace` +
-    `redeclareWindowColorSpace()`（重下发 wp_color_management）+ `QRhiSwapChain::
-    setFormat/newCompatibleRenderPassDescriptor/createOrResize()` → 再走
-    `rebuildRenderPath`（重建 composite pipeline + rtImage 格式）与 `updateMpvTarget`。
-    实测双向：SDR→HDR10 与 HDR10→SDR（RPC loadfile 切片源）均成功，
-    `libmpv_vk`/rtImage/mpv target 全部跟随，帧继续（25fps），校验层 VUID 集合
-    与纯 SDR 运行**完全一致**。
-  - ⚠ **踩过的真 bug**：`CompositeRenderNode` 曾经只在创建时缓存 pipeline 句柄 →
-    运行期重建后，在没有 `updatePaintNode` 的帧里绑定了**已销毁的 pipeline**
-    （`VUID-vkCmdBindPipeline-pipeline-parameter`）。修法：节点持 `Video*`，
-    **渲染阶段**从 owner 读 `compositePipeline()/compositePipelineLayout()`。
-  - **目标色彩空间必须由宿主用 mpv 选项声明**（`target-trc=pq`/`target-prim=bt.2020`）：
-    generic libmpv 路径（`video/out/gpu/libmpv_gpu.c` 的 `render()`）自己拼 `ra_fbo`
-    **丢掉 backend 填的 `ra_fbo.color_space`** → gl_video 把 PQ 内容烘成 gamma2.2 写进
-    PQ swapchain（暗 + 高光过饱和 = 用户报告的"偏红"）。**不要**把合成器亮度缩放后
-    填 `ra_fbo.color_space.hdr.max_luma`（会预 tone map 到 203nit，暗 2.4 倍）。
-  - **是否自己下发 `wp_color_management` 描述 = 一个真实观感变量**（`VSR_HDR_DECLARE`）：
-    **默认 1 = 自己声明**（bt2020 + st2084_pq + luminances 0/10000/203，mpv PQ 分支语义）
-    —— 用户目检"画面正常"；`VSR_HDR_DECLARE=0`（= mpv `--target-colorspace-hint` 的
-    **未声明**路径）在本机**画面发灰**（PQ 缓冲被按 gamma2.2 解释）。
-    ⚠ 我一度按"同尺寸 meanLum（声明 13.1 / 不声明 19.6 / mpv 20.7）"选了"不声明"，
-    结果发灰 —— **平均亮度不是正确性判据**（发灰恰恰均值更高）；必须目检，
-    或看饱和度/对比度。测量口径要求（同窗口尺寸、播放中截图、挖掉中心区，
-    避免暂停时的播放按钮 overlay 污染）仍然成立。
-  - **HDR10 静态元数据已下发（2026-10-17，见 `docs/hdr-pipeline-investigation.md` §20）**：
-    声明里补 `set_mastering_luminance` + `set_max_cll`/`set_max_fall`（来源 mpv
-    `video-params/{min-luma,max-luma,max-cll,max-fall}`；合法性照 mpv
-    `cm_metadata_sanitize()`；元数据变化时重下发）。**为什么必须有**：协议规定 PQ 下
-    `set_luminances` 的 max_lum **被忽略**（恒 min+10000），内容峰值只能靠这三个字段；
-    KWin `src/core/colorpipeline.cpp` 的 tone mapping 输入峰值 = `max_cll` → mastering
-    max → 主色体积上限（=10000）。缺它 → 真实片源（如 mastering 1000nit/MaxCLL 758nit）
-    被按 10000nit 压 → 对比度变平（用户原话"mpv 对比度更好"的根因）。
-  - ⚠ **两个强制模式（`VSR_HDR=hdr10`）踩过的坑（2026-10-17 修，见 §21）**：
-    ① `reevaluate()` 的"模式没变就早退"会漏掉 `updateMpvTarget` 钩子 → mpv 没设
-    `target-trc=pq` → gl_video 不做 SDR→PQ 转换 → SDR 码值写进 PQ 面 = 颜色错。
-    修法：模式未变也要 `syncTargets()`（幂等）+ 首帧补一次 `reevaluate`。
-    ② **一个 wl_surface 只能有一个 color management surface**（协议 surface_exists）：
-    show 前设 `QSurfaceFormat::colorSpace` 会让 Qt 先建一个，我们模块再
-    `get_surface()` = 协议错误、**连接断开 app 退出**。修法：强制模式只设
-    `_qt_sg_hdr_format`，colorSpace 与描述一律在首帧后由 `syncTargets()` 下发
-    （自动切换路径本来就是这么做的）。
-  - **OSD 有 `HDR` 状态行（2026-10-17，见 §22）**：`hdr::statusText()` →
-    `PlayerViewModel::setHdrStatus()` → `osdTextString()` 的 `HDR` 行。
-    形态：`SDR · content SDR` / `HDR10 · BT.2020/PQ · display 400nit · content 758nit` /
-    `SDR · content HDR not displayed (display <原因>)` / 强制时带 `(forced)`。
-    `content Xnit` 取 MaxCLL（退回 mastering max），`display Xnit` 取合成器 preferred 的
-    max_luma（物理峰值）。正常播放 **Tab** 显示 OSD（`osdPoll` 仅在可见时推送）。
-    ⚠ 切 HDR10 与静态元数据到达可能同瞬间 → **`setContentMeta()` 里必须刷新状态文本**
-    （否则 OSD 停在 `content ?`）；内容 HDR 但元数据未到时显示 `content HDR`。
-    无参数启动→恢复播放列表→点播放（上次记录续播）路径已实测同样正确。
-    ⚠ **`Output` 行带实际输出模式**（2026-10-18 用户："OSD 缺少实际输出的信息，HDR10/SDR"
-    → 追问后定为"实际输出合并进输出行，HDR 行信息完备"）：`输出  2560×1440 148.1fps · HDR10`
-    / `· SDR`。数据源 `hdr::outputText()`，取值 = **真实 swapchain 格式**（首帧
-    `installSwapchainVerification` 的 `probeSwapchain().current` + 换屏重探 + 每次
-    `applyMode` 成功后），**不是策略意图**——Qt 静默回退时以探测值为准（回退本身由
-    `installSwapchainVerification` 报 ERR）。分工：**HDR 行 = 内容侧**（内容 HDR？上变换？），
-    **Output 行 = 显示输出侧**。推送同 `hdrStatus_`（GUI 线程写/事件线程读 + 锁）。
-  - **`VSR_HDR=hdr10` 的定位 = 诊断/覆盖，非观看模式**（§22.1）：只用三类场景
-    （机制验收/回归、auto 判据失灵时的逃生舱、分离"谁做 tone mapping"）；
-    播 SDR 内容会更暗（SDR 白 203nit vs 面板 400nit，且无反相 tone mapping）；
-    **不暴露到 UI**。
-  - 仍未做：HDR10 下 Qt 自己的 UI 观感需目检
-    （Qt Linux 用硬编码 1000/200 nit 假设）；`vk_color_depth()` 的 dither 深度在
-    "只切换不 resize"时可能滞后（仅 dither）。
-- ⚠ **`peakNits` 是参考白口径**（mpv/libplacebo `PL_COLOR_SDR_WHITE=203` 缩放后的
-  `pl_color_space.hdr.max_luma`，DP-3 的 400nit 屏 → 203.0），不是屏的物理峰值——填给
-  libplacebo/mpv 是对的，别把它当 nit 显示值。
-- **已定**（本轮实验 + 实现，§15/§16）：WCG-only（HDR 关、WCG 开）的 surface preferred
-  是 **bt709**、与真 HDR 的 bt2020 可分 → 判据不误判；**内容驱动**（只有 HDR 片源用
-  HDR10，SDR 片源保持 8-bit 现状）+ 运行期切换（切换代价已实测：一次 swapchain 重建，
-  无新校验错误、帧继续）。
+### SDR→HDR10 上变换（VFX TrueHDR，2026-10-18 落地，**默认关**）
 
-### SDR→HDR10 上变换（VFX TrueHDR，2026-10-18 第一轮，**默认关**）
+**位置**：链上恒在 `vf_vsr` 之后（`hwup → vsr → truehdr → vfg`；`--fruc-order pre` **不插** → 记日志）。链串恒带占位 `@truehdr:truehdr:enable=no`（⚠ 不能写 `enable=0`，`OPT_BOOL` 只认 yes/no，写错整条 vf 解析失败）。开关 = 内容 SDR ∧ opt-in（`VSR_UPHDR=on` 或 UI）∧ 策略≠off ∧ 链上有滤镜；过滤器另有按帧 transfer 自守卫。细节见 `docs/vfx-truehdr-investigation.md` §8。
 
-调研/方案/验收全文见 `docs/vfx-truehdr-investigation.md` §8；要点：
-
-- **位置**：链上**恒在 `vf_vsr` 之后**（post 序 `hwup → vsr → truehdr → vfg`；RIFE 链尾）。
-  `--fruc-order pre` **不插**（那等于放 VSR 之前，按输出帧计费 = 最贵方案）→ 记一行日志。
-- **开关**：链串里恒 `@truehdr:truehdr:enable=no`（占位，直通成本≈0）；实际状态由 HDR 策略经
-  `vf-command truehdr enable|luminance` 下发。**opt-in 环境变量 `VSR_UPHDR=on|1|true`**
-  （默认关：收益未证实 + 成本吃紧）。⚠ 链串里 **`enable=no` 不能写 `enable=0`**——
-  `OPT_BOOL` 只认 yes/no，写错会让**整条 `vf` 选项解析失败**（所有滤镜失效，现象是 VO 直通
-  + A/V 不同步，mpv 只在 stderr 打一行）。
-- **判定（真值表，单一事实源在 `HdrOutput`）**：
-  `Enable = 内容 SDR ∧ opt-in ∧ 策略≠off ∧ 链上有 truehdr 滤镜`。
-  ⚠ **2026-10-18 改（用户："面板非 hdr 也允许开启 sdr -> hdr10"）**：判据里**去掉**了
-  "目标模式 = Hdr10"——上变换**与显示能力解耦**。面板非 HDR 时输出面仍是 SDR
-  （不动 swapchain、不下发色彩描述），TrueHDR 产出的 HDR10 帧由 mpv 按其 target
-  （`target-trc=auto` = SDR）tone map 回 SDR 写进现有 8-bit 面 = 改动前所有 HDR 片源
-  走的那条通路。用户在两方案里选了 A（**不**放宽 swapchain/声明；B = 非 HDR 面板也
-  强制 HDR10 上屏，未采纳）。auto 策略因此两格都通：**SDR 内容 × HDR 屏 × opt-in → Hdr10**
-  （顺带切 HDR10 上屏）与 **SDR 内容 × SDR 屏 × opt-in → Sdr**（只跑上变换）。
-  "链上有滤镜"一项由 `hdr::setUpconvertInChain()` 承担（`initTrueHdr` 按 `frucOrderPre()`
-  设，**须在 installPolicy 前**）——`--fruc-order pre` 不插滤镜，不停这一步 OSD 会声称
-  `SDR → HDR10` 而帧根本没被处理。
-  过滤器里还有**第二层按帧 transfer 的自守卫**（`pl_color_space_is_hdr()` → 直通），
-  所以内容 HDR 时即使客户端误开也不会二次转换。
-- **OSD 的内容标记**（`HdrOutput::statusText()`，英文不翻译）：
-  `HDR10 · BT.2020/PQ · display 400nit · content SDR → HDR10(400nit[, manual])`（HDR 输出 + 上变换）
-  / `SDR · content SDR → HDR10(400nit[, manual])`（**面板非 HDR**：上变换在跑、输出仍 SDR）
-  / `content 758nit`（真 HDR 片源，形态不变）/ `SDR · content HDR not displayed (<原因>)`。
-  `manual` = 峰值用用户覆盖值。**内容状态必须反映真实链路**（用户 2026-10-18 要求
-  "OSD 正确显示 content 状态"）：上变换关 / 链上没有滤镜时不能带 `→ HDR10`。
-- **接口**：输入 chunky RGB——RGBA8 / **X2BGR10**（10-bit SDR 源，`NvCVImage_Transfer` 落 8-bit）
-  / YUV（VSR 直通或软解+hwup：NV12/P010 走共用 `yuv_to_rgba` 内核）；输出
-  **`IMGFMT_X2BGR10` + `pl_color_space_hdr10` + `hdr.max_luma = Luminance`**
-  （口径对齐 mpv 自己的 `vf_d3d11vpp.c` NVIDIA True HDR 路径），下游全是既有 10-bit 通路。
-- **参数**：`luminance` = 面板**物理峰值**（合成器 preferred `maxLuma`，夹到 400–2000，兜底 650）
-  ——客户端下发；`saturation/contrast/middle-gray` 默认 100/100/50；
-  **`debanding-off` 恒 0（抗色带常开，铁律 6）**，选项只作诊断 A/B。
-  **参数变化走 `NvVFX_SetU32` 热更新（零重建）**——实测（`build/scratch/truehdr_setu32.c`，
-  1920×1080 合成图、同一引擎只 SetU32 后重跑）：Saturation 100→200 采样色度 0.1627→0.2377、
-  MiddleGray 50→80 均值 24.1→38.7 nit、Luminance 400→1000 灰阶带均值 74.6→88.0 nit，且
-  **与 destroy+create+Load 同参数的结果逐位相同**。只有 ①帧尺寸变化 ②`DebandingOff` 变化
-  （改 pass 图，未实测是否 Load 期决定 → 不假设）③SetU32 失败 才重建引擎（≈25 ms）。
-  ⚠ **`VSR_UPHDR_NITS=<400..2000>` = 仅调试的峰值覆盖**（非法值忽略并记 error）；
-  默认路径**永远**跟面板能力走（用户 2026-10-18 定："默认按面板能力算，env 只用于调试"）。
-  `Luminance` 有**双重作用**：① TrueHDR 的目标峰值参数；② 我们声明给合成器的内容峰值
-  （`effectiveContentMeta()` 的 `max_cll`/mastering max）——改它两个后果都会动。
-- **TrueHDR 的全部可调参数 = 5 个**（证据 = `strings libnvVFXTrueHDR.so` 里的参数文档串，
-  逐条照抄）：`Contrast` 100（0–200）/ `Saturation` 100（0–200）/ `MiddleGray` 50（**10–100**，
-  ⚠ 初版我写成 0–100，已修）/ `Luminance` 650（400–2000）/ `DebandingOff` 0（0|1）；
-  另有 `BatchSize`（只支持 1，非用户参数）。**没有**质量档/色域/transfer/强度类旋钮
-  （VSR 有 `QualityLevel`、VFG 有 `mode`，TrueHDR 没有对应物）。同两串还证实接口假设：
-  `SrcImage0` = "RGBA U8 interleaved, CUDA/CPU_PINNED"、`DstImage0` = "RGB10A2 P32 packed,
-  HDR10 PQ encoded"。5 个参数全部能用 `vf-command truehdr <name> <value>` 运行期改。
-- **⚠ 参数区间是硬约束，且越界是静默的**（2026-10-18 实测，回答"luminance 最低只能 400 吗"）：
-  探针 `build/scratch/truehdr_lumrange.c` 逐值新建引擎实测（SetU32 → Load → Run → 读回灰阶
-  PQ nit + 字节哈希）：`Luminance` 399/300/200/100/50 与 2500/4000 的
-  `NvVFX_SetU32` 全返回 **-7**（invalid parameter value），而 `Load()`/`Run()` 仍返回 0
-  → **拒绝不报错、值不生效**；被拒后引擎**保持当前值**（先设 1000 再发 100 → 输出仍 = 1000；
-  从未成功设过则停在 SDK 默认 650）。输出展开量随 Luminance 单调上升（灰阶带峰值
-  250.6 nit@400 → 318.5@650 → 375.5@1000 → 450.6@2000）→ **400 = SDK 能给的"最小展开"**，
-  想更接近原 SDR 只能在下游（mpv tone mapping）调。
-  含义：三处同区间夹取（`TrueHdrParams.h`、`vf_truehdr.c` 的 `M_RANGE`、`HdrOutput` 的 clamp）
-  是必须的；`engine_params_apply()` 检查 SetU32 返回码（失败 → 重建）是必要防线。
-- **成本**：4K 实测 **4.9–5.8 ms/源帧**（探针 CUDA-event 的 2.04 ms 只覆盖引擎 Run，
-  不含两次 D2D 拷贝 + 逐帧 `cuMemAlloc/Free`(33 MB) + 同步）。1080p→4K + VFG@60fps
-  稳态 22 s **丢帧 0**。
-- **声明**：上变换生效时给合成器的内容峰值 = TrueHDR 的 Luminance（`effectiveContentMeta()`）——
-  不发它合成器按 10000 nit 口径压，画面会发暗发平（同 §20 的机制）。
-- ⚠ **同步 mpv API 死锁（本轮踩到并修，仍然是既有脆弱点）**：`mpv_set_property` 是**同步**的
-  （内部等 core 的 dispatch lock）。**软解 + `vo=libmpv` 直渲**时 core 可能卡在
-  `get_buffer2_direct → vo_get_image → dr_helper_get_image` **等渲染线程交 DR 图像**；GUI 线程
-  若在此同步等 core = 循环等待死锁（gdb 实证；3/3 必现）。修法：① `setHdrTarget` **幂等**
-  （值未变不发属性写）；② 首帧 `reevaluate` 从 `afterRendering` **排队到 GUI 线程**
-  （渲染回调只留只读探测）。**残余**：目标真的切换时（SDR↔HDR10 运行期切换）仍是同步写，
-  若恰有 DR 在等仍可能死锁 → 彻底修法 = 异步属性写（`mpv_command_async` 的 `set`）。
-  **软解片源做 HDR 切换相关验收必须覆盖这一格。**
-- **UI（2026-10-18 第二轮，用户定的结构）**：`QualityPopup` 里只放 **SDR→HDR10 开关**
-  + **Advanced** 图标按钮（`mdi-tune`）；点开 **`TrueHdrAdvancedPopup`**（modal 居中，新文件）
-  放参数：Luminance / Saturation / Contrast / MiddleGray 各一条 **slider + Reset**，
-  Debanging 是两态开关（无 Reset——两态本身就能回到默认 On）。组件：`ui/components/ParamSliderRow.qml`（单参数行）、
-  `ui/components/SegToggle.qml`（Off/On 分段开关）；新 QML 必须登记进
-  `src/client/resources.qrc`（QML 走 **qrc**，`view.setSource("qrc:/main.qml")`——漏登记
-  的报错是 `Type Xxx unavailable` + `"components": no such directory` 这类）。
-  - **滑块实时提交但节流**（`throttleMs` 默认 120 ms，leading+trailing，尾值必发）：
-    滤镜侧改参数走 SetU32 热更新（零重建），所以不需要"松手才生效"；节流只为限制
-    vf-command 频率。（初版做的是松手才提交，用户 2026-10-18 纠正："做 throttle，
-    不要做松手才生效"。）
-  - **高级入口是图标按钮**（`mdi-tune` U+F062E，size 16 = 与左侧分段开关同高 32）；
-    打开高级弹框时 `uiLayer.closeOtherPopups(trueHdrAdvancedPopup)` **关掉 QualityPopup**。
-  - 滑块配色照 `ProgressSlider.qml`（只改配色，不动几何/交互）；高级入口 = `mdi-tune`
-    （U+F062E，`docs/icon-cheatsheet.html` 可查）字面字符。弹窗**无背景遮罩**（PopupBase 统一）。
-  - ⚠ **初始化赋值不得触发提交**：`ParamSliderRow` 的 `Component.onCompleted` 赋值必须包在
-    `_syncing` 里——否则弹窗一实例化就把"显示值"当用户输入写回 VM 并落盘
-    （实测：启动即把 `upHdrLuminance` 写成 400）。
-  - **Reset 语义 = 回 SDK 默认值**（`TrueHdrParams.h` 的 `*Def`）；**Luminance 例外**：
-    回**当前面板峰值**（该参数默认就是"自动跟面板"，用户按 Reset 想要的是自动结果）。
-  - **Luminance 覆盖开关**（Auto/Manual）：默认 Auto = 跟面板物理峰值；打开后滑块/Reset
-    才可用，且**打开瞬间把滑块种子成当前自动值**（避免一开覆盖画面就跳）。手动值同时是
-    声明给合成器的**内容峰值**（`effectiveContentMeta` 的 max_cll），所以 HdrOutput 持有
-    该覆盖状态（`hdr::setUpconvertLuminanceOverride`），VM 只是 UI/持久化的拥有者。
-  - 持久化键（QSettings）：`upHdrEnabled / upHdrLumOverride / upHdrLuminance /
-    upHdrSaturation / upHdrContrast / upHdrMiddleGray / upHdrDebanding`；手改越界值会被
-    **夹回区间**而不是整份丢弃。`VSR_UPHDR=on` 降级为 `upHdrEnabled` 的**默认值**
-    （无持久化设置时生效），benchmark 不读设置 → 仍只认 env。
-  - 区间/默认值的客户端单一来源 = `src/client/TrueHdrParams.h`（数值 = SDK 参数文档串）；
-    C 侧镜像在 `vf_truehdr.c` 的选项表——**跨构建目标无法共享头文件，改动两处同步**。
-- **未做**：观感门槛（与 `mpv --inverse-tone-mapping` 并排，决定是否默认开）；输入缓冲 wrap
-  优化（省一次拷贝）；`--fruc-order pre` 支持；RPC 侧没有 `set-uphdr`（UI 之外只能走
-  `vf-command truehdr …` 直发滤镜）；**引擎 `Load()` 失败时 OSD 仍按策略显示 `→ HDR10`**
-  （过滤器永久直通 + 一条 WARN，但 OSD 不读过滤器的 `mode=`——要彻底准确需给状态行加
-  `mode=failed` 并反馈给 `HdrOutput`，2026-10-18 记）。
+- **参数**（5 个，区间是硬约束且越界**静默失败** = SetU32 返 -7 但 Load/Run 仍 0，值不生效）：`Contrast` 100(0-200) / `Saturation` 100(0-200) / `MiddleGray` 50(**10-100**) / `Luminance` 650(**400-2000**，= 面板物理峰值) / `DebandingOff` 0（恒 0，抗色带常开）。三处区间夹取同步：`TrueHdrParams.h`、`vf_truehdr.c` 的 `M_RANGE`、`HdrOutput` 的 clamp。
+- **热更新**：参数走 `NvVFX_SetU32`（实测与 destroy+create 逐位相同）；仅帧尺寸变化 / `DebandingOff` 变化 / SetU32 失败才重建引擎（≈25ms）。
+- **输出**：`IMGFMT_X2BGR10` + `pl_color_space_hdr10` + `hdr.max_luma = Luminance`（对齐 mpv `vf_d3d11vpp.c`）；上变换生效时给合成器的内容峰值也用该 Luminance。成本 4K ≈ 4.9–5.8 ms/源帧。
+- **UI**：`QualityPopup` 只放开关 + Advanced（`mdi-tune`）→ `TrueHdrAdvancedPopup` 四条 slider + Reset、Debanding 两态；Reset = SDK 默认，Luminance 例外（回面板峰值）；Luminance 有 Auto/Manual 覆盖（Auto 跟面板）。持久化键 `upHdrEnabled/LumOverride/Luminance/Saturation/Contrast/MiddleGray/Debanding`。
+- ⚠ **同步 mpv API 死锁**：`mpv_set_property` 等 core dispatch lock，软解 + `vo=libmpv` 直渲时若 core 卡在等 DR 图像会循环死锁（gdb 实证）。已修：`setHdrTarget` 幂等 + 首帧 `reevaluate` 排队到 GUI 线程；**软解片源做 HDR 切换验收必须覆盖这一格**。
 
 ### 渲染循环（Qt Quick）
 
@@ -471,6 +156,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 - `QSG_RENDER_LOOP=basic` 必须（threaded 每帧渲染饿死事件循环）。**绝不无条件 update()/postEvent**（渲染风暴回归教训）。`aboutToBlock` 兜底已删除（`Video.cpp:377` 注释确认）。
 - 卡死归因：目录播放概率性卡死根因 = filter 每帧 `get_render_target_size` 持锁等渲染线程 → vo_libmpv.c 无锁读（__atomic relaxed）已修复。
 - **Xid 109**（全屏切换 device loss）：根因 = `Video::ensureRenderTarget` 销毁 rtImage 前无 GPU 同步（Vulkan UAF）→ 销毁前无条件 `vkQueueWaitIdle` 修复（`tests/fs_stress.sh` 验证）。
+
 
 ### 启动与会话行为（2026-10-17）
 
@@ -482,6 +168,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 - **播放列表面板"空白"根因与修法（2026-10-21）**：`PlaylistPanel` 是 `Drawer`（Popup）。关闭时 popup 内容从场景树摘除；**关闭期间**播放列表增删（换片/追加/目录展开）后，ListView 的 delegate 保持旧几何（实测 120→20 条重开后 delegate y 仍是 4326..4872，而 contentHeight=840）→ 视口内没有任何条目 = 面板空白，且**不自愈**（第一次滚轮才跳回）。修法：ListView 放进 `Loader`，`onOpened` 创建 / `onClosed` 销毁（每次打开都是全新布局）；另加 `clampScroll()`（`contentHeight/height/count` 变化时 `Qt.callLater` 夹 contentY，`boundsBehavior: StopAtBounds`）与滚轮 handler 对**全部** wheel 帧 `accept`、写入前 `cancelFlick()`（避免手写 contentY 与 Flickable 的 wheel flick 两套滚动互相打断）。验证：修复前重开截图为空，修复后显示 20 条；120 条滚到底 contentY=4368、末条 120 可见。新 ListView 全新建局 → 每次打开都会重建；`onLoaded` 里 `positionViewAtIndex(currentIndex, ListView.Center)` 把当前播放条目居中（实测 index 61/120 → contentY=2205，前后各 ~16 条可见），无 current（`currentIndex<0`）时回到顶部。
 - **两个拖放区（2026-10-21 确认）**：A = 窗口级 `DropArea`（`main.qml`）→ mode 0，**完全重置**播放列表（首条 replace 播放、其余 append 排队）；B = `PlaylistPanel` 的 `DropArea` → mode 1，**追加**（不打断当前播放）。面板打开时 B 在 popup overlay（`QQuickOverlay` 是 contentItem 的子项、创建在 QML 根之后）里叠在 A 之上，Qt 的拖放投递按 `paintOrderChildItems()` **从上到下找第一个接受者**（`qquickdeliveryagent.cpp: deliverDragEvent`），所以两个区不会同时触发。**追加目录**同样走 mpv 原生语义：`loadfile <dir> append` 只留一个目录条目、点击才展开（实测：追加后列表 = `[/tmp/vsr-dir-test]`，点击 → 4 条目并播放首条）。
   菜单侧同语义（2026-10-21）：右键菜单 = "Add files to playlist"（FileDialog mode 1）+ "Add folder to playlist"（FolderDialog mode 1，同一 `folderDialog` 实例靠 `mode` 属性区分标题与 `onAccepted`）；"打开文件/文件夹"仍分开（平台对话框不能同时选文件与目录），但两者与追加共用 `openFiles` 单一入口，目录路径一律交给 mpv。
+
 
 ### 当前条目的移除 / 删除（2026-10-23）
 
@@ -528,6 +215,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 ——此时按设计**不改播放列表**（文件还在），只记 ERR。测试要用 `$HOME` 下的文件。
 ⚠ RPC 同步提供 `remove-current` / `delete-current`（测试与脚本用）。
 
+
 ### 快进/快退（连续 seek 门控，2026-10-21）
 
 - **键位**：Qt Quick 自己处理（`main.qml` 的 `Keys.onPressed`，**从不把按键喂给 mpv 的 input 层**）：`←/→` = ±5 s，`Shift` = ±10 s；mpv 默认是 `seek ∓5`（相对、**关键帧**精度）+ `Shift` = ±1 s exact + `↑/↓` = ±60 s（`third_party/mpv/etc/input.conf`，编译时嵌入）。
@@ -541,7 +229,6 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分** + **RIFE 插�
 - **seek 目标之前的帧被喂进滤镜链 → 已修（2026-10-21，把 seek 从 212 ms 降到 ~40 ms）**：A/B（1080p29.97、精确 seek、VSR+VFG）：VSR auto **212–216 ms**、`set-vsr off` **40–47 ms**、固定 `--scale 2` **265 ms**；无音频同样 207–227 ms（排除音频）。**不在 VO 侧**：`VSR_LOG_VIDEO=1` 逐帧日志显示 seek 期间只渲染 2 帧且 `rnd≈0.2 ms`（无新帧）。**根因**：`vf_vsr` 里临时打印 `mpi->pts` 看到——seek 到 45 s 后滤镜处理的是 **pts=40.04、40.11…**（demux 落到的关键帧、目标之前）的帧，每 6.2 ms 一帧连续进 VSR 直到越过目标；这些帧最终在 VO 被丢弃（画面正确）但 VSR 白跑。`hr_seek_framedrop` 只在解码器层按 packet 丢，对这条链不生效/不充分。**实现**：`vf_vsr` 加 `skip_before_pts`（`vf-command vsr seek-target <秒>`，0=清除）；`f_process` 在**同一次调用里循环拉取**丢弃 `pts < target-5ms` 的帧（早先每帧 `mark_progress`+return 绕图一圈，实测每帧框架开销 ~0.3 ms；改成 drop loop 后单帧只剩解码成本），首个 `pts >= target` 的帧照常处理，但**标记不在此清除**（见下一条）。⚠ 若不 `mark_progress`/不循环直接 return，下游取帧请求落空 → 整条链卡死在 `seeking`（踩过）。客户端 `seekAbsolute()` 在 seek 命令**之前**发该命令；**不要在 `notePlaybackRestart()` 里从事件线程补发清除**——跨线程的 async 命令顺序不保证，清除可能插到下一步的 marker 之后把那一步的跳过抹掉；滤镜侧只在 3 s 过期 / 下一次 seek-target 时清，直播流客户端不发 marker。**效果**：VSR 开启时精确 seek 典型 **40–130 ms**（原来 212 ms；按住 25 Hz 实测 ~9 步/3 s vs 修复前 ~2.5 步/3 s，VSR 直通上限 ~15 步/3 s）。
 - **marker 必须留到过期，否则"偶发特别慢"（2026-10-22 实测更正）**：一次 seek 里 mpv 会把目标之前的帧**喂两遍**——第一遍驱动到目标（marker 生效，drop loop 丢 297–450 帧），随后 `vsr: reset`（链 reset）之后再从更早的位置喂 60–130 帧（0.5–2 s 的量）。早先实现"首个 >= 目标的帧就清 marker"，这批迟到帧便逐帧进引擎（2.8 ms/帧）→ 单次 seek 多 **200–400 ms**，正是按住方向键时"连续几次快必有一次特别慢"。**修法**：marker 只在 3 s 过期或下一次 `seek-target` 时清除，正常播放零影响（每帧只多一次 pts 比较）。**实测（catlove_470s，60 fps，VSR auto 2×）**：单步中位 **53 ms**（p90 137 / max 167），按住 25 Hz 3 s → **29 步 / +148 s**（修前 12 步 / +64 s），与 `set-vsr off` 的 29 步 / +149 s 持平；60 Hz → 33 步 / +168 s（VSR off 46 步 / +234 s）。⚠ 之前"剩余慢步 = 精确 seek 固有解码成本（VSR off 同样慢）"的结论**作废**：那次 VSR off 的 324 ms 也是迟到帧 + 当时的系统负载所致，与 VSR 无关。
 - **不改用关键帧 seek（实测否决）**：mpv 原生相对 seek（`seek +5 relative`，即其方向键语义）在按住 25 Hz 时**累加**目标，3 s 内位置 +439 s（画面整段飞过），60 Hz 直接冲到文件尾并回绕；它的"每帧看着正常"只是因为画面在整段跳。门控 + 精确绝对 seek（每步严格 +5 s、落点精确）在修好 marker 之后速度已与关键帧同级，因此保留现语义。
-
 
 ### 反交错（mpv 原生 `--deinterlace`，2026-10-22）
 

@@ -1,5 +1,4 @@
 input/
-.venv/
 *.egg-info/
 dist/
 build/
@@ -22,14 +21,10 @@ screenshots/
 articles/
 
 # Compiled test binaries
-tests/test_decoder
 tests/*.o
 third_party/
-!third_party/imgui/
 logs/
 references/
 docs/notes/
 docs/superpowers/
-tests/fruc/fruc_of_flow
-tests/fruc/fruc_of_interp
 

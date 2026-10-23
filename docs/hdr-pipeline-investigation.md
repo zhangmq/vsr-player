@@ -7,6 +7,10 @@ scope: 只回答"能不能做、代价是什么、风险在哪"；不含实现
 
 # HDR 管线调研
 
+> ⚠ 历史标注（2026-10-23）：文中早期的 `WaylandColorManagement` / `libvsr-color-wayland`
+> 模块后来已删除，现实现是 `src/client/WaylandColorFeedback.cpp`（`libvsr-color-feedback.so`，
+> 读 surface preferred 描述）。其余结论未变；以 `AGENTS.md` 的摘要为准。
+
 > 触发问题（用户原话）："看下 vfx 的 sdr -> hdr 实现，另外我们的管线目前会把 hdr 内容转 sdr 再处理，
 > 新版 vfx 应该可以直接支持 hdr 内容，mpv 也支持，先做调研吧，暂时不开发。"
 
