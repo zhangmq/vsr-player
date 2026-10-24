@@ -627,8 +627,14 @@ private:
     /// AI 相关设置入口的统一守卫：不可用时**拒绝**（返回 false）并记一次 WARN。
     bool aiAllowed(const char *what);
     /// 重算 canDeleteCurrentFile_（path 变化时调用）。
-    void refreshCanDeleteCurrentFile();
+    /// ⚠ path 必须由调用方传入（path 观察器手里已经有值）。**不要**在这里
+    /// 重读 mpv 属性：本函数在 GUI 线程执行，而软解 + vo=libmpv 的 DR 帧
+    /// 分配要靠 GUI 线程在 mpv_render_context_update() 里服务，同步
+    /// mpv_get_property 会把整条渲染/解码链锁死（2026-10-24 gdb 实证）。
+    void refreshCanDeleteCurrentFile(const QString &path);
     bool canDeleteCurrentFile_ = false;
+    QString deletePath_;      // 与 canDeleteCurrentFile_ 同源（GUI 线程缓存）
+    int playlistPos_ = -1;    // 缓存的 playlist-pos（playlist 观察器 post 写）
     QString videoInfo_;
     // ── OSD 数据源（主线程观察器 post 写；事件线程 osdTextString 拉取读；
     //    数值成员原子化，QString 隐式共享线程安全）─────────────────

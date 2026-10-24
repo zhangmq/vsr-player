@@ -165,9 +165,18 @@ void PlayerViewModel::attach(MpvController *mpv) {
     mpv_->observeProperty("path", MPV_FORMAT_STRING, [this, post] {
         std::string p = mpv_->propertyString("path");
         post([this, p] {
-            if (!p.empty())
-                lastPath_ = QString::fromStdString(p);
-            refreshCanDeleteCurrentFile();   // 换文件 → "能否删除"跟着变
+            // ⚠ 这个 lambda 在 GUI 线程执行，**绝不能**再同步调 mpv API：
+            // 软解 + vo=libmpv 时 DR 帧分配靠 GUI 线程在
+            // mpv_render_context_update() 里服务（vo_libmpv.c），GUI 线程
+            // 一旦阻塞在 mpv_get_property（等 core 的 dispatch 锁），解码
+            // 线程拿不到 DR 帧 → core 卡在 send_packet → 双向死锁。
+            // 实测：v0.4.3 的 refreshCanDeleteCurrentFile() 在这里重读 path，
+            // 软解启动 1080p h264/hevc 必挂（窗口无响应、只能杀进程）。
+            // path 观察值 p 已经够用，直接传下去。
+            const QString path = QString::fromStdString(p);
+            if (!path.isEmpty())
+                lastPath_ = path;
+            refreshCanDeleteCurrentFile(path);   // 换文件 → "能否删除"跟着变
         });
     });
 
@@ -221,6 +230,10 @@ void PlayerViewModel::attach(MpvController *mpv) {
         // current 行高亮，不重建列表——QStringList 属性全量 reset
         // 是大列表卡顿主因）
         post([this, files, cur] {
+            // 缓存的 current 索引（= mpv playlist-pos，-1 = 无当前条目）。
+            // "移除当前条目"用它，避免在 GUI 线程同步读 playlist-pos
+            //（同 path 观察器注释：同步 mpv API 会和 DR 帧分配互锁）。
+            playlistPos_ = cur;
             // 列表**变空**（移除最后一个条目 / 清空播放列表）→ 忘掉重播目标：
             // 否则 play() 的 !fileLoaded_ 分支会走 resumeLastPath()，把刚被
             // 移除的文件 append-play **重新加回列表**（用户实测："删了当前
@@ -986,7 +999,9 @@ void PlayerViewModel::stop() {
     fileLoaded_ = false;
     // keep-playlist：mpv stop 默认清空播放列表（command.c cmd_stop
     // flags&1 → playlist_clear 跳过），单曲循环下停止后列表消失。
-    mpv_->commandV({"stop", "keep-playlist", nullptr});
+    // async：GUI 线程不阻塞 core-lock（同 seek；同步命令会与软解 DR 帧
+    // 分配互锁，见 path 观察器注释）。
+    mpv_->commandAsync({"stop", "keep-playlist", nullptr});
 }
 
 void PlayerViewModel::seekAbsolute(int64_t ms) {
@@ -1424,14 +1439,18 @@ void PlayerViewModel::toggleLoop() {
     setLoopMode((loopMode_ + 1) % 3);
 }
 
-void PlayerViewModel::playlistNext() { if (mpv_) mpv_->commandStr("playlist-next"); }
-void PlayerViewModel::playlistPrev() { if (mpv_) mpv_->commandStr("playlist-prev"); }
+// 播放中的控制命令一律 async：GUI 线程同步调 mpv API 会在软解 + vo=libmpv
+// 时与 DR 帧分配互锁（解码线程等 GUI 服务 DR，GUI 等 core 执行命令；
+// 见 path 观察器处的完整说明）。启动/idle 阶段的 loadfile（restorePlaylist*
+// /resumeLastPath）保持同步——那时 core 空闲，没有解码线程在等 DR。
+void PlayerViewModel::playlistNext() { if (mpv_) mpv_->commandAsync({"playlist-next", nullptr}); }
+void PlayerViewModel::playlistPrev() { if (mpv_) mpv_->commandAsync({"playlist-prev", nullptr}); }
 
 void PlayerViewModel::playlistPlayIndex(int index) {
     if (!mpv_) return;
     char buf[32];
-    snprintf(buf, sizeof(buf), "playlist-play-index %d", index);
-    mpv_->commandStr(buf);
+    snprintf(buf, sizeof(buf), "%d", index);
+    mpv_->commandAsync({"playlist-play-index", buf, nullptr});
 }
 
 // ── File ─────────────────────────────────────────────────────────────
@@ -1440,7 +1459,7 @@ void PlayerViewModel::loadFile(const QString &path) {
     if (!mpv_) return;
     videoInfo_ = path.section('/', -1);
     emit videoInfoChanged();
-    mpv_->commandV({"loadfile", path.toUtf8().constData(), nullptr});
+    mpv_->commandAsync({"loadfile", path.toUtf8().constData(), nullptr});
 }
 
 // ── 轨道/字幕/文件/列表管理（Task 3 计划代码；moc 要求 slot 有定义）──
@@ -1460,8 +1479,8 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
         // 跳过混拖分类（URL 以 .srt 结尾会被误判为字幕 sub-add）
         bool first = true;
         for (const QString &p : paths) {
-            if (first) mpv_->commandV({"loadfile", p.toUtf8().constData(), nullptr});
-            else       mpv_->commandV({"loadfile", p.toUtf8().constData(), "append", nullptr});
+            if (first) mpv_->commandAsync({"loadfile", p.toUtf8().constData(), nullptr});
+            else       mpv_->commandAsync({"loadfile", p.toUtf8().constData(), "append", nullptr});
             first = false;
         }
         return;
@@ -1480,9 +1499,9 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
             continue;
         }
         if (mode == 1 || !first)
-            mpv_->commandV({"loadfile", p.toUtf8().constData(), "append", nullptr});
+            mpv_->commandAsync({"loadfile", p.toUtf8().constData(), "append", nullptr});
         else
-            mpv_->commandV({"loadfile", p.toUtf8().constData(), nullptr});
+            mpv_->commandAsync({"loadfile", p.toUtf8().constData(), nullptr});
         first = false;
     }
 }
@@ -1559,9 +1578,10 @@ void PlayerViewModel::playlistRemove(int index) {
 
 void PlayerViewModel::removeCurrentFromPlaylist() {
     if (!mpv_) return;
-    // 用 mpv 的 playlist-pos（-1 = 无当前条目）；不用 lastPath_（曲目切换
-    // 期间 path 属性会被清空，见上方 path 观察器注释）。
-    const int pos = atoi(mpv_->propertyString("playlist-pos").c_str());
+    // 用缓存的 playlist-pos（-1 = 无当前条目）；**不在 GUI 线程同步读**
+    //（同步 mpv API 与软解 DR 帧分配互锁，见 path 观察器注释）。也不用
+    // lastPath_（曲目切换期间 path 属性会被清空）。
+    const int pos = playlistPos_;
     if (pos < 0) {
         MLOG_INFO("playlist: no current entry to remove");
         return;
@@ -1571,8 +1591,9 @@ void PlayerViewModel::removeCurrentFromPlaylist() {
 }
 
 void PlayerViewModel::deleteCurrentFile() {
-    const QString path = QString::fromStdString(mpv_->propertyString("path"));
-    if (!canDeleteCurrentFile_) {
+    // 路径同样用缓存（与 canDeleteCurrentFile_ 同源），不重读 mpv 属性。
+    const QString path = deletePath_;
+    if (!canDeleteCurrentFile_ || path.isEmpty()) {
         MLOG_WARN("file: delete refused (not a local writable file): %s",
                   path.isEmpty() ? "(none)" : path.toUtf8().constData());
         return;
@@ -1591,19 +1612,18 @@ void PlayerViewModel::deleteCurrentFile() {
     removeCurrentFromPlaylist();
 }
 
-void PlayerViewModel::refreshCanDeleteCurrentFile() {
-    QString path;
+void PlayerViewModel::refreshCanDeleteCurrentFile(const QString &path) {
+    // path 由调用方传入（观察器的已读值 / 缓存）——本函数在 GUI 线程跑，
+    // 不能同步读 mpv 属性（原因见 path 观察器处的注释）。
     bool can = false;
-    if (mpv_) {
-        path = QString::fromStdString(mpv_->propertyString("path"));
-        // 只允许本地常规可写文件：URL/流（含 http(s)/ytdl）没有"文件"可删；
-        // 相对路径（命令行 `input/foo.mkv`）按当前工作目录解析。
-        if (!path.isEmpty() && !path.contains(QStringLiteral("://"))) {
-            QFileInfo fi(path);
-            const QFileInfo abs(fi.isAbsolute() ? path : QDir::current().absoluteFilePath(path));
-            can = abs.isFile() && abs.isWritable();
-        }
+    // 只允许本地常规可写文件：URL/流（含 http(s)/ytdl）没有"文件"可删；
+    // 相对路径（命令行 `input/foo.mkv`）按当前工作目录解析。
+    if (!path.isEmpty() && !path.contains(QStringLiteral("://"))) {
+        QFileInfo fi(path);
+        const QFileInfo abs(fi.isAbsolute() ? path : QDir::current().absoluteFilePath(path));
+        can = abs.isFile() && abs.isWritable();
     }
+    deletePath_ = path;   // 与 canDeleteCurrentFile_ 同源：删除时用同一路径
     if (canDeleteCurrentFile_ != can) {
         canDeleteCurrentFile_ = can;
         MLOG_INFO("file: delete availability = %s (%s)", can ? "yes" : "no",
@@ -1871,7 +1891,7 @@ void PlayerViewModel::playlistClear() {
 
 void PlayerViewModel::screenshot() {
     if (!mpv_) return;
-    mpv_->commandStr("screenshot");
+    mpv_->commandAsync({"screenshot", nullptr});
 }
 
 // ── vf string ────────────────────────────────────────────────────────

@@ -156,6 +156,8 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - `QSG_RENDER_LOOP=basic` 必须（threaded 每帧渲染饿死事件循环）。**绝不无条件 update()/postEvent**（渲染风暴回归教训）。`aboutToBlock` 兜底已删除（`Video.cpp:377` 注释确认）。
 - 卡死归因：目录播放概率性卡死根因 = filter 每帧 `get_render_target_size` 持锁等渲染线程 → vo_libmpv.c 无锁读（__atomic relaxed）已修复。
 - **Xid 109**（全屏切换 device loss）：根因 = `Video::ensureRenderTarget` 销毁 rtImage 前无 GPU 同步（Vulkan UAF）→ 销毁前无条件 `vkQueueWaitIdle` 修复（`tests/fs_stress.sh` 验证）。
+- ⚠ **GUI 线程（= 渲染线程）不得同步调 mpv API**（`mpv_get_property` / `mpv_set_property` / `mpv_command` 都要等 core 的 dispatch 锁）：软解 + `vo=libmpv` 时 DR 帧分配**只由 GUI 线程**在 `mpv_render_context_update()` 里服务（`vo_libmpv.c:443`），GUI 一旦阻塞 → 解码线程等 DR、core 卡在 `send_packet` → 双向死锁（窗口完全无响应、只能杀进程）。**2026-10-24 实证**：v0.4.3 的 path 观察器回调里 `refreshCanDeleteCurrentFile()` 同步重读 `path`，软解启动 1080p h264/hevc 必挂（gdb：GUI 在 `mp_dispatch_lock`、core 在 `send_packet`、解码线程在 `dr_helper_get_image`）。规则：GUI 线程的属性读用观察器缓存/事件线程读，写与命令一律 `*Async`；启动/idle（core 空闲、无解码线程等 DR）的同步调用可保留（`restorePlaylist*`/`resumeLastPath`）。
+- **损坏文件的硬解回退 = mpv 原生行为，接受**（2026-10-24 用户定）：`hwdec-software-fallback` 默认 3 连错（`AVERROR_INVALIDDATA` 也算）→ `force_fallback()` 永久软解；实测 h264 空洞冻结 9.2s（新软解器等关键帧）vs 保持硬解 4.1s。mpv 判据不区分"码流坏/硬件坏"，属上游设计；不做本地补丁，也不改 UI 的 "software-only" 判定（回退后按钮仍禁用，重开文件即恢复硬解）。
 
 
 ### 启动与会话行为（2026-10-17）
