@@ -39,9 +39,13 @@
  *
  * 输出帧率上限（max-fps，2026-10-20）：**用户显式设定的上限**，不是性能自动
  * 降级——`k * src_fps > max_fps` 时本节点直通（reason=max-fps），源帧率回落
- * （换片/逐帧重估）后自动恢复插帧。src_fps 未知（<=0，直播流）时无法判定，
- * 不因上限直通（与"不因 src_fps<=0 直通"同一条理由：插值本身不依赖它）。
- * 判据用 cur->nominal_fps（VFR 源 = 容器给的平均帧率，够用；不做逐段估算）。
+ * （换片/逐帧重估）后自动恢复插帧。
+ *   · src_fps **已知**（cur->nominal_fps > 0，本地文件/VFR 源）→ 用容器给的
+ *     精确值直接比较，不做任何估算（原逻辑，2026-10-24 用户明确要求）。
+ *   · src_fps **未知**（<=0，直播/URL 流；mpv 的 container-fps 与
+ *     track-list/N/demux-fps 都 unavailable）→ 用**输入帧 PTS 间隔的中位数**
+ *     估计源帧率（track_input_fps），只用于本判据、不写回元数据；带 2% 死区
+ *     和连续帧去抖，避免估计值在阈值附近摆动导致引擎反复销毁/重建。
  * 上限在**引擎初始化之前**判定，所以被限制时既不建引擎也不耗 CUDA。
  *
  * Filter options:
@@ -106,6 +110,19 @@
 // 输出帧率上限（max-fps）：0 = 不限（默认，直接 --vf 的旧用法不受影响）；
 // 客户端（UI）只会下发 48/60/120，上限放宽到 240 只为让手工调参有余量。
 #define VFG_MAX_FPS_LIMIT_MAX 240
+
+// 输入帧率估计（仅 container 帧率未知、即直播流时，用于 max-fps；见
+// track_input_fps）。中位数窗口 31 个间隔 ≈ 0.5s @60fps，抗偶发坏时间戳；
+// 样本满 15 个才 ready（≈0.25s）。间隔合法范围 [4fps, 240fps]。
+#define VFG_DT_HIST          31
+#define VFG_DT_WARMUP        15
+#define VFG_DT_MIN           (1.0 / 240.0)
+#define VFG_DT_MAX           0.25
+// 估计值路径的直通去抖：连续 30 帧（≈0.5s @60fps）确认超上限才直通，
+// 连续 60 帧（≈1s）确认回落后才恢复插帧；进入判据另加 2% 死区。
+#define VFG_CAP_ENTER_FRAMES 30
+#define VFG_CAP_EXIT_FRAMES  60
+#define VFG_CAP_DEADBAND     1.02
 
 static double vfg_now_ms(void)
 {
@@ -254,8 +271,21 @@ struct priv {
     int         out_w, out_h, out_pitch;
 
     int    video_w, video_h;        // 引擎/输入尺寸（VFG 输出同尺寸）
-    double src_fps;                 // 输入帧率（nominal_fps）
+    double src_fps;                 // 输入帧率（nominal_fps；0=容器未提供）
     int    k;                       // 当前倍率（= opts->fps，2..4）
+
+    // 输入帧率估计（仅 src_fps<=0 的直播/URL 流、且启用 max-fps 时维护；
+    // 见 track_input_fps）。估计值只用于 max-fps 判据。
+    double in_dt_hist[VFG_DT_HIST]; // 输入帧间隔（秒）环形窗口
+    int    in_dt_n;                 // 已填样本数（<= VFG_DT_HIST）
+    int    in_dt_pos;               // 环形写指针
+    double in_last_pts;             // 上一个输入帧 PTS（每帧更新，含直通）
+    bool   in_have_pts;
+    double est_fps;                 // 中位数推得的源帧率（0=未知）
+    bool   est_ready;               // 样本达到 VFG_DT_WARMUP
+    bool   cap_engaged;             // max-fps 直通当前是否生效（估计值路径去抖）
+    int    cap_enter_cnt;           // 连续"超上限"帧数
+    int    cap_exit_cnt;            // 连续"回落到上限内"帧数
 
     // 调度状态：一个 pair 跨多次 process() 调用展开
     bool   have_prev;               // in_img[0] 已有 prev（内容时间 prev_pts）
@@ -300,6 +330,114 @@ static void vfg_status(struct mp_filter *f, struct priv *p)
            p->status_frames > 0 ? p->status_cost_ms / p->status_frames : 0.0);
     p->status_frames = 0;
     p->status_cost_ms = 0;
+}
+
+// ── 输入帧率估计 + max-fps 判据（container 帧率未知时）──────────────────
+// 直播/URL 流的 cur->nominal_fps 恒为 0（mpv 的 container-fps 与
+// track-list/N/demux-fps 都 unavailable），max-fps 原本因此完全失效
+// （2026-10-24 用户实测：60fps 直播 + k=2 + cap=60 仍输出 120fps）。
+// 插值本身只依赖 PTS 相对时间、不需要帧率，但上限需要——这里用输入帧 PTS
+// 间隔的中位数估计源帧率。**只在 nominal 未知时使用**：src_fps>0 时仍走容器
+// 给的精确值、不经过本逻辑（用户 2026-10-24 明确要求）。估计值不写回
+// mp_image 元数据（输出帧率元数据仍保持"未知"，见文件头）。
+static void track_input_fps(struct mp_filter *f, struct priv *p, double pts)
+{
+    if (pts == MP_NOPTS_VALUE) {
+        // 时间戳断开（下一帧重新起算，不把跨断点的间隔当样本）
+        p->in_have_pts = false;
+        return;
+    }
+    if (!p->in_have_pts) {
+        p->in_have_pts = true;
+        p->in_last_pts = pts;
+        return;
+    }
+
+    double dt = pts - p->in_last_pts;
+    p->in_last_pts = pts;
+    // 只收合理帧间隔：排除重复/倒序帧（dt<=0）、段边界大跳、坏时间戳
+    if (!(dt >= VFG_DT_MIN && dt <= VFG_DT_MAX))
+        return;
+
+    p->in_dt_hist[p->in_dt_pos] = dt;
+    p->in_dt_pos = (p->in_dt_pos + 1) % VFG_DT_HIST;
+    if (p->in_dt_n < VFG_DT_HIST)
+        p->in_dt_n++;
+    if (p->in_dt_n < VFG_DT_WARMUP)
+        return;
+
+    double tmp[VFG_DT_HIST];
+    memcpy(tmp, p->in_dt_hist, p->in_dt_n * sizeof(tmp[0]));
+    for (int i = 1; i < p->in_dt_n; i++) {   // 插入排序（31 项，代价可忽略）
+        double v = tmp[i];
+        int j = i - 1;
+        while (j >= 0 && tmp[j] > v) {
+            tmp[j + 1] = tmp[j];
+            j--;
+        }
+        tmp[j + 1] = v;
+    }
+    double med = (p->in_dt_n & 1)
+               ? tmp[p->in_dt_n / 2]
+               : 0.5 * (tmp[p->in_dt_n / 2 - 1] + tmp[p->in_dt_n / 2]);
+    p->est_fps = med > 0 ? 1.0 / med : 0.0;
+    if (!p->est_ready && p->est_fps > 0) {
+        p->est_ready = true;
+        MP_INFO(f, "vfg: input fps estimated %.2f (container fps unknown)\n",
+                p->est_fps);
+    }
+}
+
+// max-fps 判据（在引擎初始化之前调用）。
+//   · src_fps 已知 → 精确比较（原行为，无去抖）；
+//   · src_fps 未知 → 用上面的估计值，2% 死区 + 连续帧去抖：估计值在阈值
+//     附近抖动时不能反复销毁/重建 VFG 引擎（模型重新 Load 很贵）。
+static bool max_fps_hit(struct mp_filter *f, struct priv *p)
+{
+    if (p->opts->max_fps <= 0 ||
+        p->opts->fps < VFG_FPS_OPT_MIN || p->opts->fps > VFG_FPS_OPT_MAX) {
+        p->cap_engaged = false;
+        p->cap_enter_cnt = p->cap_exit_cnt = 0;
+        return false;
+    }
+
+    const double k = p->opts->fps;
+    const double cap = p->opts->max_fps;
+    if (p->src_fps > 0) {
+        // 已知帧率：精确判据（不去抖、不等估计）。**相等允许插帧**
+        // （如 30×2=60 @cap=60），加 1e-6 相对容差吸收容器帧率的浮点
+        // 尾数（实测 goose_480p.webm：demux-fps=30.0000003 → 严格 > 会把
+        // "恰好等于上限"误判成超限，插帧被意外直通）。
+        p->cap_engaged = k * p->src_fps > cap + cap * 1e-6;
+        p->cap_enter_cnt = p->cap_exit_cnt = 0;
+        return p->cap_engaged;
+    }
+
+    // 未知帧率：预热完成前保持现状（不判定）
+    if (!p->est_ready || p->est_fps <= 0)
+        return p->cap_engaged;
+
+    const bool want = k * p->est_fps > cap * VFG_CAP_DEADBAND;
+    if (want && !p->cap_engaged) {
+        if (++p->cap_enter_cnt >= VFG_CAP_ENTER_FRAMES) {
+            p->cap_engaged = true;
+            p->cap_enter_cnt = 0;
+            MP_INFO(f, "vfg: max-fps engaged (est fps %.2f, k=%d, cap=%d)\n",
+                    p->est_fps, p->opts->fps, p->opts->max_fps);
+        }
+        return p->cap_engaged;
+    }
+    if (!want && p->cap_engaged) {
+        if (++p->cap_exit_cnt >= VFG_CAP_EXIT_FRAMES) {
+            p->cap_engaged = false;
+            p->cap_exit_cnt = 0;
+            MP_INFO(f, "vfg: max-fps released (est fps %.2f, k=%d, cap=%d)\n",
+                    p->est_fps, p->opts->fps, p->opts->max_fps);
+        }
+        return p->cap_engaged;
+    }
+    p->cap_enter_cnt = p->cap_exit_cnt = 0;
+    return p->cap_engaged;
 }
 
 static const char *vfg_mode_name(int mode)
@@ -770,6 +908,11 @@ static void f_process(struct mp_filter *f)
     if (cur->nominal_fps > 0)
         p->src_fps = cur->nominal_fps;
 
+    // 源帧率未知（直播/URL 流）且启用了 max-fps → 用输入 PTS 间隔估计；
+    // nominal 已知的源**不维护估计值**（精确值直接判定，见 max_fps_hit）。
+    if (p->src_fps <= 0 && p->opts->max_fps > 0)
+        track_input_fps(f, p, cur->pts);
+
     // ── 3. 直通判定（逐帧重估：vf-command 热更新下一帧即生效）──────────
     bool sw_input = (cur->imgfmt != IMGFMT_CUDA);
     if (sw_input && !p->sw_warned) {
@@ -785,10 +928,9 @@ static void f_process(struct mp_filter *f)
     else if (p->opts->fps < VFG_MULT_MIN ||
              p->opts->fps > VFG_MULT_MAX)            reason = "k-range";
     // 输出帧率上限（用户显式设定，非自动降级；见文件头）。恰好等于上限
-    // （如 30×2=60、cap=60）**允许插帧**；src_fps 未知时不判定。
-    else if (p->opts->max_fps > 0 && p->src_fps > 0 &&
-             p->opts->fps * p->src_fps > p->opts->max_fps)
-                                                     reason = "max-fps";
+    // （如 30×2=60、cap=60）**允许插帧**；帧率已知用精确值，未知用 PTS
+    // 估计值（带死区/去抖，见 max_fps_hit）。
+    else if (max_fps_hit(f, p))                      reason = "max-fps";
     else if (sw_input)                               reason = "sw";
     else if (p->engine_failed)                       reason = "engine";
     else if (cur->pts == MP_NOPTS_VALUE && !p->have_prev)
@@ -987,8 +1129,17 @@ static bool vfg_command(struct mp_filter *f, struct mp_filter_command *cmd)
             MP_INFO(f, "vfg: max-fps %d -> %d (vf-command)\n",
                     p->opts->max_fps, v);
             p->opts->max_fps = v;
-            // 无需重置：下一帧直通判定重估；若从 passthrough 恢复，have_prev
-            // 已在直通分支里清空，会按"新的一对"重新起算（无缝）。
+            // 新上限下一帧重估。重建直通状态与帧率估计（估计值路径重新
+            // 预热/去抖）：否则会带着旧上限的 engaged 状态或旧窗口的估计
+            // 值判定；从 passthrough 恢复时 have_prev 已在直通分支清空，
+            // 会按"新的一对"重新起算（无缝）。
+            p->cap_engaged = false;
+            p->cap_enter_cnt = p->cap_exit_cnt = 0;
+            p->in_dt_n = 0;
+            p->in_dt_pos = 0;
+            p->in_have_pts = false;
+            p->est_fps = 0;
+            p->est_ready = false;
         }
         return true;
     }
@@ -1019,6 +1170,18 @@ static void f_reset(struct mp_filter *f)
     p->passthrough = (p->opts->fps == -1);
     if (p->passthrough)
         snprintf(p->pt_reason, sizeof(p->pt_reason), "off");
+    // 输入帧率估计/直通去抖状态作废：seek 会跳 PTS，旧窗口的样本不可用；
+    // 重开后从当前帧重新预热（nominal 已知的源根本不走估计值）。
+    // src_fps 也清零：换文件（尤其 本地文件 → 直播流）时不能沿用上一个文件
+    // 的值，否则 max-fps 会用错帧率、并跳过估计路径。
+    p->src_fps = 0;
+    p->in_dt_n = 0;
+    p->in_dt_pos = 0;
+    p->in_have_pts = false;
+    p->est_fps = 0;
+    p->est_ready = false;
+    p->cap_engaged = false;
+    p->cap_enter_cnt = p->cap_exit_cnt = 0;
     // 引擎降级重置（换文件/改参数后允许重试 init）
     p->degrade_warned = false;
     p->engine_failed = false;

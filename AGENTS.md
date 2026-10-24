@@ -73,8 +73,12 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   `QualityPopup` 的 "Max interpolation frame rate" 排（48/60/120 fps，默认 **60**；`--fruc-max-fps` /
   RPC `set-fruc-max-fps` / 持久化键 `frucMaxFps`；RIFE 分支该排隐藏、参数忽略）。
   filter 判据（`vf_vfg.c` 直通判定）：`k × src_fps > max_fps` → `vfg-status: mode=
-  passthrough reason=max-fps`；**恰好等于上限允许插帧**（24×2=48 @cap48、30×2=60 @cap60）；
-  `src_fps<=0`（直播流）不判定；上限在引擎初始化前判 → 被限制时不建引擎/不耗 CUDA；
+  passthrough reason=max-fps`；**恰好等于上限允许插帧**（24×2=48 @cap48、30×2=60 @cap60；
+  已知帧率路径带 1e-6 相对容差，吸收容器帧率浮点尾数，如 goose 的 demux-fps=30.0000003）；
+  **src_fps 未知（直播/URL 流）时用输入帧 PTS 间隔的中位数估计**（2026-10-24 修：此前直接
+  不判定，60fps 直播 + k=2 + cap=60 仍输出 120fps；现 31 样本窗口/15 预热、2% 死区 +
+  30 帧进入 / 60 帧退出去抖；估计值只用于判据、不写回元数据；nominal 已知的源仍走精确值、
+  不走估计逻辑——用户明确要求）；上限在引擎初始化前判 → 被限制时不建引擎/不耗 CUDA；
   源帧率变化（换片/VFR）逐帧重估，回落即恢复插帧。默认 **60**（用户
   2026-10-20 定："对于视频来说，60 已经很高了"）：24×2=48、30×2=60 放行，
   24×3/×4、60×2+ 直通；要更高由用户显式选 120。
