@@ -8,8 +8,8 @@
 
 Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR→HDR10 上变换**（VSR / VFG / TrueHDR，默认链路）+ **冻结的 RIFE 插帧后端**（TensorRT，仅源码构建可选）。架构 = **libmpv**（demux/decode/AV 同步/timing/VO 全交给 mpv）+ 自定义 mpv 滤镜（`vf_hwup` 软解上传、`vf_vsr` 超分、`vf_truehdr` 上变换、`vf_vfg` 插帧）+ Qt 6/QML 前端（Vulkan，`vo=libmpv` 渲染到 Qt 场景图共享 VkImage）。很可能是首个直接调 VFX SDK（非驱动级 RTX VSR）的开源 Linux 播放器。
 
-滤镜链：`demux → decode → [deint] → [vf_hwup] → [vf_vsr] → [vf_truehdr] → [vf_vfg] → VO (libmpv) → Qt scene graph`
-（`deint` = mpv 自己的反交错 pre-filter；冻结的 RIFE 构建用 `hwup → rife → vsr`，链尾不加 vfg）
+滤镜链：`demux → decode → [deint] → [vf_hwup] → [vf_rot] → [vf_vsr] → [vf_truehdr] → [vf_vfg] → VO (libmpv) → Qt scene graph`
+（`deint` = mpv 自己的反交错 pre-filter；`rot` = 我们自己的 CUDA 零拷贝旋转，见「旋转」一节；冻结的 RIFE 构建用 `hwup → rot → rife → vsr`，链尾不加 vfg）
 
 ## 工作铁律（用户明确要求，违反会被纠正；通用方法论已迁移至 `~/.dsh/AGENTS.md`，此处仅项目特定规则）
 
@@ -235,6 +235,26 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **seek 目标之前的帧被喂进滤镜链 → 已修（2026-10-21，把 seek 从 212 ms 降到 ~40 ms）**：A/B（1080p29.97、精确 seek、VSR+VFG）：VSR auto **212–216 ms**、`set-vsr off` **40–47 ms**、固定 `--scale 2` **265 ms**；无音频同样 207–227 ms（排除音频）。**不在 VO 侧**：`VSR_LOG_VIDEO=1` 逐帧日志显示 seek 期间只渲染 2 帧且 `rnd≈0.2 ms`（无新帧）。**根因**：`vf_vsr` 里临时打印 `mpi->pts` 看到——seek 到 45 s 后滤镜处理的是 **pts=40.04、40.11…**（demux 落到的关键帧、目标之前）的帧，每 6.2 ms 一帧连续进 VSR 直到越过目标；这些帧最终在 VO 被丢弃（画面正确）但 VSR 白跑。`hr_seek_framedrop` 只在解码器层按 packet 丢，对这条链不生效/不充分。**实现**：`vf_vsr` 加 `skip_before_pts`（`vf-command vsr seek-target <秒>`，0=清除）；`f_process` 在**同一次调用里循环拉取**丢弃 `pts < target-5ms` 的帧（早先每帧 `mark_progress`+return 绕图一圈，实测每帧框架开销 ~0.3 ms；改成 drop loop 后单帧只剩解码成本），首个 `pts >= target` 的帧照常处理，但**标记不在此清除**（见下一条）。⚠ 若不 `mark_progress`/不循环直接 return，下游取帧请求落空 → 整条链卡死在 `seeking`（踩过）。客户端 `seekAbsolute()` 在 seek 命令**之前**发该命令；**不要在 `notePlaybackRestart()` 里从事件线程补发清除**——跨线程的 async 命令顺序不保证，清除可能插到下一步的 marker 之后把那一步的跳过抹掉；滤镜侧只在 3 s 过期 / 下一次 seek-target 时清，直播流客户端不发 marker。**效果**：VSR 开启时精确 seek 典型 **40–130 ms**（原来 212 ms；按住 25 Hz 实测 ~9 步/3 s vs 修复前 ~2.5 步/3 s，VSR 直通上限 ~15 步/3 s）。
 - **marker 必须留到过期，否则"偶发特别慢"（2026-10-22 实测更正）**：一次 seek 里 mpv 会把目标之前的帧**喂两遍**——第一遍驱动到目标（marker 生效，drop loop 丢 297–450 帧），随后 `vsr: reset`（链 reset）之后再从更早的位置喂 60–130 帧（0.5–2 s 的量）。早先实现"首个 >= 目标的帧就清 marker"，这批迟到帧便逐帧进引擎（2.8 ms/帧）→ 单次 seek 多 **200–400 ms**，正是按住方向键时"连续几次快必有一次特别慢"。**修法**：marker 只在 3 s 过期或下一次 `seek-target` 时清除，正常播放零影响（每帧只多一次 pts 比较）。**实测（catlove_470s，60 fps，VSR auto 2×）**：单步中位 **53 ms**（p90 137 / max 167），按住 25 Hz 3 s → **29 步 / +148 s**（修前 12 步 / +64 s），与 `set-vsr off` 的 29 步 / +149 s 持平；60 Hz → 33 步 / +168 s（VSR off 46 步 / +234 s）。⚠ 之前"剩余慢步 = 精确 seek 固有解码成本（VSR off 同样慢）"的结论**作废**：那次 VSR off 的 324 ms 也是迟到帧 + 当时的系统负载所致，与 VSR 无关。
 - **不改用关键帧 seek（实测否决）**：mpv 原生相对 seek（`seek +5 relative`，即其方向键语义）在按住 25 Hz 时**累加**目标，3 s 内位置 +439 s（画面整段飞过），60 Hz 直接冲到文件尾并回绕；它的"每帧看着正常"只是因为画面在整段跳。门控 + 精确绝对 seek（每步严格 +5 s、落点精确）在修好 marker 之后速度已与关键帧同级，因此保留现语义。
+
+### 旋转（vf_rot，CUDA 零拷贝，2026-10-25）
+
+- **链上位置**：`hwup → rot → vsr → truehdr → vfg`（VFG 链；RIFE 链为
+  `hwup → rot → rife → vsr`）。`@rot:rot=angle=N` 常驻链串（angle=0 直通），
+  运行期 `vf-command rot angle N` 只改实例选项、不重建链；持久化键 `rotMode`
+  （0|90|270；180 只给 vf-command/手工用，UI 不暴露）。
+- **实现**（`src/mpv/video/filter/vf_rot.c`）：NVRTC 编译 `rot_u8/u16/u32` 三个
+  kernel，直接读写 `IMGFMT_CUDA` 的 NV12/P010 平面——**零拷贝**，无
+  hwdownload/hwupload。Y 平面按元素宽 1/2 字节；UV 平面按 **pair** 整体搬运
+  （NV12 一对 U/V = 2B、P010 = 4B），否则 U/V 会互换。输出帧新 cuMemAlloc，
+  hwctx = **旋转后尺寸**的 CUDA/NV12|P010 frames ctx（`mp_cuda_ensure_frames`；
+  hwdownload 按 hwctx 尺寸解析，借用源尺寸会错乱/崩溃）。上下文借上游共享结构
+  或 hwdec 帧（cuda_shared.h 同一套）。
+- **语义**：90/270 为顺时针（270 = 逆时针 90°），90/270 交换 w/h 与 p_w/p_h；
+  文件 rotate 元数据原样带出（菜单角度**叠加**在它之上，与 `--video-rotate` 一致）。
+- **UI**：右键菜单 "Rotate" 二级面板 Off / 90° / 270°（与反交错共用同一个二级
+  面板机制，`subIndex` 区分展开项）；RPC `set-rotate 0|90|270` / `get-rotate`。
+- ⚠ 旋转在 VFG **之前** → 横转竖会让 VFG 输入变成竖屏（如 720x1280）走慢路径
+  （见插帧一节的竖屏实测），竖转横则相反。这是"VFX 之前旋转"的固有代价。
 
 ### 反交错（mpv 原生 `--deinterlace`，2026-10-22）
 

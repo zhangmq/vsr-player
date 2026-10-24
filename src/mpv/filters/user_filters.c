@@ -107,6 +107,7 @@ const struct mp_user_filter_entry *vf_list[] = {
     &vf_gpu,
 #endif
     &vf_hwup,
+    &vf_rot,
     &vf_vsr,
     &vf_vfg,
     &vf_truehdr,

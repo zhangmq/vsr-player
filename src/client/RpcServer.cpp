@@ -392,6 +392,31 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             if (m < 0 || m > 2) m = 0;
             response = formatResponse("success", std::string("\"") + names[m] + "\"");
         }
+    } else if (cmd == "set-rotate") {
+        // 旋转三态（0=Off / 90=顺时针 / 270=逆时针 90°），viewModel 单一
+        // 来源，与右键菜单同路径（vf-command rot angle N 运行期生效）。
+        if (args.empty()) {
+            response = formatResponse("missing value (0|90|270)");
+        } else if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            char *end = nullptr;
+            long v = strtol(args[0].c_str(), &end, 10);
+            if (end == args[0].c_str() || *end != '\0' ||
+                (v != 0 && v != 90 && v != 270)) {
+                response = formatResponse("invalid value (0|90|270)");
+            } else {
+                QMetaObject::invokeMethod(vm, "setRotMode", Qt::QueuedConnection,
+                                          Q_ARG(int, (int)v));
+                response = formatResponse("success");
+            }
+        }
+    } else if (cmd == "get-rotate") {
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            response = formatResponse("success", std::to_string(vm->rotMode()));
+        }
     } else if (cmd == "dump-vsr") {
         // VSR-specific screenshot: one frame, input (original) + output (Nx).
         // Paths auto-generated as [videoname]_[frameno]_[original|Nx].png

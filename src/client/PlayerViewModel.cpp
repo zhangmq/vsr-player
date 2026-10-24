@@ -765,6 +765,14 @@ void PlayerViewModel::loadSettings() {
     // 手改越界 → 夹回 0..2（不整份丢弃）。CLI `-- --deinterlace=…` 优先，
     // 见 initDeinterlace()（在 applyPlaybackSettings 之前调用）。
     persistDeintMode_ = clampInt(settings_.value("deintMode", 0).toInt(), 0, 2);
+
+    // ── 旋转（0=Off / 90=顺时针 / 270=逆时针 90°）─────────────────────
+    // 非法值（含旧的 180）→ 0；vfOption() 在 loadSettings 之后取当前值拼链。
+    int rot = settings_.value("rotMode", 0).toInt();
+    if (rot != 90 && rot != 270)
+        rot = 0;
+    persistRotMode_ = rot;
+    rotMode_.store(rot);
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -1277,6 +1285,22 @@ void PlayerViewModel::setDeintMode(int mode) {
     }
     applyDeinterlace();
     saveSettings("deintMode", mode);
+}
+
+void PlayerViewModel::setRotMode(int deg) {
+    // 只接受 0/90/270（菜单三态；180 用不到——横竖互换只需要 90/270）。
+    if (deg != 0 && deg != 90 && deg != 270)
+        return;
+    if (rotMode_.load() != deg) {
+        rotMode_.store(deg);
+        emit rotModeChanged();
+    }
+    // 链上恒有 @rot（angle=init）→ 运行期只改 filter 实例选项，不重建链；
+    // 下一帧即按新角度转（光栅在显存里做，无下载/上传）。
+    if (mpv_)
+        mpv_->commandAsync({"vf-command", "rot", "angle",
+                            std::to_string(deg).c_str(), nullptr});
+    saveSettings("rotMode", deg);
 }
 
 // ── AI 可用性（Vulkan 设备 × CUDA 设备同一性）──────────────────────────
@@ -1923,6 +1947,9 @@ std::string PlayerViewModel::vfOption() const {
     const std::string hwup = aiCudaUuid_.empty()
                                  ? std::string("@hwup:hwup")
                                  : ("@hwup:hwup=cuda-uuid=" + aiCudaUuid_);
+    // 旋转（CUDA 零拷贝）：hwup 之后、vsr/vfg 之前。链上恒有（angle=0
+    // =直通），运行期 vf-command 只改实例选项、不重建链。
+    const std::string rot = "@rot:rot=angle=" + std::to_string(rotMode_.load());
     const std::string vsr = "@vsr:vsr:scale=" + scaleOpt
                           + ":denoise=" + denoiseString()
                           + ":quality=" + qualityString();
@@ -1956,11 +1983,11 @@ std::string PlayerViewModel::vfOption() const {
             fprintf(stderr, "[truehdr] upconversion is not supported with --fruc-order pre "
                             "(design §8.1); the truehdr filter is not inserted in this order\n");
         }
-        return hwup + "," + vfg + "," + vsr;
+        return hwup + "," + rot + "," + vfg + "," + vsr;
     }
-    return hwup + "," + vsr + "," + up + "," + vfg;
+    return hwup + "," + rot + "," + vsr + "," + up + "," + vfg;
 #else
-    std::string vf = hwup + ",";
+    std::string vf = hwup + "," + rot + ",";
     if (fruc == 2 || fruc == 3 || fruc == 4) {
         vf += std::string("@") + frucFilterName() + ":" + frucFilterName()
             + ":fps=off:scale=" + std::to_string(fruc) + ",";
@@ -2219,6 +2246,9 @@ void PlayerViewModel::syncVfOptions() {
     // 否则"上变换开了但重播就没了"。
     pushVf("truehdr", "enable", upconvertOn_ ? "1" : "0");
     pushTrueHdrParams();   // 5 个参数全量重放（链重建后回到链串默认值）
+    // 旋转：链重建后回到链串里的 angle（初始值 = 持久化值，正常情况
+    // 无需重放；这里仍推一次，保证运行期改过角度后换片不丢）。
+    pushVf("rot", "angle", std::to_string(rotMode_.load()));
     MLOG_INFO("syncVfOptions: truehdr enable=%d lum=%d sat=%d contrast=%d mg=%d deband=%d",
               int(upconvertOn_), effectiveUpHdrLuminance(), upHdrSaturation_,
               upHdrContrast_, upHdrMiddleGray_, int(upHdrDebanding_));

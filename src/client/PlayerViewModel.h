@@ -73,6 +73,13 @@ class PlayerViewModel : public QObject {
     // ⚠ send_field 语义 = 每个场一帧 → 帧率翻倍（25i→50p），下游 VSR/VFG
     // 按翻倍后的帧数工作（README/AGENTS 有实测）。
     Q_PROPERTY(int deintMode READ deintMode NOTIFY deintModeChanged)
+    // ── 旋转（VFX 之前的 CUDA 零拷贝 90°/270°）─────────────────────────
+    // 0=Off（默认）、90=顺时针、270=逆时针 90°（右键菜单三态，参考反交错）。
+    // 由链上的 `@rot:rot=angle=N` 实现（hwup 之后、vsr/vfg 之前；NVRTC
+    // kernel 直接读写显存平面，无下载/上传）。运行期 `vf-command rot angle N`
+    // 即时生效、不重建链。90/270 交换宽高与像素宽高比；文件 rotate 元数据
+    // 原样带出（菜单角度叠加在它之上，与 --video-rotate 语义一致）。
+    Q_PROPERTY(int rotMode READ rotMode NOTIFY rotModeChanged)
     // ── SDR→HDR10 上变换（VFX TrueHDR，链上位于 vsr 之后；参数/证据见
     //    docs/vfx-truehdr-investigation.md §8 与 src/client/TrueHdrParams.h）──
     // 总开关 = HDR 策略的 opt-in（默认取 `VSR_UPHDR` env；UI 改后以持久化值为准）。
@@ -303,6 +310,7 @@ public:
     /// 输出帧率上限（仅 VFG；RIFE 分支恒默认值且该排隐藏）。
     int frucMaxFps() const      { return frucMaxFps_.load(); }
     int deintMode() const       { return deintMode_.load(); }
+    int rotMode() const         { return rotMode_.load(); }
     QVariantList frucMaxFpsModel() const;
     bool frucMaxFpsAvailable() const;
     double speed() const        { return speed_.load(); }
@@ -409,6 +417,8 @@ public slots:
     void setFrucMaxFps(int v);
     /// 反交错三态（0/1/2，见 deintMode）：下发 mpv + 持久化。
     Q_INVOKABLE void setDeintMode(int mode);
+    /// 旋转三态（0/90/270，见 rotMode）：vf-command 下发 + 持久化。
+    Q_INVOKABLE void setRotMode(int deg);
     /// FRUC 状态行（事件线程从 mpv status 日志提取；前缀随后端：
     /// VFG "vfg-status:" / RIFE "fruc-status:"，见 FrucBackend.h）
     void setFrucStatus(const std::string &s);
@@ -489,6 +499,7 @@ signals:
     void frucQualityChanged();
     void frucMaxFpsChanged();
     void deintModeChanged();
+    void rotModeChanged();
     // TrueHDR（SDR→HDR10 上变换）参数
     void upHdrEnabledChanged();
     void upHdrEffectiveChanged();
@@ -761,4 +772,6 @@ private:
     int persistFrucMaxFps_ = fruc::kMaxFpsDefault;  // 持久化输出帧率上限（initFrucMaxFps 用）
     int persistDeintMode_ = 0;    // 持久化反交错模式（initDeinterlace 用）
     std::atomic<int> deintMode_{0};   // 当前反交错模式（0/1/2；RPC 线程读）
+    int persistRotMode_ = 0;          // 持久化旋转角度（0/90/270）
+    std::atomic<int> rotMode_{0};     // 当前旋转角度（RPC 线程读）
 };

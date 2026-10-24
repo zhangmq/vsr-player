@@ -4,8 +4,9 @@ import "components"
 
 /// 右键菜单（播放器惯例）。复刻 PopupBase 外观；定位 = 鼠标位置
 ///（anchorTarget 语义不适用），宿主席位 showAt() 后 open()。
-/// 条目可带 `submenu: [{label, value}]`（目前只有"反交错"）→ 悬停/点击在右侧
-/// 展开二级面板，选中后关闭整个菜单。
+/// 条目可带 `submenu: [{label, value}]`（反交错 / 旋转）→ 悬停/点击在右侧
+/// 展开二级面板，选中后关闭整个菜单。多个二级菜单共用同一个面板：
+/// subIndex 记录当前展开的是哪一条（悬停切换）。
 ///
 /// ⚠ 二级面板画在**同一个 Popup 里**（打开子菜单时 popup 加宽、面板占右半边），
 /// 不用嵌套 Popup：两个 popup 会各自抢 grab，点面板会被外层判成"点击外部"
@@ -24,6 +25,8 @@ PopupBase {
     readonly property int padY: 8
 
     property bool subOpen: false
+    /// 当前展开二级菜单的条目下标（-1 = 收起）。两个二级菜单共用面板。
+    property int subIndex: -1
 
     signal openFilesRequested()
     signal openFolderRequested()
@@ -36,6 +39,8 @@ PopupBase {
     signal deleteFileRequested()
     /// 二级菜单里选中了某个反交错档位（0=Off / 1=Auto / 2=Force）。
     signal deinterlaceSelected(int mode)
+    /// 二级菜单里选中了某个旋转角度（0=Off / 90=顺时针 / 270=逆时针 90°）。
+    signal rotateSelected(int mode)
     signal quitRequested()
 
     /// 菜单项（sig 须与上方 signal 声明同名；新增项同步改三处：
@@ -55,10 +60,21 @@ PopupBase {
         {sep: true},
         {icon: "󰉸", text: qsTr("Deinterlace"),
          hint: function() { return root.deintLabel() },
+         subSig: "deinterlaceSelected",
+         current: function() { return viewModel.deintMode },
          submenu: [
              {label: qsTr("Off"),   value: 0},
              {label: qsTr("Auto"),  value: 1},
              {label: qsTr("Force"), value: 2}
+         ]},
+        {icon: "󰚖", text: qsTr("Rotate"),
+         hint: function() { return root.rotLabel() },
+         subSig: "rotateSelected",
+         current: function() { return viewModel.rotMode },
+         submenu: [
+             {label: qsTr("Off"),  value: 0},
+             {label: qsTr("90°"),  value: 90},
+             {label: qsTr("270°"), value: 270}
          ]},
         {sep: true},
         {icon: "󰐥", text: qsTr("Quit"),               hint: "Ctrl+Q", sig: "quitRequested"}
@@ -73,32 +89,49 @@ PopupBase {
         }
     }
 
+    /// 旋转角度文案（0=Off / 90=顺时针 / 270=逆时针 90°）。
+    function rotLabel() {
+        switch (viewModel.rotMode) {
+        case 90:  return qsTr("90°")
+        case 270: return qsTr("270°")
+        default:  return qsTr("Off")
+        }
+    }
+
     /// 条目是否显示（`visibleWhen` 缺省 = 恒显示；不满足条件的条目不占高度）。
     function itemShown(it) {
         return it.visibleWhen === undefined ? true : it.visibleWhen()
     }
 
-    /// 二级面板的 y：与所属条目行对齐（行高/分隔线逐个累加，跳过隐藏条）。
+    /// 二级面板的 y：与所属条目行对齐。
+    /// **取委托的实际布局位置**，不再用 items 数组重推行高：隐藏行（visibleWhen，
+    /// 例如 URL/直播没有"删除文件"）由 Column 布局决定高度 0，而 items 侧的
+    /// visibleWhen 求值时机可能与委托的 shown 不同步——重算会多算/少算隐藏行，
+    /// 面板就会整体偏下/偏上（2026-10-25 实测）。
     readonly property real subY: {
-        var y = root.padY
-        for (var i = 0; i < items.length; i++) {
-            var it = items[i]
-            if (!itemShown(it)) continue
-            if (it.submenu !== undefined) return y
-            y += it.sep === true ? 1 : rowH
+        // popup 的 contentItem 是懒创建的：首次打开前 mainColumn 还不存在。
+        // 读 mainColumn.height 同时登记"布局变化"依赖（行显示/隐藏时重算）。
+        if (!mainColumn)
+            return root.padY
+        var mh = mainColumn.height
+        if (!root.subOpen)
+            return mainColumn.y + mh
+        for (var i = 0; i < mainColumn.children.length; i++) {
+            var c = mainColumn.children[i]
+            if (c.itemIndex === root.subIndex)
+                return mainColumn.y + c.y
         }
-        return y
+        return mainColumn.y + mh
     }
 
-    /// 二级菜单条目的子项模型（目前只有反交错）
+    /// 当前展开的二级菜单子项模型（subIndex 指向的条目）
     readonly property var subItems: {
-        for (var i = 0; i < items.length; i++)
-            if (items[i].submenu !== undefined) return items[i].submenu
-        return []
+        if (root.subIndex < 0 || root.subIndex >= items.length) return []
+        return items[root.subIndex].submenu || []
     }
 
     /// 每次打开都从收起状态开始（不记忆上次展开的子菜单）。
-    onAboutToShow: subOpen = false
+    onAboutToShow: { subOpen = false; subIndex = -1 }
 
     /// 在 item 坐标系 (x,y)（即鼠标位置）弹出，屏幕边缘钳制。
     /// 横向按**展开二级菜单后的宽度**钳制：面板只在悬停时出现，但这时 popup
@@ -150,6 +183,8 @@ PopupBase {
                     property var hintSrc: modelData.hint
                     property string hintText: typeof hintSrc === "function" ? hintSrc() : (hintSrc || "")
                     property bool shown: root.itemShown(modelData)
+                    // 供 subY 用实际委托位置对齐二级面板（见 subY 注释）
+                    readonly property int itemIndex: index
                     width: parent.width
                     height: !shown ? 0 : (isSep ? 1 : root.rowH)
                     visible: shown
@@ -190,10 +225,13 @@ PopupBase {
                         hoverEnabled: true
                         visible: !isSep
                         cursorShape: Qt.PointingHandCursor
-                        // 悬停即展开二级菜单；移到别的条目上收起
-                        onEntered: root.subOpen = hasSub
+                        // 悬停即展开本条目的二级菜单；移到无子菜单的条目上收起
+                        onEntered: {
+                            if (hasSub) { root.subIndex = index; root.subOpen = true }
+                            else { root.subIndex = -1; root.subOpen = false }
+                        }
                         onClicked: {
-                            if (hasSub)    root.subOpen = true
+                            if (hasSub) { root.subIndex = index; root.subOpen = true }
                             else { root.close(); root[modelData.sig]() }
                         }
                     }
@@ -201,7 +239,7 @@ PopupBase {
             }
         }
 
-        // ── 二级菜单面板（反交错档位）────────────────────────────────
+        // ── 二级菜单面板（反交错 / 旋转档位）──────────────────────────
         Column {
             id: subColumn
             visible: root.subOpen
@@ -213,7 +251,10 @@ PopupBase {
                 delegate: Item {
                     width: subColumn.width
                     height: root.rowH
-                    readonly property bool current: modelData.value === viewModel.deintMode
+                    readonly property bool current: {
+                        var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
+                        return it && it.current ? modelData.value === it.current() : false
+                    }
                     Rectangle {
                         anchors.fill: parent
                         color: subHover.containsMouse ? "#33ffffff" : "transparent"
@@ -236,8 +277,10 @@ PopupBase {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            root.deinterlaceSelected(modelData.value)
+                            var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
+                            if (it && it.subSig) root[it.subSig](modelData.value)
                             root.subOpen = false
+                            root.subIndex = -1
                             root.close()
                         }
                     }

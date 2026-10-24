@@ -243,6 +243,7 @@ Item {
             onRemoveFromPlaylistRequested: viewModel.removeCurrentFromPlaylist()
             onDeleteFileRequested: viewModel.deleteCurrentFile()
             onDeinterlaceSelected: function(mode) { viewModel.setDeintMode(mode) }
+            onRotateSelected: function(mode) { viewModel.setRotMode(mode) }
             onQuitRequested: Qt.quit()   // 走标准退出路径（watch-later 落盘）
         }
 

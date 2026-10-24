@@ -140,65 +140,84 @@
 <context>
     <name>ContextMenu</name>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="60"/>
-        <location filename="../ui/ContextMenu.qml" line="70"/>
+        <location filename="../ui/ContextMenu.qml" line="67"/>
+        <location filename="../ui/ContextMenu.qml" line="86"/>
         <source>Auto</source>
         <translation>自动</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="61"/>
-        <location filename="../ui/ContextMenu.qml" line="71"/>
+        <location filename="../ui/ContextMenu.qml" line="68"/>
+        <location filename="../ui/ContextMenu.qml" line="87"/>
         <source>Force</source>
         <translation>强制</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="59"/>
-        <location filename="../ui/ContextMenu.qml" line="72"/>
+        <location filename="../ui/ContextMenu.qml" line="66"/>
+        <location filename="../ui/ContextMenu.qml" line="75"/>
+        <location filename="../ui/ContextMenu.qml" line="88"/>
+        <location filename="../ui/ContextMenu.qml" line="97"/>
         <source>Off</source>
         <translation>关闭</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="45"/>
+        <location filename="../ui/ContextMenu.qml" line="50"/>
         <source>Open file</source>
         <translation>打开文件</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="46"/>
+        <location filename="../ui/ContextMenu.qml" line="51"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="47"/>
+        <location filename="../ui/ContextMenu.qml" line="52"/>
         <source>Open URL</source>
         <translation>打开 URL</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="48"/>
+        <location filename="../ui/ContextMenu.qml" line="53"/>
         <source>Add files to playlist</source>
         <translation>追加文件到播放列表</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="49"/>
+        <location filename="../ui/ContextMenu.qml" line="54"/>
         <source>Add folder to playlist</source>
         <translation>追加文件夹到播放列表</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="51"/>
+        <location filename="../ui/ContextMenu.qml" line="56"/>
         <source>Remove from playlist</source>
         <translation>从播放列表移除</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="53"/>
+        <location filename="../ui/ContextMenu.qml" line="58"/>
         <source>Delete file</source>
         <translation>删除文件</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="56"/>
+        <location filename="../ui/ContextMenu.qml" line="61"/>
         <source>Deinterlace</source>
         <translation>反交错</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="64"/>
+        <location filename="../ui/ContextMenu.qml" line="70"/>
+        <source>Rotate</source>
+        <translation>旋转</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="76"/>
+        <location filename="../ui/ContextMenu.qml" line="95"/>
+        <source>90°</source>
+        <translation>90°</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="77"/>
+        <location filename="../ui/ContextMenu.qml" line="96"/>
+        <source>270°</source>
+        <translation>270°</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="80"/>
         <source>Quit</source>
         <translation>退出</translation>
     </message>
@@ -232,59 +251,59 @@
 <context>
     <name>PlayerViewModel</name>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2362"/>
-        <location filename="../PlayerViewModel.cpp" line="2370"/>
+        <location filename="../PlayerViewModel.cpp" line="2433"/>
+        <location filename="../PlayerViewModel.cpp" line="2441"/>
         <source>Source</source>
         <translation>源</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2396"/>
+        <location filename="../PlayerViewModel.cpp" line="2467"/>
         <source>Output</source>
         <translation>输出</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2403"/>
+        <location filename="../PlayerViewModel.cpp" line="2474"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2431"/>
+        <location filename="../PlayerViewModel.cpp" line="2502"/>
         <source>VSR</source>
         <translation>超分</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2456"/>
+        <location filename="../PlayerViewModel.cpp" line="2527"/>
         <source>FRUC</source>
         <translation>插帧</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2475"/>
-        <location filename="../PlayerViewModel.cpp" line="2480"/>
+        <location filename="../PlayerViewModel.cpp" line="2546"/>
+        <location filename="../PlayerViewModel.cpp" line="2551"/>
         <source>Decoder</source>
         <translation>解码器</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2485"/>
+        <location filename="../PlayerViewModel.cpp" line="2556"/>
         <source>Speed</source>
         <translation>速度</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2487"/>
+        <location filename="../PlayerViewModel.cpp" line="2558"/>
         <source>Time</source>
         <translation>时间</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2491"/>
+        <location filename="../PlayerViewModel.cpp" line="2562"/>
         <source>Frames</source>
         <translation>帧数</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2495"/>
+        <location filename="../PlayerViewModel.cpp" line="2566"/>
         <source>GPU</source>
         <translation>显卡</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2498"/>
+        <location filename="../PlayerViewModel.cpp" line="2569"/>
         <source>Audio</source>
         <translation>音频</translation>
     </message>
@@ -658,44 +677,44 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="403"/>
+        <location filename="../main.qml" line="404"/>
         <source>Open media</source>
         <translation>打开媒体</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="410"/>
+        <location filename="../main.qml" line="411"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>媒体文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="411"/>
+        <location filename="../main.qml" line="412"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</source>
         <translation>视频文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="412"/>
+        <location filename="../main.qml" line="413"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>音频文件 (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="407"/>
-        <location filename="../main.qml" line="413"/>
+        <location filename="../main.qml" line="408"/>
+        <location filename="../main.qml" line="414"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>字幕文件 (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="394"/>
+        <location filename="../main.qml" line="395"/>
         <source>Add folder to playlist</source>
         <translation>追加文件夹到播放列表</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="395"/>
+        <location filename="../main.qml" line="396"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="408"/>
-        <location filename="../main.qml" line="414"/>
+        <location filename="../main.qml" line="409"/>
+        <location filename="../main.qml" line="415"/>
         <source>All files (*)</source>
         <translation>所有文件 (*)</translation>
     </message>
