@@ -181,6 +181,9 @@ if [ -f "$FONT_SRC" ]; then
 fi
 TR_SRC="$SRC/translations"
 [ -d "$TR_SRC" ] || TR_SRC="$SRC/build/client-dist/src/client"
+# dev 构建树：meson 的 lrelease custom_target 把 .qm 放在 build/src/client/
+# （此前漏了这一档 → dev 安装沿用了上一版旧 .qm，新增 UI 文案静默回退英文）
+[ -d "$TR_SRC" ] || TR_SRC="$SRC/build/src/client"
 if ls "$TR_SRC"/*.qm >/dev/null 2>&1; then
     cp "$TR_SRC"/*.qm "$BIN_DIR/translations/"
     echo "  ✅ 翻译 → $BIN_DIR/translations/"
