@@ -515,6 +515,19 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
     会**静默回落**到它——程序能启动，但跑的是没有 `vf_vsr/vf_vfg/vf_rot` 和 libmpv vo
     互操作的原版 mpv，表现为"能开但超分/插帧全没了且无任何报错"（实测：挪走捆绑
     libmpv 后 `ldd` 解析到 `/usr/lib/libmpv.so.2`，并不报缺失）。
+  - **FFmpeg NEEDED 去版本化（2026-10-26，用户要求；standard 变体）**：
+    `scripts/rewrite-needed.py` 在打包时把 `lib/vsr-player/libmpv.so.2` 和 `mpv-vsr`
+    的 `DT_NEEDED` 从 `libavcodec.so.63` 改成 `libavcodec.so`（原地截短 .dynstr 里
+    那个字符串），安装时由 `soname-compat.sh` 按**目标机实际版本**建
+    `$LIB_DIR/libavcodec.so -> /usr/lib/libavcodec.so.<N>`。这样包本身不再钉任何
+    FFmpeg 版本。⚠ 三条实测结论：① 链接器无法绕过——`DT_NEEDED` 取库的 SONAME，
+    用 `-lavcodec`/无版本符号链接去链接仍记 `.so.63`（Oracle "Recording a Shared
+    Object Name" / Debian policy 同款规则）；② **`libnvrtc` 绝对不能改**：NVIDIA 的
+    符号版本命名空间就是 soname 本身，截短会连带改掉 version tag → 加载器报
+    `version 'libnvrtc.so' not found` + 所有 `nvrtc*` 符号 undefined（实测）；
+    FFmpeg 的 version tag 是 `LIBAVUTIL_61` 这类，与 soname 无关，且 NEEDED 与
+    VERNEED 的 `vna_file` 共用同一偏移、同步截短后仍一致 → 安全（`readelf -V` 可验）。
+    ③ 脚本内置 VERNEED 守卫：任何同时是 `vna_name` 的字符串一律跳过。
   - **soname 兼容软链（2026-10-26，用户提的"软链就行"是对的）**：
     `scripts/soname-compat.sh`（随 tarball 发布，install.sh [6/6] 在严格匹配失败后调用）：
     缺 `libX.so.N` 时在 `$LIB_DIR`（RPATH 首位）建 `libX.so.N → 系统里同库的其它 major`

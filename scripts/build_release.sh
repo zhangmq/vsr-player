@@ -122,6 +122,16 @@ fi
 cp "$CLIENT_DIST/src/client/vsr-player" "$STAGE/vsr-player"
 cp "$MPV_DIST/_build/mpv" "$STAGE/mpv-vsr"
 cp -L "$MPV_DIST/_build/libmpv.so.2" "$STAGE/lib/vsr-player/libmpv.so.2"
+
+# standard 变体：把 libmpv / mpv-vsr 的 FFmpeg DT_NEEDED 从带版本 soname
+# （libavcodec.so.63）改成无版本名（libavcodec.so），由安装时按**目标机实际版本**
+# 建链接 —— 这样包本身不再钉任何 FFmpeg 版本。只用 FFmpeg 家族：libnvrtc 的符号
+# 版本命名空间就是 soname，改 NEEDED 会破坏符号版本（见 rewrite-needed.py 注释）。
+if [ "$VARIANT" = standard ]; then
+    python3 scripts/rewrite-needed.py \
+        "$STAGE/lib/vsr-player/libmpv.so.2" "$STAGE/mpv-vsr"
+    echo "  ✓ FFmpeg NEEDED 已改为无版本名（安装时链接系统实际版本）"
+fi
 # Wayland 空闲抑制模块（可选）：主程序 dlopen；目标机无 QtWaylandClient 时
 # 加载失败 → 回退 org.freedesktop.ScreenSaver（不会导致启动失败）。
 IDLE_MOD="$CLIENT_DIST/src/client/libvsr-idle-wayland.so"

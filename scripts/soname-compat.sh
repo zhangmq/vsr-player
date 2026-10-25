@@ -41,7 +41,8 @@ missing_of() {  # 列出 <binary> 缺失的 NEEDED（basename 形式）
 # 另外扫 LD_LIBRARY_PATH，覆盖 CUDA/自建库那种不在缓存里的安装）
 candidate_for() {  # candidate_for <soname> -> 打印候选绝对路径
     local so="$1" base p d f
-    base="${so%%.so.*}"                          # libavcodec
+    base="${so%.so*}"      # libavcodec.so.63 -> libavcodec；libbar.so -> libbar
+                           # （不带版本名的情况也要能推出 base——否则找候选直接失败）
     # 1) 同名 soname 已在缓存里（只是没在默认路径上）→ 直接用它
     p="$(ldconfig -p 2>/dev/null | awk -v n="$so" '$1==n {print $NF; exit}')"
     [ -n "$p" ] && [ -e "$p" ] && { printf '%s\n' "$p"; return 0; }
