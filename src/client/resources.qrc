@@ -1,7 +1,7 @@
 <RCC>
     <qresource prefix="/">
         <file>main.qml</file>
-        <file>StereoOsd.qml</file>
+        <file>StereoHotkeyHelp.qml</file>
         <file>ui/TopBar.qml</file>
         <file>ui/BottomBar.qml</file>
         <file>ui/CenterPlayBtn.qml</file>

@@ -10,7 +10,7 @@ Item {
     property int current: 0
     property string actionText: ""
     property int keyWidth: 100
-    property int fontPixelSize: 16
+    property int fontPixelSize: 18
     implicitHeight: 32
     implicitWidth: row.implicitWidth
 

@@ -131,7 +131,7 @@ void StereoController::start(int mode, int screenIndex) {
     layout_ = 0;
     swap_ = false;
     half_ = false;
-    osdVisible_ = true;
+    helpVisible_ = true;
     screenName_ = s->name();
     active_ = true;
 
@@ -194,7 +194,7 @@ void StereoController::start(int mode, int screenIndex) {
     settings_.sync();
 
     emit stateChanged();
-    emit osdVisibleChanged();
+    emit helpVisibleChanged();
     const QVariantMap sm = screens_.value(screenIndex).toMap();
     MLOG_INFO("stereo: presentation on %s (physical %dx%d, logical %dx%d)",
               s->name().toUtf8().constData(),
@@ -251,15 +251,15 @@ void StereoController::toggleHalf() {
     emit stateChanged();
 }
 
-void StereoController::toggleOsd() {
+void StereoController::toggleHelp() {
     if (!active_)
         return;
-    setOsdVisible(!osdVisible_);
+    setHelpVisible(!helpVisible_);
 }
 
-void StereoController::setOsdVisible(bool v) {
-    if (osdVisible_ == v)
+void StereoController::setHelpVisible(bool v) {
+    if (helpVisible_ == v)
         return;
-    osdVisible_ = v;
-    emit osdVisibleChanged();
+    helpVisible_ = v;
+    emit helpVisibleChanged();
 }

@@ -518,91 +518,91 @@
     </message>
 </context>
 <context>
-    <name>StereoOsd</name>
+    <name>StereoHotkeyHelp</name>
     <message>
-        <location filename="../StereoOsd.qml" line="52"/>
+        <location filename="../StereoHotkeyHelp.qml" line="52"/>
         <source>HotKeys</source>
         <translation>热键</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="69"/>
+        <location filename="../StereoHotkeyHelp.qml" line="68"/>
         <source>Toggle HotKeys Help</source>
         <translation>显示/隐藏热键帮助</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="74"/>
+        <location filename="../StereoHotkeyHelp.qml" line="73"/>
         <source>Side-by-Side</source>
         <translation>左右并排</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="74"/>
+        <location filename="../StereoHotkeyHelp.qml" line="73"/>
         <source>Top-and-Bottom</source>
         <translation>上下并列</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="80"/>
+        <location filename="../StereoHotkeyHelp.qml" line="79"/>
         <source>Normal Eyes</source>
         <translation>正常眼序</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="80"/>
+        <location filename="../StereoHotkeyHelp.qml" line="79"/>
         <source>Swapped Eyes</source>
         <translation>交换眼序</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="86"/>
+        <location filename="../StereoHotkeyHelp.qml" line="85"/>
         <source>Full</source>
         <translation>全</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="86"/>
+        <location filename="../StereoHotkeyHelp.qml" line="85"/>
         <source>Half</source>
         <translation>半</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="101"/>
+        <location filename="../StereoHotkeyHelp.qml" line="95"/>
+        <source>Play / Pause</source>
+        <translation>播放 / 暂停</translation>
+    </message>
+    <message>
+        <location filename="../StereoHotkeyHelp.qml" line="100"/>
         <source>Seek -5s</source>
         <translation>快退 5 秒</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="106"/>
+        <location filename="../StereoHotkeyHelp.qml" line="105"/>
         <source>Seek +5s</source>
         <translation>快进 5 秒</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="111"/>
+        <location filename="../StereoHotkeyHelp.qml" line="110"/>
         <source>Seek -10s</source>
         <translation>快退 10 秒</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="116"/>
+        <location filename="../StereoHotkeyHelp.qml" line="115"/>
         <source>Seek +10s</source>
         <translation>快进 10 秒</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="121"/>
+        <location filename="../StereoHotkeyHelp.qml" line="120"/>
         <source>Volume up</source>
         <translation>音量 +</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="126"/>
+        <location filename="../StereoHotkeyHelp.qml" line="125"/>
         <source>Volume down</source>
         <translation>音量 -</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="131"/>
-        <source>Next</source>
-        <translation>下一个</translation>
-    </message>
-    <message>
-        <location filename="../StereoOsd.qml" line="136"/>
+        <location filename="../StereoHotkeyHelp.qml" line="130"/>
         <source>Previous</source>
         <translation>上一个</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="96"/>
-        <source>Play / Pause</source>
-        <translation>播放 / 暂停</translation>
+        <location filename="../StereoHotkeyHelp.qml" line="135"/>
+        <source>Next</source>
+        <translation>下一个</translation>
     </message>
 </context>
 <context>
@@ -822,28 +822,28 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="515"/>
+        <location filename="../main.qml" line="514"/>
         <source>Open media</source>
         <translation>打开媒体</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="522"/>
+        <location filename="../main.qml" line="521"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>媒体文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="523"/>
+        <location filename="../main.qml" line="522"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</source>
         <translation>视频文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="524"/>
+        <location filename="../main.qml" line="523"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>音频文件 (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="519"/>
-        <location filename="../main.qml" line="525"/>
+        <location filename="../main.qml" line="518"/>
+        <location filename="../main.qml" line="524"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>字幕文件 (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
@@ -853,18 +853,18 @@
         <translation>2D转3D 尚未实现</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="506"/>
+        <location filename="../main.qml" line="505"/>
         <source>Add folder to playlist</source>
         <translation>追加文件夹到播放列表</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="507"/>
+        <location filename="../main.qml" line="506"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="520"/>
-        <location filename="../main.qml" line="526"/>
+        <location filename="../main.qml" line="519"/>
+        <location filename="../main.qml" line="525"/>
         <source>All files (*)</source>
         <translation>所有文件 (*)</translation>
     </message>

@@ -473,14 +473,14 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             QMetaObject::invokeMethod(stereo_, "stop", Qt::QueuedConnection);
             response = formatResponse("success");
         }
-    } else if (cmd == "stereo-osd") {
+    } else if (cmd == "stereo-help") {
         if (!stereo_) {
             response = formatResponse("no stereo controller");
         } else if (args.empty()) {
             response = formatResponse("missing value (0|1)");
         } else {
             bool v = args[0] == "1" || args[0] == "yes" || args[0] == "true";
-            QMetaObject::invokeMethod(stereo_, "setOsdVisible", Qt::QueuedConnection,
+            QMetaObject::invokeMethod(stereo_, "setHelpVisible", Qt::QueuedConnection,
                                       Q_ARG(bool, v));
             response = formatResponse("success");
         }

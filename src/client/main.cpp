@@ -163,7 +163,7 @@ protected:
         case Qt::Key_H:
             MLOG_INFO("stereo key: H -> toggle OSD");
             if (repeat) return true;
-            stereo_->toggleOsd();
+            stereo_->toggleHelp();
             return true;
         case Qt::Key_Space: if (repeat) return true; viewModel_->togglePlayPause(); return true;
         case Qt::Key_Left:

@@ -27,7 +27,7 @@ TS_EN="$CLIENT/translations/vsr-player_en.ts"
 # 新增带 UI 文案的文件时必须加到这里，否则条目会是 vanished。
 INPUTS=(
     "$CLIENT/main.qml"
-    "$CLIENT/StereoOsd.qml"
+    "$CLIENT/StereoHotkeyHelp.qml"
     "$CLIENT"/ui/*.qml
     "$CLIENT"/ui/components/*.qml
     "$CLIENT/PlayerViewModel.cpp"

@@ -26,7 +26,7 @@ class StereoController : public QObject {
     Q_PROPERTY(int layout READ layout NOTIFY stateChanged)
     Q_PROPERTY(bool swap READ swap NOTIFY stateChanged)
     Q_PROPERTY(bool half READ half NOTIFY stateChanged)
-    Q_PROPERTY(bool osdVisible READ osdVisible WRITE setOsdVisible NOTIFY osdVisibleChanged)
+    Q_PROPERTY(bool helpVisible READ helpVisible WRITE setHelpVisible NOTIFY helpVisibleChanged)
     Q_PROPERTY(QVariantList screens READ screens NOTIFY screensChanged)
     Q_PROPERTY(QString screenName READ screenName NOTIFY stateChanged)
 
@@ -39,7 +39,7 @@ public:
     int layout() const { return layout_; }
     bool swap() const { return swap_; }
     bool half() const { return half_; }
-    bool osdVisible() const { return osdVisible_; }
+    bool helpVisible() const { return helpVisible_; }
     QVariantList screens() const { return screens_; }
     QString screenName() const { return screenName_; }
 
@@ -57,12 +57,12 @@ public:
     Q_INVOKABLE void cycleLayout();   // SBS / 上下
     Q_INVOKABLE void swapEyes();
     Q_INVOKABLE void toggleHalf();    // SBS：全宽/半宽；TAB：全高/半高
-    Q_INVOKABLE void toggleOsd();
-    Q_INVOKABLE void setOsdVisible(bool v);
+    Q_INVOKABLE void toggleHelp();
+    Q_INVOKABLE void setHelpVisible(bool v);
 
 signals:
     void stateChanged();
-    void osdVisibleChanged();
+    void helpVisibleChanged();
     void screensChanged();
 
 private:
@@ -78,7 +78,7 @@ private:
     int layout_ = 0;   // 0=SBS, 1=上下
     bool swap_ = false;
     bool half_ = false;  // false=全，true=半（按 split 轴）
-    bool osdVisible_ = true;
+    bool helpVisible_ = true;
     QString screenName_;
 
     QPointer<QScreen> origScreen_;

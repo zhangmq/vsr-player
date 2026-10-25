@@ -441,7 +441,7 @@ Item {
         }
         Shortcut {
             enabled: root.shortcutsEnabled; sequence: "h"
-            onActivated: stereo.active ? stereo.toggleOsd() : viewModel.toggleOsd()
+            onActivated: stereo.active ? stereo.toggleHelp() : viewModel.toggleOsd()
         }
         // 3D H/J/K/L：H 走 app filter + QShortcut + QML Shortcut；J/K/L 走
         // main.cpp 的 StereoKeyFilter（在 QML 之前按 event->key() 拦截，大小写无关）。
@@ -570,11 +570,11 @@ Item {
 
     // 3D OSD：presentation 内覆盖层（不是独立窗口）；H 只切显示。
     Loader {
-        id: stereoOsdOverlay
+        id: stereoHotkeyHelpOverlay
         anchors.fill: parent
         z: 100
         active: !controlMode && stereo.active
         visible: active
-        source: "StereoOsd.qml"
+        source: "StereoHotkeyHelp.qml"
     }
 }

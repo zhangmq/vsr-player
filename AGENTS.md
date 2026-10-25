@@ -64,7 +64,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 
 - **播放列表有条目时，点播放无反应**（2026-10-25 用户报告；先不修、不排查）。
   - 现象：播放列表已有条目，点播放按钮/播放键无响应。
-  - 当前分支：`feat/stereo-osd-prototype`；根因未查，留待后续单独安排。
+  - 当前分支：`feat/stereo-help-prototype`；根因未查，留待后续单独安排。
   - ⚠ 未调查前不要把它归因到 3D/control 改动；恢复播放行为时再按正常排查流程处理。
 
 ## 技术现状（已对照 master 代码修正）
@@ -268,7 +268,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - ⚠ 旋转在 VFG **之前** → 横转竖会让 VFG 输入变成竖屏（如 720x1280）走慢路径
   （见插帧一节的竖屏实测），竖转横则相反。这是"VFX 之前旋转"的固有代价。
 
-### 3D 输出（OSD + 视频映射，2026-10-25，分支 feat/stereo-osd-prototype）
+### 3D 输出（OSD + 视频映射，2026-10-25，分支 feat/stereo-help-prototype）
 
 - 入口/流程：右键菜单 3D 三态 **Off / 3D片源 / 2D转3D**（运行期、不持久化，默认 Off）。
   3D片源 → 选择器（QScreen `model` + `name` + **物理分辨率**；**不假设 1080×2/
@@ -316,7 +316,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   main.qml，避免 `Qt.ApplicationShortcut` 重复触发）。
 - **presentation** = 主窗口（Video/VO）：`setScreen(眼镜屏)` + `showFullScreen`，加
   `FramelessWindowHint | WindowStaysOnTopHint | WindowDoesNotAcceptFocus`，光标 Blank；
-  主窗口 uiLayer 在 3D 时隐藏；OSD 是 presentation 内的 `StereoOsd.qml` 覆盖层
+  主窗口 uiLayer 在 3D 时隐藏；3D 快捷键帮助面板是 presentation 内的 `StereoHotkeyHelp.qml` 覆盖层
   （Loader，z=100），不是独立窗口。`H` 只切覆盖层；`J/K/L` 改布局/眼序/全半。
   实测 KWin 下满屏置顶覆盖了任务栏/面板，无其他可见内容。停止时恢复主窗口 flags/
   光标/屏幕/几何，隐藏 controlView。
@@ -341,20 +341,20 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   内容，先算 contentRect 再取样。无红绿/anaglyph。
 - OSD：默认显示；`Tab` 显隐；`J` 布局、`K` 交换眼、`L` 全/半；标题/键名 Bold、
   正文 DemiBold；左右面板 ±12 logical px 交叉视差（OSD 浮在画面前，独立于视频眼序）。
-- **OSD HotKeys（2026-10-25，按用户参考重做）**：**两列、一键一行、无分组名**。
+- **3D 快捷键帮助面板（HotKeys，2026-10-25/26）**：**两列、一键一行、无分组名**。
   左列 3D：H / J / K / L；右列播放器：Space / ← / → / Shift+← / Shift+→ /
   ↑ / ↓ / Ctrl+← / Ctrl+→（方向键、Shift+方向键、音量上下、上/下一个都各占一行）。
   `HotkeyRow` 的键名列**统一 100px**，状态/说明从同一 x 起（所有行左对齐）；
   3D 状态**不用按钮**，纯文本 + 颜色区分（选中 `#ffcc00`，未选 `#e0e0e0`），
   避免按钮宽度破坏对齐；切换后该行淡黄闪 500ms。OSD 全部文字只用
-  **一个字号 = 16**（标题/键名/状态/说明同字号；标题也不加粗/不放大），
+  **一个字号 = 18**（标题/键名/状态/说明同字号；标题也不加粗/不放大），
   不再有 20/24/32 等多套；行高 32。
   左列 `H: Toggle HotKeys Help`、`J: 左右并排 / 上下并列`、`K: Normal Eyes / Swapped Eyes`、
   `L: Full / Half`；右列 `←`/`→`（±5s）、`Shift+←`/`Shift+→`（±10s）、
   `↑`/`↓`（音量 ±）、`Ctrl+←: Previous`、`Ctrl+→: Next`（中文“上一个/下一个”）。
   OSD panel 宽高按内容（`contentWidth` 在 Repeater delegate 内，不能放 root），
   左下/右眼两份 + 交叉视差不变。
-- ⚠ **OSD 的 i18n 输入**：`StereoOsd.qml` 不在 client 根目录的 `ui/*.qml`
+- ⚠ **3D 快捷键帮助面板的 i18n 输入**：`StereoHotkeyHelp.qml` 不在 client 根目录的 `ui/*.qml`
   glob 里，`scripts/update-translations.sh` 已显式加入；否则 OSD 全部回退
   英文（2026-10-25 修）。当前 zh_CN OSD：热键/左右并排/上下/正常眼序/
   交换眼序/全/半/播放器/播放暂停/快退快进/音量。
@@ -386,7 +386,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - 不做“切回 2D 自动结束 3D”（目标不一定是 1080×2，无法可靠判断）；只有目标屏被
   拔掉时 stop。`Esc` 不参与 3D。
 - 测试钩子（RPC）：`stereo-start <1> <screen-index>`、`stereo-stop`、
-  `stereo-osd <0|1>`、`stereo-cycle layout|swap|half`、`stereo-picker <1>`、
+  `stereo-help <0|1>`、`stereo-cycle layout|swap|half`、`stereo-picker <1>`、
   `grab-window <png>`。
 - 待做：i18n、2D→3D、多轨/其他 3D 格式、control UI 视频区域（当前黑底，视频只在
   presentation）。
