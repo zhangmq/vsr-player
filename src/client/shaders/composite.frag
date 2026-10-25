@@ -52,7 +52,8 @@ void main() {
     //   半：源眼沿 split 轴拉成源整帧 = srcW × srcH（SBS 横向 2×、TAB 纵向 2×）
     // 例 1920x1080 SBS：全 960x1080，半 1920x1080。
     // 例  960x720  SBS：全  480x720，半  960x720。
-    // 眼视口 = outW/2 × outH；图像按上述像素尺寸居中，不放大/不缩小。
+    // 眼视口 = outW/2 × outH。全/半先决定源眼图像的原生宽高比，
+    // 最后再按眼窗口大小做 contain 等比缩放（可放大/缩小，不拉伸），居中。
     float eyeW = float(pc.outW) * 0.5;
     float eyeH = float(pc.outH);
     float imgW = float(pc.srcW);
@@ -63,7 +64,8 @@ void main() {
         else
             imgW *= 0.5;
     }
-    vec2 imgSize = vec2(imgW / eyeW, imgH / eyeH);
+    float scale = min(eyeW / imgW, eyeH / imgH);
+    vec2 imgSize = vec2(imgW * scale / eyeW, imgH * scale / eyeH);
     vec2 imgMin = (vec2(1.0) - imgSize) * 0.5;
     vec2 local = (e - imgMin) / imgSize;
     if (local.x < 0.0 || local.x > 1.0 || local.y < 0.0 || local.y > 1.0) {
