@@ -334,15 +334,15 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   正文 DemiBold；左右面板 ±12 logical px 交叉视差（OSD 浮在画面前，独立于视频眼序）。
 - **OSD HotKeys（2026-10-25，按用户参考重做）**：**两列、一键一行、无分组名**。
   左列 3D：Tab / J / K / L；右列播放器：Space / ← / → / Shift+← / Shift+→ /
-  ↑ / ↓ / N / B（方向键、Shift+方向键、音量上下都各占一行）。
+  ↑ / ↓ / Ctrl+← / Ctrl+→（方向键、Shift+方向键、音量上下、上/下一个都各占一行）。
   `HotkeyRow` 的键名列**统一 100px**，状态/说明从同一 x 起（所有行左对齐）；
   3D 状态**不用按钮**，纯文本 + 颜色区分（选中 `#ffcc00`，未选 `#e0e0e0`），
   避免按钮宽度破坏对齐；切换后该行淡黄闪 500ms。OSD 全部文字只用
-  **一个字号 = 正常 UI 字号 13 + 2 = 15**（标题/键名/状态/说明同字号；
-  标题也不加粗/不放大），不再有 20/24/32 等多套；行高 32。
+  **一个字号 = 16**（标题/键名/状态/说明同字号；标题也不加粗/不放大），
+  不再有 20/24/32 等多套；行高 32。
   左列 `J: Side-by-Side / Top-and-Bottom`、`K: Normal Eyes / Swapped Eyes`、
   `L: Full / Half`；右列 `←`/`→`（±5s）、`Shift+←`/`Shift+→`（±10s）、
-  `↑`/`↓`（音量 ±）、`N: Next`、`B: Previous`（中文“下一个/上一个”）。
+  `↑`/`↓`（音量 ±）、`Ctrl+←: Previous`、`Ctrl+→: Next`（中文“上一个/下一个”）。
   OSD panel 宽高按内容（`contentWidth` 在 Repeater delegate 内，不能放 root），
   左下/右眼两份 + 交叉视差不变。
 - ⚠ **OSD 的 i18n 输入**：`StereoOsd.qml` 不在 client 根目录的 `ui/*.qml`
@@ -355,11 +355,15 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   `event->key()` 拦截：J/K/L/Tab（切换）+ Space（播放暂停）+ ←/→（±5s）+
   Shift+←/→（±10s）+ ↑/↓（音量）+ N/B（下一个/上一个）。大小写无关、允许
   Shift、Ctrl/Alt/Meta 不拦；切换类忽略 auto-repeat，方向/音量允许连发。
-  QML 里 3D 的 J/K/L/Tab 已删除，Space/方向/音量/N/B 在 3D 时禁用
+  QML 里 3D 的 J/K/L/Tab 已删除，Space/方向/音量在 3D 时禁用
   （`&& !stereo.active`），只留 2D 路径；C++ 负责 3D，避免重复触发。
-- **上一个/下一个**：`N`=playlistNext、`B`=playlistPrev，原本 QML 写的是大写
-  `"N"/"B"`（等价 Shift+N/B）且 OSD 没列；现在由 3D 的 C++ 过滤器处理，
-  2D 仍走 QML 小写 `"n"/"b"`，OSD 右列显示“下一个/上一个”。
+  另加了 J/K/L/Tab 的 `QShortcut`（`Qt::ApplicationShortcut`）作第二道保险，
+  防止 Tab 被 QML 焦点先吃掉。
+- **上一个/下一个 = 全局 Ctrl+← / Ctrl+→**：2D 走 QML `Shortcut`
+  （`enabled && !stereo.active`），3D 走 C++ 过滤器；`Ctrl+L` 是 URL 输入，
+  与 Ctrl+方向键不冲突，项目内无重复绑定。
+- **3D 映射变化必须重绘当前帧**：`StereoController::stateChanged` 连到
+  `Video::update()`；否则暂停时切 L（全/半）只改 OSD 状态，画面要等下一帧。
 - 不做“切回 2D 自动结束 3D”（目标不一定是 1080×2，无法可靠判断）；只有目标屏被
   拔掉时 stop。`Esc` 不参与 3D。
 - 测试钩子（RPC）：`stereo-start <1> <screen-index>`、`stereo-stop`、

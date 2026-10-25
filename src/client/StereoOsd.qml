@@ -12,7 +12,7 @@ Item {
     height: parent ? parent.height : 0
 
     // OSD 整体字号 = 正常 UI（13）+ 2。
-    readonly property int osdFontSize: 15
+    readonly property int osdFontSize: 16
     readonly property int parallax: 12
 
     Repeater {
@@ -126,13 +126,13 @@ Item {
                                 fontPixelSize: root.osdFontSize
                             }
                             HotkeyRow {
-                                keyText: "N"
-                                actionText: qsTr("Next")
+                                keyText: "Ctrl+←"
+                                actionText: qsTr("Previous")
                                 fontPixelSize: root.osdFontSize
                             }
                             HotkeyRow {
-                                keyText: "B"
-                                actionText: qsTr("Previous")
+                                keyText: "Ctrl+→"
+                                actionText: qsTr("Next")
                                 fontPixelSize: root.osdFontSize
                             }
                         }

@@ -452,12 +452,12 @@ Item {
             onActivated: Qt.quit()
         }
         Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "n"
-            onActivated: viewModel.playlistNext()
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+Left"
+            onActivated: viewModel.playlistPrev()
         }
         Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "b"
-            onActivated: viewModel.playlistPrev()
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+Right"
+            onActivated: viewModel.playlistNext()
         }
         Shortcut {
             enabled: root.shortcutsEnabled; sequence: "["

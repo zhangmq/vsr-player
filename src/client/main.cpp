@@ -12,6 +12,7 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QQuickView>
+#include <QShortcut>
 #include <QQuickWindow>
 #include <QQuickGraphicsDevice>
 #include <QVulkanInstance>
@@ -111,11 +112,22 @@ protected:
         if (event->type() != QEvent::KeyPress || !stereo_->active())
             return false;
         auto *ke = static_cast<QKeyEvent *>(event);
-        if (ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))
+        if (ke->modifiers() & (Qt::AltModifier | Qt::MetaModifier))
             return false;
 
-        // 方向键/音量允许按住连发；切换类键忽略 auto-repeat。
         const bool repeat = ke->isAutoRepeat();
+        // 上一个/下一个：全局 Ctrl+← / Ctrl+→（2D 由 QML 处理，3D 在这里处理）。
+        if (ke->modifiers() & Qt::ControlModifier) {
+            if (ke->key() == Qt::Key_Left) {
+                if (!repeat) viewModel_->playlistPrev();
+                return true;
+            }
+            if (ke->key() == Qt::Key_Right) {
+                if (!repeat) viewModel_->playlistNext();
+                return true;
+            }
+            return false;
+        }
         switch (ke->key()) {
         case Qt::Key_J: if (repeat) return true; stereo_->cycleLayout(); return true;
         case Qt::Key_K: if (repeat) return true; stereo_->swapEyes(); return true;
@@ -134,8 +146,6 @@ protected:
         case Qt::Key_Down:
             viewModel_->setVolume(viewModel_->volume() - 0.05);
             return true;
-        case Qt::Key_N: if (repeat) return true; viewModel_->playlistNext(); return true;
-        case Qt::Key_B: if (repeat) return true; viewModel_->playlistPrev(); return true;
         default: return false;
         }
     }
@@ -515,6 +525,22 @@ int main(int argc, char *argv[]) {
         // presentation/control 任一窗口，应用级过滤器才能稳定收到所有按键。
         auto *stereoKeyFilter = new StereoKeyFilter(&stereo, &viewModel, &app);
         qApp->installEventFilter(stereoKeyFilter);
+
+        // QShortcut 作为第二道保险：Tab 在某些焦点状态下会被 QML 先处理，
+        // 应用级 QShortcut 仍能命中；J/K/L 同样兜底。
+        auto addStereoShortcut = [&](Qt::Key key, auto action) {
+            auto *sc = new QShortcut(QKeySequence(key), &controlView);
+            sc->setContext(Qt::ApplicationShortcut);
+            sc->setAutoRepeat(false);
+            QObject::connect(sc, &QShortcut::activated, &controlView, [&stereo, action] {
+                if (stereo.active())
+                    action(stereo);
+            });
+        };
+        addStereoShortcut(Qt::Key_Tab, [](StereoController &s) { s.toggleOsd(); });
+        addStereoShortcut(Qt::Key_J, [](StereoController &s) { s.cycleLayout(); });
+        addStereoShortcut(Qt::Key_K, [](StereoController &s) { s.swapEyes(); });
+        addStereoShortcut(Qt::Key_L, [](StereoController &s) { s.toggleHalf(); });
         MLOG_INFO("control window ready");
 
         view.setSource(QUrl("qrc:/main.qml"));
@@ -687,6 +713,10 @@ int main(int argc, char *argv[]) {
         // ── Wire Video ────────────────────────────────────────────────
         video->setMpvController(&mpv);
         video->setStereoController(&stereo);
+        // 3D 映射变化（布局/眼序/全半）时立刻重绘当前帧；否则暂停时切 L
+        // 只会改 OSD 状态，画面要等下一帧才变。
+        QObject::connect(&stereo, &StereoController::stateChanged, video,
+                         [video] { video->update(); });
         video->setSourceAspectProvider([&viewModel]() {
             const int w = viewModel.videoWidth(), h = viewModel.videoHeight();
             return (w > 0 && h > 0) ? double(w) / double(h) : 0.0;
