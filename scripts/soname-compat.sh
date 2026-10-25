@@ -71,6 +71,18 @@ for bin in "$@"; do
 
     echo "  缺 soname: $(printf '%s ' $MISSING)"
     for so in $MISSING; do
+        # 黑名单：这些库跨 major 是**静默**不兼容（没有符号版本可验证，ldd -r 也查不出来），
+        # 自动软链过去等于制造"能启动但行为错"的故障 → 直接拒绝，让用户装对应版本或用 full。
+        case "$so" in
+            libplacebo.so.*)
+                echo "    ❌ $so：libplacebo 的 soname 就是 API 版本，跨版本无 ABI 承诺且不会报错" >&2
+                echo "       不做兼容链接；请装对应 libplacebo，或改用 full 变体（自带该库）。" >&2
+                RC=1; continue ;;
+            libnvrtc.so.*|libcudart.so.*)
+                echo "    ❌ $so：CUDA runtime 跨 major 差异大且符号版本绑定 soname" >&2
+                echo "       不做兼容链接；请装对应 CUDA runtime，或改用 full 变体。" >&2
+                RC=1; continue ;;
+        esac
         CAND="$(candidate_for "$so")"
         if [ -z "$CAND" ] || [ ! -e "$CAND" ]; then
             echo "    ❌ $so：系统里没有同库的任何版本 → 无法兼容" >&2

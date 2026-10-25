@@ -245,6 +245,9 @@ if [ "$FRUC_BACKEND" = rife ]; then
 fi
 
 # 4b. 光盘/蓝光媒体栈：从实际 NEEDED 发现 soname——**不要硬编码**。
+# ⚠ 2026-10-26 用户发的"标准版不携带第三方依赖"规则：整段只在 full 变体执行，
+# standard 由系统提供（缺了安装自检会明确报错，不会静默）。
+if [ "$VARIANT" = full ]; then
 #     2026-09 事故：libcdio .so.19→.so.21、libbluray .so.3→.so.4 升级后，
 #     未捆绑的旧 soname 让二进制启动失败（libmpv 的 cdda/蓝光 + libavformat 的 bluray）。
 #     发现必须**迭代到不动点**：libmpv → libcdio/libdvdnav → libdvdread 是两层链，
@@ -263,6 +266,9 @@ for _ in 1 2 3 4; do
     prev="$MEDIA"
 done
 [ -n "$MEDIA" ] && echo "  ✓ 媒体栈: $(printf '%s' "$MEDIA" | tr '\n' ' ')"
+else
+    echo "  · standard：光盘媒体栈由系统提供（libcdio/libdvd/libbluray）"
+fi
 
 # 4b2. 两个"跨版本不可替换"的小库：**两个变体都捆**（合计 ~0.5 MB）
 #  ① libplacebo（soname = API 版本，每次 libplacebo 发版就跳）：mpv 传给
@@ -273,7 +279,7 @@ done
 #     NEEDED（Debian 在 /usr/lib/x86_64-linux-gnu/）→ 换个发行版直接起不来。
 #     rewrite-needed.py 会把该 NEEDED 改成 basename，所以这里必须把库带上。
 PLACEBO_SO="$(needed_of "$LIB/libmpv.so.2" | grep -E '^libplacebo\.so\.[0-9]+$' | head -1)"
-if [ -n "$PLACEBO_SO" ]; then
+if [ "$VARIANT" = full ] && [ -n "$PLACEBO_SO" ]; then
     collect "$PLACEBO_SO" /usr/lib
     # libplacebo 自己的 shader 编译栈（glslang/shaderc）与 Dolby Vision 依赖，
     # 按 NEEDED 推导；整栈压缩后 ~0.5 MB，一起带走才算真自洽。
@@ -291,6 +297,8 @@ if [ -n "$PLACEBO_SO" ]; then
     done
     collect libmujs.so /usr/lib
     echo "  ✓ 小库（跨版本不可替换）: $PLACEBO_SO（含 shader 栈）+ libmujs.so"
+else
+    echo "  · standard：libplacebo / libmujs 由系统提供（跨版本不兼容 → 缺了会明确报错）"
 fi
 
 # 4c. full 变体：最小 Qt（镜像发行版布局，插件自带相对 RUNPATH 才能解析）
@@ -365,7 +373,15 @@ validate_closure() {
             base="$(basename "$dep")"          # 绝对路径依赖（无 SONAME 的库）按 basename 判定
             if [ -e "$LIB/$base" ] || [ -e "$STAGE/lib/$base" ]; then continue; fi
             printf '%s' "$base" | grep -qE "^($ALLOW)" && continue
-            echo "  ❌ $(basename "$f") → $dep（未捆绑且不在系统白名单）"
+            # standard 变体按设计**不携带第三方库**（用户 2026-10-26 的发版规则）：
+            # 未捆绑的依赖只要构建机能解析（ldconfig 缓存里有），就算"系统提供"，
+            # 会写进 COMPONENTS.md 的"要求系统提供"表。真正的错误只有一种：
+            # 连构建机都解析不到 —— 那说明 SONAME 拼错或依赖缺失。
+            if [ "$VARIANT" = standard ] && \
+               ldconfig -p 2>/dev/null | awk -v n="$base" '$1==n{found=1} END{exit !found}'; then
+                continue
+            fi
+            echo "  ❌ $(basename "$f") → $dep（未捆绑、不在白名单，且构建机也解析不到）"
             bad=1
         done < <(needed_of "$f")
     done < <(find "$STAGE" -type f \( -name '*.so*' -o -perm -u+x \) 2>/dev/null)
@@ -529,6 +545,9 @@ PYEOF
 cp scripts/install.sh "$STAGE/install.sh" && chmod +x "$STAGE/install.sh"
 # 缺 soname 的兼容兜底（install.sh 的 [6/6] 会在系统 ffmpeg/CUDA 大版本升级后调用它）
 cp scripts/soname-compat.sh "$STAGE/soname-compat.sh" && chmod +x "$STAGE/soname-compat.sh"
+
+# 组件版本表（发版必备：full 列自带清单，standard 列系统要求）
+bash scripts/gen-components.sh "$STAGE" "$VARIANT"
 
 tar -C "$PROJECT_ROOT/build" -cJf "$TARBALL" "$STAGE_BASE" \
     --transform "s/$STAGE_BASE/$PKG_NAME/"

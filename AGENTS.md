@@ -536,6 +536,22 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
     或**打包时改写 NEEDED/整包捆绑**（[Nix auto-patchelf](https://git.qyliss.net/nixlib/blame/pkgs/build-support/setup-hooks/auto-patchelf.sh)、
     AppImage/manylinux 的 auditwheel）；发行版本身靠"soname 版本共存"（如 Ubuntu 的
     [libplacebo360](https://packages.ubuntu.com/search?lang=zh-tw&keywords=libplacebo360) 包）让不同代共享。
+  - **发版规则与「组件版本表」（2026-10-26 用户定，已实现）**：
+    **标准版不带任何第三方依赖**（只带我们自己的产物：`libmpv.so.2` + 2 个
+    `libvsr-*.so`），**完整版（full）带全部依赖**（ffmpeg / CUDA / Qt / libplacebo
+    及其 shader 栈 / libmujs / 光盘栈）。每次打包由 `scripts/gen-components.sh`
+    从**产物本身**推导出 `COMPONENTS.md`（readelf NEEDED + 构建机解析结果，
+    不是手写清单，所以不会过期）：
+    - standard 那张表 = "**要求系统提供**"（61 条 NEEDED，逐条给 SONAME + 构建机
+      实际版本，如 `libavcodec.so` ← `libavcodec.so.63.1.102`）；
+    - full 那张表 = "**本包自带**"（27 个库逐条列版本/大小）+ 目标机额外要求；
+    - 两张表都带外部组件（驱动 / VFX SDK 版本 / Vulkan / Qt 要求）与排障命令。
+    `install.sh` 同时把 `COMPONENTS.md` 装到 `~/.local/share/vsr-player/`——
+    排障时让用户直接发这个文件即可。
+    ⚠ 连带改动：闭包自检对 standard 放宽成"构建机能解析即算系统提供"（否则按新
+    规则每个第三方库都会报未捆绑）；`soname-compat.sh` 加黑名单——**libplacebo /
+    libnvrtc / libcudart 禁止自动兼容链接**（跨 major 是静默不兼容，`ldd -r` 也
+    查不出来），缺了就明确报错并建议用 full。
   - **跨 major 的可见性（2026-10-26）**：去版本化后 NEEDED 里没有 major 了，而
     跨 ffmpeg major **没有 ABI 承诺**（符号齐全 ≠ 结构体/语义一致，`ldd -r` 查不出来）。
     所以 `build_release.sh` 在 staging 里写 `lib/vsr-player/VSR-FFMPEG-MAJOR`

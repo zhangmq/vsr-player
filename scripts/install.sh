@@ -173,6 +173,12 @@ else
     echo "  ℹ VFG 后端：本包不含 TRT/engine，插帧走 VFX VideoFrameGeneration"
     [ "$HAS_TRT" -eq 1 ] && echo "     （注：$LIB_DIR/ 里有旧版 RIFE 的 TRT 库/引擎残留，不影响 VFG 使用）"
 fi
+# 组件版本表（发版必备）：装到 ~/.local/share/vsr-player/，排障时直接让用户发这个文件
+if [ -f "$SRC/COMPONENTS.md" ]; then
+    mkdir -p "$HOME/.local/share/vsr-player"
+    cp "$SRC/COMPONENTS.md" "$HOME/.local/share/vsr-player/COMPONENTS.md"
+    echo "  ✅ 组件版本表 → ~/.local/share/vsr-player/COMPONENTS.md"
+fi
 FONT_SRC="$SRC/fonts/materialdesignicons-webfont.ttf"
 [ -f "$FONT_SRC" ] || FONT_SRC="$SRC/third_party/material-icons/materialdesignicons-webfont.ttf"
 if [ -f "$FONT_SRC" ]; then
