@@ -570,32 +570,32 @@
         <translation>快进 5 秒</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="112"/>
+        <location filename="../StereoOsd.qml" line="111"/>
         <source>Seek -10s</source>
         <translation>快退 10 秒</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="118"/>
+        <location filename="../StereoOsd.qml" line="116"/>
         <source>Seek +10s</source>
         <translation>快进 10 秒</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="123"/>
+        <location filename="../StereoOsd.qml" line="121"/>
         <source>Volume up</source>
         <translation>音量 +</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="128"/>
+        <location filename="../StereoOsd.qml" line="126"/>
         <source>Volume down</source>
         <translation>音量 -</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="133"/>
+        <location filename="../StereoOsd.qml" line="131"/>
         <source>Next</source>
         <translation>下一个</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="138"/>
+        <location filename="../StereoOsd.qml" line="136"/>
         <source>Previous</source>
         <translation>上一个</translation>
     </message>

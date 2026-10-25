@@ -108,13 +108,11 @@ Item {
                             }
                             HotkeyRow {
                                 keyText: "Shift+←"
-                                keyWidth: 90
                                 actionText: qsTr("Seek -10s")
                                 fontPixelSize: root.osdFontSize
                             }
                             HotkeyRow {
                                 keyText: "Shift+→"
-                                keyWidth: 90
                                 actionText: qsTr("Seek +10s")
                                 fontPixelSize: root.osdFontSize
                             }

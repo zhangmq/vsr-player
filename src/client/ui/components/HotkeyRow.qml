@@ -1,14 +1,15 @@
 import QtQuick
 
-/// HotKeys 列表的一行：键名 + 选项按钮（画质选项按钮同款样式）。
-/// OSD 是眼镜上的键盘 UI，按钮不接收鼠标；current 变化时整行淡黄闪一下。
+/// HotKeys 列表的一行：固定宽度的键名列 + 纯文本状态/说明。
+/// 状态只用颜色区分（选中 #ffcc00，未选 #e0e0e0），不用按钮，避免破坏
+/// 快捷键列与状态列的对齐。current 变化时整行淡黄闪一下。
 Item {
     id: root
     property string keyText: ""
     property var options: []
     property int current: 0
     property string actionText: ""
-    property int keyWidth: 50
+    property int keyWidth: 90
     property int fontPixelSize: 14
     implicitHeight: 30
     implicitWidth: row.implicitWidth
@@ -43,19 +44,11 @@ Item {
         }
         Repeater {
             model: root.actionText === "" ? root.options : []
-            delegate: Rectangle {
-                width: Math.max(48, label.implicitWidth + 16)
-                height: 26
-                radius: 4
-                color: index === root.current ? "#33ffcc00" : "transparent"
+            delegate: Text {
+                text: modelData
+                color: index === root.current ? "#ffcc00" : "#e0e0e0"
+                font.pixelSize: root.fontPixelSize
                 anchors.verticalCenter: parent.verticalCenter
-                Text {
-                    id: label
-                    anchors.centerIn: parent
-                    text: modelData
-                    color: index === root.current ? "#ffcc00" : "#e0e0e0"
-                    font.pixelSize: root.fontPixelSize
-                }
             }
         }
     }

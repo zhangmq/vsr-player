@@ -335,10 +335,11 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **OSD HotKeys（2026-10-25，按用户参考重做）**：**两列、一键一行、无分组名**。
   左列 3D：Tab / J / K / L；右列播放器：Space / ← / → / Shift+← / Shift+→ /
   ↑ / ↓ / N / B（方向键、Shift+方向键、音量上下都各占一行）。
-  `HotkeyRow` 的选项是 **画质选项按钮同款**（radius 4；选中 `#33ffcc00` 底 +
-  `#ffcc00` 字；未选 transparent + `#e0e0e0` 字），当前项即状态；切换后该行
-  淡黄闪 500ms。OSD 全部文字只用 **一个字号 = 正常 UI 字号 13 + 1 = 14**
-  （标题/键名/按钮/说明同字号；标题 bold），不再有 20/24/32 等多套。
+  `HotkeyRow` 的键名列**统一 90px**，状态/说明从同一 x 起（所有行左对齐）；
+  3D 状态**不用按钮**，纯文本 + 颜色区分（选中 `#ffcc00`，未选 `#e0e0e0`），
+  避免按钮宽度破坏对齐；切换后该行淡黄闪 500ms。OSD 全部文字只用
+  **一个字号 = 正常 UI 字号 13 + 1 = 14**（标题/键名/状态/说明同字号；
+  标题 bold），不再有 20/24/32 等多套。
   左列 `J: Side-by-Side / Top-and-Bottom`、`K: Normal Eyes / Swapped Eyes`、
   `L: Full / Half`；右列 `←`/`→`（±5s）、`Shift+←`/`Shift+→`（±10s）、
   `↑`/`↓`（音量 ±）、`N: Next`、`B: Previous`（中文“下一个/上一个”）。

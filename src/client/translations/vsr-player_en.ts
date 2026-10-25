@@ -570,32 +570,32 @@
         <translation>Seek +5s</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="112"/>
+        <location filename="../StereoOsd.qml" line="111"/>
         <source>Seek -10s</source>
         <translation>Seek -10s</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="118"/>
+        <location filename="../StereoOsd.qml" line="116"/>
         <source>Seek +10s</source>
         <translation>Seek +10s</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="123"/>
+        <location filename="../StereoOsd.qml" line="121"/>
         <source>Volume up</source>
         <translation>Volume up</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="128"/>
+        <location filename="../StereoOsd.qml" line="126"/>
         <source>Volume down</source>
         <translation>Volume down</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="133"/>
+        <location filename="../StereoOsd.qml" line="131"/>
         <source>Next</source>
         <translation>Next</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="138"/>
+        <location filename="../StereoOsd.qml" line="136"/>
         <source>Previous</source>
         <translation>Previous</translation>
     </message>
