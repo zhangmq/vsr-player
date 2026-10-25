@@ -90,7 +90,15 @@ void StereoController::createOsdView(QScreen *screen) {
         osdView_ = nullptr;
         return;
     }
+    // ⚠ Wayland/KWin：在 show() 之前 setScreen() 对**初始放置**不生效
+    // （新窗口会落在当前活动输出）。实测有效顺序：先 show() 让平台窗口
+    // 创建，再 setScreen(target) 把它移到目标输出，最后 showFullScreen()
+    // 在该输出全屏。setOpacity(0) 遮掉窗口化的一帧闪烁，全屏后再恢复。
+    osdView_->setOpacity(0.0);
+    osdView_->show();
+    osdView_->setScreen(screen);
     osdView_->showFullScreen();
+    osdView_->setOpacity(1.0);
     MLOG_INFO("stereo: OSD window on %s (%dx%d)",
               screen->name().toUtf8().constData(),
               screen->geometry().width(), screen->geometry().height());

@@ -267,6 +267,11 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - 可读性：标题/键名 Bold、正文 DemiBold/Medium；左右面板各 **±12 logical px
   交叉视差**（左眼右移、右眼左移）→ 融合后 OSD 浮在屏幕平面前方；视差固定、
   不受视频眼序 `stereo.swap` 影响（OSD 是 UI）。
+- ⚠ **KWin Wayland 窗口放置**：`setScreen()` 在 `show()` 之前对**初始放置**无效
+  （新窗口落在当前活动输出，实测会跑到副屏）。有效顺序：`show()` →
+  `setScreen(target)` → `showFullScreen()`（先让平台窗口存在，再移动，再全屏；
+  `setOpacity(0)` 遮掉窗口化的一帧）。实测四种顺序只有 b/d 落在 DP-1。
+- **OSD-only 原型**：只有 OSD 窗口移到眼镜；视频窗口仍在桌面（未做 3D 视频输出）。
 - 测试钩子（RPC）：`stereo-start/stop/osd/cycle/grab`、`stereo-picker`、`grab-window`。
 - 屏幕记忆：`stereoScreen`（QSettings，QScreen::name()）**只作为选择器的默认选中**，
   不自动切屏、不自动启动；3D 三态本身仍每次启动 Off。
