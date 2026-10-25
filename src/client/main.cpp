@@ -10,6 +10,7 @@
 #include "Log.h"
 
 #include <QGuiApplication>
+#include <QKeyEvent>
 #include <QQuickView>
 #include <QQuickWindow>
 #include <QQuickGraphicsDevice>
@@ -91,6 +92,40 @@ static bool expandInputs(const Options &opts, std::vector<std::string> *out) {
     }
     return true;
 }
+
+
+// 3D 热键：J/K/L/Tab 必须在按键层做大小写无关拦截。
+// 不能用 QML Shortcut：Tab 会先被焦点遍历吃掉；QKeySequence("J") 又等价于
+// Shift+J（大写绑定在无 Shift 时无效）。事件过滤器在 QML 之前收到 KeyPress，
+// 用 event->key() 判断，不受大小写/CapsLock 影响。
+class StereoKeyFilter : public QObject
+{
+public:
+    explicit StereoKeyFilter(StereoController *stereo, QObject *parent = nullptr)
+        : QObject(parent), stereo_(stereo) {}
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() != QEvent::KeyPress || !stereo_->active())
+            return false;
+        auto *ke = static_cast<QKeyEvent *>(event);
+        if (ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))
+            return false;
+        if (ke->isAutoRepeat())
+            return true;
+        switch (ke->key()) {
+        case Qt::Key_J: stereo_->cycleLayout(); return true;
+        case Qt::Key_K: stereo_->swapEyes(); return true;
+        case Qt::Key_L: stereo_->toggleHalf(); return true;
+        case Qt::Key_Tab: stereo_->toggleOsd(); return true;
+        default: return false;
+        }
+    }
+
+private:
+    StereoController *stereo_;
+};
 
 int main(int argc, char *argv[]) {
     setbuf(stdout, nullptr); setbuf(stderr, nullptr);
@@ -456,6 +491,11 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         stereo.setControlWindow(&controlView);
+        // 两个窗口都装：presentation 通常不接焦点；control 窗口失焦时也能收到，
+        // 且绕开 QML Shortcut 的 Tab/大小写问题。
+        auto *stereoKeyFilter = new StereoKeyFilter(&stereo, &app);
+        view.installEventFilter(stereoKeyFilter);
+        controlView.installEventFilter(stereoKeyFilter);
         MLOG_INFO("control window ready");
 
         view.setSource(QUrl("qrc:/main.qml"));

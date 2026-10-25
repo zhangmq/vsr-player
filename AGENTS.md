@@ -332,14 +332,20 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   先算 contentRect 再取样。无红绿/anaglyph。
 - OSD：默认显示；`Tab` 显隐；`J` 布局、`K` 交换眼、`L` 全/半；标题/键名 Bold、
   正文 DemiBold；左右面板 ±12 logical px 交叉视差（OSD 浮在画面前，独立于视频眼序）。
-- **OSD 切换项状态展示（2026-10-25）**：Layout / Eyes / Width(Height) 都改成
-  `OsdToggleRow` 分段按钮，视觉对齐 QualityPopup 的档位按钮（选中 `#33ffcc00`
-  底 + `#ffcc00` 字，未选 transparent + `#e0e0e0`）；选中项就是当前状态。
-  快捷键切换后 `current` 变化会触发一次淡黄闪动（550ms）作为即时反馈；
-  Mode 是静态文字；Tab 留在 Shortcuts 列表（OSD 自身的显隐）。
-- ⚠ **3D 快捷键大小写**：`Shortcut.sequence` 必须写小写 `"j"/"k"/"l"`。
-  Qt 的 QKeySequence `"J"` 表示 **Shift+J**；之前写成大写，用户按 J/K/L 无反应，
-  只有无大小写的 `Tab` 正常（2026-10-25 修）。OSD 标签仍显示大写 J/K/L。
+- **OSD HotKeys（2026-10-25，按用户参考重做）**：只保留四行，当前状态用
+  `#ffcc00` 加粗、未选 `#e0e0e0`；切换后该行淡黄闪 500ms。文案按常规 3D
+  播放器学名：
+  - `Tab: Toggle HotKeys Help`
+  - `J: Side-by-Side / Top-and-Bottom`
+  - `K: Normal Eyes / Swapped Eyes`
+  - `L: Full / Half`
+  实现为 `ui/components/HotkeyRow.qml`；左下/右眼两份面板 + 交叉视差不变。
+  旧的 Mode/描述/Exit/Space/方向键列表、分段按钮 `OsdToggleRow` 已删除。
+- ⚠ **3D 热键不能再用 QML Shortcut**（2026-10-25）：`Tab` 会先被焦点遍历吃掉；
+  `QKeySequence("J")` 等价于 **Shift+J**，大小写不通用。改为 `main.cpp` 的
+  `StereoKeyFilter` 事件过滤器，装到 `view` 和 `controlView`，在 QML 之前按
+  `event->key()` 拦截 `Key_J/K/L/Tab`：大小写无关、允许 Shift、Ctrl/Alt/Meta
+  不拦、忽略 auto-repeat。QML 里那四个 3D `Shortcut` 已删除。
 - 不做“切回 2D 自动结束 3D”（目标不一定是 1080×2，无法可靠判断）；只有目标屏被
   拔掉时 stop。`Esc` 不参与 3D。
 - 测试钩子（RPC）：`stereo-start <1> <screen-index>`、`stereo-stop`、

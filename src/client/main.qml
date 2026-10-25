@@ -443,32 +443,9 @@ Item {
             enabled: root.shortcutsEnabled && !stereo.active; sequence: "Tab"
             onActivated: viewModel.toggleOsd()
         }
-        // ── 3D OSD 原型：J/K/L + Tab（应用级，主窗口失焦也可用）─────
-        // 3D 独有操作；正常播放的快进/音量/暂停键位不变。
-        Shortcut {
-            enabled: controlMode && stereo.active && root.shortcutsEnabled
-            context: Qt.ApplicationShortcut
-            sequence: "Tab"
-            onActivated: stereo.toggleOsd()
-        }
-        Shortcut {
-            enabled: controlMode && stereo.active && root.shortcutsEnabled
-            context: Qt.ApplicationShortcut
-            sequence: "j"
-            onActivated: stereo.cycleLayout()
-        }
-        Shortcut {
-            enabled: controlMode && stereo.active && root.shortcutsEnabled
-            context: Qt.ApplicationShortcut
-            sequence: "k"
-            onActivated: stereo.swapEyes()
-        }
-        Shortcut {
-            enabled: controlMode && stereo.active && root.shortcutsEnabled
-            context: Qt.ApplicationShortcut
-            sequence: "l"
-            onActivated: stereo.toggleHalf()
-        }
+        // 3D J/K/L/Tab 不再用 QML Shortcut：Tab 会被焦点遍历先吃掉，且
+        // Shortcut 的字母大小写等价 Shift；改由 main.cpp 的 StereoKeyFilter
+        // 在 QML 之前按 event->key() 拦截（大小写无关）。
         Shortcut {
             // Ctrl+Q 退出（与右键菜单 Quit 一致；走标准退出路径）
             enabled: root.shortcutsEnabled; sequence: "Ctrl+Q"

@@ -1,8 +1,8 @@
-// StereoOsd.qml — 3D OSD 原型（不含 3D 视频播放）
+// StereoOsd.qml — 3D HotKeys 帮助覆盖层
 //
 // 全屏窗口由 StereoController 在所选显示器上创建；本文件只负责把同一份
-// OSD 画在左右两半：眼镜的 SBS 3D 模式下，左半进左眼、右半进右眼，
-// 两只眼看到完全相同的内容。OSD 不参与任何视频/3D 映射。
+// HotKeys 画在左右两半：SBS 下左半进左眼、右半进右眼，两只眼看到相同内容。
+// OSD 不参与任何视频/3D 映射。
 import QtQuick
 import "ui/components"
 
@@ -11,20 +11,9 @@ Item {
     width: parent ? parent.width : 0
     height: parent ? parent.height : 0
 
-    // OSD 的双眼视差（logical px）：左半右移、右半左移 = crossed disparity，
-    // 融合后 OSD 看起来浮在屏幕平面前方（在视频画面之上）。固定值、不受
-    // 视频眼序（stereo.swap）影响——OSD 是 UI，不属于片源。
+    // 交叉视差（logical px）：融合后 HotKeys 看起来浮在视频画面前方。
     readonly property int parallax: 12
 
-    // 透明窗口：视频由主窗口合成在下面，OSD 只画面板/文字。
-    // （独立 OSD 窗口测试时也可用 VSR_STEREO_OSD_OPAQUE=1 改回黑底。）
-    Rectangle {
-        anchors.fill: parent
-        color: "transparent"
-    }
-
-    // 左右各一份（始终两份；即使当前屏幕不是 32:9，也能在副屏上预览
-    // 左右眼布局，方便没有眼镜时测试）。
     Repeater {
         model: 2
         delegate: Item {
@@ -36,11 +25,9 @@ Item {
             Rectangle {
                 id: panel
                 anchors.centerIn: parent
-                // 左眼 +parallax、右眼 -parallax：交叉视差 → 浮出屏幕。
                 anchors.horizontalCenterOffset: (index === 0 ? 1 : -1) * root.parallax
-                width: Math.min(parent.width - 60, 1040)
-                height: Math.min(parent.height - 60,
-                                 body.implicitHeight + 64)
+                width: Math.min(parent.width - 60, 920)
+                height: Math.min(parent.height - 60, body.implicitHeight + 56)
                 color: "#cc111111"
                 radius: 14
                 border.width: 1
@@ -54,116 +41,41 @@ Item {
 
                     Text {
                         width: parent.width
-                        text: qsTr("3D OSD (prototype)")
+                        text: qsTr("HotKeys")
                         color: "#ffcc00"
-                        font.pixelSize: 30
+                        font.pixelSize: 32
                         font.bold: true
                     }
-                    Text {
-                        width: parent.width
-                        text: qsTr("3D video output is active. 2D to 3D is not implemented yet.")
-                        color: "#b8b8b8"
-                        font.pixelSize: 17
-                        font.weight: Font.Medium
-                        wrapMode: Text.WordWrap
-                    }
-
                     Rectangle {
                         width: parent.width; height: 1
                         color: "#33ffffff"
                     }
 
-                    // 当前状态：所有两态选项用分段按钮展示，选中项即当前状态。
-                    Column {
+                    HotkeyRow {
                         width: parent.width
-                        spacing: 8
-                        Text {
-                            width: parent.width
-                            color: "#e0e0e0"; font.pixelSize: 21
-                            font.weight: Font.DemiBold
-                            text: qsTr("Mode: %1").arg(
-                                stereo.mode === 1 ? qsTr("3D source")
-                                                  : qsTr("2D to 3D (not implemented)"))
-                        }
-                        OsdToggleRow {
-                            width: parent.width
-                            label: qsTr("Layout")
-                            key: "J"
-                            labels: [qsTr("SBS"), qsTr("Top-Bottom")]
-                            current: stereo.layout
-                            buttonWidth: 230
-                        }
-                        OsdToggleRow {
-                            width: parent.width
-                            label: qsTr("Eyes")
-                            key: "K"
-                            labels: [qsTr("Normal"), qsTr("Swapped")]
-                            current: stereo.swap ? 1 : 0
-                            buttonWidth: 200
-                        }
-                        OsdToggleRow {
-                            width: parent.width
-                            label: stereo.layout === 0 ? qsTr("Width") : qsTr("Height")
-                            key: "L"
-                            labels: [qsTr("Full"), qsTr("Half")]
-                            current: stereo.half ? 1 : 0
-                            buttonWidth: 160
-                        }
+                        keyText: "Tab"
+                        actionText: qsTr("Toggle HotKeys Help")
                     }
-
-                    Rectangle {
-                        width: parent.width; height: 1
-                        color: "#33ffffff"
-                    }
-
-                    Text {
+                    HotkeyRow {
                         width: parent.width
-                        text: qsTr("Shortcuts")
-                        color: "#ffcc00"; font.pixelSize: 22; font.bold: true
+                        keyText: "J"
+                        options: [qsTr("Side-by-Side"), qsTr("Top-and-Bottom")]
+                        current: stereo.layout
                     }
-
-                    Column {
+                    HotkeyRow {
                         width: parent.width
-                        spacing: 7
-                        Repeater {
-                            model: [
-                                { key: "Tab", desc: qsTr("Show / hide this OSD") },
-                                { key: "Space", desc: qsTr("Play / pause") },
-                                { key: "← / →", desc: qsTr("Seek -5s / +5s") },
-                                { key: "↑ / ↓", desc: qsTr("Volume") }
-                            ]
-                            Row {
-                                width: parent.width
-                                spacing: 16
-                                Text {
-                                    width: 96
-                                    text: modelData.key
-                                    color: "#ffcc00"; font.pixelSize: 20
-                                    font.family: "monospace"
-                                    font.bold: true
-                                }
-                                Text {
-                                    width: parent.width - 112
-                                    text: modelData.desc
-                                    color: "#e0e0e0"; font.pixelSize: 20
-                                    font.weight: Font.DemiBold
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-                        }
+                        keyText: "K"
+                        options: [qsTr("Normal Eyes"), qsTr("Swapped Eyes")]
+                        current: stereo.swap ? 1 : 0
                     }
-
-                    Text {
+                    HotkeyRow {
                         width: parent.width
-                        text: qsTr("Exit: use 3D → Off on the desktop UI, or close the app.")
-                        color: "#909090"; font.pixelSize: 16
-                        font.weight: Font.Medium
-                        wrapMode: Text.WordWrap
+                        keyText: "L"
+                        options: [qsTr("Full"), qsTr("Half")]
+                        current: stereo.half ? 1 : 0
                     }
                 }
             }
         }
     }
-
-    // OSD 隐藏时（Tab）窗口保持纯黑；这里不画任何东西，避免误以为还在 3D。
 }
