@@ -349,7 +349,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   避免按钮宽度破坏对齐；切换后该行淡黄闪 500ms。OSD 全部文字只用
   **一个字号 = 16**（标题/键名/状态/说明同字号；标题也不加粗/不放大），
   不再有 20/24/32 等多套；行高 32。
-  左列 `J: Side-by-Side / Top-and-Bottom`、`K: Normal Eyes / Swapped Eyes`、
+  左列 `J: 左右并排 / 上下并列`（`Side-by-Side / Top-and-Bottom`）、`K: Normal Eyes / Swapped Eyes`、
   `L: Full / Half`；右列 `←`/`→`（±5s）、`Shift+←`/`Shift+→`（±10s）、
   `↑`/`↓`（音量 ±）、`Ctrl+←: Previous`、`Ctrl+→: Next`（中文“上一个/下一个”）。
   OSD panel 宽高按内容（`contentWidth` 在 Repeater delegate 内，不能放 root），
@@ -365,15 +365,20 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   Shift+←/→（±10s）+ ↑/↓（音量）+ Ctrl+←/→（上一个/下一个）。大小写无关、
   允许 Shift；Alt/Meta 不拦；Ctrl 只处理 Ctrl+←/→，其它 Ctrl 组合放行。
   切换类忽略 auto-repeat，方向/音量允许连发。
-  QML 里 3D 的 J/K/L/Tab 已删除，Space/方向/音量在 3D 时禁用
+  QML 里 3D 的 J/K/L 已删除，Space/方向/音量在 3D 时禁用
   （`&& !stereo.active`），只留 2D 路径；C++ 负责 3D，避免重复触发。
-  另加了 J/K/L/Tab 的 `QShortcut`（`Qt::ApplicationShortcut`）作第二道保险，
-  防止 Tab 被 QML 焦点先吃掉。
+  另加了 J/K/L/Tab 的 `QShortcut`（`Qt::ApplicationShortcut`）+ QML `Shortcut`
+  （Tab 2D/3D 共用）作后续保险；Tab 若仍无反应，看日志
+  `stereo key: Tab -> toggle OSD` 判断按键是否进到应用。
 - **上一个/下一个 = 全局 Ctrl+← / Ctrl+→**：2D 走 QML `Shortcut`
   （`enabled && !stereo.active`），3D 走 C++ 过滤器；`Ctrl+L` 是 URL 输入，
   与 Ctrl+方向键不冲突，项目内无重复绑定。
 - **3D 映射变化必须重绘当前帧**：`StereoController::stateChanged` 连到
   `Video::update()`；否则暂停时切 L（全/半）只改 OSD 状态，画面要等下一帧。
+- **窗口关闭语义**：`StereoView`（presentation/3D 窗口）在 3D 时收到 close
+  → `ignore()` + `stereo.stop()`，3D 菜单随 `mode_=0` 回退“不使用”，不退出；
+  2D 时正常关闭 → 退出。`ControlView`（桌面主窗口）关闭 → `quit()`。
+- **文案**：“左右并排”不变；“上下”统一为“上下并列”（zh_CN OSD 译文）。
 - 不做“切回 2D 自动结束 3D”（目标不一定是 1080×2，无法可靠判断）；只有目标屏被
   拔掉时 stop。`Esc` 不参与 3D。
 - 测试钩子（RPC）：`stereo-start <1> <screen-index>`、`stereo-stop`、

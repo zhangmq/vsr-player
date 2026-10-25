@@ -537,7 +537,7 @@
     <message>
         <location filename="../StereoOsd.qml" line="74"/>
         <source>Top-and-Bottom</source>
-        <translation>上下</translation>
+        <translation>上下并列</translation>
     </message>
     <message>
         <location filename="../StereoOsd.qml" line="80"/>

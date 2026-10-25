@@ -13,6 +13,7 @@
 #include <QKeyEvent>
 #include <QQuickView>
 #include <QShortcut>
+#include <QCloseEvent>
 #include <QQuickWindow>
 #include <QQuickGraphicsDevice>
 #include <QVulkanInstance>
@@ -99,6 +100,34 @@ static bool expandInputs(const Options &opts, std::vector<std::string> *out) {
 // 不能用 QML Shortcut：Tab 会先被焦点遍历吃掉；QKeySequence("J") 又等价于
 // Shift+J（大写绑定在无 Shift 时无效）。事件过滤器在 QML 之前收到 KeyPress，
 // 用 event->key() 判断，不受大小写/CapsLock 影响。
+// 主窗口（presentation）：3D 时关闭 = 停止 3D 并把 3D 菜单复位为“不使用”，
+// 不退出应用；2D 时关闭 = 正常关闭主窗口（最后一个可见窗口 → 退出）。
+class StereoView : public QQuickView
+{
+public:
+    StereoController *stereo = nullptr;
+protected:
+    void closeEvent(QCloseEvent *e) override {
+        if (stereo && stereo->active()) {
+            e->ignore();
+            stereo->stop();
+            MLOG_INFO("stereo: presentation closed -> 3D off");
+            return;
+        }
+        QQuickView::closeEvent(e);
+    }
+};
+
+// 桌面主窗口（controlView）：关闭 = 退出应用。
+class ControlView : public QQuickView
+{
+protected:
+    void closeEvent(QCloseEvent *e) override {
+        QQuickView::closeEvent(e);
+        QCoreApplication::quit();
+    }
+};
+
 class StereoKeyFilter : public QObject
 {
 public:
@@ -132,7 +161,11 @@ protected:
         case Qt::Key_J: if (repeat) return true; stereo_->cycleLayout(); return true;
         case Qt::Key_K: if (repeat) return true; stereo_->swapEyes(); return true;
         case Qt::Key_L: if (repeat) return true; stereo_->toggleHalf(); return true;
-        case Qt::Key_Tab: if (repeat) return true; stereo_->toggleOsd(); return true;
+        case Qt::Key_Tab:
+            MLOG_INFO("stereo key: Tab -> toggle OSD");
+            if (repeat) return true;
+            stereo_->toggleOsd();
+            return true;
         case Qt::Key_Space: if (repeat) return true; viewModel_->togglePlayPause(); return true;
         case Qt::Key_Left:
             viewModel_->seekRelative((ke->modifiers() & Qt::ShiftModifier) ? -10000 : -5000);
@@ -454,7 +487,8 @@ int main(int argc, char *argv[]) {
         // 声明在 view 之前 → 析构晚于 view，QML 绑定不会访问已销毁对象。
         StereoController stereo;
 
-        QQuickView view;
+        StereoView view;
+        view.stereo = &stereo;
         view.setVulkanInstance(&qtVi);
         view.setGraphicsDevice(QQuickGraphicsDevice::fromDeviceObjects(
             vk.physicalDevice(), vk.device(), vk.queueFamilyIndex()));
@@ -501,7 +535,7 @@ int main(int argc, char *argv[]) {
         // 桌面 control 窗口：同一份 main.qml，但 controlMode=true → 不创建
         // Video，只保留 UI。3D 时主窗口（Video/VO）去眼镜屏，control 窗口
         // 在主 UI 原来的屏幕/几何上显示，主 UI 不会消失。
-        QQuickView controlView;
+        ControlView controlView;
         controlView.setColor("#202020");
         controlView.setTitle("vsr-player");
         controlView.setResizeMode(QQuickView::SizeRootObjectToView);
@@ -525,6 +559,8 @@ int main(int argc, char *argv[]) {
         // presentation/control 任一窗口，应用级过滤器才能稳定收到所有按键。
         auto *stereoKeyFilter = new StereoKeyFilter(&stereo, &viewModel, &app);
         qApp->installEventFilter(stereoKeyFilter);
+
+
 
         // QShortcut 作为第二道保险：Tab 在某些焦点状态下会被 QML 先处理，
         // 应用级 QShortcut 仍能命中；J/K/L 同样兜底。
