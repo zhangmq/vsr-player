@@ -353,8 +353,9 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   `QQuickView` 上时，3D 焦点可能在 presentation/control 任一窗口，事件到不了
   过滤器。`StereoKeyFilter` 现在 `qApp->installEventFilter()`，按
   `event->key()` 拦截：J/K/L/Tab（切换）+ Space（播放暂停）+ ←/→（±5s）+
-  Shift+←/→（±10s）+ ↑/↓（音量）+ N/B（下一个/上一个）。大小写无关、允许
-  Shift、Ctrl/Alt/Meta 不拦；切换类忽略 auto-repeat，方向/音量允许连发。
+  Shift+←/→（±10s）+ ↑/↓（音量）+ Ctrl+←/→（上一个/下一个）。大小写无关、
+  允许 Shift；Alt/Meta 不拦；Ctrl 只处理 Ctrl+←/→，其它 Ctrl 组合放行。
+  切换类忽略 auto-repeat，方向/音量允许连发。
   QML 里 3D 的 J/K/L/Tab 已删除，Space/方向/音量在 3D 时禁用
   （`&& !stereo.active`），只留 2D 路径；C++ 负责 3D，避免重复触发。
   另加了 J/K/L/Tab 的 `QShortcut`（`Qt::ApplicationShortcut`）作第二道保险，
