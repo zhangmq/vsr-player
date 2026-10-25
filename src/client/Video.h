@@ -29,6 +29,11 @@ public:
     void setSourceAspectProvider(std::function<double()> fn) { srcAspectFn_ = std::move(fn); }
     void setSourceSizeProvider(std::function<QSize()> fn) { srcSizeFn_ = std::move(fn); }
     StereoCompositeParams stereoParams(int outW, int outH) const;
+    /// 合成输出宽度：向上取偶。Wayland 分数缩放会让 framebuffer 宽成为
+    /// 奇数（本机 2844×1.35 = 3839），奇数宽无法被左右眼均分（1919.5），
+    /// 两眼映射会差半个像素 → 整幅画面恒定水平视差。渲染目标/合成视口都
+    /// 按这个宽度分配：多出的 1 列落在窗口外被裁掉（右眼最外侧一列）。
+    static int compositeWidth(int w) { return w > 0 ? w + (w & 1) : w; }
     bool initRenderTarget(VkDevice dev, VkPhysicalDevice pd, uint32_t qfi, VkQueue queue);
     void setCompositeObjects(VkPipeline pipe, VkPipelineLayout layout);
     /// 合成节点在**渲染阶段**读这两个 getter（而不是缓存句柄）：运行期
@@ -89,6 +94,10 @@ private:
     StereoController *stereo_ = nullptr;
     std::function<double()> srcAspectFn_;
     std::function<QSize()> srcSizeFn_;
+    /// 诊断：3D 映射参数变化时打一行 INFO（用户报“不满屏/两眼错位”时
+    /// 直接看这行的 out/src/全半/每眼实际像素尺寸，不用猜）。
+    mutable StereoCompositeParams loggedMap_{};
+    mutable bool loggedMapValid_ = false;
     VkDevice         dev_ = VK_NULL_HANDLE;
     VkPhysicalDevice pd_ = VK_NULL_HANDLE;
     VkQueue          queue_ = VK_NULL_HANDLE;

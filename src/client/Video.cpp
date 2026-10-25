@@ -7,6 +7,8 @@
 #include <QQuickWindow>
 #include <QCoreApplication>
 #include <cstdio>
+#include <cstring>
+#include <algorithm>
 #include <chrono>
 
 extern "C" {
@@ -68,6 +70,8 @@ public:
         qreal dpr = win->devicePixelRatio();
         int fbW = (int)(win->width() * dpr), fbH = (int)(win->height() * dpr);
         if (fbW <= 0 || fbH <= 0) return;
+        // 与渲染目标一致：宽度向上取偶（奇数宽无法被左右眼均分）。
+        fbW = Video::compositeWidth(fbW);
         VkViewport vp = { 0, 0, (float)fbW, (float)fbH, 0, 1 };
         VkRect2D sc = { {0, 0}, {(uint32_t)fbW, (uint32_t)fbH} };
         vkCmdSetViewport(cb, 0, 1, &vp);
@@ -324,6 +328,28 @@ StereoCompositeParams Video::stereoParams(int outW, int outH) const {
     p.layout = stereo_->layout();
     p.swap = stereo_->swap() ? 1 : 0;
     p.halfMode = stereo_->half() ? 1 : 0;
+
+    // 参数变化时打一行（含每眼实际像素尺寸）：3D 几何问题一律先看这行，
+    // 与 composite.frag 用同一套整数算式（splitX = outW/2）。
+    if (!loggedMapValid_ || std::memcmp(&loggedMap_, &p, sizeof(p)) != 0) {
+        loggedMap_ = p;
+        loggedMapValid_ = true;
+        const int splitX = std::max(p.outW / 2, 1);
+        const float eyeW = float(splitX), eyeH = float(p.outH);
+        float imgW = float(p.srcW), imgH = float(p.srcH);
+        if (p.halfMode == 0) {
+            if (p.layout == 1) imgH *= 0.5f;
+            else               imgW *= 0.5f;
+        }
+        float sc = 1.0f;
+        if (imgW >= 1.0f && imgH >= 1.0f)
+            sc = std::min(eyeW / imgW, eyeH / imgH);
+        MLOG_INFO("stereo map: out=%dx%d splitX=%d src=%dx%d layout=%s half=%d swap=%d"
+                  " -> eye=%.1fx%.1f content=%.1fx%.1f",
+                  p.outW, p.outH, splitX, p.srcW, p.srcH,
+                  p.layout == 1 ? "tab" : "sbs", p.halfMode, p.swap,
+                  eyeW, eyeH, imgW * sc, imgH * sc);
+    }
     return p;
 }
 
@@ -367,26 +393,42 @@ QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
     // 重建会触发 mpv reconfig（VSR 分辨率重配 + vsr_reconfigure），
     // 若每帧重建 → resize 拖动全程卡顿。
     if (node->w > 0 && node->h > 0) {
+        // 目标尺寸 = 窗口 framebuffer 尺寸，宽度向上取偶（见 compositeWidth）。
+        const int tgtW = compositeWidth(node->w), tgtH = node->h;
         if (formatDirty_) {
             // 格式切换（SDR↔HDR10）：不能用稳定计数节流——mpv 在同一帧稍后
             // 就会用新格式渲染，旧格式的 image 必须已经换掉。
-            pendingW_ = node->w;
-            pendingH_ = node->h;
+            pendingW_ = tgtW;
+            pendingH_ = tgtH;
             stableCount_ = RT_STABLE_FRAMES;
             formatDirty_ = false;
         }
-        if (node->w == pendingW_ && node->h == pendingH_) {
+        if (tgtW == pendingW_ && tgtH == pendingH_) {
             stableCount_++;
-            if (stableCount_ >= RT_STABLE_FRAMES)
-                ensureRenderTarget(pendingW_, pendingH_);
+            if (stableCount_ >= RT_STABLE_FRAMES) {
+                const int oldW = w_, oldH = h_;
+                if (ensureRenderTarget(pendingW_, pendingH_) &&
+                    (oldW != w_ || oldH != h_))
+                    // 新建的 rt 是空图；没有新帧时 mpv 不会自己再画一次 →
+                    // 必须本帧强制渲染当前帧，否则 resize 后画面全黑（暂停时
+                    // 切 3D 实测：rt 追平了但内容没重画）。
+                    renderRequested_.store(true);
+            }
         } else {
-            if (node->w != pendingW_ || node->h != pendingH_)
+            if (tgtW != pendingW_ || tgtH != pendingH_)
                 VLOG("rt resize pending %dx%d (was %dx%d)",
-                     node->w, node->h, pendingW_, pendingH_);
-            pendingW_ = node->w;
-            pendingH_ = node->h;
+                     tgtW, tgtH, pendingW_, pendingH_);
+            pendingW_ = tgtW;
+            pendingH_ = tgtH;
             stableCount_ = 0;
         }
+        // 没有新帧时（暂停、或拖动结束后静止）updatePaintNode 不会再被调用，
+        // 上面的"连续 N 次同尺寸"计数永远到不了阈值 → 渲染目标停在上一个尺寸。
+        // 3D 下这会表现为画面只占半屏：mpv 仍把 3840×1080 塞进旧的 16:9 rt
+        //（rt 未重建、composite 却按新窗口取样）。尺寸未追平时自我驱动补帧，
+        // 计数到阈值（重建成功或失败）后条件自然为假，不会无界循环。
+        if ((tgtW != w_ || tgtH != h_) && stableCount_ < RT_STABLE_FRAMES)
+            update();
     }
 
     // ── mpv work ─────────────────────────────────────────────────────
