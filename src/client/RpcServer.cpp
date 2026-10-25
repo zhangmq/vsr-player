@@ -516,6 +516,15 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             }, Qt::QueuedConnection);
             response = formatResponse("success");
         }
+    } else if (cmd == "get-stereo") {
+        // 合成映射数据（不截图判断满不满屏；与日志 `stereo map:` 同源）
+        if (!stereo_) {
+            response = formatResponse("no stereo controller");
+        } else {
+            const std::string m = stereo_->mapJson().toStdString();
+            response = m.empty() ? formatResponse("no map yet")
+                                 : formatResponse("success", "\"" + jsonEscape(m) + "\"");
+        }
     } else if (cmd == "stereo-cycle") {
         if (!stereo_) {
             response = formatResponse("no stereo controller");

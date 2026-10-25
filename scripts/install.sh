@@ -109,17 +109,51 @@ if [ "$OK" -eq 0 ]; then
     exit 1
 fi
 
+# 覆盖**正在运行**的二进制：`cp` 会 ETXTBSY（Text file busy）失败且不报错退出，
+# 之前的症状 = 安装输出全绿但 md5 没变（2026-10-26 连踩两次）。
+# 修法：写临时文件再 rename（rename 只换目录项，不动被执行的 inode）。
+# 原子复制到目录：写临时文件再 rename（见下面 [2/6] 的 SIGBUS 说明）
+copy_into() {  # copy_into <dstdir> <src...>
+    local dstdir="$1"; shift
+    local f tmp rc=0
+    for f in "$@"; do
+        [ -e "$f" ] || continue
+        tmp="$dstdir/.$(basename "$f").new.$$"
+        if cp -L "$f" "$tmp" 2>/dev/null; then
+            mv -f "$tmp" "$dstdir/$(basename "$f")"
+        else
+            rm -f "$tmp"; rc=1
+        fi
+    done
+    return $rc
+}
+
+install_bin() {  # install_bin <src> <dst>
+    local src="$1" dst="$2" tmp="$2.new.$$"
+    if cp "$src" "$tmp"; then
+        chmod +x "$tmp" && mv -f "$tmp" "$dst"
+    else
+        echo "  ❌ 无法写入 $dst（源 $src）" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
 # ── 2. 复制自建部分 ──────────────────────────────────────────────────
 echo "--- [2/6] install binaries + bundled libs ---"
 mkdir -p "$BIN_DIR" "$LIB_DIR" "$FONT_DIR" "$BIN_DIR/translations"
-cp "$GUI_BIN" "$BIN_DIR/vsr-player" && chmod +x "$BIN_DIR/vsr-player"
+install_bin "$GUI_BIN" "$BIN_DIR/vsr-player"
 echo "  ✅ $BIN_DIR/vsr-player"
 if [ -x "$CLI_BIN" ]; then
-    cp "$CLI_BIN" "$BIN_DIR/mpv-vsr" && chmod +x "$BIN_DIR/mpv-vsr"
+    install_bin "$CLI_BIN" "$BIN_DIR/mpv-vsr"
     echo "  ✅ $BIN_DIR/mpv-vsr"
 fi
 if [ -d "$LIB_SRC" ]; then
-    cp -L "$LIB_SRC"/* "$LIB_DIR/"   # -L：跟随软链（VFX 的 ngx-vsr 软链等）
+    # ⚠ 必须**原子替换**（临时文件 + rename）：`cp` 直接覆盖会被
+    # **正在运行的播放器** mmap 着——截断的瞬间进程收到 SIGBUS（实测 2026-10-26：
+    # vo 线程在 libmpv.so.2 里 BUS_ADRERR，core dumped），等于安装把用户正在看的
+    # 播放器打崩。rename 只换目录项，运行中的实例继续用旧 inode，下次启动才换新。
+    copy_into "$LIB_DIR" "$LIB_SRC"/*   # -L 由 copy_into 内部处理（跟随软链）
     echo "  ✅ 捆绑库（libmpv + 光盘媒体栈）→ $LIB_DIR/"
 fi
 # dev 模式：按 docs 把 wheel 的 nvidia_vfx.libs 放在 third_party/nvidia_vfx.libs，

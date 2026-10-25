@@ -1,5 +1,8 @@
 #include "StereoController.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "Log.h"
 
 #include <QGuiApplication>
@@ -262,4 +265,53 @@ void StereoController::setHelpVisible(bool v) {
         return;
     helpVisible_ = v;
     emit helpVisibleChanged();
+}
+
+// ── 合成映射快照（RPC get-stereo 用）────────────────────────────────────
+void StereoController::setMapSnapshot(int active, int layout, int swap, int half,
+                                      int srcW, int srcH, int outW, int outH) {
+    std::lock_guard<std::mutex> lk(mapMu_);
+    if (map_.valid && map_.active == active && map_.layout == layout
+        && map_.swap == swap && map_.half == half && map_.srcW == srcW
+        && map_.srcH == srcH && map_.outW == outW && map_.outH == outH)
+        return;  // 每帧都会调用，只在变化时写
+    map_ = {active, layout, swap, half, srcW, srcH, outW, outH, true};
+}
+
+QString StereoController::mapJson() const {
+    MapSnap m;
+    {
+        std::lock_guard<std::mutex> lk(mapMu_);
+        if (!map_.valid) return QString();
+        m = map_;
+    }
+    if (!m.active)
+        return QStringLiteral("active=0 src=%1x%2 out=%3x%4 (2D)")
+            .arg(m.srcW).arg(m.srcH).arg(m.outW).arg(m.outH);
+    // 与 composite.frag 同一套几何：眼视口 = 输出宽的一半（outW 已取偶）,
+    // 眼内图 = 源眼像素（全）或沿 split 轴拉伸到整帧（半），最后 contain 到眼视口。
+    const double eyeW = m.outW / 2.0, eyeH = m.outH;
+    double imgW, imgH;
+    if (m.layout == 0) {           // SBS 左右
+        imgW = m.half ? m.srcW : m.srcW / 2.0;
+        imgH = m.srcH;
+    } else {                        // 上下并列
+        imgW = m.srcW;
+        imgH = m.half ? m.srcH : m.srcH / 2.0;
+    }
+    double cw = 0, ch = 0;
+    if (imgW > 0 && imgH > 0 && eyeW > 0 && eyeH > 0) {
+        const double s = std::min(eyeW / imgW, eyeH / imgH);
+        cw = imgW * s;
+        ch = imgH * s;
+    }
+    const double fx = eyeW > 0 ? cw / eyeW * 100.0 : 0.0;
+    const double fy = eyeH > 0 ? ch / eyeH * 100.0 : 0.0;
+    return QStringLiteral("active=%1 layout=%2 half=%3 swap=%4 src=%5x%6 out=%7x%8 "
+                          "eye=%9x%10 content=%11x%12 fill=%13x%14")
+        .arg(m.active).arg(m.layout == 0 ? "sbs" : "tab").arg(m.half).arg(m.swap)
+        .arg(m.srcW).arg(m.srcH).arg(m.outW).arg(m.outH)
+        .arg(eyeW, 0, 'f', 0).arg(eyeH, 0, 'f', 0)
+        .arg(cw, 0, 'f', 0).arg(ch, 0, 'f', 0)
+        .arg(fx, 0, 'f', 1).arg(fy, 0, 'f', 1);
 }

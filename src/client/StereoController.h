@@ -3,6 +3,7 @@
 #include <QCursor>
 #include <QList>
 #include <QObject>
+#include <mutex>
 #include <QPointer>
 #include <QRect>
 #include <QQuickWindow>
@@ -57,6 +58,12 @@ public:
     Q_INVOKABLE void cycleLayout();   // SBS / 上下
     Q_INVOKABLE void swapEyes();
     Q_INVOKABLE void toggleHalf();    // SBS：全宽/半宽；TAB：全高/半高
+    // ── 合成映射快照（给 RPC `get-stereo` 读：不截图也能判断满不满屏）──
+    // Video 每次算出 push constants 时写入，RPC 线程只读；与日志 `stereo map:` 同源。
+    void setMapSnapshot(int active, int layout, int swap, int half,
+                        int srcW, int srcH, int outW, int outH);
+    QString mapJson() const;
+
     Q_INVOKABLE void toggleHelp();
     Q_INVOKABLE void setHelpVisible(bool v);
 
@@ -78,6 +85,14 @@ private:
     int layout_ = 0;   // 0=SBS, 1=上下
     bool swap_ = false;
     bool half_ = false;  // false=全，true=半（按 split 轴）
+    struct MapSnap {
+        int active = 0, layout = 0, swap = 0, half = 0;
+        int srcW = 0, srcH = 0, outW = 0, outH = 0;
+        bool valid = false;
+    };
+    mutable std::mutex mapMu_;
+    MapSnap map_;
+
     bool helpVisible_ = true;
     QString screenName_;
 

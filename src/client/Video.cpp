@@ -321,8 +321,12 @@ StereoCompositeParams Video::stereoParams(int outW, int outH) const {
             p.srcH = s.height();
         }
     }
-    if (!stereo_ || !stereo_->active())
+    if (!stereo_ || !stereo_->active()) {
+        if (stereo_)
+            stereo_->setMapSnapshot(0, p.layout, p.swap, p.halfMode,
+                                    p.srcW, p.srcH, p.outW, p.outH);
         return p;
+    }
     p.active = 1;
     // 2D→3D 暂以“2D 复制到双眼”占位（无深度）；3D 片源走 SBS/上下。
     p.layout = stereo_->layout();
@@ -350,6 +354,9 @@ StereoCompositeParams Video::stereoParams(int outW, int outH) const {
                   p.layout == 1 ? "tab" : "sbs", p.halfMode, p.swap,
                   eyeW, eyeH, imgW * sc, imgH * sc);
     }
+    // RPC `get-stereo` 的数据源（与上面这行日志同源，不截图也能核对满不满屏）
+    stereo_->setMapSnapshot(1, p.layout, p.swap, p.halfMode,
+                            p.srcW, p.srcH, p.outW, p.outH);
     return p;
 }
 
