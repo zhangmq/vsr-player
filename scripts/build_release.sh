@@ -473,6 +473,8 @@ with open(path, 'w', encoding='utf-8') as fh:
     fh.write(content)
 PYEOF
 cp scripts/install.sh "$STAGE/install.sh" && chmod +x "$STAGE/install.sh"
+# 缺 soname 的兼容兜底（install.sh 的 [6/6] 会在系统 ffmpeg/CUDA 大版本升级后调用它）
+cp scripts/soname-compat.sh "$STAGE/soname-compat.sh" && chmod +x "$STAGE/soname-compat.sh"
 
 tar -C "$PROJECT_ROOT/build" -cJf "$TARBALL" "$STAGE_BASE" \
     --transform "s/$STAGE_BASE/$PKG_NAME/"

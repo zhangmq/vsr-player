@@ -515,6 +515,15 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
     会**静默回落**到它——程序能启动，但跑的是没有 `vf_vsr/vf_vfg/vf_rot` 和 libmpv vo
     互操作的原版 mpv，表现为"能开但超分/插帧全没了且无任何报错"（实测：挪走捆绑
     libmpv 后 `ldd` 解析到 `/usr/lib/libmpv.so.2`，并不报缺失）。
+  - **soname 兼容软链（2026-10-26，用户提的"软链就行"是对的）**：
+    `scripts/soname-compat.sh`（随 tarball 发布，install.sh [6/6] 在严格匹配失败后调用）：
+    缺 `libX.so.N` 时在 `$LIB_DIR`（RPATH 首位）建 `libX.so.N → 系统里同库的其它 major`
+    （候选来源 `ldconfig -p` + `LD_LIBRARY_PATH` 目录，取 major 最大者），然后
+    **`ldd -r` 验证没有 `undefined symbol`** 才保留；有缺符号就**回滚软链并 exit 1**。
+    要点：跨 major 是 ABI 赌注，但失败面是"加载器报 undefined symbol"（可检测），
+    而不是"启动成功、功能悄悄坏掉"。单测（合成 libfoo.so.1 → 只剩 .so.2）：
+    ABI 兼容时自动建链 + 程序正常；把新库的符号删掉后能抓到 `undefined symbol: foo`
+    并回滚。**这条让 standard 在系统 ffmpeg 大版本升级后不会直接死**——能兼容就自动补。
   - **soname 绑定的本质**：ELF 的 NEEDED 记的是 so 名字，ffmpeg 跨大版本没有 ABI
     兼容承诺 → **不捆就必然绑定某个 soname**。根治只有两条路：捆库（= full，
     ffmpeg 12.6 MB 压缩）或静态链接 ffmpeg（Arch 不提供 .a，要自建 ffmpeg，

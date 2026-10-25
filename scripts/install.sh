@@ -349,6 +349,8 @@ ldd_check() {  # ldd_check <二进制> <显示名>
     return 0
 }
 LDD_OK=1
+run_checks() {
+LDD_OK=1
 ldd_check "$BIN_DIR/vsr-player" "vsr-player" || LDD_OK=0
 ldd_check "$BIN_DIR/mpv-vsr" "mpv-vsr" || LDD_OK=0
 # libmpv 必须解析到**本包**：系统若装了 mpv（/usr/lib/libmpv.so.2），捆绑库缺失时
@@ -368,6 +370,22 @@ case "$MPV_SO" in
         echo "     检查 $LIB_DIR/libmpv.so.2 是否存在、RPATH 是否被改（\$ORIGIN 相对路径）。" >&2
         LDD_OK=0 ;;
 esac
+}
+run_checks
+
+# ── soname 兼容兜底：系统 ffmpeg/CUDA 大版本升了、旧 soname 不在了 ──────────
+# 做法 = 在 $LIB_DIR（RPATH 首位）建 compat 软链（libavcodec.so.63 → 系统 .so.64），
+# 然后**用 ldd -r 验证无 undefined symbol**才保留：ffmpeg 跨 major 不保证 ABI，
+# 能加载就接受、缺符号就回滚并明确失败——绝不"启动成功但功能悄悄坏掉"。
+COMPAT_SH="$SRC/soname-compat.sh"
+[ -f "$COMPAT_SH" ] || COMPAT_SH="$SRC/scripts/soname-compat.sh"
+if [ "$LDD_OK" -eq 0 ] && [ -f "$COMPAT_SH" ]; then
+    echo "  → 缺 soname，尝试兼容软链（$(basename "$COMPAT_SH")）…"
+    if VSR_LIB_DIR="$LIB_DIR" bash "$COMPAT_SH" \
+            "$BIN_DIR/vsr-player" "$BIN_DIR/mpv-vsr"; then
+        echo "  → 重新自检"; run_checks
+    fi
+fi
 [ "$LDD_OK" -eq 1 ] && echo "  ✅ 依赖自检通过"
 [ "$LDD_OK" -eq 1 ] || exit 1
 [ -f "$LIB_DIR/libnvinfer.so.11" ] && RIFE_TRT="✅" || RIFE_TRT="❌"
