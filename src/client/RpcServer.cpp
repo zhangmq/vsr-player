@@ -516,6 +516,23 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             }, Qt::QueuedConnection);
             response = formatResponse("success");
         }
+    } else if (cmd == "nudge-volume") {
+        // 模拟快捷键调音量（触发音量提示 OSD；与 set_property volume 区分）
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: nudge-volume <delta e.g. 0.05>");
+        } else {
+            char *end = nullptr;
+            double d = strtod(args[0].c_str(), &end);
+            if (end == args[0].c_str() || *end != '\0' || !std::isfinite(d))
+                response = formatResponse("invalid delta");
+            else {
+                QMetaObject::invokeMethod(vm, "nudgeVolume", Qt::QueuedConnection,
+                                          Q_ARG(double, d));
+                response = formatResponse("success");
+            }
+        }
     } else if (cmd == "get-stereo") {
         // 合成映射数据（不截图判断满不满屏；与日志 `stereo map:` 同源）
         if (!stereo_) {

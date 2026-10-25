@@ -420,11 +420,11 @@ Item {
         }
         Shortcut {
             enabled: root.shortcutsEnabled && !stereo.active; sequence: "Up"
-            onActivated: viewModel.setVolume(viewModel.volume + 0.05)
+            onActivated: viewModel.nudgeVolume(0.05)
         }
         Shortcut {
             enabled: root.shortcutsEnabled && !stereo.active; sequence: "Down"
-            onActivated: viewModel.setVolume(viewModel.volume - 0.05)
+            onActivated: viewModel.nudgeVolume(-0.05)
         }
         Shortcut {
             enabled: root.shortcutsEnabled; sequence: "S"
@@ -575,7 +575,8 @@ Item {
     }
 
 
-    // 音量提示：独立于 3D 快捷键帮助面板，2D/3D 都显示。
+    // 音量提示：独立于 3D 快捷键帮助面板。只在**快捷键**改音量时出现
+    //（视 trigger 源是 volumeNudged，UI 滑杆拖动不弹）；3D 左右眼各一份。
     StereoVolume {
         id: volumeOsd
         anchors.fill: parent
@@ -583,6 +584,17 @@ Item {
         active: !controlMode
         volume: viewModel.volume
         muted: viewModel.muted
+    }
+
+    // 进度提示：快捷键快进/快退时短暂显示当前进度（机制同音量提示）。
+    // 只在 3D 显示——2D 桌面 UI 本身有进度条。
+    StereoProgress {
+        id: progressOsd
+        anchors.fill: parent
+        z: 99
+        active: !controlMode && stereo.active
+        position: viewModel.currentTime
+        duration: viewModel.duration
     }
 
     // 3D 快捷键帮助面板：presentation 内覆盖层（不是独立窗口）；H 只切显示。

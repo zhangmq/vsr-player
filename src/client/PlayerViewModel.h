@@ -394,6 +394,10 @@ public slots:
     void stop();
     void seekAbsolute(int64_t ms);
     void seekRelative(int64_t offsetMs);
+
+    /// 快捷键调音量（↑/↓）。与滑杆的 setVolume 区分：只有本方法发
+    /// volumeNudged()——2D 下音量提示只对"按键"出现，UI 拖动不弹提示。
+    Q_INVOKABLE void nudgeVolume(double delta);
     void setVolume(double vol);
     void toggleMute();
     void toggleHwaccel();
@@ -491,6 +495,10 @@ signals:
     /// 直播/线性流被识别（主线程发出）：main.cpp 据此撤销"因历史进度而暂停"。
     void liveSourceDetected();
     void volumeChanged();
+    /// 快捷键调了音量（UI 滑杆/API 不发）——音量提示 OSD 的触发源。
+    void volumeNudged();
+    /// 快捷键快进/快退（拖进度条走 seekAbsolute，不发）——进度提示 OSD 的触发源。
+    void seekNudged();
     void qualityChanged();
     void vsrActiveChanged();
     void scaleChanged();

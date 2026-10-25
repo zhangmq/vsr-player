@@ -405,6 +405,19 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **上一个/下一个 = 全局 Ctrl+← / Ctrl+→**：2D 走 QML `Shortcut`
   （`enabled && !stereo.active`），3D 走 C++ 过滤器；`Ctrl+L` 是 URL 输入，
   与 Ctrl+方向键不冲突，项目内无重复绑定。
+- **进度提示（2026-10-26）**：`ui/StereoProgress.qml`，与音量提示同一套机制
+  （底部居中面板 300×56、1.5s 自动隐藏、3D 左右眼各一份 ±12 logical px 视差、
+  `#cc111111` 面板 + `#44ffffff` 轨道 + `#e0e0e0` 填充），显示"当前 / 总时长"+进度条。
+  **只在 3D 显示**（2D 桌面 UI 本身有进度条）；触发源 = `viewModel.seekNudged()`
+  —— 只有 `seekRelative()`（快捷键/方向键）发，拖进度条走 `seekAbsolute()` 不发。
+- **音量/进度提示的触发源必须区分 UI 与快捷键（2026-10-26 用户要求）**：
+  `PlayerViewModel::nudgeVolume(delta)` 供快捷键用（↑/↓ 的 QML Shortcut 与 C++
+  `StereoKeyFilter` 都走它），它发 `volumeNudged()`；滑杆走 `setVolume()` 不发。
+  `StereoVolume` 只听 `volumeNudged` → 2D 下**拖滑杆不弹**、按 ↑/↓ 弹（用户批准）。
+  实测（像素差，基准=静置帧）：2D 快捷键音量 8136 px / 2D 快捷键快进 0 px /
+  2D 滑杆改音量 0 px；3D 快捷键快进 32270 px、音量 31078 px，1.8s 后均归 0；
+  两眼面板中心 +16 / −15 物理像素（= 12 logical × dpr 1.35）。
+  测试钩子：`nudge-volume <±delta>`（模拟快捷键，与 `set_property volume` 区分）。
 - **音量提示（2026-10-26）**：独立的 `ui/StereoVolume.qml`，**不是** 3D 快捷键
   帮助面板内容，与 `helpVisible` 完全无关。2D 一份；3D 左右眼各一份（±12 视差）。
   音量变化时显示 1.5s，系统 OSD 风格（扬声器图标 + `#44ffffff`/`#e0e0e0` 横条 +

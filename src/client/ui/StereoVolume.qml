@@ -30,7 +30,8 @@ Item {
 
     Connections {
         target: viewModel
-        function onVolumeChanged() { root.flash() }
+        // 只认"快捷键改音量"：UI 滑杆拖动不弹提示。
+        function onVolumeNudged() { root.flash() }
     }
 
     Repeater {

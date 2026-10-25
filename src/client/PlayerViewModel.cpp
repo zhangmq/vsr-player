@@ -1053,6 +1053,7 @@ void PlayerViewModel::seekRelative(int64_t offsetMs) {
     if (target < 0) target = 0;
     if (duration_ > 0 && target > duration_) target = duration_;
     seekAbsolute(target);
+    emit seekNudged();   // 只有按键路径走到这里（UI 拖动走 seekAbsolute）
 }
 
 void PlayerViewModel::notePlaybackRestart() {
@@ -1068,6 +1069,11 @@ void PlayerViewModel::notePlaybackRestart() {
 }
 
 // ── Audio（乐观更新）────────────────────────────────────────────────
+
+void PlayerViewModel::nudgeVolume(double delta) {
+    setVolume(volume_ + delta);
+    emit volumeNudged();
+}
 
 void PlayerViewModel::setVolume(double vol) {
     if (!mpv_) return;

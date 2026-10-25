@@ -207,10 +207,10 @@ protected:
             viewModel_->seekRelative((ke->modifiers() & Qt::ShiftModifier) ? 10000 : 5000);
             return true;
         case Qt::Key_Up:
-            viewModel_->setVolume(viewModel_->volume() + 0.05);
+            viewModel_->nudgeVolume(0.05);
             return true;
         case Qt::Key_Down:
-            viewModel_->setVolume(viewModel_->volume() - 0.05);
+            viewModel_->nudgeVolume(-0.05);
             return true;
         default: return false;
         }
