@@ -120,7 +120,7 @@ if [ -x "$CLI_BIN" ]; then
 fi
 if [ -d "$LIB_SRC" ]; then
     cp -L "$LIB_SRC"/* "$LIB_DIR/"   # -L：跟随软链（VFX 的 ngx-vsr 软链等）
-    echo "  ✅ 捆绑库（ffmpeg/CUDA/TRT/libmpv）→ $LIB_DIR/"
+    echo "  ✅ 捆绑库（libmpv + 光盘媒体栈）→ $LIB_DIR/"
 fi
 # dev 模式：按 docs 把 wheel 的 nvidia_vfx.libs 放在 third_party/nvidia_vfx.libs，
 # 安装时必须落到上面 RPATH 期望的位置——否则装出来的库加载失败 → VSR 静默直通。
@@ -331,10 +331,45 @@ fi
 
 # ── 5. 验证 + 摘要 ──────────────────────────────────────────────────
 echo "--- [6/6] verify ---"
-LDD_MISSING="$(ldd "$BIN_DIR/vsr-player" 2>/dev/null | grep "not found" | head -3 || true)"
-if [ -n "$LDD_MISSING" ]; then
-    echo "  ⚠ vsr-player 依赖缺失:"; echo "$LDD_MISSING"
-fi
+# 依赖可解析性：standard 包不捆 FFmpeg/CUDA/Qt，靠系统提供 —— 若系统 soname 与
+# 构建机不一致，这里必须**明确失败**（否则表现为"双击没反应"，用户无从判断）。
+# 与 VFX 的策略一致：要么装成，要么明确报错。
+ldd_check() {  # ldd_check <二进制> <显示名>
+    local bin="$1" name="$2" missing
+    [ -x "$bin" ] || return 0
+    missing="$(ldd "$bin" 2>/dev/null | grep "not found" | head -5 || true)"
+    if [ -n "$missing" ]; then
+        echo "  ❌ $name 依赖缺失（装完也起不来）:" >&2
+        printf '%s\n' "$missing" | sed 's/^/     /' >&2
+        echo "     standard 包不捆绑 FFmpeg / CUDA runtime / Qt，要求系统提供与构建机" >&2
+        echo "     一致的 soname。处理：① 安装对应版本的系统库；② 换 full 变体包" >&2
+        echo "     （./scripts/build_release.sh --variant=full，自带这三类）；③ 源码构建。" >&2
+        return 1
+    fi
+    return 0
+}
+LDD_OK=1
+ldd_check "$BIN_DIR/vsr-player" "vsr-player" || LDD_OK=0
+ldd_check "$BIN_DIR/mpv-vsr" "mpv-vsr" || LDD_OK=0
+# libmpv 必须解析到**本包**：系统若装了 mpv（/usr/lib/libmpv.so.2），捆绑库缺失时
+# 加载器会静默回落到它——程序照样能启动，但跑的是没有 vf_vsr/vf_vfg/vf_rot 和
+# libmpv vo 互操作的原版 mpv（现象："能开但超分/插帧全没了"，且没有任何报错）。
+# 实测：把 $LIB_DIR/libmpv.so.2 挪走，ldd 解析到 /usr/lib/libmpv.so.2、不报缺失。
+MPV_SO="$(ldd "$BIN_DIR/vsr-player" 2>/dev/null | awk '$1=="libmpv.so.2"{print $3; exit}')"
+case "$MPV_SO" in
+    */lib/vsr-player/*)
+        echo "  ✅ libmpv 来自本包（$MPV_SO）" ;;
+    "")
+        echo "  ❌ libmpv.so.2 未解析到（本包 lib/vsr-player/ 里缺它）" >&2
+        LDD_OK=0 ;;
+    *)
+        echo "  ❌ libmpv.so.2 解析到 $MPV_SO —— 不是本包！" >&2
+        echo "     系统 mpv 的 libmpv 顶替了捆绑库：程序能启动，但超分/插帧/自研 vo 全部失效。" >&2
+        echo "     检查 $LIB_DIR/libmpv.so.2 是否存在、RPATH 是否被改（\$ORIGIN 相对路径）。" >&2
+        LDD_OK=0 ;;
+esac
+[ "$LDD_OK" -eq 1 ] && echo "  ✅ 依赖自检通过"
+[ "$LDD_OK" -eq 1 ] || exit 1
 [ -f "$LIB_DIR/libnvinfer.so.11" ] && RIFE_TRT="✅" || RIFE_TRT="❌"
 # 摘要里的 TRT 字段：无 TRT 库 = VFG-only 包（HAS_TRT 在上方 [3/6] 由同一信号推断），
 # 显示后端名而不是看起来像故障的 "TRT:❌"。

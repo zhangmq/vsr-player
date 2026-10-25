@@ -176,8 +176,9 @@ collect() { collect_to "$LIB" "$@"; }
 #     用户 2026-10-26 定的：standard = 薄包，full = 自洽包）。
 #     rife 后端才有的 TensorRT 保持原样（版本绑定，显式固定）。
 if [ "$VARIANT" = full ]; then
-for f in libavcodec.so.63 libavformat.so.63 libavutil.so.61 libavfilter.so.12 \
-         libswscale.so.10 libswresample.so.7 libavdevice.so.63; do
+# FFmpeg 的 soname **从 libmpv 的 NEEDED 推导**，不硬编码版本号：以后 ffmpeg
+# 大版本升级（63→64）自动跟随，脚本不会打出一个钉死旧 soname 的包。
+for f in $(needed_of "$LIB/libmpv.so.2" | grep -E '^lib(av|sw)' | sort -u); do
     collect "$f" /usr/lib
 done
 # CUDA runtime：**不要钉 minor/patch 版本号**，从 /opt/cuda/lib64 发现实际 soname。
@@ -206,7 +207,11 @@ cuda_collect libnvrtc
 cuda_collect libnvrtc-builtins
 cuda_collect libcudart
 else
-    echo "  · standard：FFmpeg ×7 / CUDA runtime 用系统提供（不捆绑）"
+    # standard 的系统依赖同样从 NEEDED 推导，构建日志里直接列出"这包要求系统有什么"，
+# 而不是写死一份可能过期的清单。
+    SYS_DEPS="$(needed_of "$LIB/libmpv.so.2" \
+                | grep -E '^lib(av|sw|nvrtc|cudart)' | sort -u | tr '\n' ' ')"
+    echo "  · standard：FFmpeg / CUDA 用系统提供 —— 要求系统提供: ${SYS_DEPS:-（无）}"
 fi
 # TensorRT 库只有 rife 后端需要（引擎反序列化）；vfg 包不收集 libnvinfer*。
 if [ "$FRUC_BACKEND" = rife ]; then

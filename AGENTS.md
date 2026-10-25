@@ -504,6 +504,22 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
     → libdvdread` 两层链；standard 去掉 libavformat 后只看 libmpv 的 NEEDED 会漏
     libdvdread，闭包自检直接失败）；② standard 的白名单要放行
     `libav*|libsw*|libnvrtc|libcudart`（与 `libQt6` 同位）。
+  - **soname 不硬编码（2026-10-26）**：full 的 ffmpeg 收集列表改成从
+    `libmpv.so.2` 的 NEEDED 推导（`grep '^lib(av|sw)'`），ffmpeg 大版本升级后重建
+    自动跟随；standard 分支在构建日志里直接打印"要求系统提供: libavcodec.so.63 …"，
+    清单永远与构建机一致，不会出现"脚本写死 63、实机是 64"的静默错配。
+  - **装的时候就要能判断（install.sh [6/6] 预检）**：`ldd` 检查两个二进制，缺任何
+    NEEDED → **明确报错并 exit 1**（附三条出路：装对应系统库 / 换 full / 源码构建），
+    不再表现为"双击没反应"。另外强制校验 **libmpv 必须解析到本包的
+    `lib/vsr-player/`**：系统若装了 mpv（`/usr/lib/libmpv.so.2`），捆绑库缺失时加载器
+    会**静默回落**到它——程序能启动，但跑的是没有 `vf_vsr/vf_vfg/vf_rot` 和 libmpv vo
+    互操作的原版 mpv，表现为"能开但超分/插帧全没了且无任何报错"（实测：挪走捆绑
+    libmpv 后 `ldd` 解析到 `/usr/lib/libmpv.so.2`，并不报缺失）。
+  - **soname 绑定的本质**：ELF 的 NEEDED 记的是 so 名字，ffmpeg 跨大版本没有 ABI
+    兼容承诺 → **不捆就必然绑定某个 soname**。根治只有两条路：捆库（= full，
+    ffmpeg 12.6 MB 压缩）或静态链接 ffmpeg（Arch 不提供 .a，要自建 ffmpeg，
+    体积更大且每次 ffmpeg 安全更新都要重编）。因此**对外分发用 full**；
+    standard 的定位是"与构建机同源"的薄包。
   - ⚠ dev 模式 `install.sh` 与 release 包**语义不同**：dev 把构建树产物装进 `~/.local`
     （RUNPATH 指向 `build/mpv/_build`，依赖构建树）；release 包是
     `$ORIGIN/../lib/vsr-player` 相对 RPATH，自洽。用户要"正式安装"就走
