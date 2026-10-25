@@ -325,11 +325,14 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   实测 VSR 仍 active（scale 随 presentation 窗口自动变 1.5），VFG 的
   passthrough 是既有 `max-fps` 判定，不是 3D 改动。
 - **映射语义**（用户 2026-10-25 定）：SBS=左右，TAB=上下；`L` 按 split 轴切
-  **全/半**（SBS 全宽/半宽，TAB 全高/半高）。源眼画面保持自身比例，在“全/半 box”
-  内做 contain 并居中；全/半只决定 box（SBS 调宽、TAB 调高），不拉伸。目标屏按实际
-  尺寸；输出 framebuffer 恒 SBS，因此**眼视口 aspect = outAspect/2**（曾误用
-  outAspect 导致画面窄一半，已修）。源帧在 rtImage 里是 mpv letterbox 后的内容，
-  先算 contentRect 再取样。无红绿/anaglyph。
+  **全/半**，全/半是**源眼输出宽高**的区别，不是 box：
+  - **全**：源眼 960×1080（SBS）/1920×540（TAB）**不拉伸**，按自身比例 contain
+    居中到眼视口，最终图像 960×1080 / 1920×540（留黑边）；
+  - **半**：源眼**沿 split 轴拉伸**到眼视口：SBS 960×1080 → 1920×1080（横向 2×），
+    TAB 1920×540 → 1920×1080（纵向 2×），最终图像 1920×1080，无黑边。
+  目标屏按实际尺寸；输出 framebuffer 恒 SBS，因此**眼视口 aspect = outAspect/2**
+  （曾误用 outAspect 导致画面窄一半，已修）。源帧在 rtImage 里是 mpv letterbox 后的
+  内容，先算 contentRect 再取样。无红绿/anaglyph。
 - OSD：默认显示；`Tab` 显隐；`J` 布局、`K` 交换眼、`L` 全/半；标题/键名 Bold、
   正文 DemiBold；左右面板 ±12 logical px 交叉视差（OSD 浮在画面前，独立于视频眼序）。
 - **OSD HotKeys（2026-10-25，按用户参考重做）**：**两列、一键一行、无分组名**。

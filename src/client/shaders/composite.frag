@@ -43,25 +43,22 @@ void main() {
         srcRect = vec4(float(srcEye) * 0.5, 0.0, 0.5, 1.0);
     }
 
-    // 全/半 box：SBS 调宽、TAB 调高，居中。
-    vec2 boxSize = vec2(1.0);
+    // Full：源眼保持自身比例，contain 到整个眼视口（可能留黑边）。
+    // 例：1920x1080 SBS 的源眼 960x1080 原样输出为 960x1080。
+    // Half：源眼沿 split 轴拉伸到整个眼视口（anamorphic 展开），
+    // 例：960x1080 横向拉成 1920x1080；TAB 则是纵向拉满。
     if (pc.halfMode != 0) {
-        if (pc.layoutMode == 1)
-            boxSize = vec2(1.0, 0.5);
-        else
-            boxSize = vec2(0.5, 1.0);
-    }
-    vec2 boxMin = (vec2(1.0) - boxSize) * 0.5;
-    vec2 b = (e - boxMin) / boxSize;
-    if (b.x < 0.0 || b.x > 1.0 || b.y < 0.0 || b.y > 1.0) {
-        outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        vec2 local = e;
+        vec2 sampleUV = contentMin + (srcRect.xy + local * srcRect.zw) * contentSize;
+        outColor = texture(srcTex, sampleUV);
         return;
     }
 
+    vec2 b = e;
     float srcHalfAspect = (pc.srcAspect * srcRect.z) / srcRect.w;
     // 输出 framebuffer 恒为 SBS：每只眼的视口 = 半宽 × 全高。
     float eyeAspect = pc.outAspect * 0.5;
-    float boxAspect = (eyeAspect * boxSize.x) / boxSize.y;
+    float boxAspect = eyeAspect;
     vec2 cscale;
     if (srcHalfAspect > boxAspect)
         cscale = vec2(1.0, boxAspect / srcHalfAspect);
