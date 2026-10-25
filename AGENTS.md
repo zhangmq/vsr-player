@@ -66,14 +66,6 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   - 现象：播放列表已有条目，点播放按钮/播放键无响应。
   - 当前分支：`feat/stereo-osd-prototype`；根因未查，留待后续单独安排。
   - ⚠ 未调查前不要把它归因到 3D/control 改动；恢复播放行为时再按正常排查流程处理。
-- **3D 选择器打开时，右键菜单未关闭**（2026-10-25 用户截图；先不修，单独解决）。
-  - 现象：右键菜单 → 3D → 3D片源 → 选择器弹出后，右键菜单仍停留在选择器下方/后面。
-  - 未排查根因；截图见 2026-10-25 会话（选择器在 DP-3，菜单文字仍可见于 dialog 后面）。
-- **眼镜屏上的右键菜单不消失**（2026-10-25 用户截图已确认；先不修，单独解决）。
-  - 现象：3D active 时（control UI 在 DP-3、presentation/3D OSD 在 DP-1），
-    右键菜单出现在 DP-1 左眼 OSD 面板上，且不消失；control 窗口本身在 DP-3。
-  - 未排查根因；截图见 2026-10-25 会话 `/tmp/menu_glasses_repro.png`
-    （DP-1 左眼 OSD 上可见 打开文件/打开文件夹/…/3D/退出 菜单）。
 
 ## 技术现状（已对照 master 代码修正）
 
@@ -288,11 +280,21 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   （VITURE/DELL/LG）用于显示名称。
 - 菜单/选择器关闭顺序：`ContextMenu` 二级项**先发 subSig 再 close**——
   close 会拆 popup 的临时 grab/内容，之后 `root[subSig]` 的动态调用可能不生效
-  （2026-10-25 实测 3D 二级项点击无反应）；窗口移动前关闭 popup 由
-  `StereoPicker` 的 Start 负责（**先 close 再 stereo.start**）。选择器打开时
-  不再同步跑 `kscreen-doctor`（屏幕列表由 screenAdded/Removed/geometryChanged
-  维护），避免点菜单后卡顿。3D active 期间 `Escape` Shortcut 禁用（主窗口被
-  合成器聚焦时 Esc 退全屏会切回焦点屏）；退出用桌面 3D → Off。
+  （2026-10-25 实测 3D 二级项点击无反应）；主 QML 在 `onStereoSelected` 里
+  **先 `contextMenu.close()`，再 `Qt.callLater` 打开选择器**，不能依赖
+  “打开另一个 popup 自动关旧的”。`StereoPicker` 的 Start 仍先 close 再
+  `stereo.start`。选择器打开时不再同步跑 `kscreen-doctor`（屏幕列表由
+  screenAdded/Removed/geometryChanged 维护），避免点菜单后卡顿。
+- ⚠ **Popup 生命周期（2026-10-25，不是 Qt 屏 bug）**：`ContextMenu`/`StereoPicker`
+  都是默认的 **`Popup.Item`**，内容项被 reparent 到窗口 overlay，不是独立窗口；
+  打开另一个 popup **不会**自动关前一个，`uiLayer.visible=false` 也**不会**隐藏
+  overlay 里的 popup。所以打开选择器前必须显式关菜单；`stereo.active=true` 时
+  主 QML 关闭主窗口所有 popup（context/playlist/picker 等），否则它们会跟着
+  主窗口一起移到眼镜屏。Qt 文档/源码（`qquickpopup.cpp` 的
+  `adjustPopupItemParentAndWindow`、`qquickpopupwindow.cpp`）与社区报告
+  （QTBUG-67684、QTBUG-35261）都是这个语义，不是 QScreen/合成器放错屏。
+- 3D active 期间 `Escape` Shortcut 禁用（主窗口被合成器聚焦时 Esc 退全屏会切回
+  焦点屏）；退出用桌面 3D → Off。
 - **主 UI 始终在桌面**：KWin 把新窗口放到当前活动输出——用户鼠标在眼镜屏时
   主 UI/右键菜单会开到眼镜上。`main.cpp` 在 `view.show()` 后把主窗口移到
   `QGuiApplication::primaryScreen()`；`StereoController` 选 control 屏时若

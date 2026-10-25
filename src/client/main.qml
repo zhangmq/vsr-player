@@ -287,9 +287,19 @@ Item {
             onDeinterlaceSelected: function(mode) { viewModel.setDeintMode(mode) }
             onRotateSelected: function(mode) { viewModel.setRotMode(mode) }
             onStereoSelected: function(mode) {
-                if (mode === 0) stereo.stop()
-                else if (mode === 1) stereoPicker.openForMode(1)
-                else stereoToast.show(qsTr("2D to 3D is not implemented yet"))
+                // ContextMenu 是 Popup.Item，内容挂在窗口 overlay 上；打开另一个
+                // Popup 不会自动关它（Qt 文档/源码无此语义），必须先显式关闭，
+                // 否则它会留在选择器下面，随后跟着主窗口一起移到眼镜屏。
+                contextMenu.close()
+                if (mode === 0) {
+                    stereo.stop()
+                } else if (mode === 1) {
+                    // 等当前 popup 的 close 处理完再开选择器，避免两个 popup
+                    // 同帧叠放/抢 grab。
+                    Qt.callLater(function() { stereoPicker.openForMode(1) })
+                } else {
+                    stereoToast.show(qsTr("2D to 3D is not implemented yet"))
+                }
             }
             onQuitRequested: Qt.quit()   // 走标准退出路径（watch-later 落盘）
         }
@@ -307,6 +317,20 @@ Item {
                 var isFs = (window.visibility === Window.FullScreen)
                 if (wantFs !== isFs) window.visibility = wantFs ? Window.FullScreen : Window.Windowed
             } }
+
+        // 3D 启动时主窗口会移到眼镜屏；Popup.Item 没有独立窗口，会跟着窗口
+        // 一起过去。这里在主窗口移动前把主窗口里的 popup 全部关掉（不是靠
+        // uiLayer.visible，overlay 里的 popup 不受它影响）。
+        Connections {
+            target: stereo
+            function onActiveChanged() {
+                if (stereo.active) {
+                    uiLayer.closeOtherPopups(null)
+                    playlistPanel.close()
+                    stereoPicker.close()
+                }
+            }
+        }
 
         focus: true
 
