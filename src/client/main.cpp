@@ -101,30 +101,48 @@ static bool expandInputs(const Options &opts, std::vector<std::string> *out) {
 class StereoKeyFilter : public QObject
 {
 public:
-    explicit StereoKeyFilter(StereoController *stereo, QObject *parent = nullptr)
-        : QObject(parent), stereo_(stereo) {}
+    StereoKeyFilter(StereoController *stereo, PlayerViewModel *vm, QObject *parent = nullptr)
+        : QObject(parent), stereo_(stereo), viewModel_(vm) {}
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
+        Q_UNUSED(watched);
         if (event->type() != QEvent::KeyPress || !stereo_->active())
             return false;
         auto *ke = static_cast<QKeyEvent *>(event);
         if (ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))
             return false;
-        if (ke->isAutoRepeat())
-            return true;
+
+        // 方向键/音量允许按住连发；切换类键忽略 auto-repeat。
+        const bool repeat = ke->isAutoRepeat();
         switch (ke->key()) {
-        case Qt::Key_J: stereo_->cycleLayout(); return true;
-        case Qt::Key_K: stereo_->swapEyes(); return true;
-        case Qt::Key_L: stereo_->toggleHalf(); return true;
-        case Qt::Key_Tab: stereo_->toggleOsd(); return true;
+        case Qt::Key_J: if (repeat) return true; stereo_->cycleLayout(); return true;
+        case Qt::Key_K: if (repeat) return true; stereo_->swapEyes(); return true;
+        case Qt::Key_L: if (repeat) return true; stereo_->toggleHalf(); return true;
+        case Qt::Key_Tab: if (repeat) return true; stereo_->toggleOsd(); return true;
+        case Qt::Key_Space: if (repeat) return true; viewModel_->togglePlayPause(); return true;
+        case Qt::Key_Left:
+            viewModel_->seekRelative((ke->modifiers() & Qt::ShiftModifier) ? -10000 : -5000);
+            return true;
+        case Qt::Key_Right:
+            viewModel_->seekRelative((ke->modifiers() & Qt::ShiftModifier) ? 10000 : 5000);
+            return true;
+        case Qt::Key_Up:
+            viewModel_->setVolume(viewModel_->volume() + 0.05);
+            return true;
+        case Qt::Key_Down:
+            viewModel_->setVolume(viewModel_->volume() - 0.05);
+            return true;
+        case Qt::Key_N: if (repeat) return true; viewModel_->playlistNext(); return true;
+        case Qt::Key_B: if (repeat) return true; viewModel_->playlistPrev(); return true;
         default: return false;
         }
     }
 
 private:
     StereoController *stereo_;
+    PlayerViewModel *viewModel_;
 };
 
 int main(int argc, char *argv[]) {
@@ -493,9 +511,10 @@ int main(int argc, char *argv[]) {
         stereo.setControlWindow(&controlView);
         // 两个窗口都装：presentation 通常不接焦点；control 窗口失焦时也能收到，
         // 且绕开 QML Shortcut 的 Tab/大小写问题。
-        auto *stereoKeyFilter = new StereoKeyFilter(&stereo, &app);
-        view.installEventFilter(stereoKeyFilter);
-        controlView.installEventFilter(stereoKeyFilter);
+        // 装在 QGuiApplication 上（不是两个 QQuickView 上）：3D 时焦点可能在
+        // presentation/control 任一窗口，应用级过滤器才能稳定收到所有按键。
+        auto *stereoKeyFilter = new StereoKeyFilter(&stereo, &viewModel, &app);
+        qApp->installEventFilter(stereoKeyFilter);
         MLOG_INFO("control window ready");
 
         view.setSource(QUrl("qrc:/main.qml"));

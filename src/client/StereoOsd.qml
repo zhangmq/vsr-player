@@ -11,8 +11,8 @@ Item {
     width: parent ? parent.width : 0
     height: parent ? parent.height : 0
 
-    // OSD 正常界面字体 +1（项目 UI 的常规字号是 13）。
-    readonly property int osdFontSize: 14
+    // OSD 整体字号 = 正常 UI（13）+ 2。
+    readonly property int osdFontSize: 15
     readonly property int parallax: 12
 
     Repeater {

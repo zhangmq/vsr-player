@@ -9,9 +9,9 @@ Item {
     property var options: []
     property int current: 0
     property string actionText: ""
-    property int keyWidth: 90
-    property int fontPixelSize: 14
-    implicitHeight: 30
+    property int keyWidth: 100
+    property int fontPixelSize: 15
+    implicitHeight: 32
     implicitWidth: row.implicitWidth
 
     Rectangle {

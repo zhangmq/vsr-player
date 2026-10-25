@@ -335,11 +335,11 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **OSD HotKeys（2026-10-25，按用户参考重做）**：**两列、一键一行、无分组名**。
   左列 3D：Tab / J / K / L；右列播放器：Space / ← / → / Shift+← / Shift+→ /
   ↑ / ↓ / N / B（方向键、Shift+方向键、音量上下都各占一行）。
-  `HotkeyRow` 的键名列**统一 90px**，状态/说明从同一 x 起（所有行左对齐）；
+  `HotkeyRow` 的键名列**统一 100px**，状态/说明从同一 x 起（所有行左对齐）；
   3D 状态**不用按钮**，纯文本 + 颜色区分（选中 `#ffcc00`，未选 `#e0e0e0`），
   避免按钮宽度破坏对齐；切换后该行淡黄闪 500ms。OSD 全部文字只用
-  **一个字号 = 正常 UI 字号 13 + 1 = 14**（标题/键名/状态/说明同字号；
-  标题也不加粗/不放大），不再有 20/24/32 等多套。
+  **一个字号 = 正常 UI 字号 13 + 2 = 15**（标题/键名/状态/说明同字号；
+  标题也不加粗/不放大），不再有 20/24/32 等多套；行高 32。
   左列 `J: Side-by-Side / Top-and-Bottom`、`K: Normal Eyes / Swapped Eyes`、
   `L: Full / Half`；右列 `←`/`→`（±5s）、`Shift+←`/`Shift+→`（±10s）、
   `↑`/`↓`（音量 ±）、`N: Next`、`B: Previous`（中文“下一个/上一个”）。
@@ -349,14 +349,17 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   glob 里，`scripts/update-translations.sh` 已显式加入；否则 OSD 全部回退
   英文（2026-10-25 修）。当前 zh_CN OSD：热键/左右并排/上下/正常眼序/
   交换眼序/全/半/播放器/播放暂停/快退快进/音量。
-- ⚠ **3D 热键不能再用 QML Shortcut**（2026-10-25）：`Tab` 会先被焦点遍历吃掉；
-  `QKeySequence("J")` 等价于 **Shift+J**，大小写不通用。改为 `main.cpp` 的
-  `StereoKeyFilter` 事件过滤器，装到 `view` 和 `controlView`，在 QML 之前按
-  `event->key()` 拦截 `Key_J/K/L/Tab`：大小写无关、允许 Shift、Ctrl/Alt/Meta
-  不拦、忽略 auto-repeat。QML 里那四个 3D `Shortcut` 已删除。
-- **上一个/下一个**：快捷键早就存在（`N`=playlistNext、`B`=playlistPrev），
-  但 OSD 一直没列，且 QML 写的是大写 `"N"/"B"`（等价 Shift+N/B），无 Shift
-  按不出来。已改成小写 `"n"/"b"` 并加入 OSD 右列。
+- ⚠ **3D 热键统一装在 `QGuiApplication` 上**（2026-10-25）：装在两个
+  `QQuickView` 上时，3D 焦点可能在 presentation/control 任一窗口，事件到不了
+  过滤器。`StereoKeyFilter` 现在 `qApp->installEventFilter()`，按
+  `event->key()` 拦截：J/K/L/Tab（切换）+ Space（播放暂停）+ ←/→（±5s）+
+  Shift+←/→（±10s）+ ↑/↓（音量）+ N/B（下一个/上一个）。大小写无关、允许
+  Shift、Ctrl/Alt/Meta 不拦；切换类忽略 auto-repeat，方向/音量允许连发。
+  QML 里 3D 的 J/K/L/Tab 已删除，Space/方向/音量/N/B 在 3D 时禁用
+  （`&& !stereo.active`），只留 2D 路径；C++ 负责 3D，避免重复触发。
+- **上一个/下一个**：`N`=playlistNext、`B`=playlistPrev，原本 QML 写的是大写
+  `"N"/"B"`（等价 Shift+N/B）且 OSD 没列；现在由 3D 的 C++ 过滤器处理，
+  2D 仍走 QML 小写 `"n"/"b"`，OSD 右列显示“下一个/上一个”。
 - 不做“切回 2D 自动结束 3D”（目标不一定是 1080×2，无法可靠判断）；只有目标屏被
   拔掉时 stop。`Esc` 不参与 3D。
 - 测试钩子（RPC）：`stereo-start <1> <screen-index>`、`stereo-stop`、

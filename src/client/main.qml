@@ -389,7 +389,7 @@ Item {
             }
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Space"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Space"
             onActivated: viewModel.togglePlayPause()
         }
         // 当前条目操作：Delete = 仅从列表移除；Shift+Delete = 连同文件移入回收站
@@ -403,27 +403,27 @@ Item {
             onActivated: viewModel.deleteCurrentFile()
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Left"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Left"
             onActivated: viewModel.seekRelative(-5000)
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Shift+Left"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Shift+Left"
             onActivated: viewModel.seekRelative(-10000)
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Right"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Right"
             onActivated: viewModel.seekRelative(5000)
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Shift+Right"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Shift+Right"
             onActivated: viewModel.seekRelative(10000)
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Up"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Up"
             onActivated: viewModel.setVolume(viewModel.volume + 0.05)
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Down"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Down"
             onActivated: viewModel.setVolume(viewModel.volume - 0.05)
         }
         Shortcut {
@@ -452,11 +452,11 @@ Item {
             onActivated: Qt.quit()
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "n"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "n"
             onActivated: viewModel.playlistNext()
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "b"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "b"
             onActivated: viewModel.playlistPrev()
         }
         Shortcut {
