@@ -161,6 +161,7 @@ protected:
         case Qt::Key_K: if (repeat) return true; stereo_->swapEyes(); return true;
         case Qt::Key_L: if (repeat) return true; stereo_->toggleHalf(); return true;
         case Qt::Key_H:
+            MLOG_INFO("stereo key: H -> toggle OSD");
             if (repeat) return true;
             stereo_->toggleOsd();
             return true;
@@ -570,7 +571,7 @@ int main(int argc, char *argv[]) {
                     action(stereo);
             });
         };
-        addStereoShortcut(Qt::Key_H, [](StereoController &s) { s.toggleOsd(); });
+
         addStereoShortcut(Qt::Key_J, [](StereoController &s) { s.cycleLayout(); });
         addStereoShortcut(Qt::Key_K, [](StereoController &s) { s.swapEyes(); });
         addStereoShortcut(Qt::Key_L, [](StereoController &s) { s.toggleHalf(); });
