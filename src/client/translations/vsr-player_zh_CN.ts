@@ -520,67 +520,72 @@
 <context>
     <name>StereoOsd</name>
     <message>
-        <location filename="../StereoOsd.qml" line="57"/>
+        <location filename="../StereoOsd.qml" line="52"/>
         <source>HotKeys</source>
         <translation>热键</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="71"/>
+        <location filename="../StereoOsd.qml" line="69"/>
         <source>Toggle HotKeys Help</source>
         <translation>显示/隐藏热键帮助</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="77"/>
+        <location filename="../StereoOsd.qml" line="74"/>
         <source>Side-by-Side</source>
         <translation>左右并排</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="77"/>
+        <location filename="../StereoOsd.qml" line="74"/>
         <source>Top-and-Bottom</source>
         <translation>上下</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="84"/>
+        <location filename="../StereoOsd.qml" line="80"/>
         <source>Normal Eyes</source>
         <translation>正常眼序</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="84"/>
+        <location filename="../StereoOsd.qml" line="80"/>
         <source>Swapped Eyes</source>
         <translation>交换眼序</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="91"/>
+        <location filename="../StereoOsd.qml" line="86"/>
         <source>Full</source>
         <translation>全</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="91"/>
+        <location filename="../StereoOsd.qml" line="86"/>
         <source>Half</source>
         <translation>半</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="100"/>
-        <source>Player</source>
-        <translation>播放器</translation>
+        <location filename="../StereoOsd.qml" line="117"/>
+        <source>Next</source>
+        <translation>下一个</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="109"/>
+        <location filename="../StereoOsd.qml" line="122"/>
+        <source>Previous</source>
+        <translation>上一个</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="96"/>
         <source>Play / Pause</source>
         <translation>播放 / 暂停</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="115"/>
+        <location filename="../StereoOsd.qml" line="101"/>
         <source>Seek -5s / +5s</source>
         <translation>快退 5 秒 / 快进 5 秒</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="122"/>
+        <location filename="../StereoOsd.qml" line="107"/>
         <source>Seek -10s / +10s</source>
         <translation>快退 10 秒 / 快进 10 秒</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="128"/>
+        <location filename="../StereoOsd.qml" line="112"/>
         <source>Volume</source>
         <translation>音量</translation>
     </message>

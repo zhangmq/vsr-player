@@ -452,11 +452,11 @@ Item {
             onActivated: Qt.quit()
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "N"
+            enabled: root.shortcutsEnabled; sequence: "n"
             onActivated: viewModel.playlistNext()
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "B"
+            enabled: root.shortcutsEnabled; sequence: "b"
             onActivated: viewModel.playlistPrev()
         }
         Shortcut {

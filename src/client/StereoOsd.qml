@@ -11,7 +11,8 @@ Item {
     width: parent ? parent.width : 0
     height: parent ? parent.height : 0
 
-    // 交叉视差（logical px）：融合后 HotKeys 看起来浮在视频画面前方。
+    // OSD 正常界面字体 +1（项目 UI 的常规字号是 13）。
+    readonly property int osdFontSize: 14
     readonly property int parallax: 12
 
     Repeater {
@@ -22,25 +23,19 @@ Item {
             height: root.height
             visible: stereo.osdVisible
 
-            // 内容宽度以最长行为准（ids 都在本 delegate 内，不能放到 root）。
+            // 内容宽度以两列为准；Column/HotkeyRow 的 implicitWidth 首次布局前
+            // 不可靠，给一个与两列内容匹配的下限，避免 panel 缩成一条。
             readonly property real contentWidth: Math.max(
+                560,
                 titleText.implicitWidth,
-                tabRow.implicitWidth,
-                layoutRow.implicitWidth,
-                eyesRow.implicitWidth,
-                halfRow.implicitWidth,
-                playerLabel.implicitWidth,
-                playRow.implicitWidth,
-                seekRow.implicitWidth,
-                seekShiftRow.implicitWidth,
-                volumeRow.implicitWidth)
+                leftColumn.implicitWidth + 40 + rightColumn.implicitWidth)
 
             Rectangle {
                 id: panel
                 anchors.centerIn: parent
                 anchors.horizontalCenterOffset: (index === 0 ? 1 : -1) * root.parallax
-                width: Math.min(parent.width - 60, contentWidth + 56)
-                height: Math.min(parent.height - 60, body.implicitHeight + 56)
+                width: Math.min(parent.width - 60, contentWidth + 48)
+                height: Math.min(parent.height - 60, body.implicitHeight + 48)
                 color: "#cc111111"
                 radius: 14
                 border.width: 1
@@ -50,13 +45,13 @@ Item {
                     id: body
                     anchors.centerIn: parent
                     width: contentWidth
-                    spacing: 10
+                    spacing: 8
 
                     Text {
                         id: titleText
                         text: qsTr("HotKeys")
                         color: "#ffcc00"
-                        font.pixelSize: 32
+                        font.pixelSize: root.osdFontSize
                         font.bold: true
                     }
                     Rectangle {
@@ -64,68 +59,70 @@ Item {
                         color: "#33ffffff"
                     }
 
-                    HotkeyRow {
-                        id: tabRow
-                        width: contentWidth
-                        keyText: "Tab"
-                        actionText: qsTr("Toggle HotKeys Help")
-                    }
-                    HotkeyRow {
-                        id: layoutRow
-                        width: contentWidth
-                        keyText: "J"
-                        options: [qsTr("Side-by-Side"), qsTr("Top-and-Bottom")]
-                        current: stereo.layout
-                    }
-                    HotkeyRow {
-                        id: eyesRow
-                        width: contentWidth
-                        keyText: "K"
-                        options: [qsTr("Normal Eyes"), qsTr("Swapped Eyes")]
-                        current: stereo.swap ? 1 : 0
-                    }
-                    HotkeyRow {
-                        id: halfRow
-                        width: contentWidth
-                        keyText: "L"
-                        options: [qsTr("Full"), qsTr("Half")]
-                        current: stereo.half ? 1 : 0
-                    }
-                    Rectangle {
-                        width: contentWidth; height: 1
-                        color: "#33ffffff"
-                    }
-                    Text {
-                        id: playerLabel
-                        text: qsTr("Player")
-                        color: "#ffcc00"
-                        font.pixelSize: 22
-                        font.bold: true
-                    }
-                    HotkeyRow {
-                        id: playRow
-                        width: contentWidth
-                        keyText: "Space"
-                        actionText: qsTr("Play / Pause")
-                    }
-                    HotkeyRow {
-                        id: seekRow
-                        width: contentWidth
-                        keyText: "← / →"
-                        actionText: qsTr("Seek -5s / +5s")
-                    }
-                    HotkeyRow {
-                        id: seekShiftRow
-                        width: contentWidth
-                        keyText: "Shift+←/→"
-                        keyWidth: 120
-                        actionText: qsTr("Seek -10s / +10s")
-                    }
-                    HotkeyRow {
-                        id: volumeRow
-                        width: contentWidth
-                        keyText: "↑ / ↓"
-                        actionText: qsTr("Volume")
+                    Row {
+                        spacing: 40
+                        Column {
+                            id: leftColumn
+                            spacing: 6
+                            HotkeyRow {
+                                keyText: "Tab"
+                                actionText: qsTr("Toggle HotKeys Help")
+                                fontPixelSize: root.osdFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "J"
+                                options: [qsTr("Side-by-Side"), qsTr("Top-and-Bottom")]
+                                current: stereo.layout
+                                fontPixelSize: root.osdFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "K"
+                                options: [qsTr("Normal Eyes"), qsTr("Swapped Eyes")]
+                                current: stereo.swap ? 1 : 0
+                                fontPixelSize: root.osdFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "L"
+                                options: [qsTr("Full"), qsTr("Half")]
+                                current: stereo.half ? 1 : 0
+                                fontPixelSize: root.osdFontSize
+                            }
+                        }
+                        Column {
+                            id: rightColumn
+                            spacing: 6
+                            HotkeyRow {
+                                keyText: "Space"
+                                actionText: qsTr("Play / Pause")
+                                fontPixelSize: root.osdFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "← / →"
+                                actionText: qsTr("Seek -5s / +5s")
+                                fontPixelSize: root.osdFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "Shift+←/→"
+                                keyWidth: 90
+                                actionText: qsTr("Seek -10s / +10s")
+                                fontPixelSize: root.osdFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "↑ / ↓"
+                                actionText: qsTr("Volume")
+                                fontPixelSize: root.osdFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "N"
+                                actionText: qsTr("Next")
+                                fontPixelSize: root.osdFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "B"
+                                actionText: qsTr("Previous")
+                                fontPixelSize: root.osdFontSize
+                            }
+                        }
                     }
                 }
             }

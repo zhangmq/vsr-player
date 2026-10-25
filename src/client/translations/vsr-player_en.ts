@@ -520,67 +520,72 @@
 <context>
     <name>StereoOsd</name>
     <message>
-        <location filename="../StereoOsd.qml" line="57"/>
+        <location filename="../StereoOsd.qml" line="52"/>
         <source>HotKeys</source>
         <translation>HotKeys</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="71"/>
+        <location filename="../StereoOsd.qml" line="69"/>
         <source>Toggle HotKeys Help</source>
         <translation>Toggle HotKeys Help</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="77"/>
+        <location filename="../StereoOsd.qml" line="74"/>
         <source>Side-by-Side</source>
         <translation>Side-by-Side</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="77"/>
+        <location filename="../StereoOsd.qml" line="74"/>
         <source>Top-and-Bottom</source>
         <translation>Top-and-Bottom</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="84"/>
+        <location filename="../StereoOsd.qml" line="80"/>
         <source>Normal Eyes</source>
         <translation>Normal Eyes</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="84"/>
+        <location filename="../StereoOsd.qml" line="80"/>
         <source>Swapped Eyes</source>
         <translation>Swapped Eyes</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="91"/>
+        <location filename="../StereoOsd.qml" line="86"/>
         <source>Full</source>
         <translation>Full</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="91"/>
+        <location filename="../StereoOsd.qml" line="86"/>
         <source>Half</source>
         <translation>Half</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="100"/>
-        <source>Player</source>
-        <translation>Player</translation>
+        <location filename="../StereoOsd.qml" line="117"/>
+        <source>Next</source>
+        <translation>Next</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="109"/>
+        <location filename="../StereoOsd.qml" line="122"/>
+        <source>Previous</source>
+        <translation>Previous</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="96"/>
         <source>Play / Pause</source>
         <translation>Play / Pause</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="115"/>
+        <location filename="../StereoOsd.qml" line="101"/>
         <source>Seek -5s / +5s</source>
         <translation>Seek -5s / +5s</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="122"/>
+        <location filename="../StereoOsd.qml" line="107"/>
         <source>Seek -10s / +10s</source>
         <translation>Seek -10s / +10s</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="128"/>
+        <location filename="../StereoOsd.qml" line="112"/>
         <source>Volume</source>
         <translation>Volume</translation>
     </message>

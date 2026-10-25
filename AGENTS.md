@@ -332,18 +332,16 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   先算 contentRect 再取样。无红绿/anaglyph。
 - OSD：默认显示；`Tab` 显隐；`J` 布局、`K` 交换眼、`L` 全/半；标题/键名 Bold、
   正文 DemiBold；左右面板 ±12 logical px 交叉视差（OSD 浮在画面前，独立于视频眼序）。
-- **OSD HotKeys（2026-10-25，按用户参考重做）**：`HotkeyRow` 的选项是
-  **画质选项按钮同款**（radius 4；选中 `#33ffcc00` 底 + `#ffcc00` 字；未选
-  transparent + `#e0e0e0` 字），当前项即状态；切换后该行淡黄闪 500ms。
-  文案按常规 3D 播放器学名：
-  - `Tab: Toggle HotKeys Help`
-  - `J: Side-by-Side / Top-and-Bottom`
-  - `K: Normal Eyes / Swapped Eyes`
-  - `L: Full / Half`
-  另加“播放器”段：`Space` 播放/暂停、`←/→` 快退/快进 5 秒、
-  `Shift+←/→` 快退/快进 10 秒、`↑/↓` 音量（3D 无直观 UI，快捷键有提示）。
-  OSD panel 宽高都按内容算（`contentWidth` 在 Repeater delegate 内，不能放
-  root——ids 在 delegate 作用域），左下/右眼两份 + 交叉视差不变。
+- **OSD HotKeys（2026-10-25，按用户参考重做）**：**两列、一键一行、无分组名**。
+  左列 3D：Tab / J / K / L；右列播放器：Space / ←→ / Shift+←→ / ↑↓ / N / B。
+  `HotkeyRow` 的选项是 **画质选项按钮同款**（radius 4；选中 `#33ffcc00` 底 +
+  `#ffcc00` 字；未选 transparent + `#e0e0e0` 字），当前项即状态；切换后该行
+  淡黄闪 500ms。OSD 全部文字只用 **一个字号 = 正常 UI 字号 13 + 1 = 14**
+  （标题/键名/按钮/说明同字号；标题 bold），不再有 20/24/32 等多套。
+  左列 `J: Side-by-Side / Top-and-Bottom`、`K: Normal Eyes / Swapped Eyes`、
+  `L: Full / Half`；右列 `N: Next`、`B: Previous`（中文“下一个/上一个”）。
+  OSD panel 宽高按内容（`contentWidth` 在 Repeater delegate 内，不能放 root），
+  左下/右眼两份 + 交叉视差不变。
 - ⚠ **OSD 的 i18n 输入**：`StereoOsd.qml` 不在 client 根目录的 `ui/*.qml`
   glob 里，`scripts/update-translations.sh` 已显式加入；否则 OSD 全部回退
   英文（2026-10-25 修）。当前 zh_CN OSD：热键/左右并排/上下/正常眼序/
@@ -353,6 +351,9 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   `StereoKeyFilter` 事件过滤器，装到 `view` 和 `controlView`，在 QML 之前按
   `event->key()` 拦截 `Key_J/K/L/Tab`：大小写无关、允许 Shift、Ctrl/Alt/Meta
   不拦、忽略 auto-repeat。QML 里那四个 3D `Shortcut` 已删除。
+- **上一个/下一个**：快捷键早就存在（`N`=playlistNext、`B`=playlistPrev），
+  但 OSD 一直没列，且 QML 写的是大写 `"N"/"B"`（等价 Shift+N/B），无 Shift
+  按不出来。已改成小写 `"n"/"b"` 并加入 OSD 右列。
 - 不做“切回 2D 自动结束 3D”（目标不一定是 1080×2，无法可靠判断）；只有目标屏被
   拔掉时 stop。`Esc` 不参与 3D。
 - 测试钩子（RPC）：`stereo-start <1> <screen-index>`、`stereo-stop`、
