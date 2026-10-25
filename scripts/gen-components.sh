@@ -29,8 +29,41 @@ resolve() {  # resolve <soname> -> 构建机上解析到的真实路径
 }
 human() { numfmt --to=iec --suffix=B "$1" 2>/dev/null || echo "$1 B"; }
 
-# 本包自带的库（除 VFX 之外的一切 .so）
-mapfile -t BUNDLED < <(find "$LIB" -maxdepth 1 -name '*.so*' -type f | sort)
+# ── mpv 自己声明的最低版本（**从 meson.build 解析，不硬编码**）─────────────
+# mpv 的 `dependencies = [libass, libav*, libplacebo]` 是硬性依赖，且带 version floor；
+# 这些 floor 才是"系统够不够"的判据（比"我们构建机用了哪版"更有指导性）。
+declare -A MINVER=()
+MPV_MESON="$(dirname "$0")/../third_party/mpv/meson.build"
+if [ -f "$MPV_MESON" ]; then
+    while read -r name ver; do
+        [ -n "$name" ] && MINVER["$name"]="$ver"
+    done < <(grep -E "dependency\('[^']+', *version" "$MPV_MESON" \
+             | sed -nE "s/.*dependency\('([^']+)', *version: *'>= *([0-9.]+)'.*/\1 \2/p")
+fi
+# pkg-config 名 ↔ SONAME 基名不一致的少数几个（其余按"去 lib 前缀 + 小写"兜底）
+declare -A ALIAS=(
+    [libasound]=alsa [libEGL]=egl [libgbm]=gbm [libvdpau]=vdpau
+    [libdvdnav]=dvdnav [libmujs]=mujs [liblcms2]=lcms2 [libzimg]=zimg
+    [librubberband]=rubberband [libxkbcommon]=xkbcommon [libvulkan]=vulkan
+    [libX11]=x11 [libXext]=xext [libXfixes]=xfixes [libXrandr]=xrandr
+    [libXpresent]=xpresent [libXss]=xscrnsaver
+)
+minver_of() {  # minver_of <soname> -> mpv 要求的最低版本（没有则空）
+    local base="${1%.so*}" key
+    if [ -n "${ALIAS[$base]:-}" ]; then
+        printf '%s' "${MINVER[${ALIAS[$base]}]:-}"; return
+    fi
+    local v="${MINVER[$base]:-}"
+    if [ -n "$v" ]; then printf '%s' "$v"; return; fi
+    key="${base#lib}"; key="${key,,}"
+    printf '%s' "${MINVER[$key]:-}"
+}
+
+# 本包自带的库：full 把 Qt 放在 <stage>/lib/（不是 lib/vsr-player/），
+# 所以两个目录都要扫——否则表里会把 Qt 误报成"系统提供"（2026-10-26 实测踩到）。
+mapfile -t BUNDLED < <( { find "$LIB" -maxdepth 1 -name '*.so*' -type f
+                          [ -d "$STAGE/lib" ] && find "$STAGE/lib" -maxdepth 1 -name 'lib*.so*' -type f; } \
+                        | sort -u)
 
 # 所有 NEEDED（去掉 glibc 家族：那不是"组件"，是操作系统底座）
 mapfile -t NEEDED < <( { needed_of "$BIN"; needed_of "$LIB/libmpv.so.2"; } \
@@ -58,6 +91,11 @@ is_bundled() { local n="$1" f; for f in "${BUNDLED[@]}"; do [ "$(basename "$f")"
     done
     echo
     echo "## 本包携带的库（${#BUNDLED[@]} 个）"
+    if [ -d "$STAGE/lib/qt6" ]; then
+        echo
+        echo "另有 Qt 运行时：\`lib/qt6/plugins\`（$(find "$STAGE/lib/qt6/plugins" -name '*.so' 2>/dev/null | wc -l) 个插件）"
+        echo "与 \`lib/qt6/qml\`（$(find "$STAGE/lib/qt6/qml" -name '*.so' 2>/dev/null | wc -l) 个 QML 模块）。"
+    fi
     echo
     echo "| 文件 | SONAME | 大小 |"
     echo "|---|---|---|"
@@ -72,11 +110,11 @@ is_bundled() { local n="$1" f; for f in "${BUNDLED[@]}"; do [ "$(basename "$f")"
         echo "## 要求系统提供（本包未携带；构建机上的版本见右列）"
     fi
     echo
-    echo "| SONAME | 构建机版本 | 说明 |"
-    echo "|---|---|---|"
+    echo "| SONAME | 构建机版本 | mpv 要求 | 说明 |"
+    echo "|---|---|---|---|"
     for n in "${NEEDED[@]}"; do
         if bf="$(is_bundled "$n")"; then
-            printf '| `%s` | （本包自带） | %s |\n' "$n" "$(basename "$bf")"
+            printf '| `%s` | （本包自带） | — | %s |\n' "$n" "$(basename "$bf")"
             continue
         fi
         p="$(resolve "$n")"
@@ -87,7 +125,9 @@ is_bundled() { local n="$1" f; for f in "${BUNDLED[@]}"; do [ "$(basename "$f")"
             real="?"
             note="⚠ 构建机上未解析到（请核对）"
         fi
-        printf '| `%s` | `%s` | %s |\n' "$n" "$real" "$note"
+        mv="$(minver_of "$n")"
+        mvcol="—"; [ -n "$mv" ] && mvcol="≥ $mv"
+        printf '| `%s` | `%s` | %s | %s |\n' "$n" "$real" "$mvcol" "$note"
     done
     echo
     echo "## 外部组件 / 环境要求"
@@ -96,7 +136,8 @@ is_bundled() { local n="$1" f; for f in "${BUNDLED[@]}"; do [ "$(basename "$f")"
     echo '|---|---|'
     echo '| NVIDIA 驱动 | 支持 VFX SDK 1.3（本机 615.78.08 实测；含 `libcuda.so.1`） |'
     echo '| VideoFX (VFX) SDK | **不随包分发**（NVIDIA SLA）；`install.sh` 首次安装时从 pypi.nvidia.com 取 wheel（当前 0.2.0.0 = SDK 1.3+，含 VideoFrameGeneration / TrueHDR / ngx-vsr 1.8.3） |'
-    echo '| Vulkan loader | `libvulkan.so.1`（Qt Quick 渲染必需） |'
+    echo '| Vulkan loader | `libvulkan.so.1`（Qt Quick 渲染必需）；**构建期**还需 Vulkan 头 ≥ 1.3（FFmpeg/libplacebo 公共头依赖） |'
+    echo '| mpv 的构建期依赖 | wayland-protocols ≥ 1.38 与 wayland-scanner ≥ 1.23.0（因我们传 `-Dwayland=enabled`）；只在构建机需要，目标机不需要 |'
     if [ "$VARIANT" = full ]; then
         echo '| Qt | **已随包捆绑**（`lib/libQt6*.so.6` + `lib/qt6/{plugins,qml}`），目标机不需要系统 Qt |'
     else
