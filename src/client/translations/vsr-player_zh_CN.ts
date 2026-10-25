@@ -518,6 +518,74 @@
     </message>
 </context>
 <context>
+    <name>StereoOsd</name>
+    <message>
+        <location filename="../StereoOsd.qml" line="57"/>
+        <source>HotKeys</source>
+        <translation>热键</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="71"/>
+        <source>Toggle HotKeys Help</source>
+        <translation>显示/隐藏热键帮助</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="77"/>
+        <source>Side-by-Side</source>
+        <translation>左右并排</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="77"/>
+        <source>Top-and-Bottom</source>
+        <translation>上下</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="84"/>
+        <source>Normal Eyes</source>
+        <translation>正常眼序</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="84"/>
+        <source>Swapped Eyes</source>
+        <translation>交换眼序</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="91"/>
+        <source>Full</source>
+        <translation>全</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="91"/>
+        <source>Half</source>
+        <translation>半</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="100"/>
+        <source>Player</source>
+        <translation>播放器</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="109"/>
+        <source>Play / Pause</source>
+        <translation>播放 / 暂停</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="115"/>
+        <source>Seek -5s / +5s</source>
+        <translation>快退 5 秒 / 快进 5 秒</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="122"/>
+        <source>Seek -10s / +10s</source>
+        <translation>快退 10 秒 / 快进 10 秒</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="128"/>
+        <source>Volume</source>
+        <translation>音量</translation>
+    </message>
+</context>
+<context>
     <name>StereoPicker</name>
     <message>
         <location filename="../ui/StereoPicker.qml" line="43"/>

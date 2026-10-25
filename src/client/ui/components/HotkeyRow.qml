@@ -1,14 +1,14 @@
 import QtQuick
 
-/// HotKeys 列表的一行：键名 + 选项列表；当前选项用黄色/加粗标出。
-/// OSD 是眼镜上的键盘 UI，不接收鼠标；current 变化时整行淡黄闪一下，
-/// 作为快捷键切换后的即时反馈。
+/// HotKeys 列表的一行：键名 + 选项按钮（当前项用画质选项按钮同款样式）。
+/// OSD 是眼镜上的键盘 UI，按钮不接收鼠标；current 变化时整行淡黄闪一下。
 Item {
     id: root
     property string keyText: ""
     property var options: []
     property int current: 0
     property string actionText: ""
+    property int keyWidth: 78
     implicitHeight: 42
     implicitWidth: row.implicitWidth
 
@@ -22,9 +22,10 @@ Item {
     Row {
         id: row
         anchors.verticalCenter: parent.verticalCenter
-        spacing: 14
+        spacing: 12
+
         Text {
-            width: 78
+            width: root.keyWidth
             text: root.keyText
             color: "#ffcc00"
             font.pixelSize: 24
@@ -32,17 +33,30 @@ Item {
             font.bold: true
             anchors.verticalCenter: parent.verticalCenter
         }
+        Text {
+            visible: root.actionText !== ""
+            text: root.actionText
+            color: "#e0e0e0"
+            font.pixelSize: 20
+            font.weight: Font.DemiBold
+            anchors.verticalCenter: parent.verticalCenter
+        }
         Repeater {
-            model: root.actionText !== "" ? [root.actionText] : root.options
-            delegate: Text {
-                text: modelData
-                color: root.actionText !== ""
-                     ? "#e0e0e0"
-                     : (index === root.current ? "#ffcc00" : "#e0e0e0")
-                font.pixelSize: 24
-                font.weight: (root.actionText === "" && index === root.current)
-                             ? Font.Bold : Font.DemiBold
+            model: root.actionText === "" ? root.options : []
+            delegate: Rectangle {
+                width: Math.max(56, label.implicitWidth + 24)
+                height: 38
+                radius: 4
+                color: index === root.current ? "#33ffcc00" : "transparent"
                 anchors.verticalCenter: parent.verticalCenter
+                Text {
+                    id: label
+                    anchors.centerIn: parent
+                    text: modelData
+                    color: index === root.current ? "#ffcc00" : "#e0e0e0"
+                    font.pixelSize: 20
+                    font.weight: Font.DemiBold
+                }
             }
         }
     }

@@ -518,6 +518,74 @@
     </message>
 </context>
 <context>
+    <name>StereoOsd</name>
+    <message>
+        <location filename="../StereoOsd.qml" line="57"/>
+        <source>HotKeys</source>
+        <translation>HotKeys</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="71"/>
+        <source>Toggle HotKeys Help</source>
+        <translation>Toggle HotKeys Help</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="77"/>
+        <source>Side-by-Side</source>
+        <translation>Side-by-Side</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="77"/>
+        <source>Top-and-Bottom</source>
+        <translation>Top-and-Bottom</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="84"/>
+        <source>Normal Eyes</source>
+        <translation>Normal Eyes</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="84"/>
+        <source>Swapped Eyes</source>
+        <translation>Swapped Eyes</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="91"/>
+        <source>Full</source>
+        <translation>Full</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="91"/>
+        <source>Half</source>
+        <translation>Half</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="100"/>
+        <source>Player</source>
+        <translation>Player</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="109"/>
+        <source>Play / Pause</source>
+        <translation>Play / Pause</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="115"/>
+        <source>Seek -5s / +5s</source>
+        <translation>Seek -5s / +5s</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="122"/>
+        <source>Seek -10s / +10s</source>
+        <translation>Seek -10s / +10s</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="128"/>
+        <source>Volume</source>
+        <translation>Volume</translation>
+    </message>
+</context>
+<context>
     <name>StereoPicker</name>
     <message>
         <location filename="../ui/StereoPicker.qml" line="43"/>
