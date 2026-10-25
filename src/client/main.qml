@@ -454,19 +454,19 @@ Item {
         Shortcut {
             enabled: controlMode && stereo.active && root.shortcutsEnabled
             context: Qt.ApplicationShortcut
-            sequence: "J"
+            sequence: "j"
             onActivated: stereo.cycleLayout()
         }
         Shortcut {
             enabled: controlMode && stereo.active && root.shortcutsEnabled
             context: Qt.ApplicationShortcut
-            sequence: "K"
+            sequence: "k"
             onActivated: stereo.swapEyes()
         }
         Shortcut {
             enabled: controlMode && stereo.active && root.shortcutsEnabled
             context: Qt.ApplicationShortcut
-            sequence: "L"
+            sequence: "l"
             onActivated: stereo.toggleHalf()
         }
         Shortcut {

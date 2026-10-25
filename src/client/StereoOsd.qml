@@ -4,6 +4,7 @@
 // OSD 画在左右两半：眼镜的 SBS 3D 模式下，左半进左眼、右半进右眼，
 // 两只眼看到完全相同的内容。OSD 不参与任何视频/3D 映射。
 import QtQuick
+import "ui/components"
 
 Item {
     id: root
@@ -72,10 +73,10 @@ Item {
                         color: "#33ffffff"
                     }
 
-                    // 当前状态
+                    // 当前状态：所有两态选项用分段按钮展示，选中项即当前状态。
                     Column {
                         width: parent.width
-                        spacing: 6
+                        spacing: 8
                         Text {
                             width: parent.width
                             color: "#e0e0e0"; font.pixelSize: 21
@@ -84,27 +85,29 @@ Item {
                                 stereo.mode === 1 ? qsTr("3D source")
                                                   : qsTr("2D to 3D (not implemented)"))
                         }
-                        Text {
+                        OsdToggleRow {
                             width: parent.width
-                            color: "#e0e0e0"; font.pixelSize: 21
-                            font.weight: Font.DemiBold
-                            text: qsTr("Layout: %1  (J)").arg(
-                                stereo.layout === 0 ? qsTr("SBS") : qsTr("Top-Bottom"))
+                            label: qsTr("Layout")
+                            key: "J"
+                            labels: [qsTr("SBS"), qsTr("Top-Bottom")]
+                            current: stereo.layout
+                            buttonWidth: 230
                         }
-                        Text {
+                        OsdToggleRow {
                             width: parent.width
-                            color: "#e0e0e0"; font.pixelSize: 21
-                            font.weight: Font.DemiBold
-                            text: qsTr("Eyes: %1  (K)").arg(
-                                stereo.swap ? qsTr("Swapped") : qsTr("Normal"))
+                            label: qsTr("Eyes")
+                            key: "K"
+                            labels: [qsTr("Normal"), qsTr("Swapped")]
+                            current: stereo.swap ? 1 : 0
+                            buttonWidth: 200
                         }
-                        Text {
+                        OsdToggleRow {
                             width: parent.width
-                            color: "#e0e0e0"; font.pixelSize: 21
-                            font.weight: Font.DemiBold
-                            text: stereo.layout === 0
-                                ? qsTr("Width: %1  (L)").arg(stereo.half ? qsTr("Half") : qsTr("Full"))
-                                : qsTr("Height: %1  (L)").arg(stereo.half ? qsTr("Half") : qsTr("Full"))
+                            label: stereo.layout === 0 ? qsTr("Width") : qsTr("Height")
+                            key: "L"
+                            labels: [qsTr("Full"), qsTr("Half")]
+                            current: stereo.half ? 1 : 0
+                            buttonWidth: 160
                         }
                     }
 
@@ -124,9 +127,6 @@ Item {
                         spacing: 7
                         Repeater {
                             model: [
-                                { key: "J",   desc: qsTr("SBS / Top-Bottom") },
-                                { key: "K",   desc: qsTr("Swap left / right eye") },
-                                { key: "L",   desc: qsTr("Full / Half (split axis)") },
                                 { key: "Tab", desc: qsTr("Show / hide this OSD") },
                                 { key: "Space", desc: qsTr("Play / pause") },
                                 { key: "← / →", desc: qsTr("Seek -5s / +5s") },
