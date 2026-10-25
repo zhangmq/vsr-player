@@ -443,9 +443,8 @@ Item {
             enabled: root.shortcutsEnabled; sequence: "h"
             onActivated: stereo.active ? stereo.toggleOsd() : viewModel.toggleOsd()
         }
-        // 3D J/K/L/Tab 不再用 QML Shortcut：Tab 会被焦点遍历先吃掉，且
-        // Shortcut 的字母大小写等价 Shift；改由 main.cpp 的 StereoKeyFilter
-        // 在 QML 之前按 event->key() 拦截（大小写无关）。
+        // 3D H/J/K/L：H 走 app filter + QShortcut + QML Shortcut；J/K/L 走
+        // main.cpp 的 StereoKeyFilter（在 QML 之前按 event->key() 拦截，大小写无关）。
         Shortcut {
             // Ctrl+Q 退出（与右键菜单 Quit 一致；走标准退出路径）
             enabled: root.shortcutsEnabled; sequence: "Ctrl+Q"
@@ -569,7 +568,7 @@ Item {
     }
 
 
-    // 3D OSD：presentation 内覆盖层（不是独立窗口）；Tab 只切显示。
+    // 3D OSD：presentation 内覆盖层（不是独立窗口）；H 只切显示。
     Loader {
         id: stereoOsdOverlay
         anchors.fill: parent

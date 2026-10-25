@@ -361,17 +361,19 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - ⚠ **3D 热键统一装在 `QGuiApplication` 上**（2026-10-25）：装在两个
   `QQuickView` 上时，3D 焦点可能在 presentation/control 任一窗口，事件到不了
   过滤器。`StereoKeyFilter` 现在 `qApp->installEventFilter()`，按
-  `event->key()` 拦截：J/K/L/Tab（切换）+ Space（播放暂停）+ ←/→（±5s）+
+  `event->key()` 拦截：H/J/K/L（切换）+ Space（播放暂停）+ ←/→（±5s）+
   Shift+←/→（±10s）+ ↑/↓（音量）+ Ctrl+←/→（上一个/下一个）。大小写无关、
   允许 Shift；Alt/Meta 不拦；Ctrl 只处理 Ctrl+←/→，其它 Ctrl 组合放行。
   切换类忽略 auto-repeat，方向/音量允许连发。
   QML 里 3D 的 J/K/L 已删除，Space/方向/音量在 3D 时禁用
   （`&& !stereo.active`），只留 2D 路径；C++ 负责 3D，避免重复触发。
-  **OSD 帮助键已从 Tab 改为 H**（用户 2026-10-26 定）：Tab 是焦点遍历键，Qt Quick
-  focus chain 会先消费，QML `Shortcut`/`Keys` 经常看不到；H 是普通键，走
-  `StereoKeyFilter` + `QShortcut` + QML `Shortcut` 三条普通路径即可，不再需要
-  `QQuickView::event()` 特判。Tab/Backtab 绑定已全部删除；
-  `WindowDoesNotAcceptFocus` 保持原设计（不是 Tab 根因）；`send-key` 诊断 RPC 已删。
+  **OSD 帮助键已从 Tab 改为 H**（用户 2026-10-26 定）：所有 Tab/Backtab 相关代码
+  已全部回退/删除（app filter、QShortcut、QML Shortcut、QQuickView::event 特判、
+  send-key RPC），`WindowDoesNotAcceptFocus` 与 presentation 的 flags 恢复原样。
+  H 是普通键，走 `StereoKeyFilter` + `QShortcut` + QML `Shortcut` 三条普通路径。
+  注意：2D 主窗口的 QML `Shortcut` 本来就能触发 Tab（有焦点的主窗口），
+  3D 失效是当时该 Shortcut 被 `!stereo.active` 禁用后，C++ 路径又受窗口焦点影响，
+  不是“Tab 不能由 QML 处理”。
 - **上一个/下一个 = 全局 Ctrl+← / Ctrl+→**：2D 走 QML `Shortcut`
   （`enabled && !stereo.active`），3D 走 C++ 过滤器；`Ctrl+L` 是 URL 输入，
   与 Ctrl+方向键不冲突，项目内无重复绑定。

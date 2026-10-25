@@ -96,10 +96,9 @@ static bool expandInputs(const Options &opts, std::vector<std::string> *out) {
 }
 
 
-// 3D 热键：J/K/L/Tab 必须在按键层做大小写无关拦截。
-// 不能用 QML Shortcut：Tab 会先被焦点遍历吃掉；QKeySequence("J") 又等价于
-// Shift+J（大写绑定在无 Shift 时无效）。事件过滤器在 QML 之前收到 KeyPress，
-// 用 event->key() 判断，不受大小写/CapsLock 影响。
+// 3D 热键：H/J/K/L 在按键层做大小写无关拦截。
+// QKeySequence("J") 等价于 Shift+J（大写绑定在无 Shift 时无效）；
+// 事件过滤器在 QML 之前收到 KeyPress，用 event->key() 判断，不受大小写/CapsLock 影响。
 // 主窗口（presentation）：3D 时关闭 = 停止 3D 并把 3D 菜单复位为“不使用”，
 // 不退出应用；2D 时关闭 = 正常关闭主窗口（最后一个可见窗口 → 退出）。
 class StereoView : public QQuickView
@@ -553,7 +552,7 @@ int main(int argc, char *argv[]) {
         }
         stereo.setControlWindow(&controlView);
         // 两个窗口都装：presentation 通常不接焦点；control 窗口失焦时也能收到，
-        // 且绕开 QML Shortcut 的 Tab/大小写问题。
+        // 且绕开 QML Shortcut 的大小写问题。
         // 装在 QGuiApplication 上（不是两个 QQuickView 上）：3D 时焦点可能在
         // presentation/control 任一窗口，应用级过滤器才能稳定收到所有按键。
         auto *stereoKeyFilter = new StereoKeyFilter(&stereo, &viewModel, &app);
@@ -561,8 +560,7 @@ int main(int argc, char *argv[]) {
 
 
 
-        // QShortcut 作为第二道保险：Tab 在某些焦点状态下会被 QML 先处理，
-        // 应用级 QShortcut 仍能命中；J/K/L 同样兜底。
+        // QShortcut 作为第二道保险：J/K/L/H 都走应用级快捷键兜底。
         auto addStereoShortcut = [&](Qt::Key key, auto action) {
             auto *sc = new QShortcut(QKeySequence(key), &controlView);
             sc->setContext(Qt::ApplicationShortcut);
@@ -893,7 +891,7 @@ int main(int argc, char *argv[]) {
             // osdTextString 提供，与正常播放同一文本源）
             viewModel.showOsd();
         } else {
-            // 正常播放：初始隐藏（osd-level 0），Tab 切换显示
+            // 正常播放：初始隐藏（osd-level 0），H 切换显示
             mpv.setPropertyString("osd-level", "0");
         }
 
