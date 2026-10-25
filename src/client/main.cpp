@@ -107,6 +107,16 @@ class StereoView : public QQuickView
 public:
     StereoController *stereo = nullptr;
 protected:
+    bool event(QEvent *e) override {
+        if (e->type() == QEvent::KeyPress && stereo && stereo->active()) {
+            auto *ke = static_cast<QKeyEvent *>(e);
+            if ((ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab) && !ke->isAutoRepeat()) {
+                stereo->toggleOsd();
+                return true;
+            }
+        }
+        return QQuickView::event(e);
+    }
     void closeEvent(QCloseEvent *e) override {
         if (stereo && stereo->active()) {
             e->ignore();
@@ -121,7 +131,19 @@ protected:
 // 桌面主窗口（controlView）：关闭 = 退出应用。
 class ControlView : public QQuickView
 {
+public:
+    StereoController *stereo = nullptr;
 protected:
+    bool event(QEvent *e) override {
+        if (e->type() == QEvent::KeyPress && stereo && stereo->active()) {
+            auto *ke = static_cast<QKeyEvent *>(e);
+            if ((ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab) && !ke->isAutoRepeat()) {
+                stereo->toggleOsd();
+                return true;
+            }
+        }
+        return QQuickView::event(e);
+    }
     void closeEvent(QCloseEvent *e) override {
         QQuickView::closeEvent(e);
         QCoreApplication::quit();
@@ -537,6 +559,7 @@ int main(int argc, char *argv[]) {
         // Video，只保留 UI。3D 时主窗口（Video/VO）去眼镜屏，control 窗口
         // 在主 UI 原来的屏幕/几何上显示，主 UI 不会消失。
         ControlView controlView;
+        controlView.stereo = &stereo;
         controlView.setColor("#202020");
         controlView.setTitle("vsr-player");
         controlView.setResizeMode(QQuickView::SizeRootObjectToView);

@@ -315,9 +315,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   原来的屏幕/几何上显示，主 UI 不消失。3D 快捷键只在 control 窗口启用（两个窗口都载入
   main.qml，避免 `Qt.ApplicationShortcut` 重复触发）。
 - **presentation** = 主窗口（Video/VO）：`setScreen(眼镜屏)` + `showFullScreen`，加
-  `FramelessWindowHint | WindowStaysOnTopHint`（**不能加 `WindowDoesNotAcceptFocus`**，
-  否则眼镜/键盘发来的 Tab 会被合成器直接丢掉，app filter 收不到），
-  `showFullScreen()` 后 `requestActivate()`；光标 Blank；
+  `FramelessWindowHint | WindowStaysOnTopHint | WindowDoesNotAcceptFocus`，光标 Blank；
   主窗口 uiLayer 在 3D 时隐藏；OSD 是 presentation 内的 `StereoOsd.qml` 覆盖层
   （Loader，z=100），不是独立窗口。`Tab` 只切覆盖层；`J/K/L` 改布局/眼序/全半。
   实测 KWin 下满屏置顶覆盖了任务栏/面板，无其他可见内容。停止时恢复主窗口 flags/
@@ -370,9 +368,13 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   QML 里 3D 的 J/K/L 已删除，Space/方向/音量在 3D 时禁用
   （`&& !stereo.active`），只留 2D 路径；C++ 负责 3D，避免重复触发。
   另加了 J/K/L/Tab 的 `QShortcut`（`Qt::ApplicationShortcut`）+ QML `Shortcut`
-  （Tab 2D/3D 共用）+ Backtab 兜底。**已证实**：`send-key tab` 能打到 app filter
-  并隐藏 OSD；物理 Tab 无效的根因是 presentation 的 `WindowDoesNotAcceptFocus`
-  让合成器把键丢了，已移除并 `requestActivate()`。
+  （Tab 2D/3D 共用）+ Backtab 兜底。**Tab 的特殊性**：它是焦点遍历键，Qt Quick
+  的 focus chain 在 QQuickWindow/QQuickItem 层就消费它，QML `Shortcut`/`Keys`
+  经常看不到；其他快捷键是普通按键所以正常。正确层是 `StereoView` /
+  `ControlView` 覆写 `QQuickView::event()`，在 QML focus 之前拦 `Key_Tab` /
+  `Key_Backtab`，调共享 `stereo.toggleOsd()` 并吞掉。之前的
+  `WindowDoesNotAcceptFocus` 归因是错的（其他键正常说明焦点/投递没问题），已恢复；
+  `send-key` 诊断 RPC 已删除，生产交互不走 RPC。
 - **上一个/下一个 = 全局 Ctrl+← / Ctrl+→**：2D 走 QML `Shortcut`
   （`enabled && !stereo.active`），3D 走 C++ 过滤器；`Ctrl+L` 是 URL 输入，
   与 Ctrl+方向键不冲突，项目内无重复绑定。
