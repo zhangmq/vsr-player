@@ -181,12 +181,15 @@ void StereoController::start(int mode, int screenIndex) {
 
     // presentation：主窗口（Video/VO）移到眼镜屏，满屏、置顶、无边框、不收焦点。
     if (playerWin_) {
+        // 3D 窗口必须接受键盘焦点：WindowDoesNotAcceptFocus 会让眼镜/键盘
+        // 发来的 Tab 等按键被合成器丢掉，app filter 根本收不到。control 窗口
+        // 仍保持自己的焦点；按 Tab 时以当前活动窗口为准。
         playerWin_->setFlags(origFlags_ | Qt::FramelessWindowHint |
-                             Qt::WindowStaysOnTopHint |
-                             Qt::WindowDoesNotAcceptFocus);
+                             Qt::WindowStaysOnTopHint);
         playerWin_->setCursor(Qt::BlankCursor);
         playerWin_->setScreen(s);
         playerWin_->showFullScreen();
+        playerWin_->requestActivate();
     }
 
     preferredScreenName_ = s->name();

@@ -443,6 +443,10 @@ Item {
             enabled: root.shortcutsEnabled; sequence: "Tab"
             onActivated: stereo.active ? stereo.toggleOsd() : viewModel.toggleOsd()
         }
+        Shortcut {
+            enabled: root.shortcutsEnabled; sequence: "Backtab"
+            onActivated: stereo.active ? stereo.toggleOsd() : viewModel.toggleOsd()
+        }
         // 3D J/K/L/Tab 不再用 QML Shortcut：Tab 会被焦点遍历先吃掉，且
         // Shortcut 的字母大小写等价 Shift；改由 main.cpp 的 StereoKeyFilter
         // 在 QML 之前按 event->key() 拦截（大小写无关）。
