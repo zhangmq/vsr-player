@@ -155,9 +155,25 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
         Q_UNUSED(watched);
-        if (event->type() != QEvent::KeyPress || !stereo_->active())
+        if (!stereo_->active())
+            return false;
+        // 3D 下 Esc 一律吞掉：先吃 ShortcutOverride，再吃 KeyPress，
+        // 避免 QML Shortcut / 窗口层把全屏切回去。
+        if (event->type() == QEvent::ShortcutOverride) {
+            auto *ke = static_cast<QKeyEvent *>(event);
+            if (ke->key() == Qt::Key_Escape) {
+                event->accept();
+                return true;
+            }
+            return false;
+        }
+        if (event->type() != QEvent::KeyPress)
             return false;
         auto *ke = static_cast<QKeyEvent *>(event);
+        if (ke->key() == Qt::Key_Escape) {
+            MLOG_INFO("stereo key: Escape -> swallowed");
+            return true;
+        }
         if (ke->modifiers() & (Qt::AltModifier | Qt::MetaModifier))
             return false;
 
