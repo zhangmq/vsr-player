@@ -256,26 +256,41 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - ⚠ 旋转在 VFG **之前** → 横转竖会让 VFG 输入变成竖屏（如 720x1280）走慢路径
   （见插帧一节的竖屏实测），竖转横则相反。这是"VFX 之前旋转"的固有代价。
 
-### 3D OSD 原型（2026-10-25，分支 feat/stereo-osd-prototype）
+### 3D 输出（OSD + 视频映射，2026-10-25，分支 feat/stereo-osd-prototype）
 
-- 入口：右键菜单 3D 三态 **Off / 3D片源 / 2D转3D**；**运行期状态、不持久化**，
-  每次启动 Off。选中 1/2 → 选择器提示把眼镜切到 3D/SBS，列出 QScreen 供选择。
-- `StereoController` 在所选屏幕全屏创建 `StereoOsd.qml`（`Qt::WindowDoesNotAcceptFocus`）；
-  OSD 在左右两半各画一份（SBS 双眼可读），不参与视频映射。
-- `Tab` 显隐 3D OSD；`J` 布局 SBS/上下、`K` 交换左右眼、`L` 拉伸/保持比例；
-  仅更新 OSD 文本。**无 3D 视频输出、无 2D→3D 转换**（OSD 标注未实现）。
-- 可读性：标题/键名 Bold、正文 DemiBold/Medium；左右面板各 **±12 logical px
-  交叉视差**（左眼右移、右眼左移）→ 融合后 OSD 浮在屏幕平面前方；视差固定、
-  不受视频眼序 `stereo.swap` 影响（OSD 是 UI）。
-- ⚠ **KWin Wayland 窗口放置**：`setScreen()` 在 `show()` 之前对**初始放置**无效
-  （新窗口落在当前活动输出，实测会跑到副屏）。有效顺序：`show()` →
-  `setScreen(target)` → `showFullScreen()`（先让平台窗口存在，再移动，再全屏；
-  `setOpacity(0)` 遮掉窗口化的一帧）。实测四种顺序只有 b/d 落在 DP-1。
-- **OSD-only 原型**：只有 OSD 窗口移到眼镜；视频窗口仍在桌面（未做 3D 视频输出）。
-- 测试钩子（RPC）：`stereo-start/stop/osd/cycle/grab`、`stereo-picker`、`grab-window`。
-- 屏幕记忆：`stereoScreen`（QSettings，QScreen::name()）**只作为选择器的默认选中**，
-  不自动切屏、不自动启动；3D 三态本身仍每次启动 Off。
-- 待做：视频 3D 输出、2D→3D、i18n、眼镜 2D↔3D 模式切换时 OSD 窗口尺寸跟随。
+- 入口/流程：右键菜单 3D 三态 **Off / 3D片源 / 2D转3D**（运行期、不持久化，默认 Off）。
+  3D片源 → 选择器（QScreen 列表，名称+实际分辨率；**不假设 1080×2/不按宽高比猜眼镜**；
+  屏幕记忆只做默认选中，不自动切屏/启动）→ Start。2D转3D 本期只弹提示，不启动。
+- **主 UI 始终在桌面**：`main.cpp` 另建一个 `QQuickView controlView`，加载同一份
+  `main.qml` 但 `controlMode=true` → `Video` Loader 不创建，只有 UI。2D 时它隐藏、
+  主窗口（Video+UI）在桌面；3D 时主窗口去眼镜屏做 presentation，controlView 在主窗口
+  原来的屏幕/几何上显示，主 UI 不消失。3D 快捷键只在 control 窗口启用（两个窗口都载入
+  main.qml，避免 `Qt.ApplicationShortcut` 重复触发）。
+- **presentation** = 主窗口（Video/VO）：`setScreen(眼镜屏)` + `showFullScreen`，加
+  `FramelessWindowHint | WindowStaysOnTopHint | WindowDoesNotAcceptFocus`，光标 Blank；
+  主窗口 uiLayer 在 3D 时隐藏；OSD 是 presentation 内的 `StereoOsd.qml` 覆盖层
+  （Loader，z=100），不是独立窗口。`Tab` 只切覆盖层；`J/K/L` 改布局/眼序/全半。
+  实测 KWin 下满屏置顶覆盖了任务栏/面板，无其他可见内容。停止时恢复主窗口 flags/
+  光标/屏幕/几何，隐藏 controlView。
+- **屏拆分在 VO/合成阶段**：`vf_*`（VSR/VFG/TrueHDR）链路不动，滤镜仍处理完整
+  源帧；`CompositePipeline` 用 push constants 把输出窗口左右半映射到左右眼。
+  实测 VSR 仍 active（scale 随 presentation 窗口自动变 1.5），VFG 的
+  passthrough 是既有 `max-fps` 判定，不是 3D 改动。
+- **映射语义**（用户 2026-10-25 定）：SBS=左右，TAB=上下；`L` 按 split 轴切
+  **全/半**（SBS 全宽/半宽，TAB 全高/半高）。源眼画面保持自身比例，在“全/半 box”
+  内做 contain 并居中；全/半只决定 box（SBS 调宽、TAB 调高），不拉伸。目标屏按实际
+  尺寸；输出 framebuffer 恒 SBS，因此**眼视口 aspect = outAspect/2**（曾误用
+  outAspect 导致画面窄一半，已修）。源帧在 rtImage 里是 mpv letterbox 后的内容，
+  先算 contentRect 再取样。无红绿/anaglyph。
+- OSD：默认显示；`Tab` 显隐；`J` 布局、`K` 交换眼、`L` 全/半；标题/键名 Bold、
+  正文 DemiBold；左右面板 ±12 logical px 交叉视差（OSD 浮在画面前，独立于视频眼序）。
+- 不做“切回 2D 自动结束 3D”（目标不一定是 1080×2，无法可靠判断）；只有目标屏被
+  拔掉时 stop。`Esc` 不参与 3D。
+- 测试钩子（RPC）：`stereo-start <1> <screen-index>`、`stereo-stop`、
+  `stereo-osd <0|1>`、`stereo-cycle layout|swap|half`、`stereo-picker <1>`、
+  `grab-window <png>`。
+- 待做：i18n、2D→3D、多轨/其他 3D 格式、control UI 视频区域（当前黑底，视频只在
+  presentation）。
 
 ### 反交错（mpv 原生 `--deinterlace`，2026-10-22）
 

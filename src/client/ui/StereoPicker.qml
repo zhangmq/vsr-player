@@ -24,19 +24,11 @@ PopupBase {
     function openForMode(m) {
         pendingMode = m
         stereo.refreshScreens()
-        // 屏幕记忆只做默认选中，不自动切换/启动；没有记忆再选 32:9
-        // （眼镜 3D 模式），否则第一块。
+        // 屏幕记忆只做默认选中，不自动切换/启动；没有记忆选第一块。
+        // 不按分辨率/宽高比猜“眼镜屏”。
         selectedIndex = stereo.preferredScreenIndex()
-        if (selectedIndex < 0) {
+        if (selectedIndex < 0)
             selectedIndex = 0
-            for (var i = 0; i < stereo.screens.length; i++) {
-                var s = stereo.screens[i]
-                if (s.width >= s.height * 2.5) {
-                    selectedIndex = s.index
-                    break
-                }
-            }
-        }
         open()
     }
 
@@ -53,7 +45,7 @@ PopupBase {
         }
         Text {
             width: parent.width
-            text: qsTr("Switch the glasses to 3D / SBS mode first (VITURE: hold the Mode button). The glasses output should become 3840×1080. The desktop will not be readable on the glasses in that mode.")
+            text: qsTr("Switch the target display to its 3D / SBS mode first, then select that display below.")
             color: "#b0b0b0"; font.pixelSize: 14; wrapMode: Text.WordWrap
         }
         Text {
@@ -81,14 +73,6 @@ PopupBase {
                         text: modelData.name + "   " + modelData.width + " × " + modelData.height
                         color: "#e0e0e0"; font.pixelSize: 16
                     }
-                    Text {
-                        anchors.right: parent.right; anchors.rightMargin: 14
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: modelData.width >= modelData.height * 2.5 ? qsTr("SBS 3D")
-                                                                        : qsTr("2D / other")
-                        color: modelData.width >= modelData.height * 2.5 ? "#ffcc00" : "#808080"
-                        font.pixelSize: 14
-                    }
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -101,7 +85,7 @@ PopupBase {
 
         Text {
             width: parent.width
-            text: qsTr("The main window stays on this desktop; the glasses will show the 3D OSD.")
+            text: qsTr("The main UI stays on this desktop; the selected display shows the 3D video and OSD.")
             color: "#808080"; font.pixelSize: 13; wrapMode: Text.WordWrap
         }
 

@@ -1,6 +1,7 @@
 #include "Video.h"
 #include "Log.h"
 #include "MpvController.h"
+#include "StereoController.h"
 #include <QSGRenderNode>
 #include <QSGRendererInterface>
 #include <QQuickWindow>
@@ -15,6 +16,7 @@ void vkCmdBindDescriptorSets(VkCommandBuffer, VkPipelineBindPoint, VkPipelineLay
 void vkCmdDraw(VkCommandBuffer, uint32_t, uint32_t, uint32_t, uint32_t);
 void vkCmdSetViewport(VkCommandBuffer, uint32_t, uint32_t, const VkViewport*);
 void vkCmdSetScissor(VkCommandBuffer, uint32_t, uint32_t, const VkRect2D*);
+void vkCmdPushConstants(VkCommandBuffer, VkPipelineLayout, VkShaderStageFlags, uint32_t, uint32_t, const void*);
 VkResult vkQueueWaitIdle(VkQueue);
 VkResult vkBeginCommandBuffer(VkCommandBuffer, const VkCommandBufferBeginInfo*);
 VkResult vkEndCommandBuffer(VkCommandBuffer);
@@ -91,6 +93,11 @@ public:
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeNow);
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, layoutNow,
                                 0, 1, &curDs, 0, nullptr);
+        // 3D 合成参数：每帧取一次（布局/眼序/缩放可运行期切换）。
+        const StereoCompositeParams sp = owner
+            ? owner->stereoParams(fbW, fbH) : StereoCompositeParams{};
+        vkCmdPushConstants(cb, layoutNow, VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(sp), &sp);
         vkCmdDraw(cb, 3, 1, 0, 0);
     }
 
@@ -290,6 +297,25 @@ bool Video::ensureRenderTarget(int w, int h) {
     w_ = w; h_ = h; fmt_ = renderFormat_;
     MLOG_INFO("render target %dx%d fmt=%d", w_, h_, int(fmt_));
     return true;
+}
+
+StereoCompositeParams Video::stereoParams(int outW, int outH) const {
+    StereoCompositeParams p;
+    p.outAspect = outH > 0 ? float(outW) / float(outH) : 1.0f;
+    p.srcAspect = p.outAspect;
+    if (srcAspectFn_) {
+        const double a = srcAspectFn_();
+        if (a > 0.01 && a < 100.0)
+            p.srcAspect = float(a);
+    }
+    if (!stereo_ || !stereo_->active())
+        return p;
+    p.active = 1;
+    // 2D→3D 暂以“2D 复制到双眼”占位（无深度）；3D 片源走 SBS/上下。
+    p.layout = stereo_->layout();
+    p.swap = stereo_->swap() ? 1 : 0;
+    p.halfMode = stereo_->half() ? 1 : 0;
+    return p;
 }
 
 void Video::setCompositeObjects(VkPipeline pipe, VkPipelineLayout layout) {

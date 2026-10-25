@@ -1,7 +1,8 @@
 #include "CompositePipeline.h"
 #include "Log.h"
 #include "composite_vert_spv.h"
-#include "composite_frag_spv.h">
+#include "composite_frag_spv.h"
+#include "CompositeParams.h"
 
 extern "C" {
 VkResult vkCreateRenderPass(VkDevice, const VkRenderPassCreateInfo*, const VkAllocationCallbacks*, VkRenderPass*);
@@ -64,9 +65,13 @@ bool CompositePipeline::create(VkDevice dev, VkDescriptorSetLayout dsLayout,
         return false;
     }
 
+    // 片元阶段 push constants：3D 合成参数（24 B）。
+    VkPushConstantRange pcr = {
+        VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(StereoCompositeParams)
+    };
     VkPipelineLayoutCreateInfo plci = {
         VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        nullptr, 0, 1, &dsLayout, 0, nullptr
+        nullptr, 0, 1, &dsLayout, 1, &pcr
     };
     if (vkCreatePipelineLayout(dev, &plci, nullptr, &pipeLayout_) != VK_SUCCESS) {
         MLOG_ERR("vkCreatePipelineLayout failed");

@@ -10,17 +10,59 @@ Item {
     anchors.fill: parent
 
     // ── 渲染层（z 最低）────────────────────────────────────────────
-    Video {
-        id: video
+    // controlMode = 桌面 UI 窗口：不创建 Video（视频只在 presentation 主窗口）。
+    Loader {
+        id: videoLoader
         anchors.fill: parent
+        active: !controlMode
+        sourceComponent: Component {
+            Video {
+                id: video
+                anchors.fill: parent
+            }
+        }
     }
 
     // ── UI 层（benchmark 模式隐藏）────────────────────────────────
     Item {
         id: uiLayer   // 信号处理器作用域不含父对象——弹窗互斥须经 uiLayer 显式调用
+        // presentation 主窗口在 3D 时只留 Video + OSD；桌面 control 窗口
+        // 载入同一份 UI，主 UI 始终在桌面可用。
         anchors.fill: parent
-        visible: !benchmarkMode
+        visible: !benchmarkMode && (controlMode || !stereo.active)
         enabled: !benchmarkMode
+
+        // 2D→3D 占位提示（本期不启动 3D 输出）。
+        Rectangle {
+            id: stereoToast
+            z: 1000
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 96
+            width: toastText.implicitWidth + 32
+            height: 38
+            radius: 6
+            color: "#dd202020"
+            border.width: 1; border.color: "#33ffffff"
+            opacity: 0
+            visible: opacity > 0
+            Behavior on opacity { NumberAnimation { duration: 150 } }
+            Text {
+                id: toastText
+                anchors.centerIn: parent
+                color: "#e0e0e0"; font.pixelSize: 14
+            }
+            Timer {
+                id: toastTimer
+                interval: 2000
+                onTriggered: stereoToast.opacity = 0
+            }
+            function show(msg) {
+                toastText.text = msg
+                opacity = 1
+                toastTimer.restart()
+            }
+        }
 
         // ── Auto-hide ───────────────────────────────────────────────
         // 显示 = 底部区域 hover（bottomBar.mouseInRegion：热区+进度条+
@@ -246,7 +288,8 @@ Item {
             onRotateSelected: function(mode) { viewModel.setRotMode(mode) }
             onStereoSelected: function(mode) {
                 if (mode === 0) stereo.stop()
-                else stereoPicker.openForMode(mode)
+                else if (mode === 1) stereoPicker.openForMode(1)
+                else stereoToast.show(qsTr("2D to 3D is not implemented yet"))
             }
             onQuitRequested: Qt.quit()   // 走标准退出路径（watch-later 落盘）
         }
@@ -255,8 +298,10 @@ Item {
 
         // ── Fullscreen 双向同步 + 键盘（快捷键单点）─────────────────
         Connections { target: window
+            enabled: !controlMode
             function onVisibilityChanged() { viewModel.fullscreen = (window.visibility === Window.FullScreen) } }
         Connections { target: viewModel
+            enabled: !controlMode
             function onFullscreenChanged() {
                 var wantFs = viewModel.fullscreen
                 var isFs = (window.visibility === Window.FullScreen)
@@ -344,28 +389,28 @@ Item {
         // ── 3D OSD 原型：J/K/L + Tab（应用级，主窗口失焦也可用）─────
         // 3D 独有操作；正常播放的快进/音量/暂停键位不变。
         Shortcut {
-            enabled: stereo.active && root.shortcutsEnabled
+            enabled: controlMode && stereo.active && root.shortcutsEnabled
             context: Qt.ApplicationShortcut
             sequence: "Tab"
             onActivated: stereo.toggleOsd()
         }
         Shortcut {
-            enabled: stereo.active && root.shortcutsEnabled
+            enabled: controlMode && stereo.active && root.shortcutsEnabled
             context: Qt.ApplicationShortcut
             sequence: "J"
             onActivated: stereo.cycleLayout()
         }
         Shortcut {
-            enabled: stereo.active && root.shortcutsEnabled
+            enabled: controlMode && stereo.active && root.shortcutsEnabled
             context: Qt.ApplicationShortcut
             sequence: "K"
             onActivated: stereo.swapEyes()
         }
         Shortcut {
-            enabled: stereo.active && root.shortcutsEnabled
+            enabled: controlMode && stereo.active && root.shortcutsEnabled
             context: Qt.ApplicationShortcut
             sequence: "L"
-            onActivated: stereo.toggleFit()
+            onActivated: stereo.toggleHalf()
         }
         Shortcut {
             // Ctrl+Q 退出（与右键菜单 Quit 一致；走标准退出路径）
@@ -487,5 +532,16 @@ Item {
     property int stereoPickerMode: 1
     function openStereoPicker() {
         stereoPicker.openForMode(stereoPickerMode)
+    }
+
+
+    // 3D OSD：presentation 内覆盖层（不是独立窗口）；Tab 只切显示。
+    Loader {
+        id: stereoOsdOverlay
+        anchors.fill: parent
+        z: 100
+        active: !controlMode && stereo.active
+        visible: active
+        source: "StereoOsd.qml"
     }
 }

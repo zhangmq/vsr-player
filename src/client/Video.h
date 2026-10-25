@@ -1,10 +1,12 @@
 #pragma once
 #include <QQuickItem>
+#include "CompositeParams.h"
 #include <vulkan/vulkan.h>
 #include <atomic>
 #include <functional>
 
 class MpvController;
+class StereoController;
 
 /// Single-threaded video renderer.
 /// mpv work (update→render→reportSwap) happens in updatePaintNode on the main thread.
@@ -20,6 +22,11 @@ public:
     ~Video() override;
 
     void setMpvController(MpvController *mpv);
+    /// 3D 输出：合成片元着色器从该 controller 取布局/眼序/缩放。
+    void setStereoController(StereoController *s) { stereo_ = s; }
+    /// 源视频整帧比例（W/H），由 main.cpp 接 viewModel 的 videoWidth/Height。
+    void setSourceAspectProvider(std::function<double()> fn) { srcAspectFn_ = std::move(fn); }
+    StereoCompositeParams stereoParams(int outW, int outH) const;
     bool initRenderTarget(VkDevice dev, VkPhysicalDevice pd, uint32_t qfi, VkQueue queue);
     void setCompositeObjects(VkPipeline pipe, VkPipelineLayout layout);
     /// 合成节点在**渲染阶段**读这两个 getter（而不是缓存句柄）：运行期
@@ -77,6 +84,8 @@ protected:
 
 private:
     MpvController   *mpv_ = nullptr;
+    StereoController *stereo_ = nullptr;
+    std::function<double()> srcAspectFn_;
     VkDevice         dev_ = VK_NULL_HANDLE;
     VkPhysicalDevice pd_ = VK_NULL_HANDLE;
     VkQueue          queue_ = VK_NULL_HANDLE;

@@ -457,8 +457,8 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             char *e1 = nullptr, *e2 = nullptr;
             long mode = strtol(args[0].c_str(), &e1, 10);
             long idx  = strtol(args[1].c_str(), &e2, 10);
-            if (!e1 || *e1 || !e2 || *e2 || (mode != 1 && mode != 2) || idx < 0) {
-                response = formatResponse("invalid mode/screen (mode 1|2, index>=0)");
+            if (!e1 || *e1 || !e2 || *e2 || mode != 1 || idx < 0) {
+                response = formatResponse("invalid mode/screen (mode 1, index>=0)");
             } else {
                 QMetaObject::invokeMethod(stereo_, "start", Qt::QueuedConnection,
                                           Q_ARG(int, (int)mode),
@@ -516,16 +516,6 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             }, Qt::QueuedConnection);
             response = formatResponse("success");
         }
-    } else if (cmd == "stereo-grab") {
-        if (!stereo_) {
-            response = formatResponse("no stereo controller");
-        } else if (args.empty()) {
-            response = formatResponse("missing path");
-        } else {
-            QMetaObject::invokeMethod(stereo_, "grabToFile", Qt::QueuedConnection,
-                                      Q_ARG(QString, QString::fromStdString(args[0])));
-            response = formatResponse("success");
-        }
     } else if (cmd == "stereo-cycle") {
         if (!stereo_) {
             response = formatResponse("no stereo controller");
@@ -537,11 +527,11 @@ void RpcServer::handleLine(int fd, const std::string &line) {
         } else if (args[0] == "swap") {
             QMetaObject::invokeMethod(stereo_, "swapEyes", Qt::QueuedConnection);
             response = formatResponse("success");
-        } else if (args[0] == "fit") {
-            QMetaObject::invokeMethod(stereo_, "toggleFit", Qt::QueuedConnection);
+        } else if (args[0] == "half") {
+            QMetaObject::invokeMethod(stereo_, "toggleHalf", Qt::QueuedConnection);
             response = formatResponse("success");
         } else {
-            response = formatResponse("invalid value (layout|swap|fit)");
+            response = formatResponse("invalid value (layout|swap|half)");
         }
     } else {
         response = formatResponse("unknown command");

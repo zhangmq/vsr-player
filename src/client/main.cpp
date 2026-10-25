@@ -409,12 +409,14 @@ int main(int argc, char *argv[]) {
         view.rootContext()->setContextProperty("viewModel", &viewModel);
         view.rootContext()->setContextProperty("window", &view);
         view.rootContext()->setContextProperty("stereo", &stereo);
+        stereo.setPlayerWindow(&view);
         // 图标字体：随项目分发（third_party，VSR_ICON_FONT 宏注入），
         // C++ 加载并注入 family 名。注意必须是 context property——
         // qmlcachegen AOT 编译不支持动态作用域（组件内引用父级未声明
         // 属性会解析失败 → font.family 空 → 图标乱码）。
         // 安装部署 fallback：<appdir>/../share/vsr-player/fonts/（install.sh
         // 复制字体到该位置；宏路径是开发机绝对路径，安装后不可用）。
+        QString iconFont;
         {
             QString fontPath = QString::fromLatin1(VSR_ICON_FONT);
             int fid = QFontDatabase::addApplicationFont(fontPath);
@@ -423,7 +425,7 @@ int main(int argc, char *argv[]) {
                          + "/../share/vsr-player/fonts/materialdesignicons-webfont.ttf";
                 fid = QFontDatabase::addApplicationFont(fontPath);
             }
-            QString iconFont = fid >= 0
+            iconFont = fid >= 0
                 ? QFontDatabase::applicationFontFamilies(fid).value(0)
                 : QString();
             view.rootContext()->setContextProperty("iconFont", iconFont);
@@ -431,6 +433,30 @@ int main(int argc, char *argv[]) {
                  fontPath.toUtf8().constData());
         }
         view.rootContext()->setContextProperty("benchmarkMode", opts.benchmark);
+        view.rootContext()->setContextProperty("controlMode", false);
+
+        // 桌面 control 窗口：同一份 main.qml，但 controlMode=true → 不创建
+        // Video，只保留 UI。3D 时主窗口（Video/VO）去眼镜屏，control 窗口
+        // 在主 UI 原来的屏幕/几何上显示，主 UI 不会消失。
+        QQuickView controlView;
+        controlView.setColor("#202020");
+        controlView.setTitle("vsr-player");
+        controlView.setResizeMode(QQuickView::SizeRootObjectToView);
+        controlView.resize(1280, 720);
+        controlView.rootContext()->setContextProperty("viewModel", &viewModel);
+        controlView.rootContext()->setContextProperty("window", &controlView);
+        controlView.rootContext()->setContextProperty("stereo", &stereo);
+        controlView.rootContext()->setContextProperty("iconFont", iconFont);
+        controlView.rootContext()->setContextProperty("benchmarkMode", false);
+        controlView.rootContext()->setContextProperty("controlMode", true);
+        controlView.setSource(QUrl("qrc:/main.qml"));
+        if (controlView.status() != QQuickView::Ready) {
+            for (const auto &e : controlView.errors())
+                MLOG_ERR("control QML error: %s", e.toString().toUtf8().constData());
+            return 1;
+        }
+        stereo.setControlWindow(&controlView);
+        MLOG_INFO("control window ready");
 
         view.setSource(QUrl("qrc:/main.qml"));
         if (view.status() != QQuickView::Ready) {
@@ -590,6 +616,11 @@ int main(int argc, char *argv[]) {
 
         // ── Wire Video ────────────────────────────────────────────────
         video->setMpvController(&mpv);
+        video->setStereoController(&stereo);
+        video->setSourceAspectProvider([&viewModel]() {
+            const int w = viewModel.videoWidth(), h = viewModel.videoHeight();
+            return (w > 0 && h > 0) ? double(w) / double(h) : 0.0;
+        });
         video->setFrameRenderedCallback([&viewModel]() {
             viewModel.notifyFrameRendered();
         });

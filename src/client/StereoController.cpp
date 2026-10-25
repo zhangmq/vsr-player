@@ -3,11 +3,9 @@
 #include "Log.h"
 
 #include <QGuiApplication>
-#include <QQmlContext>
-#include <QQuickView>
+#include <QQuickWindow>
 #include <QScreen>
 #include <QVariantMap>
-#include <QImage>
 
 StereoController::StereoController(QObject *parent) : QObject(parent) {
     connect(qApp, &QGuiApplication::screenAdded, this, [this](QScreen *s) {
@@ -24,9 +22,7 @@ StereoController::StereoController(QObject *parent) : QObject(parent) {
     refreshScreens();
 }
 
-StereoController::~StereoController() {
-    destroyOsdView();
-}
+StereoController::~StereoController() = default;
 
 QScreen *StereoController::screenAt(int index) const {
     if (index < 0 || index >= screenPtrs_.size())
@@ -37,7 +33,6 @@ QScreen *StereoController::screenAt(int index) const {
 void StereoController::refreshScreens() {
     screenPtrs_ = QGuiApplication::screens();
     screens_.clear();
-    QStringList names;
     for (int i = 0; i < screenPtrs_.size(); ++i) {
         QScreen *s = screenPtrs_[i];
         QVariantMap m;
@@ -47,17 +42,13 @@ void StereoController::refreshScreens() {
         m.insert("height", s->geometry().height());
         m.insert("model", s->model());
         screens_.append(m);
-        names << QStringLiteral("%1:%2 %3x%4")
-                     .arg(i).arg(s->name())
-                     .arg(s->geometry().width())
-                     .arg(s->geometry().height());
         MLOG_INFO("stereo: screen %d = %s (%dx%d)", i,
                   s->name().toUtf8().constData(),
                   s->geometry().width(), s->geometry().height());
     }
     emit screensChanged();
 
-    // 正在放映的屏幕被拔掉 → 结束会话（避免残留窗口/状态）。
+    // 目标屏被拔掉 → 结束会话并清理窗口；不做“切回 2D 自动结束”。
     if (active_) {
         bool found = false;
         for (QScreen *s : screenPtrs_)
@@ -71,47 +62,6 @@ void StereoController::refreshScreens() {
     }
 }
 
-void StereoController::createOsdView(QScreen *screen) {
-    osdView_ = new QQuickView();
-    osdView_->setColor(Qt::black);
-    // 3D 期间不要让眼镜窗口抢焦点：主窗口保持焦点，全局快捷键（J/K/L/Tab）
-    // 仍然有效；必要时也可以直接看主窗口状态。
-    osdView_->setFlags(Qt::Window | Qt::FramelessWindowHint |
-                       Qt::WindowDoesNotAcceptFocus);
-    osdView_->setResizeMode(QQuickView::SizeRootObjectToView);
-    osdView_->setScreen(screen);
-    osdView_->rootContext()->setContextProperty("stereo", this);
-    osdView_->setSource(QUrl("qrc:/StereoOsd.qml"));
-    if (osdView_->status() != QQuickView::Ready) {
-        for (const auto &e : osdView_->errors())
-            MLOG_ERR("stereo: OSD QML error: %s",
-                     e.toString().toUtf8().constData());
-        delete osdView_;
-        osdView_ = nullptr;
-        return;
-    }
-    // ⚠ Wayland/KWin：在 show() 之前 setScreen() 对**初始放置**不生效
-    // （新窗口会落在当前活动输出）。实测有效顺序：先 show() 让平台窗口
-    // 创建，再 setScreen(target) 把它移到目标输出，最后 showFullScreen()
-    // 在该输出全屏。setOpacity(0) 遮掉窗口化的一帧闪烁，全屏后再恢复。
-    osdView_->setOpacity(0.0);
-    osdView_->show();
-    osdView_->setScreen(screen);
-    osdView_->showFullScreen();
-    osdView_->setOpacity(1.0);
-    MLOG_INFO("stereo: OSD window on %s (%dx%d)",
-              screen->name().toUtf8().constData(),
-              screen->geometry().width(), screen->geometry().height());
-}
-
-void StereoController::destroyOsdView() {
-    if (!osdView_)
-        return;
-    osdView_->close();
-    delete osdView_;
-    osdView_ = nullptr;
-}
-
 int StereoController::preferredScreenIndex() const {
     if (preferredScreenName_.isEmpty())
         return -1;
@@ -122,7 +72,8 @@ int StereoController::preferredScreenIndex() const {
 }
 
 void StereoController::start(int mode, int screenIndex) {
-    if (mode != 1 && mode != 2)
+    // 2D→3D 本期只占位：不创建 presentation、不伪造 3D。
+    if (mode != 1)
         return;
     QScreen *s = screenAt(screenIndex);
     if (!s) {
@@ -130,37 +81,84 @@ void StereoController::start(int mode, int screenIndex) {
         return;
     }
     if (active_)
-        destroyOsdView();
+        stop();
 
     mode_ = mode;
     layout_ = 0;
     swap_ = false;
-    fit_ = false;
+    half_ = false;
     osdVisible_ = true;
     screenName_ = s->name();
     active_ = true;
-    // 记忆仅作为下次选择器的默认选中；不在这里/启动时自动切屏。
+
+    if (playerWin_) {
+        origScreen_ = playerWin_->screen();
+        origGeom_ = playerWin_->geometry();
+        origFullScreen_ = (playerWin_->visibility() == QWindow::FullScreen);
+        origFlags_ = playerWin_->flags();
+        origCursor_ = playerWin_->cursor();
+    }
+
+    // 桌面 control 窗口：沿用主窗口进入 3D 前的屏幕/几何，让主 UI 看起来没“消失”。
+    if (controlWin_) {
+        if (origScreen_)
+            controlWin_->setScreen(origScreen_);
+        if (origFullScreen_) {
+            controlWin_->showFullScreen();
+        } else {
+            controlWin_->showNormal();
+            if (origGeom_.isValid())
+                controlWin_->setGeometry(origGeom_);
+        }
+        controlWin_->requestActivate();
+    }
+
+    // presentation：主窗口（Video/VO）移到眼镜屏，满屏、置顶、无边框、不收焦点。
+    if (playerWin_) {
+        playerWin_->setFlags(origFlags_ | Qt::FramelessWindowHint |
+                             Qt::WindowStaysOnTopHint |
+                             Qt::WindowDoesNotAcceptFocus);
+        playerWin_->setCursor(Qt::BlankCursor);
+        playerWin_->setScreen(s);
+        playerWin_->showFullScreen();
+    }
+
     preferredScreenName_ = s->name();
     settings_.setValue("stereoScreen", preferredScreenName_);
     settings_.sync();
-    createOsdView(s);
-    if (!osdView_) {
-        active_ = false;
-        mode_ = 0;
-        screenName_.clear();
-    }
+
     emit stateChanged();
     emit osdVisibleChanged();
+    MLOG_INFO("stereo: presentation on %s (%dx%d)", s->name().toUtf8().constData(),
+              s->geometry().width(), s->geometry().height());
 }
 
 void StereoController::stop() {
-    if (!active_ && !osdView_)
+    if (!active_)
         return;
-    destroyOsdView();
+
+    if (controlWin_)
+        controlWin_->hide();
+
+    if (playerWin_) {
+        playerWin_->setFlags(origFlags_);
+        playerWin_->setCursor(origCursor_);
+        if (origScreen_)
+            playerWin_->setScreen(origScreen_);
+        if (origFullScreen_) {
+            playerWin_->showFullScreen();
+        } else {
+            playerWin_->showNormal();
+            if (origGeom_.isValid())
+                playerWin_->setGeometry(origGeom_);
+        }
+    }
+
     active_ = false;
     mode_ = 0;
     screenName_.clear();
     emit stateChanged();
+    MLOG_INFO("stereo: stopped");
 }
 
 void StereoController::cycleLayout() {
@@ -177,10 +175,10 @@ void StereoController::swapEyes() {
     emit stateChanged();
 }
 
-void StereoController::toggleFit() {
+void StereoController::toggleHalf() {
     if (!active_)
         return;
-    fit_ = !fit_;
+    half_ = !half_;
     emit stateChanged();
 }
 
@@ -195,16 +193,4 @@ void StereoController::setOsdVisible(bool v) {
         return;
     osdVisible_ = v;
     emit osdVisibleChanged();
-}
-
-bool StereoController::grabToFile(const QString &path) {
-    if (!osdView_)
-        return false;
-    QImage img = osdView_->grabWindow();
-    if (img.isNull())
-        return false;
-    bool ok = img.save(path);
-    MLOG_INFO("stereo: grab %dx%d -> %s (ok=%d)", img.width(), img.height(),
-              path.toUtf8().constData(), ok);
-    return ok;
 }

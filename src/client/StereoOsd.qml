@@ -7,16 +7,19 @@ import QtQuick
 
 Item {
     id: root
+    width: parent ? parent.width : 0
+    height: parent ? parent.height : 0
 
     // OSD 的双眼视差（logical px）：左半右移、右半左移 = crossed disparity，
     // 融合后 OSD 看起来浮在屏幕平面前方（在视频画面之上）。固定值、不受
     // 视频眼序（stereo.swap）影响——OSD 是 UI，不属于片源。
     readonly property int parallax: 12
 
-    // 整块黑底：SBS 模式下左右两半都是黑的，OSD 才有内容。
+    // 透明窗口：视频由主窗口合成在下面，OSD 只画面板/文字。
+    // （独立 OSD 窗口测试时也可用 VSR_STEREO_OSD_OPAQUE=1 改回黑底。）
     Rectangle {
         anchors.fill: parent
-        color: "black"
+        color: "transparent"
     }
 
     // 左右各一份（始终两份；即使当前屏幕不是 32:9，也能在副屏上预览
@@ -57,7 +60,7 @@ Item {
                     }
                     Text {
                         width: parent.width
-                        text: qsTr("This is the 3D shortcut overlay only. 3D video output is not implemented yet.")
+                        text: qsTr("3D video output is active. 2D to 3D is not implemented yet.")
                         color: "#b8b8b8"
                         font.pixelSize: 17
                         font.weight: Font.Medium
@@ -99,8 +102,9 @@ Item {
                             width: parent.width
                             color: "#e0e0e0"; font.pixelSize: 21
                             font.weight: Font.DemiBold
-                            text: qsTr("Scale: %1  (L)").arg(
-                                stereo.fit ? qsTr("Fit") : qsTr("Stretch"))
+                            text: stereo.layout === 0
+                                ? qsTr("Width: %1  (L)").arg(stereo.half ? qsTr("Half") : qsTr("Full"))
+                                : qsTr("Height: %1  (L)").arg(stereo.half ? qsTr("Half") : qsTr("Full"))
                         }
                     }
 
@@ -122,7 +126,7 @@ Item {
                             model: [
                                 { key: "J",   desc: qsTr("SBS / Top-Bottom") },
                                 { key: "K",   desc: qsTr("Swap left / right eye") },
-                                { key: "L",   desc: qsTr("Stretch / Fit") },
+                                { key: "L",   desc: qsTr("Full / Half (split axis)") },
                                 { key: "Tab", desc: qsTr("Show / hide this OSD") },
                                 { key: "Space", desc: qsTr("Play / pause") },
                                 { key: "← / →", desc: qsTr("Seek -5s / +5s") },
@@ -151,7 +155,7 @@ Item {
 
                     Text {
                         width: parent.width
-                        text: qsTr("Exit: take off the glasses and close from the desktop, or switch the glasses back to 2D first.")
+                        text: qsTr("Exit: use 3D → Off on the desktop UI, or close the app.")
                         color: "#909090"; font.pixelSize: 16
                         font.weight: Font.Medium
                         wrapMode: Text.WordWrap
