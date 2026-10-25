@@ -271,10 +271,13 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   3840×1080）；选择器通过 `kscreen-doctor -j` 的 `currentModeId` → mode `size`
   取物理分辨率（KDE/KWin 专属；找不到工具时退回 QScreen 尺寸）。`QScreen::model`
   （VITURE/DELL/LG）用于显示名称。
-- 菜单/选择器关闭顺序：`ContextMenu` 二级项**先 close 再发 subSig**；
-  `StereoPicker` 的 Start **先 close 再 stereo.start**——否则 popup 会跟着
-  主窗口跑到眼镜屏上。3D active 期间 `Escape` Shortcut 禁用（主窗口被合成器
-  聚焦时 Esc 退全屏会切回焦点屏）；退出用桌面 3D → Off。
+- 菜单/选择器关闭顺序：`ContextMenu` 二级项**先发 subSig 再 close**——
+  close 会拆 popup 的临时 grab/内容，之后 `root[subSig]` 的动态调用可能不生效
+  （2026-10-25 实测 3D 二级项点击无反应）；窗口移动前关闭 popup 由
+  `StereoPicker` 的 Start 负责（**先 close 再 stereo.start**）。选择器打开时
+  不再同步跑 `kscreen-doctor`（屏幕列表由 screenAdded/Removed/geometryChanged
+  维护），避免点菜单后卡顿。3D active 期间 `Escape` Shortcut 禁用（主窗口被
+  合成器聚焦时 Esc 退全屏会切回焦点屏）；退出用桌面 3D → Off。
 - **主 UI 始终在桌面**：`main.cpp` 另建一个 `QQuickView controlView`，加载同一份
   `main.qml` 但 `controlMode=true` → `Video` Loader 不创建，只有 UI。2D 时它隐藏、
   主窗口（Video+UI）在桌面；3D 时主窗口去眼镜屏做 presentation，controlView 在主窗口

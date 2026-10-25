@@ -299,12 +299,14 @@ PopupBase {
                         onClicked: {
                             var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
                             var value = modelData.value
-                            // 先关菜单再执行：3D 片源会打开选择器/移动主窗口，
-                            // 晚关的菜单会跟到眼镜屏上。
+                            // 必须先发信号再 close：close 会拆 popup 的临时
+                            // grab/内容，之后 root[subSig] 的动态调用可能不生效
+                            // （2026-10-25 实测 3D 二级项点击无反应）。窗口移动
+                            // 前关闭 popup 由 StereoPicker 的 Start 负责。
+                            if (it && it.subSig) root[it.subSig](value)
                             root.subOpen = false
                             root.subIndex = -1
                             root.close()
-                            if (it && it.subSig) root[it.subSig](value)
                         }
                     }
                 }

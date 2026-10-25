@@ -23,7 +23,8 @@ PopupBase {
 
     function openForMode(m) {
         pendingMode = m
-        stereo.refreshScreens()
+        // 屏幕列表由 StereoController 的 screenAdded/Removed/geometryChanged
+        // 维护；这里不再同步跑 kscreen-doctor，避免点菜单后卡顿。
         // 屏幕记忆只做默认选中，不自动切换/启动；没有记忆选第一块。
         // 不按分辨率/宽高比猜“眼镜屏”。
         selectedIndex = stereo.preferredScreenIndex()
