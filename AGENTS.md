@@ -264,6 +264,9 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   OSD 在左右两半各画一份（SBS 双眼可读），不参与视频映射。
 - `Tab` 显隐 3D OSD；`J` 布局 SBS/上下、`K` 交换左右眼、`L` 拉伸/保持比例；
   仅更新 OSD 文本。**无 3D 视频输出、无 2D→3D 转换**（OSD 标注未实现）。
+- 可读性：标题/键名 Bold、正文 DemiBold/Medium；左右面板各 **±12 logical px
+  交叉视差**（左眼右移、右眼左移）→ 融合后 OSD 浮在屏幕平面前方；视差固定、
+  不受视频眼序 `stereo.swap` 影响（OSD 是 UI）。
 - 测试钩子（RPC）：`stereo-start/stop/osd/cycle/grab`、`stereo-picker`、`grab-window`。
 - 待做：视频 3D 输出、2D→3D、i18n、眼镜 2D↔3D 模式切换时 OSD 窗口尺寸跟随。
 
