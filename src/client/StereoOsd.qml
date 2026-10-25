@@ -52,7 +52,6 @@ Item {
                         text: qsTr("HotKeys")
                         color: "#ffcc00"
                         font.pixelSize: root.osdFontSize
-                        font.bold: true
                     }
                     Rectangle {
                         width: contentWidth; height: 1

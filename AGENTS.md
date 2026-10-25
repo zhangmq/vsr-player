@@ -339,7 +339,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   3D 状态**不用按钮**，纯文本 + 颜色区分（选中 `#ffcc00`，未选 `#e0e0e0`），
   避免按钮宽度破坏对齐；切换后该行淡黄闪 500ms。OSD 全部文字只用
   **一个字号 = 正常 UI 字号 13 + 1 = 14**（标题/键名/状态/说明同字号；
-  标题 bold），不再有 20/24/32 等多套。
+  标题也不加粗/不放大），不再有 20/24/32 等多套。
   左列 `J: Side-by-Side / Top-and-Bottom`、`K: Normal Eyes / Swapped Eyes`、
   `L: Full / Half`；右列 `←`/`→`（±5s）、`Shift+←`/`Shift+→`（±10s）、
   `↑`/`↓`（音量 ±）、`N: Next`、`B: Previous`（中文“下一个/上一个”）。
