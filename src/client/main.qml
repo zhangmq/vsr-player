@@ -568,7 +568,17 @@ Item {
     }
 
 
-    // 3D OSD：presentation 内覆盖层（不是独立窗口）；H 只切显示。
+    // 音量提示：独立于 3D 快捷键帮助面板，2D/3D 都显示。
+    StereoVolume {
+        id: volumeOsd
+        anchors.fill: parent
+        z: 99
+        active: !controlMode
+        volume: viewModel.volume
+        muted: viewModel.muted
+    }
+
+    // 3D 快捷键帮助面板：presentation 内覆盖层（不是独立窗口）；H 只切显示。
     Loader {
         id: stereoHotkeyHelpOverlay
         anchors.fill: parent

@@ -377,8 +377,12 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **上一个/下一个 = 全局 Ctrl+← / Ctrl+→**：2D 走 QML `Shortcut`
   （`enabled && !stereo.active`），3D 走 C++ 过滤器；`Ctrl+L` 是 URL 输入，
   与 Ctrl+方向键不冲突，项目内无重复绑定。
+- **音量提示（2026-10-26）**：独立的 `ui/StereoVolume.qml`，**不是** 3D 快捷键
+  帮助面板内容，与 `helpVisible` 完全无关。2D 一份；3D 左右眼各一份（±12 视差）。
+  音量变化时显示 1.5s，系统 OSD 风格（扬声器图标 + `#44ffffff`/`#e0e0e0` 横条 +
+  百分比）；2D/3D 都显示，`controlMode` 不显示。绑定 `viewModel.volumeChanged`。
 - **3D 映射变化必须重绘当前帧**：`StereoController::stateChanged` 连到
-  `Video::update()`；否则暂停时切 L（全/半）只改 OSD 状态，画面要等下一帧。
+  `Video::update()`；否则暂停时切 L（全/半）只改帮助面板状态，画面要等下一帧。
 - **窗口关闭语义**：`StereoView`（presentation/3D 窗口）在 3D 时收到 close
   → `ignore()` + `stereo.stop()`，3D 菜单随 `mode_=0` 回退“不使用”，不退出；
   2D 时正常关闭 → 退出。`ControlView`（桌面主窗口）关闭 → `quit()`。
