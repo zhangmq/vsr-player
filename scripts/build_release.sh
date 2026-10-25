@@ -127,10 +127,16 @@ cp -L "$MPV_DIST/_build/libmpv.so.2" "$STAGE/lib/vsr-player/libmpv.so.2"
 # （libavcodec.so.63）改成无版本名（libavcodec.so），由安装时按**目标机实际版本**
 # 建链接 —— 这样包本身不再钉任何 FFmpeg 版本。只用 FFmpeg 家族：libnvrtc 的符号
 # 版本命名空间就是 soname，改 NEEDED 会破坏符号版本（见 rewrite-needed.py 注释）。
+# 绝对路径形式的 NEEDED（libmujs）两个变体都要改成 basename；FFmpeg 去版本化
+# 只在 standard 做（full 自带匹配的库，没必要改）。
 if [ "$VARIANT" = standard ]; then
+    python3 scripts/rewrite-needed.py --ffmpeg \
+        "$STAGE/lib/vsr-player/libmpv.so.2" "$STAGE/mpv-vsr"
+    echo "  ✓ FFmpeg NEEDED 去版本化 + 绝对路径去目录（安装时链接系统实际版本）"
+else
     python3 scripts/rewrite-needed.py \
         "$STAGE/lib/vsr-player/libmpv.so.2" "$STAGE/mpv-vsr"
-    echo "  ✓ FFmpeg NEEDED 已改为无版本名（安装时链接系统实际版本）"
+    echo "  ✓ 绝对路径 NEEDED 去目录（libmujs）"
 fi
 # Wayland 空闲抑制模块（可选）：主程序 dlopen；目标机无 QtWaylandClient 时
 # 加载失败 → 回退 org.freedesktop.ScreenSaver（不会导致启动失败）。
@@ -248,6 +254,35 @@ for _ in 1 2 3 4; do
     prev="$MEDIA"
 done
 [ -n "$MEDIA" ] && echo "  ✓ 媒体栈: $(printf '%s' "$MEDIA" | tr '\n' ' ')"
+
+# 4b2. 两个"跨版本不可替换"的小库：**两个变体都捆**（合计 ~0.5 MB）
+#  ① libplacebo（soname = API 版本，每次 libplacebo 发版就跳）：mpv 传给
+#     pl_log_create 的 api_ver 在库里是 "historical, ignored currently"
+#     （/usr/include/libplacebo/log.h:69）→ 跨版本链接是**静默 ABI 赌注**，
+#     不像 libnvrtc 会明确报错。0.4 MB 换确定性，值。
+#  ② libmujs：**没有 SONAME**，mpv 链接时把绝对路径 /usr/lib/libmujs.so 整条记进
+#     NEEDED（Debian 在 /usr/lib/x86_64-linux-gnu/）→ 换个发行版直接起不来。
+#     rewrite-needed.py 会把该 NEEDED 改成 basename，所以这里必须把库带上。
+PLACEBO_SO="$(needed_of "$LIB/libmpv.so.2" | grep -E '^libplacebo\.so\.[0-9]+$' | head -1)"
+if [ -n "$PLACEBO_SO" ]; then
+    collect "$PLACEBO_SO" /usr/lib
+    # libplacebo 自己的 shader 编译栈（glslang/shaderc）与 Dolby Vision 依赖，
+    # 按 NEEDED 推导；整栈压缩后 ~0.5 MB，一起带走才算真自洽。
+    # 迭代到不动点：glslang/shaderc 还会拖出 libSPIRV-Tools(-opt) 这一层
+    for _ in 1 2 3 4 5; do
+        added=0
+        for f in $(for b in "$LIB"/*.so*; do
+                       needed_of "$b" | grep -E '^lib(shaderc|glslang|SPIRV|dovi)'
+                   done | sort -u); do
+            [ -e "$LIB/$f" ] && continue
+            collect "$f" /usr/lib >/dev/null && added=$((added + 1))
+            echo "  ✓ $f（libplacebo shader 栈）"
+        done
+        [ "$added" -eq 0 ] && break
+    done
+    collect libmujs.so /usr/lib
+    echo "  ✓ 小库（跨版本不可替换）: $PLACEBO_SO（含 shader 栈）+ libmujs.so"
+fi
 
 # 4c. full 变体：最小 Qt（镜像发行版布局，插件自带相对 RUNPATH 才能解析）
 #     布局：<prefix>/lib/{libQt6*.so.6} + <prefix>/lib/qt6/{plugins,qml}

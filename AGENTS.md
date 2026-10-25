@@ -515,6 +515,27 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
     会**静默回落**到它——程序能启动，但跑的是没有 `vf_vsr/vf_vfg/vf_rot` 和 libmpv vo
     互操作的原版 mpv，表现为"能开但超分/插帧全没了且无任何报错"（实测：挪走捆绑
     libmpv 后 `ldd` 解析到 `/usr/lib/libmpv.so.2`，并不报缺失）。
+  - **依赖盘点（2026-10-26，逐类定论）**：`libmpv.so.2` / `mpv-vsr` 共 ~55 条
+    `DT_NEEDED`，按"soname 会不会随上游跳"分四类：
+    | 类别 | 例子 | 处理 |
+    |---|---|---|
+    | 每次大版本必跳 | ffmpeg ×7（`.so.63/.12/.61/.7/.10`） | standard 去版本化 + 安装时链接 |
+    | 会跳但**不能**改 NEEDED | `libnvrtc.so.13`（符号版本命名空间就是 soname） | 保持带版本；靠系统，跳了由 compat 链接兜底 |
+    | soname=API 版本、跨版本会**静默**串 | `libplacebo.so.360`（`pl_log_create` 的 api_ver 在库里是 "historical, ignored currently"，`/usr/include/libplacebo/log.h:69`） | **两变体都捆**（含 shaderc/glslang/SPIRV-Tools/dovi 闭包） |
+    | 记成**绝对路径** | `libmujs.so`（无 SONAME → NEEDED 写成 `/usr/lib/libmujs.so`） | **两变体都捆** + `rewrite-needed.py` 改成 basename |
+    | soname 长期稳定 | glibc / libX11 / libwayland / libcuda / libvulkan / `libQt6*.so.6` | 用系统（标准做法） |
+    | soname 少见跳、无符号版本 | libass/libzimg/libluajit/librubberband/libuchardet/libsixel/libcaca | 用系统；真跳了 compat 链接兜底（它们无 VERNEED，改动安全） |
+  - **为什么必须这么处理（引用）**：`DT_NEEDED` 记的是库的 **SONAME**
+    （[Oracle: Recording a Shared Object Name](https://docs.oracle.com/cd/E19253-01/817-1984/6mhm7pl4u/index.html)、
+    [Debian policy：库由 SONAME 标识](http://www.debian.org/doc/debian-policy/policy.pdf)），
+    所以 `-lavcodec` / 无版本软链去链接**仍然**记 `.so.63`（实测 A/B）。真实世界的同类
+    事故：[zen-browser #14889](https://github.com/zen-browser/desktop/issues/14889)
+    （系统 ffmpeg 升 9.0 → `libavcodec.so.63` 不在白名单 → H.264 全挂）。
+    生态里的两种正解：**重编译对齐目标系统**（发行版做法，
+    [Debian #699648](https://alioth-lists.debian.net/pipermail/pkg-multimedia-maintainers/2013-February/031075.html)）
+    或**打包时改写 NEEDED/整包捆绑**（[Nix auto-patchelf](https://git.qyliss.net/nixlib/blame/pkgs/build-support/setup-hooks/auto-patchelf.sh)、
+    AppImage/manylinux 的 auditwheel）；发行版本身靠"soname 版本共存"（如 Ubuntu 的
+    [libplacebo360](https://packages.ubuntu.com/search?lang=zh-tw&keywords=libplacebo360) 包）让不同代共享。
   - **FFmpeg NEEDED 去版本化（2026-10-26，用户要求；standard 变体）**：
     `scripts/rewrite-needed.py` 在打包时把 `lib/vsr-player/libmpv.so.2` 和 `mpv-vsr`
     的 `DT_NEEDED` 从 `libavcodec.so.63` 改成 `libavcodec.so`（原地截短 .dynstr 里

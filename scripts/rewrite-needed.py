@@ -16,7 +16,13 @@
 libX11/libwayland/libplacebo/libass 这类系统 ABI 稳定的 soname 不动
 （改成无版本名反而没有对应的软链可指）。
 
-用法: rewrite-needed.py <elf> [<elf>...]
+此外**总会**把"绝对路径形式"的 NEEDED 改成 basename（`/usr/lib/libmujs.so` →
+`libmujs.so`）：libmujs 没有 SONAME，mpv 链接时把路径整条记了进去，换个发行版
+（Debian 在 /usr/lib/x86_64-linux-gnu/）二进制直接起不来。
+
+用法: rewrite-needed.py [--ffmpeg] <elf> [<elf>...]
+  --ffmpeg  同时把 FFmpeg 家族的 NEEDED 去版本化（standard 变体用；full 变体
+            自带匹配的库，不需要）。
 退出码 0 = 成功（可能 0 处修改）；2 = 参数/格式问题；1 = 内部校验失败。
 """
 import re
@@ -45,7 +51,7 @@ def unversioned(name: str) -> str:
     return name[:i + 3] if i >= 0 else name
 
 
-def rewrite(path: str) -> int:
+def rewrite(path: str, ffmpeg_mode: bool = False) -> int:
     data = bytearray(open(path, 'rb').read())
     if data[:4] != b'\x7fELF' or data[4] != 2 or data[5] != 1:
         print(f"  ⚠ {path}: 不是 64-bit LE ELF，跳过", file=sys.stderr)
@@ -113,7 +119,16 @@ def rewrite(path: str) -> int:
         s_off = str_off + val
         end = data.index(0, s_off)
         name = data[s_off:end].decode('ascii', 'replace')
-        if not any(p.match(name) for p in PATTERNS):
+        # 绝对路径 NEEDED → basename（任何时候都改：绝对路径跨发行版必炸）
+        base_name = name.rsplit('/', 1)[-1]
+        if name.startswith('/') and base_name:
+            data[s_off:s_off + len(base_name)] = base_name.encode()
+            data[s_off + len(base_name):end] = b'\0' * (end - s_off - len(base_name))
+            changed += 1
+            print(f"  · {path.split('/')[-1]}: {name} -> {base_name}（绝对路径去目录）")
+            continue
+
+        if not ffmpeg_mode or not any(p.match(name) for p in PATTERNS):
             continue
         if val in verneed_name_offsets:
             print(f"  ⚠ {path.split('/')[-1]}: 跳过 {name}"
@@ -137,9 +152,14 @@ def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__, file=sys.stderr)
         return 2
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    ffmpeg_mode = '--ffmpeg' in sys.argv
+    if not args:
+        print(__doc__, file=sys.stderr)
+        return 2
     rc = 0
-    for p in sys.argv[1:]:
-        r = rewrite(p)
+    for p in args:
+        r = rewrite(p, ffmpeg_mode)
         rc = max(rc, r if r != 0 else 0)
     return rc
 
