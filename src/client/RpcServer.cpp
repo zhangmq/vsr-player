@@ -9,8 +9,6 @@
 #include <mpv/client.h>
 #include <QMetaObject>
 #include <QQuickWindow>
-#include <QKeyEvent>
-#include <QCoreApplication>
 #include <QVariant>
 #include <cmath>
 #include <cstdio>
@@ -501,41 +499,6 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                 QMetaObject::invokeMethod(rootItem, "openStereoPicker", Qt::QueuedConnection);
             }, Qt::QueuedConnection);
             response = formatResponse("success");
-        }
-    } else if (cmd == "send-key") {
-        // 测试用：向主窗口发合成 KeyPress/KeyRelease，验证 app filter/Shortcut 链路。
-        if (!win_) {
-            response = formatResponse("no window");
-        } else if (args.empty()) {
-            response = formatResponse("missing key (tab|backtab|j|k|l|space|left|right|up|down|ctrl-left|ctrl-right)");
-        } else {
-            QString k = QString::fromStdString(args[0]).toLower();
-            int key = 0;
-            Qt::KeyboardModifiers mods = Qt::NoModifier;
-            if (k == "tab") key = Qt::Key_Tab;
-            else if (k == "backtab") key = Qt::Key_Backtab;
-            else if (k == "j") key = Qt::Key_J;
-            else if (k == "k") key = Qt::Key_K;
-            else if (k == "l") key = Qt::Key_L;
-            else if (k == "space") key = Qt::Key_Space;
-            else if (k == "left") key = Qt::Key_Left;
-            else if (k == "right") key = Qt::Key_Right;
-            else if (k == "up") key = Qt::Key_Up;
-            else if (k == "down") key = Qt::Key_Down;
-            else if (k == "ctrl-left") { key = Qt::Key_Left; mods = Qt::ControlModifier; }
-            else if (k == "ctrl-right") { key = Qt::Key_Right; mods = Qt::ControlModifier; }
-            if (!key) {
-                response = formatResponse("unknown key");
-            } else {
-                QQuickWindow *win = win_;
-                QMetaObject::invokeMethod(win, [win, key, mods]() {
-                    QKeyEvent press(QEvent::KeyPress, key, mods);
-                    QCoreApplication::sendEvent(win, &press);
-                    QKeyEvent release(QEvent::KeyRelease, key, mods);
-                    QCoreApplication::sendEvent(win, &release);
-                }, Qt::QueuedConnection);
-                response = formatResponse("success");
-            }
         }
     } else if (cmd == "grab-window") {
         // 测试用：抓主窗口（锁屏/无眼镜时检查 UI）
