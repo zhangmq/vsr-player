@@ -560,12 +560,42 @@
         <translation>半</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="117"/>
+        <location filename="../StereoOsd.qml" line="101"/>
+        <source>Seek -5s</source>
+        <translation>快退 5 秒</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="106"/>
+        <source>Seek +5s</source>
+        <translation>快进 5 秒</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="112"/>
+        <source>Seek -10s</source>
+        <translation>快退 10 秒</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="118"/>
+        <source>Seek +10s</source>
+        <translation>快进 10 秒</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="123"/>
+        <source>Volume up</source>
+        <translation>音量 +</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="128"/>
+        <source>Volume down</source>
+        <translation>音量 -</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="133"/>
         <source>Next</source>
         <translation>下一个</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="122"/>
+        <location filename="../StereoOsd.qml" line="138"/>
         <source>Previous</source>
         <translation>上一个</translation>
     </message>
@@ -573,21 +603,6 @@
         <location filename="../StereoOsd.qml" line="96"/>
         <source>Play / Pause</source>
         <translation>播放 / 暂停</translation>
-    </message>
-    <message>
-        <location filename="../StereoOsd.qml" line="101"/>
-        <source>Seek -5s / +5s</source>
-        <translation>快退 5 秒 / 快进 5 秒</translation>
-    </message>
-    <message>
-        <location filename="../StereoOsd.qml" line="107"/>
-        <source>Seek -10s / +10s</source>
-        <translation>快退 10 秒 / 快进 10 秒</translation>
-    </message>
-    <message>
-        <location filename="../StereoOsd.qml" line="112"/>
-        <source>Volume</source>
-        <translation>音量</translation>
     </message>
 </context>
 <context>

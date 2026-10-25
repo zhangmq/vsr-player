@@ -97,19 +97,35 @@ Item {
                                 fontPixelSize: root.osdFontSize
                             }
                             HotkeyRow {
-                                keyText: "← / →"
-                                actionText: qsTr("Seek -5s / +5s")
+                                keyText: "←"
+                                actionText: qsTr("Seek -5s")
                                 fontPixelSize: root.osdFontSize
                             }
                             HotkeyRow {
-                                keyText: "Shift+←/→"
+                                keyText: "→"
+                                actionText: qsTr("Seek +5s")
+                                fontPixelSize: root.osdFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "Shift+←"
                                 keyWidth: 90
-                                actionText: qsTr("Seek -10s / +10s")
+                                actionText: qsTr("Seek -10s")
                                 fontPixelSize: root.osdFontSize
                             }
                             HotkeyRow {
-                                keyText: "↑ / ↓"
-                                actionText: qsTr("Volume")
+                                keyText: "Shift+→"
+                                keyWidth: 90
+                                actionText: qsTr("Seek +10s")
+                                fontPixelSize: root.osdFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "↑"
+                                actionText: qsTr("Volume up")
+                                fontPixelSize: root.osdFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "↓"
+                                actionText: qsTr("Volume down")
                                 fontPixelSize: root.osdFontSize
                             }
                             HotkeyRow {

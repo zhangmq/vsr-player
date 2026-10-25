@@ -560,12 +560,42 @@
         <translation>Half</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="117"/>
+        <location filename="../StereoOsd.qml" line="101"/>
+        <source>Seek -5s</source>
+        <translation>Seek -5s</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="106"/>
+        <source>Seek +5s</source>
+        <translation>Seek +5s</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="112"/>
+        <source>Seek -10s</source>
+        <translation>Seek -10s</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="118"/>
+        <source>Seek +10s</source>
+        <translation>Seek +10s</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="123"/>
+        <source>Volume up</source>
+        <translation>Volume up</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="128"/>
+        <source>Volume down</source>
+        <translation>Volume down</translation>
+    </message>
+    <message>
+        <location filename="../StereoOsd.qml" line="133"/>
         <source>Next</source>
         <translation>Next</translation>
     </message>
     <message>
-        <location filename="../StereoOsd.qml" line="122"/>
+        <location filename="../StereoOsd.qml" line="138"/>
         <source>Previous</source>
         <translation>Previous</translation>
     </message>
@@ -573,21 +603,6 @@
         <location filename="../StereoOsd.qml" line="96"/>
         <source>Play / Pause</source>
         <translation>Play / Pause</translation>
-    </message>
-    <message>
-        <location filename="../StereoOsd.qml" line="101"/>
-        <source>Seek -5s / +5s</source>
-        <translation>Seek -5s / +5s</translation>
-    </message>
-    <message>
-        <location filename="../StereoOsd.qml" line="107"/>
-        <source>Seek -10s / +10s</source>
-        <translation>Seek -10s / +10s</translation>
-    </message>
-    <message>
-        <location filename="../StereoOsd.qml" line="112"/>
-        <source>Volume</source>
-        <translation>Volume</translation>
     </message>
 </context>
 <context>
