@@ -36,6 +36,7 @@
 #include "MpvController.h"
 #include "PlayerViewModel.h"
 #include "RpcServer.h"
+#include "StereoController.h"
 #include "SessionIdle.h"
 #include "HdrOutput.h"
 
@@ -386,6 +387,10 @@ int main(int argc, char *argv[]) {
         if (!opts.benchmark)
             viewModel.applyPlaybackSettings();   // 音量/倍速/循环（观察器回填 UI）
 
+        // 3D OSD 原型：运行期状态（不持久化），在所选屏幕创建 3D OSD 窗口。
+        // 声明在 view 之前 → 析构晚于 view，QML 绑定不会访问已销毁对象。
+        StereoController stereo;
+
         QQuickView view;
         view.setVulkanInstance(&qtVi);
         view.setGraphicsDevice(QQuickGraphicsDevice::fromDeviceObjects(
@@ -403,6 +408,7 @@ int main(int argc, char *argv[]) {
 
         view.rootContext()->setContextProperty("viewModel", &viewModel);
         view.rootContext()->setContextProperty("window", &view);
+        view.rootContext()->setContextProperty("stereo", &stereo);
         // 图标字体：随项目分发（third_party，VSR_ICON_FONT 宏注入），
         // C++ 加载并注入 family 名。注意必须是 context property——
         // qmlcachegen AOT 编译不支持动态作用域（组件内引用父级未声明
@@ -728,6 +734,7 @@ int main(int argc, char *argv[]) {
             rpc.setMpv(&mpv);
             rpc.setViewModel(&viewModel);
             rpc.setWindow(&view);   // resize 命令（逐级 resize 压测）
+            rpc.setStereo(&stereo); // 3D OSD 原型（测试用 RPC）
             rpc.setQuitCallback([&app]() {
                 // Cross-thread: RPC thread → Qt event loop.
                 QMetaObject::invokeMethod(&app, &QCoreApplication::quit,

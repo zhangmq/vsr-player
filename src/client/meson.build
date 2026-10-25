@@ -198,7 +198,7 @@ mpv_dep = declare_dependency(
 
 # ── MOC ────────────────────────────────────────────────────────────────
 processed = qt6.preprocess(
-    moc_headers: ['Video.h', 'PlayerViewModel.h', 'PlaylistModel.h'],
+    moc_headers: ['Video.h', 'PlayerViewModel.h', 'PlaylistModel.h', 'StereoController.h'],
     qresources: files('resources.qrc'),
     dependencies: qt6_dep,
 )
@@ -212,6 +212,7 @@ executable('vsr-player',
     'main.cpp', 'Options.cpp', 'VulkanContext.cpp',
     'CompositePipeline.cpp', 'MpvController.cpp', 'Video.cpp',
     'PlayerViewModel.cpp', 'PlaylistModel.cpp', 'RpcServer.cpp', 'Log.cpp',
+    'StereoController.cpp',
     'SessionIdle.cpp', 'HdrOutput.cpp', 'CudaProbe.cpp',
     c_vert_h, c_frag_h, translations_qm, processed,
     dependencies: [qt6_dep, vulkan_dep, libplacebo_dep, mpv_dep],

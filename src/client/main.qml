@@ -244,8 +244,14 @@ Item {
             onDeleteFileRequested: viewModel.deleteCurrentFile()
             onDeinterlaceSelected: function(mode) { viewModel.setDeintMode(mode) }
             onRotateSelected: function(mode) { viewModel.setRotMode(mode) }
+            onStereoSelected: function(mode) {
+                if (mode === 0) stereo.stop()
+                else stereoPicker.openForMode(mode)
+            }
             onQuitRequested: Qt.quit()   // 走标准退出路径（watch-later 落盘）
         }
+
+        StereoPicker { id: stereoPicker }
 
         // ── Fullscreen 双向同步 + 键盘（快捷键单点）─────────────────
         Connections { target: window
@@ -332,8 +338,34 @@ Item {
             onActivated: viewModel.frameStep(-1)
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Tab"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Tab"
             onActivated: viewModel.toggleOsd()
+        }
+        // ── 3D OSD 原型：J/K/L + Tab（应用级，主窗口失焦也可用）─────
+        // 3D 独有操作；正常播放的快进/音量/暂停键位不变。
+        Shortcut {
+            enabled: stereo.active && root.shortcutsEnabled
+            context: Qt.ApplicationShortcut
+            sequence: "Tab"
+            onActivated: stereo.toggleOsd()
+        }
+        Shortcut {
+            enabled: stereo.active && root.shortcutsEnabled
+            context: Qt.ApplicationShortcut
+            sequence: "J"
+            onActivated: stereo.cycleLayout()
+        }
+        Shortcut {
+            enabled: stereo.active && root.shortcutsEnabled
+            context: Qt.ApplicationShortcut
+            sequence: "K"
+            onActivated: stereo.swapEyes()
+        }
+        Shortcut {
+            enabled: stereo.active && root.shortcutsEnabled
+            context: Qt.ApplicationShortcut
+            sequence: "L"
+            onActivated: stereo.toggleFit()
         }
         Shortcut {
             // Ctrl+Q 退出（与右键菜单 Quit 一致；走标准退出路径）
@@ -450,5 +482,10 @@ Item {
     // root 上找不到该函数 → 运行时 TypeError → 点击无反应。
     function togglePlaylist() {
         playlistPanel.visible ? playlistPanel.close() : playlistPanel.open()
+    }
+    // 测试/调试入口：RPC 打开 3D 选择器（正常从右键菜单进入）。
+    property int stereoPickerMode: 1
+    function openStereoPicker() {
+        stereoPicker.openForMode(stereoPickerMode)
     }
 }

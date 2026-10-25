@@ -26,6 +26,8 @@ class QQuickWindow;
 ///  - idle（无活动文件）时 set_property pause no 委托 play() 重载
 ///    lastPath；idle 且无历史路径时该命令为 no-op。
 ///  - quit 经回调路由到 Qt 事件循环（跨线程）；render API 仅在主线程。
+class StereoController;
+
 class RpcServer {
 public:
     RpcServer() = default;
@@ -38,6 +40,7 @@ public:
     void setMpv(MpvController *mpv) { mpv_ = mpv; }
     void setViewModel(PlayerViewModel *vm) { vm_ = vm; }
     void setWindow(QQuickWindow *win) { win_ = win; }   // resize 命令路由目标
+    void setStereo(StereoController *s) { stereo_ = s; } // 3D OSD 原型（测试用）
     void setQuitCallback(std::function<void()> cb) { quit_cb_ = std::move(cb); }
 
 private:
@@ -70,5 +73,6 @@ private:
     MpvController *mpv_ = nullptr;
     PlayerViewModel *vm_ = nullptr;
     QQuickWindow *win_ = nullptr;
+    StereoController *stereo_ = nullptr;
     std::function<void()> quit_cb_;
 };

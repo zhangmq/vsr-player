@@ -1,6 +1,10 @@
 #include "RpcServer.h"
 #include "MpvController.h"
 #include "PlayerViewModel.h"
+#include "StereoController.h"
+#include <QQuickView>
+#include <QQuickItem>
+#include <QImage>
 #include "FrucBackend.h"
 #include <mpv/client.h>
 #include <QMetaObject>
@@ -442,6 +446,103 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             response = formatResponse(mpv_error_string(e));
         else
             response = formatResponse("success");
+    } else if (cmd == "stereo-start") {
+        // 3D OSD 原型：stereo-start <mode 1|2> <screen index>（测试用；
+        // 正常入口是右键菜单 3D → 选项 → 选择显示器）。
+        if (!stereo_) {
+            response = formatResponse("no stereo controller");
+        } else if (args.size() < 2) {
+            response = formatResponse("usage: stereo-start <1|2> <screen-index>");
+        } else {
+            char *e1 = nullptr, *e2 = nullptr;
+            long mode = strtol(args[0].c_str(), &e1, 10);
+            long idx  = strtol(args[1].c_str(), &e2, 10);
+            if (!e1 || *e1 || !e2 || *e2 || (mode != 1 && mode != 2) || idx < 0) {
+                response = formatResponse("invalid mode/screen (mode 1|2, index>=0)");
+            } else {
+                QMetaObject::invokeMethod(stereo_, "start", Qt::QueuedConnection,
+                                          Q_ARG(int, (int)mode),
+                                          Q_ARG(int, (int)idx));
+                response = formatResponse("success");
+            }
+        }
+    } else if (cmd == "stereo-stop") {
+        if (!stereo_) {
+            response = formatResponse("no stereo controller");
+        } else {
+            QMetaObject::invokeMethod(stereo_, "stop", Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "stereo-osd") {
+        if (!stereo_) {
+            response = formatResponse("no stereo controller");
+        } else if (args.empty()) {
+            response = formatResponse("missing value (0|1)");
+        } else {
+            bool v = args[0] == "1" || args[0] == "yes" || args[0] == "true";
+            QMetaObject::invokeMethod(stereo_, "setOsdVisible", Qt::QueuedConnection,
+                                      Q_ARG(bool, v));
+            response = formatResponse("success");
+        }
+    } else if (cmd == "stereo-picker") {
+        // 测试用：打开 3D 选择器（正常入口 = 右键菜单 → 3D → 3D片源/2D转3D）
+        auto *qv = qobject_cast<QQuickView *>(win_);
+        if (!qv || !qv->rootObject()) {
+            response = formatResponse("no window");
+        } else if (args.empty()) {
+            response = formatResponse("missing mode (1|2)");
+        } else {
+            int mode = atoi(args[0].c_str());
+            QQuickItem *rootItem = qv->rootObject();
+            QMetaObject::invokeMethod(rootItem, [rootItem, mode]() {
+                rootItem->setProperty("stereoPickerMode", mode);
+                QMetaObject::invokeMethod(rootItem, "openStereoPicker", Qt::QueuedConnection);
+            }, Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "grab-window") {
+        // 测试用：抓主窗口（锁屏/无眼镜时检查 UI）
+        if (!win_) {
+            response = formatResponse("no window");
+        } else if (args.empty()) {
+            response = formatResponse("missing path");
+        } else {
+            QQuickWindow *win = win_;
+            QString path = QString::fromStdString(args[0]);
+            QMetaObject::invokeMethod(win, [win, path]() {
+                QImage img = win->grabWindow();
+                if (!img.isNull())
+                    img.save(path);
+            }, Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "stereo-grab") {
+        if (!stereo_) {
+            response = formatResponse("no stereo controller");
+        } else if (args.empty()) {
+            response = formatResponse("missing path");
+        } else {
+            QMetaObject::invokeMethod(stereo_, "grabToFile", Qt::QueuedConnection,
+                                      Q_ARG(QString, QString::fromStdString(args[0])));
+            response = formatResponse("success");
+        }
+    } else if (cmd == "stereo-cycle") {
+        if (!stereo_) {
+            response = formatResponse("no stereo controller");
+        } else if (args.empty()) {
+            response = formatResponse("missing value (layout|swap|fit)");
+        } else if (args[0] == "layout") {
+            QMetaObject::invokeMethod(stereo_, "cycleLayout", Qt::QueuedConnection);
+            response = formatResponse("success");
+        } else if (args[0] == "swap") {
+            QMetaObject::invokeMethod(stereo_, "swapEyes", Qt::QueuedConnection);
+            response = formatResponse("success");
+        } else if (args[0] == "fit") {
+            QMetaObject::invokeMethod(stereo_, "toggleFit", Qt::QueuedConnection);
+            response = formatResponse("success");
+        } else {
+            response = formatResponse("invalid value (layout|swap|fit)");
+        }
     } else {
         response = formatResponse("unknown command");
     }

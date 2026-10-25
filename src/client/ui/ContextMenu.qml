@@ -4,7 +4,7 @@ import "components"
 
 /// 右键菜单（播放器惯例）。复刻 PopupBase 外观；定位 = 鼠标位置
 ///（anchorTarget 语义不适用），宿主席位 showAt() 后 open()。
-/// 条目可带 `submenu: [{label, value}]`（反交错 / 旋转）→ 悬停/点击在右侧
+/// 条目可带 `submenu: [{label, value}]`（反交错 / 旋转 / 3D）→ 悬停/点击在右侧
 /// 展开二级面板，选中后关闭整个菜单。多个二级菜单共用同一个面板：
 /// subIndex 记录当前展开的是哪一条（悬停切换）。
 ///
@@ -41,6 +41,8 @@ PopupBase {
     signal deinterlaceSelected(int mode)
     /// 二级菜单里选中了某个旋转角度（0=Off / 90=顺时针 / 270=逆时针 90°）。
     signal rotateSelected(int mode)
+    /// 3D 三态（0=不使用 / 1=3D片源 / 2=2D转3D；运行期状态，不持久化）。
+    signal stereoSelected(int mode)
     signal quitRequested()
 
     /// 菜单项（sig 须与上方 signal 声明同名；新增项同步改三处：
@@ -76,6 +78,15 @@ PopupBase {
              {label: qsTr("90°"),  value: 90},
              {label: qsTr("270°"), value: 270}
          ]},
+        {icon: "󰟽", text: qsTr("3D"),
+         hint: function() { return root.stereoLabel() },
+         subSig: "stereoSelected",
+         current: function() { return stereo.mode },
+         submenu: [
+             {label: qsTr("Off"),        value: 0},
+             {label: qsTr("3D source"),  value: 1},
+             {label: qsTr("2D to 3D"),   value: 2}
+         ]},
         {sep: true},
         {icon: "󰐥", text: qsTr("Quit"),               hint: "Ctrl+Q", sig: "quitRequested"}
     ]
@@ -85,6 +96,15 @@ PopupBase {
         switch (viewModel.deintMode) {
         case 1: return qsTr("Auto")
         case 2: return qsTr("Force")
+        default: return qsTr("Off")
+        }
+    }
+
+    /// 3D 三态文案（0=Off / 1=3D片源 / 2=2D转3D）。
+    function stereoLabel() {
+        switch (stereo.mode) {
+        case 1: return qsTr("3D source")
+        case 2: return qsTr("2D to 3D")
         default: return qsTr("Off")
         }
     }

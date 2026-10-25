@@ -256,6 +256,17 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - ⚠ 旋转在 VFG **之前** → 横转竖会让 VFG 输入变成竖屏（如 720x1280）走慢路径
   （见插帧一节的竖屏实测），竖转横则相反。这是"VFX 之前旋转"的固有代价。
 
+### 3D OSD 原型（2026-10-25，分支 feat/stereo-osd-prototype）
+
+- 入口：右键菜单 3D 三态 **Off / 3D片源 / 2D转3D**；**运行期状态、不持久化**，
+  每次启动 Off。选中 1/2 → 选择器提示把眼镜切到 3D/SBS，列出 QScreen 供选择。
+- `StereoController` 在所选屏幕全屏创建 `StereoOsd.qml`（`Qt::WindowDoesNotAcceptFocus`）；
+  OSD 在左右两半各画一份（SBS 双眼可读），不参与视频映射。
+- `Tab` 显隐 3D OSD；`J` 布局 SBS/上下、`K` 交换左右眼、`L` 拉伸/保持比例；
+  仅更新 OSD 文本。**无 3D 视频输出、无 2D→3D 转换**（OSD 标注未实现）。
+- 测试钩子（RPC）：`stereo-start/stop/osd/cycle/grab`、`stereo-picker`、`grab-window`。
+- 待做：视频 3D 输出、2D→3D、i18n、眼镜 2D↔3D 模式切换时 OSD 窗口尺寸跟随。
+
 ### 反交错（mpv 原生 `--deinterlace`，2026-10-22）
 
 **mpv 怎么做的**（全部在它的输出链里，**不经过 `--vf`**）：
