@@ -1423,6 +1423,7 @@ void PlayerViewModel::showOsd() {
 
 void PlayerViewModel::toggleOsd() {
     osdVisible_.store(!osdVisible_.load());
+    MLOG_INFO("osd: %s (toggle)", osdVisible_.load() ? "shown" : "hidden");
     emit osdVisibleChanged();
     if (osdVisible_.load()) {
         // 打开：osd-level 由事件线程 idle 回调应用（≤100ms）；

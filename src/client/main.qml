@@ -443,6 +443,13 @@ Item {
             enabled: root.shortcutsEnabled; sequence: "h"
             onActivated: stereo.active ? stereo.toggleHelp() : viewModel.toggleOsd()
         }
+        Shortcut {
+            // 2D：Tab 显隐 mpv 的 OSD（3D 下不参与——3D 的帮助面板是 H，且 present-
+            // ation 窗口不收焦点，Tab 会退化成焦点遍历）。2026-10-26 用户报
+            // "2D 下 Tab 失效"：早前清理 3D 的 Tab 特判时把这条 2D 绑定一起删了。
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Tab"
+            onActivated: viewModel.toggleOsd()
+        }
         // 3D H/J/K/L：H 走 app filter + QShortcut + QML Shortcut；J/K/L 走
         // main.cpp 的 StereoKeyFilter（在 QML 之前按 event->key() 拦截，大小写无关）。
         Shortcut {
