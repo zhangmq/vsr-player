@@ -486,6 +486,28 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 
 - **patch 方案**：`third_party/mpv`（纯净 0.41，只读基座）+ `src/mpv` 覆盖层（只含修改文件）。改 mpv 代码 = 改 `src/mpv/<同路径>` 后跑 `scripts/build_mpv.sh`（合并到 `build/mpv` 再 meson 构建）。
 - **构建陷阱**：`build_mpv.sh` 输出被 grep 过滤，编译失败看不到——确认最后一行 "Done"；别 `cd build` 后还用相对路径；系统库升级（FFmpeg/Qt/TRT）后必须全量重建（soname 变更直接启动失败）。
+- **standard / full 分层（2026-10-26 用户定，已实现）**：`build_release.sh` 两个变体
+  按"谁依赖系统库"切分，**不是按体积随意砍**：
+  - **standard（默认，6.3 MB tarball）**：只捆 `libmpv` + 光盘媒体栈（libcdio/libdvd/libbluray）
+    + 我们自己的 wayland 模块；**FFmpeg ×7、CUDA runtime（libnvrtc/builtins/cudart）、
+    Qt 一律用系统**。要求：系统 Qt ≥ 6.12、FFmpeg soname 与构建机一致（当前
+    `libavcodec.so.63` 等 7 个）、CUDA runtime 可解析（本机 `/opt/cuda`，已在
+    `/etc/ld.so.conf.d/cuda.conf` 里）。适合滚动发行版用户（系统本来就是新的）。
+  - **full（~70 MB）**：在 standard 之上再捆 FFmpeg ×7 + CUDA runtime + 最小 Qt
+    （库闭包 + 3 个平台插件 + wayland-* 插件 + `qml/QtQuick`(含 Controls/Dialogs/
+    Layouts/Shapes)+`qml/QtQml`）；用户侧只需驱动 + Vulkan loader + 基础 C 运行库。
+    面向 Qt < 6.12 / 老 FFmpeg / 无 CUDA toolkit 的发行版。**不对外分发**（按需构建）。
+  - 体积参考（实测）：standard 6.3 MB；带 ffmpeg+CUDA 的 55.8 MB 版本里
+    ffmpeg 占 12.6 MB、**libnvrtc 一个就占 36.9 MB（66%）**——真要瘦身先动 libnvrtc，
+    不是 ffmpeg。
+  - ⚠ 实现细节：① `4b` 的媒体栈发现必须**迭代到不动点**（`libmpv → libcdio/libdvdnav
+    → libdvdread` 两层链；standard 去掉 libavformat 后只看 libmpv 的 NEEDED 会漏
+    libdvdread，闭包自检直接失败）；② standard 的白名单要放行
+    `libav*|libsw*|libnvrtc|libcudart`（与 `libQt6` 同位）。
+  - ⚠ dev 模式 `install.sh` 与 release 包**语义不同**：dev 把构建树产物装进 `~/.local`
+    （RUNPATH 指向 `build/mpv/_build`，依赖构建树）；release 包是
+    `$ORIGIN/../lib/vsr-player` 相对 RPATH，自洽。用户要"正式安装"就走
+    `build_release.sh` + 包内 `install.sh`。
 - 分发（2026-09 重构）：**源码构建为推荐路径**——`scripts/build-from-source.sh`（依赖自检→构建→安装→记录快照）；系统库升级后重跑同一条命令即可恢复。预编译 tarball 两个变体：`build_release.sh`（standard，需系统 Qt ≥6.12——Qt 二进制兼容是单向的，构建机 Qt 6.12.0 → 真实下限 6.12）与 `--variant=full`（捆绑最小 Qt：镜像发行版布局 `<prefix>/lib/qt6/{plugins,qml}` + Qt 库在 `<prefix>/lib/`，靠 Qt 自带相对 RUNPATH 解析，**免 patchelf**；`main.cpp` 在 QGuiApplication 前探测并设 `QT_PLUGIN_PATH`/`QML2_IMPORT_PATH`）。依赖收集 = 显式核心集 + 媒体栈动态发现（libcdio/libdvd/libbluray）+ **打包时闭包自检**（未捆绑且非白名单即失败）；`--engine=<已构建引擎>` 跳过 trtexec。
 - **依赖漂移检测**：`scripts/check-deps.sh [--record]` 记录构建时**系统库**快照（路径+mtime+size，排除仓库内自建产物——否则每次重建都误报），系统升级替换后提示重建；staging 目标用 `LD_LIBRARY_PATH` 模拟安装态解析。**soname 变更导致启动失败 → 跑 `build-from-source.sh` 重建**；用户侧排查见 README「故障排查」。
 - `scripts/install.sh`（用户端）：~/.local；VFX 从 **NVIDIA 官方索引 `pypi.nvidia.com`** 取 nvidia-vfx wheel（pypi.org 仅占位 sdist，2026-09 实测），curl 提取不调 pip 不改系统；VFX ~0.6GB 不随 tarball 分发（SLA）。⚠️ `set -euo pipefail` 下所有探测命令（nvidia-smi / pkg-config / curl 管道）必须 `|| true` 兜底，否则"未检测到"会变成"安装静默中止"（本项目实测踩过两次）。

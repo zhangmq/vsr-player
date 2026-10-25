@@ -18,9 +18,9 @@
 #   ├── mpv-vsr               # CLI 二进制（RPATH 同款）
 #   ├── lib/vsr-player/       # 安装 → ~/.local/lib/vsr-player/（与 VFX 汇合）
 #   │   ├── libmpv.so.2       #    libmpv + 闭包捆绑依赖（RPATH 同款）
-#   │   ├── ffmpeg ×7         #    防系统版本漂移（62→63 实测破坏）
 #   │   ├── 光盘媒体栈         #    libcdio*/libdvd*/libbluray（cdda/蓝光/ISO）
-#   │   ├── libnvrtc/builtins/cudart.so.13   # CUDA runtime（mpv 硬依赖）
+#   │   ├── ffmpeg ×7         #    仅 full（standard 用系统 FFmpeg）
+#   │   ├── libnvrtc/builtins/cudart.so.13   # 仅 full（standard 用系统 CUDA runtime）
 #   │   └── libnvinfer(+plugin).so.11        # 仅 rife：TRT 11.2.1.2（engine 版本绑定）
 #   ├── lib/                  # 仅 full：Qt6 库（插件 RUNPATH 期望 <prefix>/lib）
 #   ├── lib/qt6/plugins/      # 仅 full：platforms(wayland/xcb) + wayland-* + imageformats
@@ -38,9 +38,10 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # ── 变体 + 插帧后端 ──────────────────────────────────────────────────
-# standard（默认）：捆绑 FFmpeg/CUDA + 光盘媒体栈（rife 后端另含 TRT + RIFE 引擎）；
-#                   GUI 依赖系统 Qt ≥ 6.12。
-# full：额外捆绑最小 Qt（库 + 平台插件 + QML 模块，镜像发行版布局），
+# standard（默认）：只捆 libmpv + 光盘媒体栈；**FFmpeg / CUDA runtime / Qt 一律用系统**
+#                   （要求系统 Qt ≥ 6.12、FFmpeg soname 与构建机一致、CUDA runtime 可解析）。
+# full：额外捆绑 FFmpeg ×7 + CUDA runtime（libnvrtc/builtins/cudart）+ 最小 Qt
+#       （库 + 平台插件 + QML 模块，镜像发行版布局）；
 #       用户侧只需驱动 + Vulkan loader + 基础 C 运行库。
 # 依赖收集 = 传递闭包 + 系统白名单：非白名单的 NEEDED 自动捆绑，
 # 因此系统 soname 升级（如 libcdio .so.19→.so.21）不会漏收。
@@ -171,7 +172,10 @@ collect_to() {  # collect_to <outdir> <soname> <search-dirs...>（SONAME 即目�
 LIB="$STAGE/lib/vsr-player"
 collect() { collect_to "$LIB" "$@"; }
 
-# 4a. 核心集：FFmpeg / CUDA runtime（+ rife 后端才有的 TensorRT，版本绑定，显式固定）
+# 4a. 核心集：FFmpeg / CUDA runtime 仅 full 变体捆绑（standard 用系统提供——分层是
+#     用户 2026-10-26 定的：standard = 薄包，full = 自洽包）。
+#     rife 后端才有的 TensorRT 保持原样（版本绑定，显式固定）。
+if [ "$VARIANT" = full ]; then
 for f in libavcodec.so.63 libavformat.so.63 libavutil.so.61 libavfilter.so.12 \
          libswscale.so.10 libswresample.so.7 libavdevice.so.63; do
     collect "$f" /usr/lib
@@ -201,6 +205,9 @@ cuda_collect() {  # cuda_collect <基础名>（libnvrtc / libnvrtc-builtins / li
 cuda_collect libnvrtc
 cuda_collect libnvrtc-builtins
 cuda_collect libcudart
+else
+    echo "  · standard：FFmpeg ×7 / CUDA runtime 用系统提供（不捆绑）"
+fi
 # TensorRT 库只有 rife 后端需要（引擎反序列化）；vfg 包不收集 libnvinfer*。
 if [ "$FRUC_BACKEND" = rife ]; then
     collect libnvinfer.so.11 /usr/lib
@@ -210,13 +217,21 @@ fi
 # 4b. 光盘/蓝光媒体栈：从实际 NEEDED 发现 soname——**不要硬编码**。
 #     2026-09 事故：libcdio .so.19→.so.21、libbluray .so.3→.so.4 升级后，
 #     未捆绑的旧 soname 让二进制启动失败（libmpv 的 cdda/蓝光 + libavformat 的 bluray）。
+#     发现必须**迭代到不动点**：libmpv → libcdio/libdvdnav → libdvdread 是两层链，
+#     只看 libmpv 的 NEEDED 会漏掉第二层（standard 不捆 libavformat 后实测：
+#     libdvdnav.so.4 → libdvdread.so.8 闭包自检报"未捆绑"）。之前没暴露是因为
+#     libavformat 的 NEEDED 里恰好也有 libdvdread。
 MEDIA=""
-for f in "$LIB"/libmpv.so.2 "$LIB"/libavformat.so.*; do
-    [ -f "$f" ] || continue
-    MEDIA+="$(needed_of "$f" | grep -E '^lib(cdio|dvd|bluray)' || true)"$'\n'
+prev=""
+for _ in 1 2 3 4; do
+    MEDIA="$(for f in "$LIB"/*.so*; do
+                 [ -f "$f" ] || continue
+                 needed_of "$f" | grep -E '^lib(cdio|dvd|bluray)' || true
+             done | sort -u)"
+    [ "$MEDIA" = "$prev" ] && break
+    for f in $MEDIA; do [ -e "$LIB/$f" ] || collect "$f" /usr/lib; done
+    prev="$MEDIA"
 done
-MEDIA="$(printf '%s' "$MEDIA" | sed '/^$/d' | sort -u)"
-for f in $MEDIA; do collect "$f" /usr/lib; done
 [ -n "$MEDIA" ] && echo "  ✓ 媒体栈: $(printf '%s' "$MEDIA" | tr '\n' ' ')"
 
 # 4c. full 变体：最小 Qt（镜像发行版布局，插件自带相对 RUNPATH 才能解析）
@@ -276,8 +291,12 @@ ALLOW+='|libOpenCL|libclang|libLLVM|libwayland-egl'
 ALLOW+='|libOpenGL|libGLdispatch|libGLESv2|liburing|libdouble-conversion|libmd4c|libb2|libSM|libICE|libmtdev|libts|libinput|libhunspell'
 # mpv/FFmpeg 的可选特性依赖（输出/图像/采集），发行版常规组件
 ALLOW+='|libmujs|liblcms2|libcaca|libwebp|libopenjp2|libraw1394|libavc1394|librom1394|libiec61883|libbs2b|libflite|libOpenEXR|libIlmThread|libImath|libzvbi|libdc1394'
-# standard 变体：Qt 由系统提供（硬性要求 ≥ 6.12）；full 变体则必须已捆绑
-[ "$VARIANT" = standard ] && ALLOW+='|libQt6'
+# standard 变体：Qt / FFmpeg / CUDA runtime 全由系统提供；full 变体则必须已捆绑
+if [ "$VARIANT" = standard ]; then
+    ALLOW+='|libQt6'
+    ALLOW+='|libavcodec|libavformat|libavutil|libavfilter|libavdevice|libswscale|libswresample'
+    ALLOW+='|libnvrtc|libcudart'
+fi
 
 validate_closure() {
     local bad=0 f dep base
@@ -406,8 +425,11 @@ if [ "$VARIANT" = full ]; then
 - Vulkan loader（`libvulkan.so.1`）与 Wayland/X11 客户端库（发行版常规组件）
 - **Qt6 已随包捆绑**——无需系统 Qt（本变体面向 Qt < 6.12 的发行版）'
 else
-    DEPS_TEXT='- NVIDIA 显卡 + 驱动（`libcuda.so.1`）——唯一强制外部依赖
-- 系统 Qt ≥ 6.12（GUI 版；`mpv-vsr` 命令行版不需要）'
+    DEPS_TEXT='- NVIDIA 显卡 + 驱动（`libcuda.so.1`）
+- 系统 Qt ≥ 6.12（GUI 版；`mpv-vsr` 命令行版不需要）
+- 系统 FFmpeg（soname 需与本包一致：libavcodec.so.63 等）——本包不捆绑
+- 系统 CUDA runtime（libnvrtc.so.13 + libnvrtc-builtins + libcudart.so.13）
+  ——本包不捆绑（需 CUDA Toolkit 或同 soname 运行时）'
 fi
 # README 中随后端分支的段落（vfg 无 TRT/engine，不能留 RIFE 专属说明误导用户）
 if [ "$FRUC_BACKEND" = rife ]; then
