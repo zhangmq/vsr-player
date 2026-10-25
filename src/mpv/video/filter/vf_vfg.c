@@ -110,6 +110,11 @@
 // 输出帧率上限（max-fps）：0 = 不限（默认，直接 --vf 的旧用法不受影响）；
 // 客户端（UI）只会下发 48/60/120，上限放宽到 240 只为让手工调参有余量。
 #define VFG_MAX_FPS_LIMIT_MAX 240
+// 已知帧率路径的 max-fps 相对容差。容器 avg_frame_rate 常有微小漂移
+// （实测 3D 测试片 4024000/134133 = 30.0000745 → k=2 时 60.000149），
+// 1e-6 会把“30fps ×2 @cap60”误判成超限；1e-4（0.01%）覆盖这种漂移，
+// 同时仍能拦住真正的超限（如 30.1fps ×2 = 60.2）。
+#define VFG_MAX_FPS_TOL 1e-4
 
 // 输入帧率估计（仅 container 帧率未知、即直播流时，用于 max-fps；见
 // track_input_fps）。中位数窗口 31 个间隔 ≈ 0.5s @60fps，抗偶发坏时间戳；
@@ -405,10 +410,13 @@ static bool max_fps_hit(struct mp_filter *f, struct priv *p)
     const double cap = p->opts->max_fps;
     if (p->src_fps > 0) {
         // 已知帧率：精确判据（不去抖、不等估计）。**相等允许插帧**
-        // （如 30×2=60 @cap=60），加 1e-6 相对容差吸收容器帧率的浮点
-        // 尾数（实测 goose_480p.webm：demux-fps=30.0000003 → 严格 > 会把
-        // "恰好等于上限"误判成超限，插帧被意外直通）。
-        p->cap_engaged = k * p->src_fps > cap + cap * 1e-6;
+        // （如 30×2=60 @cap=60），用 1e-4 相对容差吸收容器 avg_frame_rate
+        // 的微小漂移（goose 30.0000003；3D 测试片 30.0000745）。
+        const bool hit = k * p->src_fps > cap * (1.0 + VFG_MAX_FPS_TOL);
+        if (hit != p->cap_engaged)
+            MP_INFO(f, "vfg: max-fps %s (src=%.6f k=%.0f cap=%d)\n",
+                    hit ? "engaged" : "released", p->src_fps, k, p->opts->max_fps);
+        p->cap_engaged = hit;
         p->cap_enter_cnt = p->cap_exit_cnt = 0;
         return p->cap_engaged;
     }

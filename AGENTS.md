@@ -75,6 +75,11 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   filter 判据（`vf_vfg.c` 直通判定）：`k × src_fps > max_fps` → `vfg-status: mode=
   passthrough reason=max-fps`；**恰好等于上限允许插帧**（24×2=48 @cap48、30×2=60 @cap60；
   已知帧率路径带 1e-6 相对容差，吸收容器帧率浮点尾数，如 goose 的 demux-fps=30.0000003）；
+  **已知帧率路径的 max-fps 相对容差 1e-4（2026-10-25 修）**：容器
+  `avg_frame_rate` 会有微小漂移（3D 测试片 `4024000/134133 = 30.0000745`，
+  k=2 时输出 60.000149），旧的 1e-6 容差（60.00006）会把它误判成超过
+  `max-fps=60`，整条插帧直通。改成 1e-4（0.01%，仍能拦住 30.1fps×2=60.2），
+  并在 cap 状态变化时打 `vfg: max-fps engaged/released (src=… k=… cap=…)`。
   **src_fps 未知（直播/URL 流）时用输入帧 PTS 间隔的中位数估计**（2026-10-24 修：此前直接
   不判定，60fps 直播 + k=2 + cap=60 仍输出 120fps；现 31 样本窗口/15 预热、2% 死区 +
   30 帧进入 / 60 帧退出去抖；估计值只用于判据、不写回元数据；nominal 已知的源仍走精确值、
