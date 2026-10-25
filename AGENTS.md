@@ -326,12 +326,15 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   passthrough 是既有 `max-fps` 判定，不是 3D 改动。
 - **映射语义**（用户 2026-10-25 定）：SBS=左右，TAB=上下；`L` 按 split 轴切
   **全/半**，全/半是**源眼输出宽高**的区别，不是 box：
-  - **全**：源眼 960×1080（SBS）/1920×540（TAB）**不拉伸**，按自身比例 contain
-    居中到眼视口，最终图像 960×1080 / 1920×540（留黑边）；
-  - **半**：源眼**沿 split 轴拉伸**到眼视口：SBS 960×1080 → 1920×1080（横向 2×），
-    TAB 1920×540 → 1920×1080（纵向 2×），最终图像 1920×1080，无黑边。
+  - **全**：源眼像素尺寸原样（SBS = srcW/2 × srcH；TAB = srcW × srcH/2），
+    **不拉伸**；图像按这个原生尺寸居中到眼视口，不放大/不缩小；
+  - **半**：源眼沿 split 轴拉成**源整帧像素尺寸**（srcW × srcH）：SBS 横向 2×、
+    TAB 纵向 2×；图像按这个尺寸居中到眼视口。
+  - 例 1920×1080 SBS：全 960×1080，半 1920×1080；例 960×720 SBS：全 480×720，
+    半 960×720。眼视口 = outW/2 × outH，图像小于视口时留黑边。
   目标屏按实际尺寸；输出 framebuffer 恒 SBS，因此**眼视口 aspect = outAspect/2**
-  （曾误用 outAspect 导致画面窄一半，已修）。源帧在 rtImage 里是 mpv letterbox 后的
+  （曾误用 outAspect 导致画面窄一半，已修）。`StereoCompositeParams` 带
+  `srcW/srcH/outW/outH`，全/半按源像素算（不是按眼视口缩放）。源帧在 rtImage 里是 mpv letterbox 后的
   内容，先算 contentRect 再取样。无红绿/anaglyph。
 - OSD：默认显示；`Tab` 显隐；`J` 布局、`K` 交换眼、`L` 全/半；标题/键名 Bold、
   正文 DemiBold；左右面板 ±12 logical px 交叉视差（OSD 浮在画面前，独立于视频眼序）。

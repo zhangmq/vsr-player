@@ -721,6 +721,9 @@ int main(int argc, char *argv[]) {
             const int w = viewModel.videoWidth(), h = viewModel.videoHeight();
             return (w > 0 && h > 0) ? double(w) / double(h) : 0.0;
         });
+        video->setSourceSizeProvider([&viewModel]() {
+            return QSize(viewModel.videoWidth(), viewModel.videoHeight());
+        });
         video->setFrameRenderedCallback([&viewModel]() {
             viewModel.notifyFrameRendered();
         });

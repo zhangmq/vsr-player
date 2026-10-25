@@ -302,11 +302,20 @@ bool Video::ensureRenderTarget(int w, int h) {
 StereoCompositeParams Video::stereoParams(int outW, int outH) const {
     StereoCompositeParams p;
     p.outAspect = outH > 0 ? float(outW) / float(outH) : 1.0f;
+    p.outW = outW;
+    p.outH = outH;
     p.srcAspect = p.outAspect;
     if (srcAspectFn_) {
         const double a = srcAspectFn_();
         if (a > 0.01 && a < 100.0)
             p.srcAspect = float(a);
+    }
+    if (srcSizeFn_) {
+        const QSize s = srcSizeFn_();
+        if (s.isValid()) {
+            p.srcW = s.width();
+            p.srcH = s.height();
+        }
     }
     if (!stereo_ || !stereo_->active())
         return p;

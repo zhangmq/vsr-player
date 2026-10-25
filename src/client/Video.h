@@ -1,5 +1,6 @@
 #pragma once
 #include <QQuickItem>
+#include <QSize>
 #include "CompositeParams.h"
 #include <vulkan/vulkan.h>
 #include <atomic>
@@ -26,6 +27,7 @@ public:
     void setStereoController(StereoController *s) { stereo_ = s; }
     /// 源视频整帧比例（W/H），由 main.cpp 接 viewModel 的 videoWidth/Height。
     void setSourceAspectProvider(std::function<double()> fn) { srcAspectFn_ = std::move(fn); }
+    void setSourceSizeProvider(std::function<QSize()> fn) { srcSizeFn_ = std::move(fn); }
     StereoCompositeParams stereoParams(int outW, int outH) const;
     bool initRenderTarget(VkDevice dev, VkPhysicalDevice pd, uint32_t qfi, VkQueue queue);
     void setCompositeObjects(VkPipeline pipe, VkPipelineLayout layout);
@@ -86,6 +88,7 @@ private:
     MpvController   *mpv_ = nullptr;
     StereoController *stereo_ = nullptr;
     std::function<double()> srcAspectFn_;
+    std::function<QSize()> srcSizeFn_;
     VkDevice         dev_ = VK_NULL_HANDLE;
     VkPhysicalDevice pd_ = VK_NULL_HANDLE;
     VkQueue          queue_ = VK_NULL_HANDLE;

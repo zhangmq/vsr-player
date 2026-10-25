@@ -13,6 +13,10 @@ layout(push_constant) uniform Push {
     int halfMode;   // 0=全 1=半
     float srcAspect;
     float outAspect;
+    int srcW;
+    int srcH;
+    int outW;
+    int outH;
 } pc;
 
 layout(location = 0) in vec2 fragUV;
@@ -43,34 +47,29 @@ void main() {
         srcRect = vec4(float(srcEye) * 0.5, 0.0, 0.5, 1.0);
     }
 
-    // Full：源眼保持自身比例，contain 到整个眼视口（可能留黑边）。
-    // 例：1920x1080 SBS 的源眼 960x1080 原样输出为 960x1080。
-    // Half：源眼沿 split 轴拉伸到整个眼视口（anamorphic 展开），
-    // 例：960x1080 横向拉成 1920x1080；TAB 则是纵向拉满。
-    if (pc.halfMode != 0) {
-        vec2 local = e;
-        vec2 sampleUV = contentMin + (srcRect.xy + local * srcRect.zw) * contentSize;
-        outColor = texture(srcTex, sampleUV);
-        return;
+    // 全/半是“源眼输出像素尺寸”的区别，不是缩放到眼视口：
+    //   全：SBS 源眼 = srcW/2 × srcH；TAB = srcW × srcH/2（不拉伸）
+    //   半：源眼沿 split 轴拉成源整帧 = srcW × srcH（SBS 横向 2×、TAB 纵向 2×）
+    // 例 1920x1080 SBS：全 960x1080，半 1920x1080。
+    // 例  960x720  SBS：全  480x720，半  960x720。
+    // 眼视口 = outW/2 × outH；图像按上述像素尺寸居中，不放大/不缩小。
+    float eyeW = float(pc.outW) * 0.5;
+    float eyeH = float(pc.outH);
+    float imgW = float(pc.srcW);
+    float imgH = float(pc.srcH);
+    if (pc.halfMode == 0) {
+        if (pc.layoutMode == 1)
+            imgH *= 0.5;
+        else
+            imgW *= 0.5;
     }
-
-    vec2 b = e;
-    float srcHalfAspect = (pc.srcAspect * srcRect.z) / srcRect.w;
-    // 输出 framebuffer 恒为 SBS：每只眼的视口 = 半宽 × 全高。
-    float eyeAspect = pc.outAspect * 0.5;
-    float boxAspect = eyeAspect;
-    vec2 cscale;
-    if (srcHalfAspect > boxAspect)
-        cscale = vec2(1.0, boxAspect / srcHalfAspect);
-    else
-        cscale = vec2(srcHalfAspect / boxAspect, 1.0);
-    vec2 coff = (vec2(1.0) - cscale) * 0.5;
-    if (b.x < coff.x || b.x > coff.x + cscale.x ||
-        b.y < coff.y || b.y > coff.y + cscale.y) {
+    vec2 imgSize = vec2(imgW / eyeW, imgH / eyeH);
+    vec2 imgMin = (vec2(1.0) - imgSize) * 0.5;
+    vec2 local = (e - imgMin) / imgSize;
+    if (local.x < 0.0 || local.x > 1.0 || local.y < 0.0 || local.y > 1.0) {
         outColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
-    vec2 local = (b - coff) / cscale;
     vec2 sampleUV = contentMin + (srcRect.xy + local * srcRect.zw) * contentSize;
     outColor = texture(srcTex, sampleUV);
 }
