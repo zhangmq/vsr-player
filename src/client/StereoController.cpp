@@ -20,6 +20,7 @@ StereoController::StereoController(QObject *parent) : QObject(parent) {
     for (QScreen *s : QGuiApplication::screens())
         connect(s, &QScreen::geometryChanged, this,
                 &StereoController::refreshScreens, Qt::UniqueConnection);
+    preferredScreenName_ = settings_.value("stereoScreen").toString();
     refreshScreens();
 }
 
@@ -103,6 +104,15 @@ void StereoController::destroyOsdView() {
     osdView_ = nullptr;
 }
 
+int StereoController::preferredScreenIndex() const {
+    if (preferredScreenName_.isEmpty())
+        return -1;
+    for (int i = 0; i < screenPtrs_.size(); ++i)
+        if (screenPtrs_[i]->name() == preferredScreenName_)
+            return i;
+    return -1;
+}
+
 void StereoController::start(int mode, int screenIndex) {
     if (mode != 1 && mode != 2)
         return;
@@ -121,6 +131,10 @@ void StereoController::start(int mode, int screenIndex) {
     osdVisible_ = true;
     screenName_ = s->name();
     active_ = true;
+    // 记忆仅作为下次选择器的默认选中；不在这里/启动时自动切屏。
+    preferredScreenName_ = s->name();
+    settings_.setValue("stereoScreen", preferredScreenName_);
+    settings_.sync();
     createOsdView(s);
     if (!osdView_) {
         active_ = false;

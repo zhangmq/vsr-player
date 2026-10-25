@@ -268,6 +268,8 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   交叉视差**（左眼右移、右眼左移）→ 融合后 OSD 浮在屏幕平面前方；视差固定、
   不受视频眼序 `stereo.swap` 影响（OSD 是 UI）。
 - 测试钩子（RPC）：`stereo-start/stop/osd/cycle/grab`、`stereo-picker`、`grab-window`。
+- 屏幕记忆：`stereoScreen`（QSettings，QScreen::name()）**只作为选择器的默认选中**，
+  不自动切屏、不自动启动；3D 三态本身仍每次启动 Off。
 - 待做：视频 3D 输出、2D→3D、i18n、眼镜 2D↔3D 模式切换时 OSD 窗口尺寸跟随。
 
 ### 反交错（mpv 原生 `--deinterlace`，2026-10-22）

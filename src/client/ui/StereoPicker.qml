@@ -24,13 +24,17 @@ PopupBase {
     function openForMode(m) {
         pendingMode = m
         stereo.refreshScreens()
-        selectedIndex = 0
-        // 预选 32:9 的屏幕（眼镜 3D 模式）；没有则第一块。
-        for (var i = 0; i < stereo.screens.length; i++) {
-            var s = stereo.screens[i]
-            if (s.width >= s.height * 2.5) {
-                selectedIndex = s.index
-                break
+        // 屏幕记忆只做默认选中，不自动切换/启动；没有记忆再选 32:9
+        // （眼镜 3D 模式），否则第一块。
+        selectedIndex = stereo.preferredScreenIndex()
+        if (selectedIndex < 0) {
+            selectedIndex = 0
+            for (var i = 0; i < stereo.screens.length; i++) {
+                var s = stereo.screens[i]
+                if (s.width >= s.height * 2.5) {
+                    selectedIndex = s.index
+                    break
+                }
             }
         }
         open()

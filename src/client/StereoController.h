@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QVariantList>
+#include <QSettings>
 
 class QQuickView;
 class QScreen;
@@ -43,6 +44,9 @@ public:
 
     /// 重新枚举屏幕（供选择器打开时调用；屏幕增删/分辨率变化也会自动刷新）。
     Q_INVOKABLE void refreshScreens();
+    /// 上次选择的屏幕在 screens() 里的 index；只用于选择器默认选中，
+    /// 绝不自动切换/启动。没有记忆/屏幕已拔 → -1。
+    Q_INVOKABLE int preferredScreenIndex() const;
     /// 开始 3D OSD 原型：mode 1/2，screenIndex = screens() 里的 index。
     Q_INVOKABLE void start(int mode, int screenIndex);
     Q_INVOKABLE void stop();
@@ -77,4 +81,8 @@ private:
     bool fit_ = false;
     bool osdVisible_ = true;
     QString screenName_;
+    // 屏幕记忆：只记住上次选的 QScreen::name()，供选择器默认选中；3D 模式
+    // 三态本身**不持久化**（每次启动 Off）。
+    QSettings settings_{QStringLiteral("vsr-player"), QStringLiteral("vsr-player")};
+    QString preferredScreenName_;
 };
