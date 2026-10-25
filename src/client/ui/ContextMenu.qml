@@ -298,10 +298,13 @@ PopupBase {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
-                            if (it && it.subSig) root[it.subSig](modelData.value)
+                            var value = modelData.value
+                            // 先关菜单再执行：3D 片源会打开选择器/移动主窗口，
+                            // 晚关的菜单会跟到眼镜屏上。
                             root.subOpen = false
                             root.subIndex = -1
                             root.close()
+                            if (it && it.subSig) root[it.subSig](value)
                         }
                     }
                 }

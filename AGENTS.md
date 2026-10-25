@@ -264,8 +264,17 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 ### 3D 输出（OSD + 视频映射，2026-10-25，分支 feat/stereo-osd-prototype）
 
 - 入口/流程：右键菜单 3D 三态 **Off / 3D片源 / 2D转3D**（运行期、不持久化，默认 Off）。
-  3D片源 → 选择器（QScreen 列表，名称+实际分辨率；**不假设 1080×2/不按宽高比猜眼镜**；
-  屏幕记忆只做默认选中，不自动切屏/启动）→ Start。2D转3D 本期只弹提示，不启动。
+  3D片源 → 选择器（QScreen `model` + `name` + **物理分辨率**；**不假设 1080×2/
+  不按宽高比猜眼镜**；屏幕记忆只做默认选中，不自动切屏/启动）→ Start。
+  2D转3D 本期只弹提示，不启动。
+- ⚠ Wayland 下 `QScreen::geometry` 是**逻辑**尺寸（VITURE 报 2844×800，物理
+  3840×1080）；选择器通过 `kscreen-doctor -j` 的 `currentModeId` → mode `size`
+  取物理分辨率（KDE/KWin 专属；找不到工具时退回 QScreen 尺寸）。`QScreen::model`
+  （VITURE/DELL/LG）用于显示名称。
+- 菜单/选择器关闭顺序：`ContextMenu` 二级项**先 close 再发 subSig**；
+  `StereoPicker` 的 Start **先 close 再 stereo.start**——否则 popup 会跟着
+  主窗口跑到眼镜屏上。3D active 期间 `Escape` Shortcut 禁用（主窗口被合成器
+  聚焦时 Esc 退全屏会切回焦点屏）；退出用桌面 3D → Off。
 - **主 UI 始终在桌面**：`main.cpp` 另建一个 `QQuickView controlView`，加载同一份
   `main.qml` 但 `controlMode=true` → `Video` Loader 不创建，只有 UI。2D 时它隐藏、
   主窗口（Video+UI）在桌面；3D 时主窗口去眼镜屏做 presentation，controlView 在主窗口

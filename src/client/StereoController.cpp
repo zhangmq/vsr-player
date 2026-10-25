@@ -6,6 +6,11 @@
 #include <QQuickWindow>
 #include <QScreen>
 #include <QVariantMap>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
+#include <QStandardPaths>
 
 StereoController::StereoController(QObject *parent) : QObject(parent) {
     connect(qApp, &QGuiApplication::screenAdded, this, [this](QScreen *s) {
@@ -30,21 +35,60 @@ QScreen *StereoController::screenAt(int index) const {
     return screenPtrs_[index];
 }
 
+// Wayland 下 QScreen::geometry 是**逻辑**尺寸（高 DPI/分数缩放后），
+// 不是物理输出模式；例如 3840×1080 的眼镜可能报 2844×800。
+// KWin 的 kscreen-doctor -j 有每个输出当前模式的物理像素尺寸；这里只用于
+// 选择器显示/识别，不参与渲染。没有该工具（非 KDE）时退回 QScreen 尺寸。
+static QHash<QString, QSize> physicalModes()
+{
+    QHash<QString, QSize> out;
+    const QString exe = QStandardPaths::findExecutable("kscreen-doctor");
+    if (exe.isEmpty())
+        return out;
+    QProcess p;
+    p.start(exe, {QStringLiteral("-j")});
+    if (!p.waitForFinished(800))
+        return out;
+    const QJsonDocument doc = QJsonDocument::fromJson(p.readAllStandardOutput());
+    for (const QJsonValue &v : doc.object().value("outputs").toArray()) {
+        const QJsonObject o = v.toObject();
+        const QString name = o.value("name").toString();
+        const QString cur = o.value("currentModeId").toString();
+        for (const QJsonValue &mv : o.value("modes").toArray()) {
+            const QJsonObject m = mv.toObject();
+            if (m.value("id").toString() != cur)
+                continue;
+            const QJsonObject sz = m.value("size").toObject();
+            out.insert(name, QSize(sz.value("width").toInt(),
+                                   sz.value("height").toInt()));
+            break;
+        }
+    }
+    return out;
+}
+
 void StereoController::refreshScreens() {
+    const QHash<QString, QSize> phys = physicalModes();
     screenPtrs_ = QGuiApplication::screens();
     screens_.clear();
     for (int i = 0; i < screenPtrs_.size(); ++i) {
         QScreen *s = screenPtrs_[i];
+        const QRect g = s->geometry();
+        const QSize physical = phys.value(s->name(), g.size());
         QVariantMap m;
         m.insert("index", i);
         m.insert("name", s->name());
-        m.insert("width", s->geometry().width());
-        m.insert("height", s->geometry().height());
         m.insert("model", s->model());
+        m.insert("manufacturer", s->manufacturer());
+        m.insert("width", physical.width());
+        m.insert("height", physical.height());
+        m.insert("logicalWidth", g.width());
+        m.insert("logicalHeight", g.height());
         screens_.append(m);
-        MLOG_INFO("stereo: screen %d = %s (%dx%d)", i,
-                  s->name().toUtf8().constData(),
-                  s->geometry().width(), s->geometry().height());
+        MLOG_INFO("stereo: screen %d = %s model=%s physical=%dx%d logical=%dx%d",
+                  i, s->name().toUtf8().constData(),
+                  s->model().toUtf8().constData(),
+                  physical.width(), physical.height(), g.width(), g.height());
     }
     emit screensChanged();
 
@@ -129,7 +173,10 @@ void StereoController::start(int mode, int screenIndex) {
 
     emit stateChanged();
     emit osdVisibleChanged();
-    MLOG_INFO("stereo: presentation on %s (%dx%d)", s->name().toUtf8().constData(),
+    const QVariantMap sm = screens_.value(screenIndex).toMap();
+    MLOG_INFO("stereo: presentation on %s (physical %dx%d, logical %dx%d)",
+              s->name().toUtf8().constData(),
+              sm.value("width").toInt(), sm.value("height").toInt(),
               s->geometry().width(), s->geometry().height());
 }
 

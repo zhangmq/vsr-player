@@ -324,7 +324,9 @@ Item {
         readonly property bool shortcutsEnabled: !uiLayer.anyPopupOpen
 
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Escape"
+            // 3D presentation 期间不响应 Esc（主窗口可能仍被合成器聚焦，
+            // Esc 退全屏会把窗口切回焦点屏）；退出用桌面 3D → Off。
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Escape"
             onActivated: {
                 // 全屏 → 退全屏；播放列表打开 → 关闭；其余不响应。Esc 不控制播放停止。
                 if (viewModel.fullscreen) viewModel.toggleFullscreen()

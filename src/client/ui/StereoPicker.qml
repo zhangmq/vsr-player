@@ -70,7 +70,10 @@ PopupBase {
                     Text {
                         anchors.left: parent.left; anchors.leftMargin: 14
                         anchors.verticalCenter: parent.verticalCenter
-                        text: modelData.name + "   " + modelData.width + " × " + modelData.height
+                        text: (modelData.model && modelData.model.length > 0
+                               ? modelData.model + (modelData.model !== modelData.name ? " (" + modelData.name + ")" : "")
+                               : modelData.name)
+                              + "   " + modelData.width + " × " + modelData.height
                         color: "#e0e0e0"; font.pixelSize: 16
                     }
                     MouseArea {
@@ -105,8 +108,12 @@ PopupBase {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        stereo.start(root.pendingMode, root.selectedIndex)
+                        // 先关选择器再启动：start() 会把主窗口移到眼镜屏，
+                        // 晚关的 popup 会跟着窗口跑到眼镜屏上。
+                        var mode = root.pendingMode
+                        var idx = root.selectedIndex
                         root.close()
+                        stereo.start(mode, idx)
                     }
                 }
             }
