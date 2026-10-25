@@ -64,7 +64,7 @@ Item {
                             id: leftColumn
                             spacing: 6
                             HotkeyRow {
-                                keyText: "Tab"
+                                keyText: "H"
                                 actionText: qsTr("Toggle HotKeys Help")
                                 fontPixelSize: root.osdFontSize
                             }

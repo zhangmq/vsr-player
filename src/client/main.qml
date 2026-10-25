@@ -440,11 +440,7 @@ Item {
             onActivated: viewModel.frameStep(-1)
         }
         Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Tab"
-            onActivated: stereo.active ? stereo.toggleOsd() : viewModel.toggleOsd()
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Backtab"
+            enabled: root.shortcutsEnabled; sequence: "h"
             onActivated: stereo.active ? stereo.toggleOsd() : viewModel.toggleOsd()
         }
         // 3D J/K/L/Tab 不再用 QML Shortcut：Tab 会被焦点遍历先吃掉，且

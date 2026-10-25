@@ -317,7 +317,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **presentation** = 主窗口（Video/VO）：`setScreen(眼镜屏)` + `showFullScreen`，加
   `FramelessWindowHint | WindowStaysOnTopHint | WindowDoesNotAcceptFocus`，光标 Blank；
   主窗口 uiLayer 在 3D 时隐藏；OSD 是 presentation 内的 `StereoOsd.qml` 覆盖层
-  （Loader，z=100），不是独立窗口。`Tab` 只切覆盖层；`J/K/L` 改布局/眼序/全半。
+  （Loader，z=100），不是独立窗口。`H` 只切覆盖层；`J/K/L` 改布局/眼序/全半。
   实测 KWin 下满屏置顶覆盖了任务栏/面板，无其他可见内容。停止时恢复主窗口 flags/
   光标/屏幕/几何，隐藏 controlView。
 - **屏拆分在 VO/合成阶段**：`vf_*`（VSR/VFG/TrueHDR）链路不动，滤镜仍处理完整
@@ -342,14 +342,14 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - OSD：默认显示；`Tab` 显隐；`J` 布局、`K` 交换眼、`L` 全/半；标题/键名 Bold、
   正文 DemiBold；左右面板 ±12 logical px 交叉视差（OSD 浮在画面前，独立于视频眼序）。
 - **OSD HotKeys（2026-10-25，按用户参考重做）**：**两列、一键一行、无分组名**。
-  左列 3D：Tab / J / K / L；右列播放器：Space / ← / → / Shift+← / Shift+→ /
+  左列 3D：H / J / K / L；右列播放器：Space / ← / → / Shift+← / Shift+→ /
   ↑ / ↓ / Ctrl+← / Ctrl+→（方向键、Shift+方向键、音量上下、上/下一个都各占一行）。
   `HotkeyRow` 的键名列**统一 100px**，状态/说明从同一 x 起（所有行左对齐）；
   3D 状态**不用按钮**，纯文本 + 颜色区分（选中 `#ffcc00`，未选 `#e0e0e0`），
   避免按钮宽度破坏对齐；切换后该行淡黄闪 500ms。OSD 全部文字只用
   **一个字号 = 16**（标题/键名/状态/说明同字号；标题也不加粗/不放大），
   不再有 20/24/32 等多套；行高 32。
-  左列 `J: 左右并排 / 上下并列`（`Side-by-Side / Top-and-Bottom`）、`K: Normal Eyes / Swapped Eyes`、
+  左列 `H: Toggle HotKeys Help`、`J: 左右并排 / 上下并列`、`K: Normal Eyes / Swapped Eyes`、
   `L: Full / Half`；右列 `←`/`→`（±5s）、`Shift+←`/`Shift+→`（±10s）、
   `↑`/`↓`（音量 ±）、`Ctrl+←: Previous`、`Ctrl+→: Next`（中文“上一个/下一个”）。
   OSD panel 宽高按内容（`contentWidth` 在 Repeater delegate 内，不能放 root），
@@ -367,14 +367,11 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   切换类忽略 auto-repeat，方向/音量允许连发。
   QML 里 3D 的 J/K/L 已删除，Space/方向/音量在 3D 时禁用
   （`&& !stereo.active`），只留 2D 路径；C++ 负责 3D，避免重复触发。
-  另加了 J/K/L/Tab 的 `QShortcut`（`Qt::ApplicationShortcut`）+ QML `Shortcut`
-  （Tab 2D/3D 共用）+ Backtab 兜底。**Tab 的特殊性**：它是焦点遍历键，Qt Quick
-  的 focus chain 在 QQuickWindow/QQuickItem 层就消费它，QML `Shortcut`/`Keys`
-  经常看不到；其他快捷键是普通按键所以正常。正确层是 `StereoView` /
-  `ControlView` 覆写 `QQuickView::event()`，在 QML focus 之前拦 `Key_Tab` /
-  `Key_Backtab`，调共享 `stereo.toggleOsd()` 并吞掉。之前的
-  `WindowDoesNotAcceptFocus` 归因是错的（其他键正常说明焦点/投递没问题），已恢复；
-  `send-key` 诊断 RPC 已删除，生产交互不走 RPC。
+  **OSD 帮助键已从 Tab 改为 H**（用户 2026-10-26 定）：Tab 是焦点遍历键，Qt Quick
+  focus chain 会先消费，QML `Shortcut`/`Keys` 经常看不到；H 是普通键，走
+  `StereoKeyFilter` + `QShortcut` + QML `Shortcut` 三条普通路径即可，不再需要
+  `QQuickView::event()` 特判。Tab/Backtab 绑定已全部删除；
+  `WindowDoesNotAcceptFocus` 保持原设计（不是 Tab 根因）；`send-key` 诊断 RPC 已删。
 - **上一个/下一个 = 全局 Ctrl+← / Ctrl+→**：2D 走 QML `Shortcut`
   （`enabled && !stereo.active`），3D 走 C++ 过滤器；`Ctrl+L` 是 URL 输入，
   与 Ctrl+方向键不冲突，项目内无重复绑定。
