@@ -510,6 +510,17 @@ int main(int argc, char *argv[]) {
         hdr::installCapabilityProbe(&view);
         hdr::installSwapchainVerification(&view, initialMode);
         view.show();
+        // 主 UI 默认放到 primary 屏：KWin 会把新窗口放到当前活动输出，
+        // 用户鼠标在眼镜屏时主 UI/右键菜单会开到眼镜上。3D presentation
+        // 才是唯一应该去眼镜屏的窗口。
+        if (QScreen *primary = QGuiApplication::primaryScreen()) {
+            if (view.screen() != primary) {
+                MLOG_INFO("main window: move %s -> primary %s",
+                          view.screen() ? view.screen()->name().toUtf8().constData() : "?",
+                          primary->name().toUtf8().constData());
+                view.setScreen(primary);
+            }
+        }
         // QML 的 Qt.quit() → QQmlEngine::quit() signal——文档不保证默认
         // 连接，QQuickView 场景实测不退出（"退出无效"根因，2026-08-06）。
         // 显式连接：菜单"退出"/Ctrl+Q 走标准退出路径（exec 返回 → 清理）。

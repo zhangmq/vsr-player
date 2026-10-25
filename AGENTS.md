@@ -278,7 +278,13 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   不再同步跑 `kscreen-doctor`（屏幕列表由 screenAdded/Removed/geometryChanged
   维护），避免点菜单后卡顿。3D active 期间 `Escape` Shortcut 禁用（主窗口被
   合成器聚焦时 Esc 退全屏会切回焦点屏）；退出用桌面 3D → Off。
-- **主 UI 始终在桌面**：`main.cpp` 另建一个 `QQuickView controlView`，加载同一份
+- **主 UI 始终在桌面**：KWin 把新窗口放到当前活动输出——用户鼠标在眼镜屏时
+  主 UI/右键菜单会开到眼镜上。`main.cpp` 在 `view.show()` 后把主窗口移到
+  `QGuiApplication::primaryScreen()`；`StereoController` 选 control 屏时若
+  主 UI 原来就在目标（眼镜）屏，改用 primary/其他非目标屏。control 窗口用
+  `show() → setScreen(controlScreen) → setGeometry()`（Wayland 初始放置看
+  active output，show 前 setScreen 不生效）。`main.cpp` 另建一个
+  `QQuickView controlView`，加载同一份
   `main.qml` 但 `controlMode=true` → `Video` Loader 不创建，只有 UI。2D 时它隐藏、
   主窗口（Video+UI）在桌面；3D 时主窗口去眼镜屏做 presentation，controlView 在主窗口
   原来的屏幕/几何上显示，主 UI 不消失。3D 快捷键只在 control 窗口启用（两个窗口都载入

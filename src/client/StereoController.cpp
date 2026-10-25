@@ -143,18 +143,40 @@ void StereoController::start(int mode, int screenIndex) {
         origCursor_ = playerWin_->cursor();
     }
 
-    // 桌面 control 窗口：沿用主窗口进入 3D 前的屏幕/几何，让主 UI 看起来没“消失”。
+    // 桌面 control 窗口：优先沿用主 UI 进入 3D 前的屏幕；但如果主 UI 当时
+    // 就在目标（眼镜）屏上，control 必须换到 primary/其他非目标屏，否则
+    // 右键菜单/UI 还是会出现在眼镜上。
     if (controlWin_) {
-        if (origScreen_)
-            controlWin_->setScreen(origScreen_);
-        if (origFullScreen_) {
-            controlWin_->showFullScreen();
-        } else {
-            controlWin_->showNormal();
-            if (origGeom_.isValid())
-                controlWin_->setGeometry(origGeom_);
+        QScreen *controlScreen = origScreen_;
+        if (!controlScreen || controlScreen == s) {
+            controlScreen = QGuiApplication::primaryScreen();
+            if (!controlScreen || controlScreen == s) {
+                for (QScreen *cand : QGuiApplication::screens()) {
+                    if (cand != s) { controlScreen = cand; break; }
+                }
+            }
+        }
+        if (controlScreen) {
+            // Wayland 初始放置看 active output，show() 之前 setScreen 不生效；
+            // 先 show 让平台窗口存在，再 setScreen/geometry。
+            controlWin_->setOpacity(0.0);
+            controlWin_->show();
+            controlWin_->setScreen(controlScreen);
+            if (origFullScreen_) {
+                controlWin_->showFullScreen();
+            } else {
+                controlWin_->showNormal();
+                if (origGeom_.isValid())
+                    controlWin_->setGeometry(origGeom_);
+            }
+            controlWin_->setOpacity(1.0);
         }
         controlWin_->requestActivate();
+        MLOG_INFO("stereo: control window on %s geom=%dx%d+%d+%d (orig screen %s)",
+                  controlWin_->screen() ? controlWin_->screen()->name().toUtf8().constData() : "?",
+                  controlWin_->geometry().width(), controlWin_->geometry().height(),
+                  controlWin_->geometry().x(), controlWin_->geometry().y(),
+                  origScreen_ ? origScreen_->name().toUtf8().constData() : "?");
     }
 
     // presentation：主窗口（Video/VO）移到眼镜屏，满屏、置顶、无边框、不收焦点。
