@@ -127,6 +127,15 @@ cp -L "$MPV_DIST/_build/libmpv.so.2" "$STAGE/lib/vsr-player/libmpv.so.2"
 # （libavcodec.so.63）改成无版本名（libavcodec.so），由安装时按**目标机实际版本**
 # 建链接 —— 这样包本身不再钉任何 FFmpeg 版本。只用 FFmpeg 家族：libnvrtc 的符号
 # 版本命名空间就是 soname，改 NEEDED 会破坏符号版本（见 rewrite-needed.py 注释）。
+# 记录**构建期的 FFmpeg 主版本**：standard 把 NEEDED 去版本化后就再也看不出
+# 原本依赖哪个 major 了，而跨 major 是没有 ABI 承诺的（能加载 ≠ 行为对）。
+# install.sh 会拿这个文件对照目标机实际装的 libavcodec 主版本，不一致就告警。
+# 注意：needed_of() 在 [4/6] 才定义，这里用 readelf 直读（staging 早于它）
+readelf -d "$MPV_DIST/_build/libmpv.so.2" \
+    | sed -n 's/.*(NEEDED).*\[libavcodec\.so\.\([0-9]*\)\].*/\1/p' \
+    > "$STAGE/lib/vsr-player/VSR-FFMPEG-MAJOR"
+echo "  ✓ 记录构建期 FFmpeg 主版本: $(cat "$STAGE/lib/vsr-player/VSR-FFMPEG-MAJOR")"
+
 # 绝对路径形式的 NEEDED（libmujs）两个变体都要改成 basename；FFmpeg 去版本化
 # 只在 standard 做（full 自带匹配的库，没必要改）。
 if [ "$VARIANT" = standard ]; then

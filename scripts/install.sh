@@ -386,6 +386,24 @@ if [ "$LDD_OK" -eq 0 ] && [ -f "$COMPAT_SH" ]; then
         echo "  → 重新自检"; run_checks
     fi
 fi
+# 跨 major 的可见性：standard 不捆 FFmpeg，NEEDED 也没有版本号了 —— 拿构建期
+# 记录的主版本对照目标机实际装的 libavcodec，不一致必须说出来（能加载 ≠ 行为对：
+# ABI 结构体变化不会体现为 undefined symbol）。
+FF_EXP_FILE="$LIB_DIR/VSR-FFMPEG-MAJOR"
+if [ -f "$FF_EXP_FILE" ]; then
+    FF_WANT="$(tr -d '[:space:]' < "$FF_EXP_FILE")"
+    FF_SO="$(ldd "$BIN_DIR/vsr-player" 2>/dev/null | awk '$1=="libavcodec.so"{print $3; exit}')"
+    FF_HAVE=""
+    [ -n "$FF_SO" ] && FF_HAVE="$(readelf -d "$FF_SO" 2>/dev/null \
+        | sed -n 's/.*(SONAME).*\[libavcodec\.so\.\([0-9]*\)\].*/\1/p')"
+    if [ -n "$FF_HAVE" ] && [ -n "$FF_WANT" ] && [ "$FF_HAVE" != "$FF_WANT" ]; then
+        echo "  ⚠ FFmpeg 主版本不一致：运行时 libavcodec.so.$FF_HAVE，本包构建于 $FF_WANT" >&2
+        echo "     standard 不捆 FFmpeg，跨 major 没有 ABI 承诺：符号能对上不代表行为对。" >&2
+        echo "     要绝对确定性请用 full 变体（自带匹配的 FFmpeg）。" >&2
+    elif [ -n "$FF_HAVE" ]; then
+        echo "  ✅ FFmpeg 主版本匹配（libavcodec.so.$FF_HAVE）"
+    fi
+fi
 [ "$LDD_OK" -eq 1 ] && echo "  ✅ 依赖自检通过"
 [ "$LDD_OK" -eq 1 ] || exit 1
 [ -f "$LIB_DIR/libnvinfer.so.11" ] && RIFE_TRT="✅" || RIFE_TRT="❌"

@@ -536,6 +536,13 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
     或**打包时改写 NEEDED/整包捆绑**（[Nix auto-patchelf](https://git.qyliss.net/nixlib/blame/pkgs/build-support/setup-hooks/auto-patchelf.sh)、
     AppImage/manylinux 的 auditwheel）；发行版本身靠"soname 版本共存"（如 Ubuntu 的
     [libplacebo360](https://packages.ubuntu.com/search?lang=zh-tw&keywords=libplacebo360) 包）让不同代共享。
+  - **跨 major 的可见性（2026-10-26）**：去版本化后 NEEDED 里没有 major 了，而
+    跨 ffmpeg major **没有 ABI 承诺**（符号齐全 ≠ 结构体/语义一致，`ldd -r` 查不出来）。
+    所以 `build_release.sh` 在 staging 里写 `lib/vsr-player/VSR-FFMPEG-MAJOR`
+    （从 `$MPV_DIST/_build/libmpv.so.2` 的 NEEDED 读，注意 staging 早于 `needed_of()`
+    定义 → 用 readelf 直读），`install.sh [6/6]` 拿它对照目标机实际
+    `libavcodec.so.<N>` 的 SONAME：一致打 `✅ FFmpeg 主版本匹配`，不一致打 ⚠ 并提示
+    "符号能对上不代表行为对，要确定性用 full 变体"（实测两支都验过）。
   - **FFmpeg NEEDED 去版本化（2026-10-26，用户要求；standard 变体）**：
     `scripts/rewrite-needed.py` 在打包时把 `lib/vsr-player/libmpv.so.2` 和 `mpv-vsr`
     的 `DT_NEEDED` 从 `libavcodec.so.63` 改成 `libavcodec.so`（原地截短 .dynstr 里
