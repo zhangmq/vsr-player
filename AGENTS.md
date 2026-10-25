@@ -293,6 +293,14 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   主窗口一起移到眼镜屏。Qt 文档/源码（`qquickpopup.cpp` 的
   `adjustPopupItemParentAndWindow`、`qquickpopupwindow.cpp`）与社区报告
   （QTBUG-67684、QTBUG-35261）都是这个语义，不是 QScreen/合成器放错屏。
+- **Context menu 仅 UI 窗口可用**（2026-10-25 用户要求）：`MouseArea` 与
+  `ContextMenu.enabled = controlMode || !stereo.active` —— 2D 用 main 窗口，
+  3D 用 control 窗口（桌面主 UI）；presentation 窗口禁用右键/菜单。
+- **Context menu 及时关闭**：选 3D 片源时 `onStereoSelected` 先
+  `contextMenu.close()` 再 `Qt.callLater` 开选择器；`stereo.active` 变 true、
+  `uiLayer.visible=false`（自动隐藏/进 3D）、`window.active=false`、
+  `window.visible=false` 都显式 `contextMenu.close()` + `stereoPicker.close()`；
+  打开其他 popup 仍走 `uiLayer.closeOtherPopups()`。
 - 3D active 期间 `Escape` Shortcut 禁用（主窗口被合成器聚焦时 Esc 退全屏会切回
   焦点屏）；退出用桌面 3D → Off。
 - **主 UI 始终在桌面**：KWin 把新窗口放到当前活动输出——用户鼠标在眼镜屏时

@@ -98,6 +98,8 @@ Item {
         MouseArea {
             anchors.fill: parent
             acceptedButtons: Qt.RightButton
+            // 3D presentation（主窗口在眼镜屏）不响应右键；此时 UI 在 control 窗口。
+            enabled: controlMode || !stereo.active
             onClicked: {
                 if (mouse.button === Qt.RightButton) {
                     uiLayer.closeOtherPopups(contextMenu)
@@ -277,6 +279,8 @@ Item {
         // ── Context Menu（右键，showAt 定位 = 鼠标位置）──────────────
         ContextMenu {
             id: contextMenu
+            // 仅主 UI 窗口可用；presentation 窗口不挂 context menu。
+            enabled: controlMode || !stereo.active
             onOpenFilesRequested: function() { fileDialog.mode = 0; fileDialog.open() }
             onOpenFolderRequested: function() { folderDialog.mode = 0; folderDialog.open() }
             onOpenUrlRequested: urlPopup.open()
@@ -327,6 +331,33 @@ Item {
                 if (stereo.active) {
                     uiLayer.closeOtherPopups(null)
                     playlistPanel.close()
+                    stereoPicker.close()
+                }
+            }
+        }
+
+        // 及时关闭：窗口失活/隐藏、UI 层隐藏（自动隐藏或进入 3D）时，
+        // Popup.Item 不会收到“窗口外”的点击，必须显式关。
+        Connections {
+            target: uiLayer
+            function onVisibleChanged() {
+                if (!uiLayer.visible) {
+                    contextMenu.close()
+                    stereoPicker.close()
+                }
+            }
+        }
+        Connections {
+            target: window
+            function onActiveChanged() {
+                if (!window.active) {
+                    contextMenu.close()
+                    stereoPicker.close()
+                }
+            }
+            function onVisibleChanged() {
+                if (!window.visible) {
+                    contextMenu.close()
                     stereoPicker.close()
                 }
             }
