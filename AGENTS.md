@@ -815,6 +815,13 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 - GPU：RTX 5060 Ti（Blackwell sm_120）；驱动 615.78.08（2026-10-17 实测）；KWin Wayland 6.8.0（纯 Wayland，无 X11）。显示器 DP-3 = LG ULTRAFINE 27" 4K：EDID 含 ST2084、峰值 400 nit、基色≈DCI-P3（HDR 可在 KWin 里开）
 - Qt 6.12.0 / C++20 (GCC 13+) / Meson / FFmpeg 9.0 / TRT 11.2.1.2（pacman）
 - 测试文件：`input/`（catlove_720p.webm、Jellyfish 1080p h264/h265、goose_480p、heya 等）
+- **软件解码能力（2026-10-26 实测，i5-14600KF）**：`input/Fallout … 2160p … H265`（3840×1600
+  HEVC Main10 HDR，24fps）用 `--benchmark --scale off -- --hwdec=no` 跑出 **176 fps**
+  （约 7.3× 实时，CPU 约 5.6 核）；`ffmpeg -benchmark` 独立对照 **208 fps / 8.66×（≈7.4 核）**。
+  同文件 `--scale 2`（4K→7680×3200）46.8 fps、`--fruc 60` 168 fps、`--scale auto` 176.9 fps
+  （benchmark 无窗口 → auto 判定 1× 直通）。结论：**4K HEVC 10-bit 纯软解在本机有 7–8× 余量**，
+  所以 1080p×2 的 MVC 软解（≈100 Mpx/s，本机 4K 软解约 1075 Mpx/s）不是瓶颈；
+  4K MVC 则仍不现实。
 - 复现命令：`./build/src/client/vsr-player --fruc 60 input/goose_480p.webm`；RPC socket `/tmp/vsr-player.sock`
 - benchmark：`./build/src/client/vsr-player --benchmark [--scale off|auto|2|3|4] <video>`（无 UI，`all=no`，END_FILE 判定结束）；短文件启动开销会低估吞吐 ~35%，用 ≥100s 文件取稳态
 - 解码规则：AV1/H.264/HEVC/VC-1（wmv3/vc1）/MPEG-1/MPEG-2/MJPEG 一律 native decoder + CUDA hwaccel（get_format，mpv 显示为 `nvdec`）；**永不用 `*_cuvid`**（surface 管理 bug → 周期重复帧）。⚠️ 白名单补全史（2026-08-18，patch `src/mpv/video/decode/vd_lavc.c`）：默认 hwdec-codecs 漏 wmv3（软解 core 99.7% CPU + 掉帧，加后硬解 CPU 10% 0 掉帧）；实测 mpeg2video/mpeg1video/mjpeg 硬解生效已加入；mpeg4/h263/h263p 未加（mpeg4 的 mpv nvdec 路径 probe 失败打 error `decoding to AV_PIX_FMT_NONE` 回退软解，ffmpeg CLI 却可解——集成差异；h263 无测试文件）。
