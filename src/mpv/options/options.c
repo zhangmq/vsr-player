@@ -1103,7 +1103,11 @@ static const struct MPOpts mp_default_opts = {
         "zip", "rar", "7z", "cbz", "cbr", NULL
     },
     .playlist_exts = (char *[]){
-        "cue", "edl", "m3u", "m3u8", "pls", "strm", NULL
+        // "iso"：蓝光镜像按"容器"处理（见 demux/demux_playlist.c 的 parse_bluray）。
+        // 加在这里，是因为目录展开（parse_dir → test_path）只按扩展名表挑选——
+        // 不加的话"打开一个只装了 .iso 的文件夹"会得到 0 条目，随即报
+        // "Failed to recognize file format"（实测）。
+        "cue", "edl", "m3u", "m3u8", "pls", "strm", "iso", NULL
     },
 
     .sub_auto_exts = (char *[]){

@@ -587,6 +587,12 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 - `src/mpv/demux/demux_lavf.c`：入口处对蓝光镜像 **主动让路**（`return -1`）。
   ⚠ 必须这么做：demuxer 列表里 lavf 排在 playlist **之前**，而 lavf 会"认领"任何文件
   （把 ISO 当成无流的 mpeg），不拦就永远走不到 playlist。
+- `src/mpv/options/options.c`：`playlist_exts` 加 **`iso`**。
+  ⚠ 不加的话"打开一个**只装了 .iso 的文件夹**"会得到 **0 条目**：目录展开
+  （`parse_dir` → `test_path`）只按扩展名表挑选，而 `iso` 原本既不在
+  video/audio/image、也不在 archive/playlist 表里 → 目录当成普通文件打开、
+  报 `Failed to recognize file format`，播放列表里只剩一个点不动的目录条目
+  （2026-10-26 用户实测报的正是这个）。
 - ⚠ **stream origin 坑（最花时间的一处）**：`bd://` 的 `stream_info_bluray.stream_origin`
   是 `STREAM_ORIGIN_UNSAFE`（设备路径可指向任意文件），而 `check_origin()` 只允许
   DIRECT/UNSAFE 来源打开它；demuxer 展开出来的条目默认是 **FS** 来源 → 被静默拒绝，
