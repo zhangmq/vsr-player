@@ -994,10 +994,14 @@ int main(int argc, char *argv[]) {
             if (!entries.empty()) {
                 // CLI/播放列表（mpv 语义）：首条 replace 载入并播放，其余
                 // append（不打断首条；列表整体落进 mpv 的 playlist 属性，
-                // 后续由 UI/RPC 正常管理并照常持久化）
-                mpv.loadFile(entries[0].c_str());
-                for (size_t i = 1; i < entries.size(); i++)
-                    mpv.appendFile(entries[i].c_str());
+                // 后续由 UI/RPC 正常管理并照常持久化）。
+                // ⚠ 走 viewModel.openFiles 而不是直接 loadFile：蓝光 ISO 需要
+                // "像文件夹一样展开成 title 列表、且不自动播放"的特殊处理
+                //（见 PlayerViewModel::openFiles 的 ISO 分支）。
+                QStringList cliPaths;
+                cliPaths.reserve(int(entries.size()));
+                for (const auto &e : entries) cliPaths.append(QString::fromStdString(e));
+                viewModel.openFiles(cliPaths, 0);
                 MLOG_INFO("%zu inputs (first: %s), entering app.exec()",
                           entries.size(), entries[0].c_str());
             } else if (idleStart) {

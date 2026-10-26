@@ -251,6 +251,8 @@ public:
     /// 恢复上次播放列表（无 CLI 文件时调用）：首条 replace 开始播放，
     /// 其余 append，最后定位上次条目。
     void restorePlaylist();
+    /// 启动恢复 bd:// 条目前设回 bluray-device（见 .cpp 注释）。
+    void restoreBlurayDevice(const QStringList &files);
     /// 只恢复播放列表、**不载入任何媒体**（启动 idle，见 main.cpp）：
     /// 全部条目 append（无 current 条目 → mpv 不建解码/滤镜链、不 Load
     /// 引擎、不做续播 seek），仅把列表填进 UI 并记住"播放键该载入哪一条"。
@@ -774,6 +776,9 @@ private:
     QString liveSourcePath_;
     bool    liveSourcePending_ = false;
     QString lastPath_;
+    /// 当前蓝光 ISO（mpv 的 bluray-device 是全局选项）：bd:// 条目离开它
+    /// 就打不开，所以随播放列表一起持久化，启动恢复前先设回去。
+    QString blurayDevice_;
     // 启动 idle：列表已排队但**没有 current 条目**（媒体未载入）。记住
     // 播放键第一次要载入的目标索引；同时供 playlist 观察器在 mpv 报
     // cur<0（无 current）时高亮"按播放将载入的那一条"。

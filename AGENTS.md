@@ -575,6 +575,52 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 - Toggle 与 `send_field` 的连带影响：反交错在链最前面 → VSR 按翻倍后的帧数计费；
   VFG 按 `k × 反交错后帧率` 判 `max-fps`（默认 60：50p 源 ×2 = 100 > 60 → 直通）。
 
+### 蓝光 ISO / BDMV（2026-10-26，按"文件夹"展开）
+
+**交互（用户定）**：打开 `.iso`（或含 `BDMV/` 的目录）不再直接播最长 title，
+而是把盘上**所有 title 作为播放列表条目列出来、不自动播放**（mpv 保持 idle），
+用户自己挑。与"打开文件夹 = mpv 原生目录展开"同一套心智。
+
+**实现**：
+- `src/client/BlurayDisc.{h,cpp}`：进程内链 **libbluray**（meson 里
+  `dependency('libbluray', version: '>= 1.0.0')`；standard 用系统的、full 已捆
+  `libbluray.so.4`）。`bdisc::enumerate()` 只读 mpls/clpi 元数据（**不解码**），
+  返回 `{index, mpls, durationMs, chapterCount, clipCount, label}`。
+  ⚠ 命名空间不能叫 `bluray`——libbluray 头里有 `struct bluray`，同名会
+  "redeclared as different kind of entity"（实测）。
+- `PlayerViewModel::openFiles`：识别 ISO → 设全局选项 `bluray-device=<iso>` →
+  逐个 `loadfile bd://mpls/<n> append`（**append 不 replace** → 不进播放）→
+  用户点条目即播。
+  ⚠ 用 **mpls 编号**而不是 title index：libbluray 的 title 索引随
+  `TITLES_*` 过滤条件变化，mpls 是盘上稳定标识。
+  ⚠ 设备只能走全局选项：`bd://<title>/<device>` 的 URL 解析会在第一个 `/`
+  处切分设备串，绝对路径的前导斜杠会被吃掉（mpv `stream_bluray.c`）。
+- 播放列表面板显示名：`bdisc::labelFor("bd://mpls/5")` → `Title 6 · 01:18:30`
+  （进程级 QHash 在枚举时登记；未知 URL 回退 basename）。
+- **持久化**：`bluray-device` 是全局选项，重启后 bd:// 条目会打不开
+  （mpv 报 "No protocol handler found"）。所以把 ISO 路径存 `blurayDevice`
+  （设置写入后**立即 `settings_.sync()`**——被 SIGTERM 杀掉时不落盘，实测），
+  `restorePlaylist*` 在装载前先设回去。启动阶段同步写属性是安全的
+  （core 空闲、无 DR 竞争，见"GUI 线程不得同步调 mpv API"的例外条款）。
+- 枚举失败（非蓝光结构/损坏）→ 退回 `loadfile bd://`（mpv 默认播最长 title）。
+- CLI 输入也改走 `viewModel.openFiles`（原先直接 `mpv.loadFile`），否则
+  `vsr-player xxx.iso` 这条路径拿不到 ISO 特殊处理。
+
+**实测（本机 `test.iso`，20.6 GB）**：卷标 `CW3DBD_04`（3D 蓝光，`BDMV/STREAM/SSIF/`
+5 个 ssif），枚举 6 个 title（0:00 / 0:10 / 0:30 / 1:30 / 4:00 / **1:18:30**，
+主片 mpls=00003、16 章），`aacs=0`；点击主片 → `bd://mpls/3`、
+`h264 [High] 1920x1080`、`hwdec=nvdec`、`chapter-list/count=16`；重启后自动
+恢复 6 条 + 设备。普通文件与目录播放未受影响。
+
+**⚠ 该盘是双轨 MVC（蓝光 3D），只能播 base view（2D）**：SSIF 里两条视频 PID
+（0x1011 base + 0x1012 dependent/MVC），依赖视图的 NAL 是 type 15（subset SPS）
+与 type 20（slice extension）。FFmpeg 9.0.2 **不能解 MVC**（`sps_id 1 out of range`）。
+开源方案存在但**未合并**：[FFmpeg PR #24303](https://patchwork.ffmpeg.org/project/ffmpeg/patch/20260828142448.29D46269EF@ffbox0-bg.ffmpeg.org/)
+（Dom Cobley，2026-08，18 个补丁，`view_ids` 选视图），已知缺口正是我们要用的：
+**mpegts 里两视图分属不同 PID、未做关联**（蓝光 .ssif/.MTS 仍只解被 map 的那路），
+且 **hwaccel 下只解 base view**（必须软解）。真要支持 3D 需 backport 该系列 +
+自己做 SSIF 双 PID 关联，见后续评估。
+
 ### 桌面集成（2026-10-17）
 
 - `scripts/install.sh` 装应用菜单入口：入口内容 = **`data/vsr-player.desktop.in`**（单一事实源，中英 Name/Comment；`@EXEC@` 由脚本替换为安装后绝对路径，不依赖 PATH），图标 = `data/vsr-player.svg` + `.png` → hicolor `scalable`/`512x512`，之后 best-effort 刷新 `update-desktop-database`/`gtk-update-icon-cache`/`kbuildsycoca6`。打包脚本把 `data/` 放进 tarball 根（`build_release.sh` staging）。

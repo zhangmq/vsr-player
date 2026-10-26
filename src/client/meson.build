@@ -208,14 +208,20 @@ processed = qt6.preprocess(
 # HDR 上屏的唯一权威来源）：该头装在 qtbase 私有头目录，故 _qt6_priv_inc 也
 # 加给主程序。注意只是**头文件**依赖——QRhi 符号在 libQt6Gui 里（format()
 # 内联、isFormatSupported 纯虚），没有私有符号链接。
+# 蓝光 ISO 标题枚举（libbluray 1.5.1 起 API 稳定；缺库时构建直接失败，
+# 不做静默降级——ISO 支持是本功能的硬依赖）。
+bluray_dep = dependency('libbluray', version: '>= 1.0.0')
+
 executable('vsr-player',
     'main.cpp', 'Options.cpp', 'VulkanContext.cpp',
     'CompositePipeline.cpp', 'MpvController.cpp', 'Video.cpp',
     'PlayerViewModel.cpp', 'PlaylistModel.cpp', 'RpcServer.cpp', 'Log.cpp',
     'StereoController.cpp',
-    'SessionIdle.cpp', 'HdrOutput.cpp', 'CudaProbe.cpp',
+    'SessionIdle.cpp', 'HdrOutput.cpp', 'CudaProbe.cpp', 'BlurayDisc.cpp',
     c_vert_h, c_frag_h, translations_qm, processed,
-    dependencies: [qt6_dep, vulkan_dep, libplacebo_dep, mpv_dep],
+    # libbluray：ISO/BDMV 的 title 枚举（只有元数据；解码仍交给 libmpv）。
+    # standard 变体用系统的，full 变体已捆 libbluray.so.4。
+    dependencies: [qt6_dep, vulkan_dep, libplacebo_dep, mpv_dep, bluray_dep],
     include_directories: include_directories(
         '../../src/mpv/include',
         '../../third_party/mpv/include',
