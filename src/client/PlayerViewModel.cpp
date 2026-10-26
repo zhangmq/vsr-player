@@ -1550,46 +1550,41 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
     items.reserve(paths.size());
     for (const QString &p : paths) {
         if (mode != 4 && !isSubtitleFile(p) && bdisc::isBlurayPath(p)) {
+            // ISO 由 **mpv 自己**展开（src/mpv/demux/demux_playlist.c 的
+            // parse_bluray：`.iso` + libbluray 枚举 → bd://mpls/<n>//<path>
+            // 条目，带 title），语义与"文件夹 / m3u 容器"完全一致。
+            // 客户端只做两件事：① 把 ISO 路径原样交给 mpv；
+            // ② 顺便枚举一次登记友好名（播放列表里显示 "Title 6 · 1:18:30"
+            //    而不是一长串 URL）。失败不影响播放（mpv 会自己报错）。
             const BlurayDiscInfo info = bdisc::enumerate(p);
-            if (!info.ok) {
-                // 枚举失败 → 退回 bd://（mpv 会播最长 title），至少不哑火
-                MLOG_WARN("bluray: %s: %s -> fallback to bd:// default title",
+            if (info.ok) {
+                for (const BlurayTitle &t : info.titles) {
+                    // mpv 用 %05u 拼 mpls；两种写法都登记，短名给兼容路径用
+                    for (const QString &url : {
+                             QStringLiteral("bd://mpls/%1//%2")
+                                 .arg(t.playlist, 5, 10, QChar('0'))
+                                 .arg(QFileInfo(p).absoluteFilePath().mid(1)),
+                             QStringLiteral("bd://mpls/%1//%2")
+                                 .arg(t.playlist)
+                                 .arg(QFileInfo(p).absoluteFilePath().mid(1)),
+                             QStringLiteral("bd://mpls/%1").arg(t.playlist),
+                             QStringLiteral("bd://mpls/%1")
+                                 .arg(t.playlist, 5, 10, QChar('0')) })
+                        bdisc::registerLabel(url, t.label);
+                }
+                MLOG_INFO("bluray: %s -> %d title(s) (expanded by mpv, playlist order)",
+                          qUtf8Printable(QFileInfo(p).fileName()), int(info.titles.size()));
+            } else {
+                MLOG_WARN("bluray: %s: %s (mpv will report the real error)",
                           qUtf8Printable(QFileInfo(p).fileName()),
                           qUtf8Printable(info.error));
-                bdisc::registerLabel(QStringLiteral("bd://"), QFileInfo(p).fileName());
-                items.append({QStringLiteral("bd://"), p});
-                continue;
             }
-            for (const BlurayTitle &t : info.titles) {
-                // mpls 编号而不是 title index：后者随 libbluray 的 TITLES_*
-                // 过滤条件变化，mpls 是盘上稳定标识。
-                // 设备编进 URL（`bd://mpls/N//<绝对路径>`）→ 每条自带设备，
-                // 多盘混排/重启恢复都不再依赖全局 bluray-device。
-                const QString url = bdisc::urlFor(p, t.playlist);
-                bdisc::registerLabel(url, t.label);
-                items.append({url, p});
-            }
-            MLOG_INFO("bluray: %s expanded to %d title(s) in playlist order "
-                      "(device embedded per entry: bd://mpls/<n>//%s)",
-                      qUtf8Printable(QFileInfo(p).fileName()), int(info.titles.size()),
-                      qUtf8Printable(QFileInfo(p).absoluteFilePath()));
+            items.append({p, p});
             continue;
         }
         items.append({p, QString()});
     }
 
-    // 蓝光设备是全局选项：随播放列表一起记住，重启后恢复（见 restoreBlurayDevice）
-    for (const Item &it : items) {
-        if (it.device.isEmpty()) continue;
-        blurayDevice_ = it.device;
-        saveSettings("blurayDevice", it.device);
-        settings_.sync();   // 掉电/SIGTERM 也要留住——否则 bd:// 条目重启后全打不开
-        break;
-    }
-
-    // ── 按顺序入列：首条播放，其余 append ──────────────────────────
-    // mode 4（打开 URL）跳过混拖分类：URL 以 .srt 结尾会被误判成字幕。
-    // mode 1（追加到播放列表）全部 append、不打断当前播放。
     // 兜底：把最后一张盘设成全局 bluray-device（URL 里的设备优先，不影响正确性；
     // 但老版本持久化下来的裸 `bd://mpls/N` 条目靠它还能打开）。
     for (const Item &it : items) {

@@ -529,8 +529,11 @@ Item {
             qsTr("Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)"),
             qsTr("All files (*)")
         ] : [
-            qsTr("Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv *.mp3 *.flac *.wav *.ogg *.m4a)"),
-            qsTr("Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.flv *.wmv)"),
+            qsTr("Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)"),
+            qsTr("Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)"),
+            // 蓝光镜像：默认列表里必须能看见，否则从 UI 根本没机会打开 ISO
+            //（Blu-ray 的 title 枚举/URL 生成只发生在 openFiles 收到 .iso 时）。
+            qsTr("Blu-ray images (*.iso)"),
             qsTr("Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)"),
             qsTr("Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)"),
             qsTr("All files (*)")

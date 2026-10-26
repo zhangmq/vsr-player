@@ -577,6 +577,25 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 
 ### 蓝光 ISO / BDMV（2026-10-26，按"文件夹"展开）
 
+**容器语义（2026-10-26 用户要求，"像文件夹 / m3u 那样"）**：**扩展了 mpv**——
+`.iso` 由 `demux_playlist` 展开成 title 条目，客户端不再自己造 URL。三个 overlay 文件：
+- `src/mpv/demux/bluray_image.h`（新增）：`mp_is_bluray_image()`——本地路径 +
+  扩展名 `.iso` + `bd_open()` 能枚举出 title 才算（只读元数据，毫秒级）。
+- `src/mpv/demux/demux_playlist.c`：新增 `parse_bluray()`（挂进 `playlist_formats[]`
+  首位），生成 `bd://mpls/<%05u>//<绝对路径去掉前导 />` 条目并设 `title`
+  （`Title N · H:MM:SS`）。
+- `src/mpv/demux/demux_lavf.c`：入口处对蓝光镜像 **主动让路**（`return -1`）。
+  ⚠ 必须这么做：demuxer 列表里 lavf 排在 playlist **之前**，而 lavf 会"认领"任何文件
+  （把 ISO 当成无流的 mpeg），不拦就永远走不到 playlist。
+- ⚠ **stream origin 坑（最花时间的一处）**：`bd://` 的 `stream_info_bluray.stream_origin`
+  是 `STREAM_ORIGIN_UNSAFE`（设备路径可指向任意文件），而 `check_origin()` 只允许
+  DIRECT/UNSAFE 来源打开它；demuxer 展开出来的条目默认是 **FS** 来源 → 被静默拒绝，
+  报 `No protocol handler found to open URL bd://...`（错误文案完全不提 origin）。
+  修法：`parse_bluray` 成功后把这些条目提升为 `STREAM_ORIGIN_DIRECT`（镜像已本地打开
+  并枚举成功，条目只是同一张盘里的 title，不是权限放宽）。
+  对照：客户端用 `loadfile bd://…` 手塞条目时是 DIRECT → 一直能用，所以这个坑只在
+  "让 mpv 自己展开"之后才暴露。
+
 **交互（用户 2026-10-26 定，含一次修正）**：ISO 与普通文件**同等对待**——
 展开成多个 title 条目后**按播放列表顺序播放**（首条播放、其余 append 排队），
 命令行 / 打开文件 / 打开文件夹 / 拖入 dropzone 四条入口一致。
@@ -591,10 +610,13 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   返回 `{index, mpls, durationMs, chapterCount, clipCount, label}`。
   ⚠ 命名空间不能叫 `bluray`——libbluray 头里有 `struct bluray`，同名会
   "redeclared as different kind of entity"（实测）。
-- `PlayerViewModel::openFiles`：先把 ISO 展开成 `{bd://mpls/<n>, 所属 ISO}` 的
-  条目列表（保持输入顺序，普通文件原样混排），再走统一入列逻辑：首条
-  `loadfile`（播放）、其余 `append`；`mode == 1`（追加到播放列表）全部 append。
-  每条 bd:// 入列前若设备变了就设全局选项 `bluray-device`（命令队列有序）。
+- `PlayerViewModel::openFiles`：ISO **只把路径原样交给 mpv**（mpv 自己展开，见上），
+  顺带枚举一次只为**登记友好名**（`bdisc::registerLabel`，注册 `%05u` 与不补零两种
+  写法）；普通文件原样混排，首条 `loadfile` 播放、其余 `append`，`mode == 1` 全部
+  append。
+- **UI 入口必须能选到 ISO**：`FileDialog` 的媒体过滤器原本只有
+  `*.mp4 *.mkv …`，`.iso` 只能靠"All files (*)"才看得见 → 等于没有 UI 途径。
+  现在媒体过滤器含 `*.iso *.m2ts *.mts`，并单列 `Blu-ray images (*.iso)`。
   ⚠ 用 **mpls 编号**而不是 title index：libbluray 的 title 索引随
   `TITLES_*` 过滤条件变化，mpls 是盘上稳定标识。
   **设备编进 URL（2026-10-26，解决了多盘混排）**：条目 URL 是
