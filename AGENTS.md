@@ -820,9 +820,11 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   （约 7.3× 实时，CPU 约 5.6 核）；`ffmpeg -benchmark` 独立对照 **208 fps / 8.66×（≈7.4 核）**。
   同文件 `--scale 2`（4K→7680×3200）46.8 fps、`--fruc 60` 168 fps、`--scale auto` 176.9 fps
   （benchmark 无窗口 → auto 判定 1× 直通）、`--fruc 120`（4K→120fps）**168.3 fps**。
-  结论：**4K 软解在本机有 7–8× 余量 → 4K60（2.9×）甚至 4K120（1.4×）都不缺解码能力**；
-  真正的瓶颈只在 **VSR 大幅上采样**（`--scale 2` = 4K→8K 时掉到 46 fps）。
-  所以 1080p×2 的 MVC（≈2×1080p H.264 ≈ 4.1 Mpx/帧）远在余量内，连假设的 4K MVC
+  结论：**4K 软解在本机有 7–8× 余量 → 4K60（2.9×）甚至 4K120（1.4×）都不缺解码能力**，
+  4K 内容播放时 `scale=auto` 天然是 **1× 直通**（VSR 不参与，无额外成本），所以
+  "4K 播放"在本机**没有瓶颈**。（`--scale 2` 的 46.8 fps 只是人为构造的 4K→8K 压力测试，
+  真实场景不会出现——4K 已经到头了，没有上采样需求。）
+  所以 1080p×2 的 MVC（≈2×1080p H.264 ≈ 4.1 Mpx/帧）更是远在余量内，连假设的 4K MVC
   （2×4K 解码 ≈ 88 fps 等效）在 CPU 侧都够 24fps。
 - 复现命令：`./build/src/client/vsr-player --fruc 60 input/goose_480p.webm`；RPC socket `/tmp/vsr-player.sock`
 - benchmark：`./build/src/client/vsr-player --benchmark [--scale off|auto|2|3|4] <video>`（无 UI，`all=no`，END_FILE 判定结束）；短文件启动开销会低估吞吐 ~35%，用 ≥100s 文件取稳态
