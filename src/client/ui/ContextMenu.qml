@@ -17,6 +17,10 @@ PopupBase {
 
     padding: 0
     width: menuWidth + (subOpen ? subMenuGap + subMenuWidth : 0)
+    // 主菜单自身高度（popup 高度 = 它；二级面板必须在这个范围内排布，
+    // 否则会被 popup 裁掉 —— popup 是固定大小的自绘 Item，不随子项长高）。
+    readonly property real mainPanelH: mainColumn
+        ? mainColumn.implicitHeight + 2 * padY : 0
 
     readonly property int menuWidth: 230
     readonly property int subMenuWidth: 150
@@ -42,7 +46,8 @@ PopupBase {
     /// 二级菜单里选中了某个旋转角度（0=Off / 90=顺时针 / 270=逆时针 90°）。
     signal rotateSelected(int mode)
     /// 3D 三态（0=不使用 / 1=3D片源 / 2=2D转3D；运行期状态，不持久化）。
-    signal stereoSelected(int mode)
+    /// group: 0 = 显示方式（mode），1 = 输出设备（outputType）——二级面板分两组
+    signal stereoSelected(int value, int group)
     signal quitRequested()
 
     /// 菜单项（sig 须与上方 signal 声明同名；新增项同步改三处：
@@ -81,8 +86,12 @@ PopupBase {
         {icon: "󰟽", text: qsTr("3D"),
          hint: function() { return root.stereoLabel() },
          subSig: "stereoSelected",
-         current: function() { return stereo.mode },
+         // 二级面板分两组：group 1 = 输出设备，group 0（默认）= 显示方式
+         current: function(g) { return g === 1 ? stereo.outputType : stereo.mode },
          submenu: [
+             {header: qsTr("Output device")},
+             {label: qsTr("XR glasses"), value: 0, group: 1},
+             {header: qsTr("Display mode")},
              {label: qsTr("Off"),        value: 0},
              {label: qsTr("3D source"),  value: 1},
              {label: qsTr("2D to 3D"),   value: 2}
@@ -136,12 +145,29 @@ PopupBase {
         var mh = mainColumn.height
         if (!root.subOpen)
             return mainColumn.y + mh
+        var y = mainColumn.y + mh
         for (var i = 0; i < mainColumn.children.length; i++) {
             var c = mainColumn.children[i]
-            if (c.itemIndex === root.subIndex)
-                return mainColumn.y + c.y
+            if (c.itemIndex === root.subIndex) {
+                y = mainColumn.y + c.y
+                break
+            }
         }
-        return mainColumn.y + mh
+        // 底部钳制：面板不能超出**主菜单自身**的下边缘（popup 高度 = 主菜单
+        // 高度，超出部分会被裁掉）。分组后 3D 面板有 6 行，条目靠下时整块
+        // 跑出可视区 → 整体上移到刚好放得下。
+        var maxY = root.mainPanelH - root.subPanelH - root.padY
+        if (y > maxY)
+            y = Math.max(root.padY, maxY)
+        return y
+    }
+
+    /// 二级面板高度（分组标题行矮 4px，行数 = 面板条目数）
+    readonly property int subPanelH: {
+        var h = 0
+        for (var i = 0; i < subItems.length; i++)
+            h += (subItems[i].header !== undefined) ? root.rowH - 4 : root.rowH
+        return h
     }
 
     /// 当前展开的二级菜单子项模型（subIndex 指向的条目）
@@ -166,10 +192,10 @@ PopupBase {
     }
 
     background: Item {
-        // 主菜单底
+        // 主菜单底（高度 = 主菜单自身，不随 popup 长高拉伸）
         Rectangle {
             width: root.menuWidth
-            height: parent.height
+            height: root.mainPanelH
             color: "#d9111111"; radius: 8
             border { width: 1; color: "#22ffffff" }
         }
@@ -179,7 +205,7 @@ PopupBase {
             x: root.menuWidth + root.subMenuGap
             y: root.subY - 6
             width: root.subMenuWidth
-            height: root.subItems.length * root.rowH + 12
+            height: root.subPanelH + 12
             color: "#d9111111"; radius: 8
             border { width: 1; color: "#22ffffff" }
         }
@@ -270,31 +296,42 @@ PopupBase {
                 model: root.subItems
                 delegate: Item {
                     width: subColumn.width
-                    height: root.rowH
+                    // 分组标题行矮一点、不可点、不参与勾选
+                    readonly property bool isHeader: modelData.header !== undefined
+                    readonly property int myGroup: modelData.group || 0
+                    height: isHeader ? root.rowH - 4 : root.rowH
                     readonly property bool current: {
                         var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
-                        return it && it.current ? modelData.value === it.current() : false
+                        return !isHeader && it && it.current
+                               ? modelData.value === it.current(myGroup) : false
                     }
                     Rectangle {
                         anchors.fill: parent
-                        color: subHover.containsMouse ? "#33ffffff" : "transparent"
+                        color: !isHeader && subHover.containsMouse ? "#33ffffff" : "transparent"
+                    }
+                    // 分组标题：顶部细线 + 灰字（不可点，鼠标穿到面板本身）
+                    Rectangle {
+                        visible: isHeader
+                        anchors { left: parent.left; leftMargin: 8; right: parent.right; rightMargin: 8; top: parent.top }
+                        height: 1; color: "#22ffffff"
                     }
                     Text {
                         anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter }
-                        text: modelData.label
-                        color: current ? "#ffcc00" : "#e0e0e0"
+                        text: isHeader ? modelData.header : modelData.label
+                        color: isHeader ? "#808080" : (current ? "#ffcc00" : "#e0e0e0")
                         font.pixelSize: 13
                     }
                     Text {
                         anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
                         font.family: iconFont; font.pixelSize: 14; text: "󰄬"
-                        color: "#ffcc00"; visible: current
+                        color: "#ffcc00"; visible: current && !isHeader
                         renderType: Text.NativeRendering
                     }
                     MouseArea {
                         id: subHover
                         anchors.fill: parent
-                        hoverEnabled: true
+                        hoverEnabled: !isHeader
+                        enabled: !isHeader
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
@@ -303,7 +340,7 @@ PopupBase {
                             // grab/内容，之后 root[subSig] 的动态调用可能不生效
                             // （2026-10-25 实测 3D 二级项点击无反应）。窗口移动
                             // 前关闭 popup 由 StereoPicker 的 Start 负责。
-                            if (it && it.subSig) root[it.subSig](value)
+                            if (it && it.subSig) root[it.subSig](value, myGroup)
                             root.subOpen = false
                             root.subIndex = -1
                             root.close()

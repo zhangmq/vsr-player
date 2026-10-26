@@ -463,6 +463,15 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             response = e < 0 ? formatResponse(mpv_error_string(e))
                              : formatResponse("success");
         }
+    } else if (cmd == "toggle-osd") {
+        // 测试钩子：切管线状态 OSD（= Tab 键的效果；不注入按键）。
+        // 2D 走 mpv osd-msg1，3D 走 QML 覆盖层（见 PlayerViewModel::osdPoll）。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            QMetaObject::invokeMethod(vm, "toggleOsd", Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
     } else if (cmd == "set-stereo-map") {
         // 测试钩子：设置 3D 每眼映射（等价于真 3D 状态下客户端推给 vf_vsr 的值）。
         // 走 viewModel 同一入口，因此会被 syncVfOptions 重放（不会被链重建抹掉）——
@@ -523,6 +532,27 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             bool v = args[0] == "1" || args[0] == "yes" || args[0] == "true";
             QMetaObject::invokeMethod(stereo_, "setHelpVisible", Qt::QueuedConnection,
                                       Q_ARG(bool, v));
+            response = formatResponse("success");
+        }
+    } else if (cmd == "open-menu") {
+        // 测试用：在窗口内 (x,y) 打开右键菜单（正常入口 = 右键）。
+        // 用于截图核对菜单排版/分组（尤其二级面板的分组标题与勾选态）。
+        auto *qv = qobject_cast<QQuickView *>(win_);
+        if (!qv || !qv->rootObject()) {
+            response = formatResponse("no window");
+        } else if (args.size() < 2) {
+            response = formatResponse("usage: open-menu <x> <y> [submenu-index]");
+        } else {
+            const int x = atoi(args[0].c_str());
+            const int y = atoi(args[1].c_str());
+            const int sub = args.size() >= 3 ? atoi(args[2].c_str()) : -1;
+            QQuickItem *rootItem = qv->rootObject();
+            QMetaObject::invokeMethod(rootItem, [rootItem, x, y, sub]() {
+                QMetaObject::invokeMethod(rootItem, "openMenuAt",
+                                          Q_ARG(QVariant, QVariant(x)),
+                                          Q_ARG(QVariant, QVariant(y)),
+                                          Q_ARG(QVariant, QVariant(sub)));
+            });
             response = formatResponse("success");
         }
     } else if (cmd == "stereo-picker") {

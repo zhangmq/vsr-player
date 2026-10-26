@@ -290,7 +290,11 @@ Item {
             onDeleteFileRequested: viewModel.deleteCurrentFile()
             onDeinterlaceSelected: function(mode) { viewModel.setDeintMode(mode) }
             onRotateSelected: function(mode) { viewModel.setRotMode(mode) }
-            onStereoSelected: function(mode) {
+            onStereoSelected: function(mode, group) {
+                if (group === 1) {          // 输出设备（本期只有 XR 眼镜）
+                    stereo.setOutputType(mode);
+                    return;
+                }
                 // ContextMenu 是 Popup.Item，内容挂在窗口 overlay 上；打开另一个
                 // Popup 不会自动关它（Qt 文档/源码无此语义），必须先显式关闭，
                 // 否则它会留在选择器下面，随后跟着主窗口一起移到眼镜屏。
@@ -568,6 +572,21 @@ Item {
     function togglePlaylist() {
         playlistPanel.visible ? playlistPanel.close() : playlistPanel.open()
     }
+    // 测试/调试入口：RPC 在指定位置打开右键菜单（正常从右键进入）。
+    // 用于截图核对菜单排版/分组（RPC `open-menu <x> <y>`）。
+    function openMenuAt(x, y, subIndex) {
+        contextMenu.showAt(uiLayer, x, y)
+        // 可选：直接展开第 subIndex 个条目的二级面板（截图核对分组排版用）。
+        // 必须 callLater：ContextMenu.onAboutToShow 会重置 subOpen/subIndex，
+        // 而它在 open() 期间（异步）才触发 → 立刻赋值会被覆盖掉。
+        if (typeof subIndex === "number" && subIndex >= 0) {
+            Qt.callLater(function () {
+                contextMenu.subIndex = subIndex
+                contextMenu.subOpen = true
+            })
+        }
+    }
+
     // 测试/调试入口：RPC 打开 3D 选择器（正常从右键菜单进入）。
     property int stereoPickerMode: 1
     function openStereoPicker() {
@@ -584,6 +603,60 @@ Item {
         active: !controlMode
         volume: viewModel.volume
         muted: viewModel.muted
+    }
+
+    // ── 3D 管线状态 OSD（Tab 切显隐；调试用）────────────────────────
+    // mpv 的 OSD 在 3D 下会被合成分屏切成两半（每行只剩一半字），所以 3D
+    // 改由 QML 画 —— 文本来自 viewModel.osdText（与 mpv 用的同一份）。
+    // 左右眼各一份、**无视差**（零视差 = 落在屏幕平面，长时间看最舒服）。
+    Item {
+        id: pipelineOsd
+        anchors.fill: parent
+        z: 97
+        visible: !controlMode && stereo.active && viewModel.osdVisible
+        Repeater {
+            model: 2
+            delegate: Item {
+                x: index * pipelineOsd.width / 2
+                width: pipelineOsd.width / 2
+                height: pipelineOsd.height
+                Text {
+                    x: 24
+                    y: 24
+                    width: parent.width - 48
+                    text: viewModel.osdText
+                    // 文本按显示宽度补空格对齐（osdTextString 的约定）→ 等宽字体
+                    font.family: "monospace"
+                    font.pixelSize: 15
+                    color: "#e0e0e0"
+                    style: Text.Outline
+                    styleColor: "#c0000000"
+                    wrapMode: Text.NoWrap
+                }
+            }
+        }
+    }
+
+    // ── 3D 进行中提示（桌面 control 窗口中心）──────────────────────
+    // 视频在眼镜屏上，桌面这块是空的（controlMode 不创建 Video）。
+    Column {
+        anchors.centerIn: parent
+        spacing: 24
+        visible: controlMode && stereo.active
+        z: 90
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "󰊪"   // mdi-glasses U+F02AA（字面字符；\uXXXX 只吃 4 位）
+            font.family: iconFont
+            font.pixelSize: 96
+            color: "#e0e0e0"
+        }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: qsTr("请戴上眼镜观看")
+            font.pixelSize: 18
+            color: "#e0e0e0"
+        }
     }
 
     // 进度提示：快捷键快进/快退时短暂显示当前进度（机制同音量提示）。

@@ -2621,15 +2621,39 @@ std::string PlayerViewModel::osdTextString() {
 /// 主线程调 osd-msg1 更新会与 untimed 渲染死锁，实测卡死）。
 void PlayerViewModel::osdPoll() {
     if (!mpv_) return;
-    bool visible = osdVisible_.load();
-    if (visible != osdLevelApplied_) {
-        osdLevelApplied_ = visible;
-        mpv_->setPropertyString("osd-level", visible ? "1" : "0");
+    const bool visible = osdVisible_.load();
+    // 3D：mpv 的 OSD 会被合成器按左/右半幅切开（每行只剩一半字），改用
+    // QML 覆盖层渲染 osdText —— mpv 侧强制 osd-level=0（单一 osdVisible 状态）。
+    const bool useMpvOsd = visible && !stereo3d_.load();
+    if (useMpvOsd != osdLevelApplied_) {
+        osdLevelApplied_ = useMpvOsd;
+        mpv_->setPropertyString("osd-level", useMpvOsd ? "1" : "0");
     }
     if (!visible) return;
-    std::string text = osdTextString();
+
+    const std::string text = osdTextString();
+    bool textChanged = false;
     if (text != osdLastText_) {
-        osdLastText_ = std::move(text);
-        mpv_->setPropertyString("osd-msg1", osdLastText_);
+        osdLastText_ = text;
+        textChanged = true;
+        if (useMpvOsd)
+            mpv_->setPropertyString("osd-msg1", osdLastText_);
     }
+    // 3D 的 QML 覆盖层读这份缓存。切换渲染器（进出 3D）时即使文本没变也要
+    // 在下次轮询把最新文本交给 QML；emit 只在内容真变时才发（避免每秒刷）。
+    if (stereo3d_.load() || textChanged) {
+        const QString qt = QString::fromStdString(osdLastText_);
+        bool qChanged = false;
+        {
+            std::lock_guard<std::mutex> lk(osdTextMu_);
+            if (osdText_ != qt) { osdText_ = qt; qChanged = true; }
+        }
+        if (qChanged)
+            emit osdTextChanged();
+    }
+}
+
+QString PlayerViewModel::osdText() const {
+    std::lock_guard<std::mutex> lk(osdTextMu_);
+    return osdText_;
 }

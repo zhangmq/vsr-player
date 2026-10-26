@@ -37,6 +37,12 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(int64_t duration READ duration NOTIFY durationChanged)
     // Overlay
     Q_PROPERTY(bool overlaysVisible READ overlaysVisible WRITE setOverlaysVisible NOTIFY overlaysVisibleChanged)
+    // 管线状态 OSD：2D 由 mpv 画进视频帧（osd-msg1）；3D 下 mpv 的 OSD 会被
+    // 合成器按左/右半幅切开（文字被劈成两半）→ 3D 改用 QML 覆盖层渲染
+    // osdText，mpv 侧强制 osd-level=0（见 osdPoll）。osdVisible 是同一个
+    // 单一状态，两种渲染器共用。
+    Q_PROPERTY(bool osdVisible READ osdVisible NOTIFY osdVisibleChanged)
+    Q_PROPERTY(QString osdText READ osdText NOTIFY osdTextChanged)
     // Audio
     Q_PROPERTY(double volume READ volume NOTIFY volumeChanged)
     // 无独立 mute 状态位：volume == 0 即静音（派生属性，volumeChanged 通知）
@@ -353,6 +359,9 @@ public:
     int videoBitDepth() const { return videoBitDepth_.load(); }
     bool fullscreen() const     { return fullscreen_; }
     bool osdVisible() const     { return osdVisible_; }
+    QString osdText() const;   // 最近一次算出的 OSD 文本（互斥量保护）
+    /// 3D 是否激活：决定 OSD 走 mpv（2D）还是 QML 覆盖层（3D）。
+    void setStereo3DActive(bool v) { stereo3d_.store(v); }
     QVariantList trackList() const { return trackList_; }
     bool subVisible() const { return subVisible_; }
     double subDelay() const { return subDelay_; }
@@ -541,6 +550,8 @@ signals:
     void videoHdrMetaChanged();   // 内容静态元数据变化（HDR10 描述需重下发）
     void fullscreenChanged();
     void osdVisibleChanged();
+    /// OSD 文本变化（事件线程发出；QML 在 GUI 线程接收 → 自动排队）
+    void osdTextChanged();
     void loopModeChanged();
     void trackListChanged();
     void subVisibleChanged();
@@ -720,6 +731,9 @@ private:
     // 事件线程 idle 回调拉取 osdTextString 并推送（benchmark 同方案）；
     // 主线程 toggleOsd 只翻转 osdVisible_/osdLevel_（atomic）。
     std::atomic<bool> osdVisible_{false};
+    std::atomic<bool> stereo3d_{false};   // 3D 激活（OSD 改走 QML 覆盖层）
+    mutable std::mutex osdTextMu_;
+    QString osdText_;                     // 最近一次 OSD 文本（3D 的 QML 读）
     std::atomic<bool> osdLevel_{false};       // true=level 1（显示）
     bool osdLevelApplied_ = false;            // 事件线程专用：上次应用的 level
     std::string osdLastText_;                 // 事件线程专用：上次推送的文本

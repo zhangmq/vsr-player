@@ -16,6 +16,11 @@
 #include <QStandardPaths>
 
 StereoController::StereoController(QObject *parent) : QObject(parent) {
+    // 输出设备类型（默认 0 = XR 眼镜；本期唯一实现，读回只为将来扩展）
+    {
+        const int t = settings_.value("stereoOutput", 0).toInt();
+        if (t == 0) outputType_ = 0;
+    }
     connect(qApp, &QGuiApplication::screenAdded, this, [this](QScreen *s) {
         connect(s, &QScreen::geometryChanged, this,
                 &StereoController::refreshScreens, Qt::UniqueConnection);
@@ -274,6 +279,15 @@ void StereoController::toggleHalf() {
     if (!active_)
         return;
     half_ = !half_;
+    emit stateChanged();
+}
+
+void StereoController::setOutputType(int t) {
+    // 本期只有 0（XR 眼镜）；越界忽略。持久化，下次进 3D 沿用。
+    if (t != 0 || outputType_ == t)
+        return;
+    outputType_ = t;
+    settings_.setValue("stereoOutput", t);
     emit stateChanged();
 }
 

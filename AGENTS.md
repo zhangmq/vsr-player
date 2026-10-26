@@ -465,6 +465,31 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 - **上一个/下一个 = 全局 Ctrl+← / Ctrl+→**：2D 走 QML `Shortcut`
   （`enabled && !stereo.active`），3D 走 C++ 过滤器；`Ctrl+L` 是 URL 输入，
   与 Ctrl+方向键不冲突，项目内无重复绑定。
+- **3D 进行中提示（2026-10-26）**：桌面 control 窗口正中显示 **MDI `glasses`
+  U+F02AA** 大图标（`pixelSize: 96`）+ `qsTr("请戴上眼镜观看")`（18px，`#e0e0e0`），
+  显示条件 `controlMode && stereo.active`。视频在眼镜屏上，桌面这块本来就是空的
+  （controlMode 不创建 Video）。⚠ 图标码点必须写**字面字符**：`\uF02AA` 会被
+  QML 解析成 `\uF02A` + "A"（本项目踩过两次；我第一次查 cheatsheet 也把 U+F02A8
+  = glass-tulip 当成了 glasses，截图里是个高脚杯才发现——正确是 U+F02AA）。
+- **3D 下 Tab 切管线状态 OSD（2026-10-26 用户要求）**：`StereoKeyFilter` 在 3D 时
+  吃掉 `Key_Tab`/`Key_Backtab` → `viewModel.toggleOsd()`，2D 仍走 QML `Shortcut`。
+  ⚠ **3D 下 mpv 的 OSD 必须关掉**：osd-msg1 是画进视频帧的，合成器按左/右半幅切开
+  → 每行只剩半个字，完全不可读。所以 `osdPoll()` 里 3D 时强制 `osd-level=0`，文本
+  另存 `osdText`（互斥量保护，事件线程 emit `osdTextChanged`），由 presentation
+  窗口的 QML 覆盖层 `pipelineOsd` 画：左右眼各一份、**零视差**（落在屏幕平面）、
+  左上角 24px、`font.family: "monospace"`（osdTextString 按显示宽度补空格对齐，
+  等宽才不歪）、带 `Text.Outline` 保证在亮画面上可读。`osdVisible` 是单一状态，
+  两种渲染器共用（新增 `Q_PROPERTY(bool osdVisible)` + `Q_PROPERTY(QString osdText)`）。
+  测试钩子 `toggle-osd`（不注入按键）。
+- **3D 二级面板分组（2026-10-26）**：`submenu` 支持 `{header: "…"}` 分组标题与
+  `{group: 1, value: …}` 分组 id；点击时 `root[it.subSig](value, group)`，
+  勾选态用 `it.current(group)` 按组求值（`signal stereoSelected(int value, int group)`）。
+  3D 面板现在是两组：**输出设备**（`XR 眼镜`，值为 `stereo.outputType`，默认 0）
+  + **显示方式**（不使用/3D片源/2D转3D，值为 `stereo.mode`）。`outputType` 目前
+  不影响渲染路径，是前向占位（将来接 3D 电视需 SBS-half 拉伸几何、VR 头显需 OpenXR）。
+  ⚠ **面板不能超出主菜单高度**：popup 高度 = 主菜单高度，二级面板是自绘子项，
+  超出会被裁掉 → `subY` 按 `mainPanelH - subPanelH` 做底部钳制并整体上移；
+  `subPanelH` 按实际行高累加（header 行矮 4px）。
 - **进度提示（2026-10-26）**：`ui/StereoProgress.qml`，与音量提示同一套机制
   （底部居中面板 300×56、1.5s 自动隐藏、3D 左右眼各一份 ±12 logical px 视差、
   `#cc111111` 面板 + `#44ffffff` 轨道 + `#e0e0e0` 填充），显示"当前 / 总时长"+进度条。

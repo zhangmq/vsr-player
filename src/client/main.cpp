@@ -194,6 +194,15 @@ protected:
         case Qt::Key_J: if (repeat) return true; stereo_->cycleLayout(); return true;
         case Qt::Key_K: if (repeat) return true; stereo_->swapEyes(); return true;
         case Qt::Key_L: if (repeat) return true; stereo_->toggleHalf(); return true;
+        case Qt::Key_Tab:
+        case Qt::Key_Backtab:
+            // 3D 下用 Tab 切**管线状态 OSD**（调试用；H 仍切快捷键帮助面板）。
+            // 由本过滤器吃掉并返回 true —— 否则 QML 的 Tab Shortcut 会再
+            // 触发一次，两次 toggle 抵消（等于没反应）。
+            if (repeat) return true;
+            MLOG_INFO("stereo key: Tab -> toggle pipeline OSD");
+            viewModel_->toggleOsd();
+            return true;
         case Qt::Key_H:
             MLOG_INFO("stereo key: H -> toggle OSD");
             if (repeat) return true;
@@ -791,6 +800,8 @@ int main(int argc, char *argv[]) {
             //（见 vf_vsr compute_adaptive_scale）——状态/布局/全半变化都推给滤镜。
             viewModel.setStereoMap(stereo.active(), stereo.layout(),
                                    stereo.half() ? 1 : 0);
+            // 3D 下 mpv 的 OSD 会被左右半幅切开 → 改由 QML 覆盖层渲染
+            viewModel.setStereo3DActive(stereo.active());
         });
         video->setSourceAspectProvider([&viewModel]() {
             const int w = viewModel.videoWidth(), h = viewModel.videoHeight();

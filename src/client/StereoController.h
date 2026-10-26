@@ -24,6 +24,10 @@ class StereoController : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool active READ active NOTIFY stateChanged)
     Q_PROPERTY(int mode READ mode NOTIFY stateChanged)
+    // 输出设备类型：0=XR 眼镜（双目分屏，SBS 全幅 1:1 —— 本期唯一实现）。
+    // 目前不影响渲染路径，是前向占位；将来接 3D 电视（单面板 SBS-half 拉伸）
+    // / VR 头显（OpenXR 逐眼）时由它分支。
+    Q_PROPERTY(int outputType READ outputType NOTIFY stateChanged)
     Q_PROPERTY(int layout READ layout NOTIFY stateChanged)
     Q_PROPERTY(bool swap READ swap NOTIFY stateChanged)
     Q_PROPERTY(bool half READ half NOTIFY stateChanged)
@@ -37,6 +41,7 @@ public:
 
     bool active() const { return active_; }
     int mode() const { return mode_; }
+    int outputType() const { return outputType_; }
     int layout() const { return layout_; }
     bool swap() const { return swap_; }
     bool half() const { return half_; }
@@ -64,6 +69,7 @@ public:
                         int srcW, int srcH, int outW, int outH);
     QString mapJson() const;
 
+    Q_INVOKABLE void setOutputType(int t);
     Q_INVOKABLE void toggleHelp();
     Q_INVOKABLE void setHelpVisible(bool v);
 
@@ -83,6 +89,7 @@ private:
     bool active_ = false;
     int mode_ = 0;
     int layout_ = 0;   // 0=SBS, 1=上下
+    int outputType_ = 0;  // 0=XR 眼镜（SBS 全幅 1:1）
     bool swap_ = false;
     bool half_ = false;  // false=全，true=半（按 split 轴）
     struct MapSnap {
