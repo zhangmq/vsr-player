@@ -2,6 +2,9 @@
 
 > 本文件由 DeepSeek Harness 转写：来源 = 开发机上的 Claude Code 会话记忆（已筛选：保留知识/经验类 6 个主题，移除过程性/过期记录；清洗隐私/密钥后拉入仓库 `docs/memory/`）+ 原 `CLAUDE.md`（已于 2026-08 删除，信息脱节），并已对照 master 代码（`7bae9ce`）修正其中的失效/冲突信息。
 >
+> **⚠ 当前在办任务（接手先读）**：`docs/handover-3d-conversion.md`
+> —— 把 `test.iso` 的 6 个 title 离线转出来（2D 直接压 / 3D 转全宽 SBS），含阻塞点、工具位置、编码参数与已知坑。
+>
 > **本文件是项目的唯一权威指令**。原 CLAUDE.md 含未同步的过时内容与幻觉断言历史（modeset、Wayland embedding 两处已被证伪），删除后不再有冲突源；引用任何技术事实前，仍先对照代码验证（通用"证据优先/结论先验证"原则见 `~/.dsh/AGENTS.md`）。
 
 ## 项目是什么
