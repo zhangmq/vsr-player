@@ -40,6 +40,12 @@ BlurayDiscInfo enumerate(const QString &path);
 /// 把 ms 格式化成 H:MM:SS / MM:SS（与播放列表/OSD 一致）。
 QString formatDuration(qint64 ms);
 
+/// 生成带设备的条目 URL：`bd://mpls/<mpls>//<绝对路径>`。
+/// ⚠ 必须是**双斜杠**：mpv 在 `bd://mpls/<n>/<device>` 的第一个 `/` 处切分，
+/// 单斜杠会把绝对路径的前导 `/` 吃掉（`/home/…` → `home/…`，实测打不开）。
+/// ⚠ 必须是**绝对路径**：相对路径会被解析成 `/xxx`（相对 root），同样打不开。
+QString urlFor(const QString &isoPath, int mpls);
+
 /// 播放列表条目的友好名字（`bd://mpls/5` → "Title 6 · 01:18:30"）。
 /// 枚举时登记；未知 URL 返回空串（调用方回退到 basename）。
 /// 单进程只可能有一张盘在播（mpv 的 bluray-device 是全局选项），

@@ -17,12 +17,29 @@ static QHash<QString, QString> &labels()
 
 QString labelFor(const QString &url)
 {
-    return labels().value(url);
+    const QString exact = labels().value(url);
+    if (!exact.isEmpty())
+        return exact;
+    // 兼容：旧持久化里存的是不带设备的 bd://mpls/N
+    const int sep = url.indexOf(QStringLiteral("//"));
+    if (sep > 0)
+        return labels().value(url.left(sep));
+    return QString();
 }
 
 void registerLabel(const QString &url, const QString &label)
 {
     labels().insert(url, label);
+}
+
+QString urlFor(const QString &isoPath, int mpls)
+{
+    // 绝对路径去掉自己的前导 '/'：URL 里固定用 `//` 作分隔，否则会变成
+    // `///home/...`（设备串多一个斜杠，posix 下虽多半能用但不该这么依赖）。
+    QString dev = QFileInfo(isoPath).absoluteFilePath();
+    if (dev.startsWith('/'))
+        dev.remove(0, 1);
+    return QStringLiteral("bd://mpls/%1//%2").arg(mpls).arg(dev);
 }
 
 QString formatDuration(qint64 ms)

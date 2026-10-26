@@ -1563,10 +1563,16 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
             for (const BlurayTitle &t : info.titles) {
                 // mpls 编号而不是 title index：后者随 libbluray 的 TITLES_*
                 // 过滤条件变化，mpls 是盘上稳定标识。
-                items.append({QStringLiteral("bd://mpls/%1").arg(t.playlist), p});
+                // 设备编进 URL（`bd://mpls/N//<绝对路径>`）→ 每条自带设备，
+                // 多盘混排/重启恢复都不再依赖全局 bluray-device。
+                const QString url = bdisc::urlFor(p, t.playlist);
+                bdisc::registerLabel(url, t.label);
+                items.append({url, p});
             }
-            MLOG_INFO("bluray: %s expanded to %d title(s) in playlist order",
-                      qUtf8Printable(QFileInfo(p).fileName()), int(info.titles.size()));
+            MLOG_INFO("bluray: %s expanded to %d title(s) in playlist order "
+                      "(device embedded per entry: bd://mpls/<n>//%s)",
+                      qUtf8Printable(QFileInfo(p).fileName()), int(info.titles.size()),
+                      qUtf8Printable(QFileInfo(p).absoluteFilePath()));
             continue;
         }
         items.append({p, QString()});
@@ -1584,13 +1590,15 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
     // ── 按顺序入列：首条播放，其余 append ──────────────────────────
     // mode 4（打开 URL）跳过混拖分类：URL 以 .srt 结尾会被误判成字幕。
     // mode 1（追加到播放列表）全部 append、不打断当前播放。
-    QString lastDevice;
+    // 兜底：把最后一张盘设成全局 bluray-device（URL 里的设备优先，不影响正确性；
+    // 但老版本持久化下来的裸 `bd://mpls/N` 条目靠它还能打开）。
+    for (const Item &it : items) {
+        if (it.device.isEmpty()) continue;
+        mpv_->setPropertyStringAsync("bluray-device", it.device.toStdString());
+    }
+
     bool first = true;
     for (const Item &it : items) {
-        if (!it.device.isEmpty() && it.device != lastDevice) {
-            mpv_->setPropertyStringAsync("bluray-device", it.device.toStdString());
-            lastDevice = it.device;
-        }
         const QByteArray p = it.path.toUtf8();
         if (mode != 4 && isSubtitleFile(it.path)) {
             mpv_->commandAsync({"sub-add", p.constData(), "select", nullptr});

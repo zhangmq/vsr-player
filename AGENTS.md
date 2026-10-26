@@ -597,8 +597,18 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   每条 bd:// 入列前若设备变了就设全局选项 `bluray-device`（命令队列有序）。
   ⚠ 用 **mpls 编号**而不是 title index：libbluray 的 title 索引随
   `TITLES_*` 过滤条件变化，mpls 是盘上稳定标识。
-  ⚠ 设备只能走全局选项：`bd://<title>/<device>` 的 URL 解析会在第一个 `/`
-  处切分设备串，绝对路径的前导斜杠会被吃掉（mpv `stream_bluray.c`）。
+  **设备编进 URL（2026-10-26，解决了多盘混排）**：条目 URL 是
+  `bd://mpls/<n>//<绝对路径去掉前导 />`，即
+  `bd://mpls/3//home/zmq/视频/test.iso`。每条自带设备 → 同一播放列表里放**多张
+  不同 ISO** 也各自正确；URL 就是 mpv playlist 的 `filename` → **持久化免费成立**
+  （重启后条目自带设备，不再依赖全局设置）；`watch_later` 续播同理能定位回同一张盘。
+  ⚠ 两条硬约束（都实测过）：
+  ① **必须双斜杠**：`bd://mpls/<n>/<device>` 在第一个 `/` 处切分设备串，单斜杠会把
+     绝对路径的前导 `/` 吃掉（`/home/…` → `home/…`)；写 `///home/…` 又多一个斜杠，
+     所以生成时把路径自己的前导 `/` 去掉、固定用 `//` 作分隔。
+  ② **必须绝对路径**：相对路径会被解析成相对 root（`test.iso` → `/test.iso`）。
+  路径含中文/空格都验证可用（不需要 URL 编码）。
+  全局 `--bluray-device` 仍会设置一次作兜底（老持久化里的裸 `bd://mpls/N` 条目靠它）。
 - 播放列表面板显示名：`bdisc::labelFor("bd://mpls/5")` → `Title 6 · 01:18:30`
   （进程级 QHash 在枚举时登记；未知 URL 回退 basename）。
 - **持久化**：`bluray-device` 是全局选项，重启后 bd:// 条目会打不开
