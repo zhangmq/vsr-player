@@ -119,7 +119,8 @@ stock FFmpeg 9 已有 `view_ids`（本机 `ffmpeg -h decoder=hevc` 可见），*
 
 ## 3.5 本机实测（2026-10-26，全部离线，不涉及上屏）
 
-工具与可复现步骤见 [tools/mvc-prototype/](../tools/mvc-prototype/README.md)。要点：
+（原型工具放在仓库外，属于一次性验证脚本：SSIF 拆包/配对 + 打过补丁的 libavcodec 探针。
+不进仓库——与播放器目标无关。）要点：
 
 1. 从 `test.iso` 取出 `BDMV/STREAM/SSIF/00006.ssif` 前 30 MB → 手工拆 TS：确实有两条
    视频流 `0x1011`（base）与 `0x1012`（dependent）。
