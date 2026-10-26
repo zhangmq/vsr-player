@@ -446,6 +446,47 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             response = formatResponse(mpv_error_string(e));
         else
             response = formatResponse("success");
+    } else if (cmd == "vf-command") {
+        // 测试/诊断钩子：直通 mpv 的 vf-command（filter, cmd, [arg]）。
+        // 用途举例：`vf-command vsr stereo "tab full"` 强制造 3D 每眼映射，
+        // 在没有眼镜/多重屏时也能测 auto 倍率与 VSR 成本。
+        const char *argv[5] = {"vf-command", nullptr, nullptr, nullptr, nullptr};
+        if (!h) {
+            response = formatResponse("no mpv handle");
+        } else if (args.size() < 2) {
+            response = formatResponse("usage: vf-command <filter> <cmd> [arg]");
+        } else {
+            argv[1] = args[0].c_str();
+            argv[2] = args[1].c_str();
+            if (args.size() >= 3) argv[3] = args[2].c_str();
+            int e = mpv_command(h, argv);
+            response = e < 0 ? formatResponse(mpv_error_string(e))
+                             : formatResponse("success");
+        }
+    } else if (cmd == "set-stereo-map") {
+        // 测试钩子：设置 3D 每眼映射（等价于真 3D 状态下客户端推给 vf_vsr 的值）。
+        // 走 viewModel 同一入口，因此会被 syncVfOptions 重放（不会被链重建抹掉）——
+        // 没接眼镜时也能测 3D 下的 VSR auto 倍率与成本。
+        // 用法：set-stereo-map off | set-stereo-map <sbs|tab> <full|half>
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: set-stereo-map off|<sbs|tab> <full|half>");
+        } else if (args[0] == "off") {
+            QMetaObject::invokeMethod(vm, "setStereoMap", Qt::QueuedConnection,
+                                      Q_ARG(bool, false), Q_ARG(int, 0), Q_ARG(int, 0));
+            response = formatResponse("success");
+        } else if (args.size() >= 2 &&
+                   (args[0] == "sbs" || args[0] == "tab") &&
+                   (args[1] == "full" || args[1] == "half")) {
+            QMetaObject::invokeMethod(vm, "setStereoMap", Qt::QueuedConnection,
+                                      Q_ARG(bool, true),
+                                      Q_ARG(int, args[0] == "tab" ? 1 : 0),
+                                      Q_ARG(int, args[1] == "half" ? 1 : 0));
+            response = formatResponse("success");
+        } else {
+            response = formatResponse("usage: set-stereo-map off|<sbs|tab> <full|half>");
+        }
     } else if (cmd == "stereo-start") {
         // 3D OSD 原型：stereo-start <mode 1|2> <screen index>（测试用；
         // 正常入口是右键菜单 3D → 选项 → 选择显示器）。

@@ -395,6 +395,15 @@ public slots:
     void seekAbsolute(int64_t ms);
     void seekRelative(int64_t offsetMs);
 
+    /// 3D 每眼映射（vf_vsr 的 auto 倍率按"眼视口 vs 眼源像素"算）。
+    /// active=false → 回 2D 公式。链重建后由 syncVfOptions 重放。
+    void setStereoMap(bool active, int layout, int half);
+    /// 链重建后重放 3D 每眼映射（事件线程调用 → 内部 async 命令）。
+    /// mpv 在解码器软硬切换/格式变化时会用**加载时的 vf 选项串**重建用户
+    /// 滤镜链，运行期 vf-command 设的值随之丢失（2026-10-26 实测：3D 倍率
+    /// 在软硬解码切换后回到 2D 公式）——所以 VIDEO_RECONFIG 时补推一次。
+    void replayStereoMap();
+
     /// 快捷键调音量（↑/↓）。与滑杆的 setVolume 区分：只有本方法发
     /// volumeNudged()——2D 下音量提示只对"按键"出现，UI 拖动不弹提示。
     Q_INVOKABLE void nudgeVolume(double delta);
@@ -781,5 +790,7 @@ private:
     int persistDeintMode_ = 0;    // 持久化反交错模式（initDeinterlace 用）
     std::atomic<int> deintMode_{0};   // 当前反交错模式（0/1/2；RPC 线程读）
     int persistRotMode_ = 0;          // 持久化旋转角度（0/90/270）
-    std::atomic<int> rotMode_{0};     // 当前旋转角度（RPC 线程读）
+    std::atomic<int> rotMode_{0};    // 当前旋转角度（RPC 线程读）
+    std::atomic<int> stereoLayout_{-1};  // 3D 布局（-1=非3D, 0=SBS, 1=上下；RPC 线程读）
+    std::atomic<int> stereoHalf_{0};     // 3D 全/半（0=全 1=半）
 };

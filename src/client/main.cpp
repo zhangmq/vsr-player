@@ -785,7 +785,13 @@ int main(int argc, char *argv[]) {
         // 3D 映射变化（布局/眼序/全半）时立刻重绘当前帧；否则暂停时切 L
         // 只会改 OSD 状态，画面要等下一帧才变。
         QObject::connect(&stereo, &StereoController::stateChanged, video,
-                         [video] { video->update(); });
+                         [video, &viewModel, &stereo] {
+            video->update();
+            // VSR 的 auto 倍率在 3D 下要按"单眼视口 vs 单眼源像素"算
+            //（见 vf_vsr compute_adaptive_scale）——状态/布局/全半变化都推给滤镜。
+            viewModel.setStereoMap(stereo.active(), stereo.layout(),
+                                   stereo.half() ? 1 : 0);
+        });
         video->setSourceAspectProvider([&viewModel]() {
             const int w = viewModel.videoWidth(), h = viewModel.videoHeight();
             return (w > 0 && h > 0) ? double(w) / double(h) : 0.0;
@@ -882,6 +888,13 @@ int main(int argc, char *argv[]) {
             // 连续 seek 时完成通知可能被吞（拖进度条后方向键卡死的根因）。
             if (ev->event_id == MPV_EVENT_PLAYBACK_RESTART) {
                 viewModel.notePlaybackRestart();
+                return;
+            }
+            // 视频重配（解码器软硬切换、像素格式/尺寸变化）→ mpv 用**加载时的
+            // vf 选项串**重建用户滤镜链，运行期 vf-command 设的 3D 每眼映射会
+            // 丢（实测：3D auto 倍率在软硬解码切换后回到 2D 公式）→ 补推。
+            if (ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
+                viewModel.replayStereoMap();
                 return;
             }
             if (ev->event_id != MPV_EVENT_END_FILE)

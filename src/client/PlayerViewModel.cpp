@@ -1167,6 +1167,15 @@ void PlayerViewModel::setDenoiseQuality(int d) {
     if (denoise_ != d) { denoise_ = d; emit denoiseQualityChanged(); }
     saveSettings("denoiseQuality", d);
     pushVf("vsr", "denoise", denoiseStr());
+    // 3D 每眼映射（链重建后回到滤镜默认"非 3D"，必须重放，否则 3D 下
+    // auto 倍率会退回 2D 公式 → TAB 拍偏软 / 半幅偏大）。
+    {
+        const int layer = stereoLayout_.load();
+        pushVf("vsr", "stereo",
+               layer < 0 ? "off"
+                         : std::string(layer ? "tab " : "sbs ")
+                               + (stereoHalf_.load() ? "half" : "full"));
+    }
     bool nowActive = vsrActive();
     if (wasActive != nowActive) emit vsrActiveChanged();
 }
@@ -1957,9 +1966,14 @@ std::string PlayerViewModel::vfOption() const {
     // 旋转（CUDA 零拷贝）：hwup 之后、vsr/vfg 之前。链上恒有（angle=0
     // =直通），运行期 vf-command 只改实例选项、不重建链。
     const std::string rot = "@rot:rot=angle=" + std::to_string(rotMode_.load());
+    // stereo-layout/-half 进链串：3D 每眼映射要能在**链重建后自动恢复**
+    //（解码器软硬切换、格式变化都会重建用户滤镜链，只靠 vf-command 会被抹掉
+    // ——2026-10-26 实测：手动推过的倍率在链重建后回到 2D 公式）。
     const std::string vsr = "@vsr:vsr:scale=" + scaleOpt
                           + ":denoise=" + denoiseString()
-                          + ":quality=" + qualityString();
+                          + ":quality=" + qualityString()
+                          + ":stereo-layout=" + std::to_string(stereoLayout_.load())
+                          + ":stereo-half=" + std::to_string(stereoHalf_.load());
     const int fruc = frucFps_.load();
     // SDR→HDR10 上变换（VFX TrueHDR）：**恒在 vsr 之后**（方案 §8.1：VSR 输入
     // 保持今天的 SDR 分布不变）。链串里恒 `enable=no`——实际状态由 HDR 策略经
@@ -2228,6 +2242,29 @@ void PlayerViewModel::setUpHdrDebanding(bool on) {
     MLOG_INFO("truehdr: debanding -> %s (on by default; disabling exposes banding on "
               "affected shots; engine cost is roughly 1.6-4.3x)", on ? "on" : "off");
     pushVf("truehdr", "debanding-off", on ? "0" : "1");
+}
+
+void PlayerViewModel::replayStereoMap() {
+    if (!mpv_ || !aiAvailable_.load()) return;
+    const int l = stereoLayout_.load();
+    pushVf("vsr", "stereo",
+           l < 0 ? "off"
+                 : std::string(l ? "tab " : "sbs ")
+                       + (stereoHalf_.load() ? "half" : "full"));
+}
+
+void PlayerViewModel::setStereoMap(bool active, int layout, int half) {
+    const int nl = active ? (layout == 1 ? 1 : 0) : -1;
+    const int nh = half ? 1 : 0;
+    const int old = stereoLayout_.exchange(nl);
+    const int oldHalf = stereoHalf_.exchange(nh);
+    if (old == nl && oldHalf == nh) return;
+    if (!mpv_) return;
+    if (!aiAvailable_.load()) return;   // 链上没插 vsr，vf-command 无处可发
+    // 3D：auto 倍率按"单眼视口 vs 单眼源像素"算（见 vf_vsr compute_adaptive_scale）
+    pushVf("vsr", "stereo",
+           nl < 0 ? "off"
+                  : std::string(nl ? "tab " : "sbs ") + (nh ? "half" : "full"));
 }
 
 void PlayerViewModel::syncVfOptions() {

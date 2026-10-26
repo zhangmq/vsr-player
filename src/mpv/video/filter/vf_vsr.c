@@ -57,6 +57,11 @@ struct vf_vsr_opts {
     float scale;   // -1=off, 0=auto, 倍率（SDK 支持集：4/3, 1.5, 2, 3, 4）
     int quality;   // 1-4
     int denoise;   // -1=off, 8-11
+    // 3D 每眼映射（auto 倍率按"单眼视口 vs 单眼源像素"算；见
+    // compute_adaptive_scale）。链串里带值，链重建后自然恢复；
+    // 运行期用 `vf-command vsr stereo <sbs|tab> <full|half>|off` 热切。
+    int stereo_layout;   // -1=非 3D, 0=SBS, 1=上下并列
+    int stereo_half;     // 0=全, 1=半
 };
 
 // ── scale 选项类型（off/auto 字符串 + 数值/ratio 浮点）──────────────────
@@ -170,6 +175,8 @@ static const m_option_type_t m_option_type_vsr_scale = {
 #define OPT_BASE_STRUCT struct vf_vsr_opts
 
 static const struct m_option vf_opts_fields[] = {
+    {"stereo-layout", OPT_INT(stereo_layout), .min = -1, .max = 1},
+    {"stereo-half",   OPT_INT(stereo_half),   .min = 0,  .max = 1},
     {"scale",   OPT_TYPED_FIELD(m_option_type_vsr_scale, float, scale),
                 M_RANGE(-1, 4)},
     {"denoise", OPT_CHOICE(denoise,
@@ -183,6 +190,8 @@ static const struct m_option vf_opts_fields[] = {
 
 static const struct vf_vsr_opts vf_vsr_opts_def = {
     .scale   = 0,
+    .stereo_layout = -1,
+    .stereo_half   = 0,
     .quality = 3,
     .denoise = -1,
 };
@@ -228,6 +237,8 @@ struct priv {
     int video_w, video_h;
     float effective_scale;
 
+    float auto_logged;   // 上次打印的 auto 倍率（变化才打，-1=未打过）
+
     bool passthrough;
     bool warmup_done;
     int  frame_count;
@@ -251,18 +262,37 @@ struct priv {
 
 // ── compute_adaptive_scale ─────────────────────────────────────────────────
 
+// 3D 模式下"显示区域"是**单眼视口**而不是整块 framebuffer，源也是**单眼像素**
+// 而不是整帧；两者都按布局/全半换算后才等价可比。
+//   layout, half 为 -1 时按 2D（整帧 vs 整块）。
+// 推导：composite 把每眼源像素 (imgW×imgH) contain 进眼视口 (eyeW×eyeH)，
+// 想 1:1 不重采样就需要 s ≥ min(eyeW/imgW, eyeH/imgH)；VSR 倍率是整帧统一
+// 相乘，所以这个 need 直接就是整帧倍率。
+// ⚠ SBS 全时它与 2D 公式**代数等价**（min((outW/2)/(W/2), outH/H) =
+//   min(outW/W, outH/H)），所以历史上只看 SBS 全没暴露问题；TAB 全会偏软
+//   （源只取半高却按整高比），半幅会偏大（源已拉伸到整帧）。
 static float compute_adaptive_scale(int phys_w, int phys_h,
-                                   int video_w, int video_h)
+                                   int video_w, int video_h,
+                                   int stereo_layout, int stereo_half)
 {
     if (video_w <= 0 || video_h <= 0) return 1.0f;
 
     // 所需最小倍率：VSR 输出目标是覆盖**显示区域**（视频 aspect fit 到
-    // 视口后的区域，letterbox/pillarbox 黑边不算需求）——显示区域/视频
-    // = min(phys_w/video_w, phys_h/video_h)（两维中刚好适配的缩放）。
+    // 视口后的区域，letterbox/pillarbox 黑边不算需求）。
     // 取 max 是错的：宽银幕视频（如 3840×1600 在 2160p 视口）高度方向
     // 的 1.35 是 letterbox 黑边，非真实放大需求（实测 auto 误出 1.5×）。
-    double need_w = (double)phys_w / video_w;
-    double need_h = (double)phys_h / video_h;
+    double aw = phys_w, ah = phys_h, vw = video_w, vh = video_h;
+    if (stereo_layout >= 0) {
+        aw = phys_w / 2.0;                       // 眼视口宽（输出恒为 SBS）
+        if (stereo_layout == 0) {                 // SBS 左右
+            if (!stereo_half) vw = video_w / 2.0; // 全：源眼 = 半宽
+        } else {                                  // 上下并列
+            if (!stereo_half) vh = video_h / 2.0; // 全：源眼 = 半高
+        }
+        // 半：源眼沿 split 轴拉伸到整帧，源尺寸就是整帧尺寸（不改 vw/vh）
+    }
+    double need_w = aw / vw;
+    double need_h = ah / vh;
     double need = (need_w < need_h) ? need_w : need_h;
 
     // 显示区域 ≤ 视频（无需放大）→ 1:1（passthrough / 降噪）
@@ -294,7 +324,29 @@ static float resolve_scale(struct mp_filter *f, struct priv *p,
     if (res[0] <= 0 || res[1] <= 0)
         return p->effective_scale;  // not yet available — keep current
 
-    return compute_adaptive_scale(res[0], res[1], video_w, video_h);
+    float ns = compute_adaptive_scale(res[0], res[1], video_w, video_h,
+                                      p->opts->stereo_layout, p->opts->stereo_half);
+    // 决策日志（变化时一行）：3D 下"显示区域"是单眼视口、"源"是单眼像素，
+    // 与 2D 的整帧/整块不同——倍率异常先看这一行。
+    if (fabsf(ns - p->auto_logged) > 0.001f) {
+        p->auto_logged = ns;
+        if (p->opts->stereo_layout < 0) {
+            MP_INFO(f, "vsr: auto scale: out=%dx%d src=%dx%d (2D) -> %.2fx\n",
+                    res[0], res[1], video_w, video_h, ns);
+        } else {
+            double eh = res[1], ew = res[0] / 2.0;
+            double iw = video_w, ih = video_h;
+            if (p->opts->stereo_layout == 0) { if (!p->opts->stereo_half) iw /= 2.0; }
+            else                             { if (!p->opts->stereo_half) ih /= 2.0; }
+            MP_INFO(f, "vsr: auto scale: out=%dx%d src=%dx%d stereo=%s/%s "
+                       "eye=%.0fx%.0f eye-src=%.0fx%.0f -> %.2fx\n",
+                    res[0], res[1], video_w, video_h,
+                    p->opts->stereo_layout ? "tab" : "sbs",
+                    p->opts->stereo_half ? "half" : "full",
+                    ew, eh, iw, ih, ns);
+        }
+    }
+    return ns;
 }
 
 // ── CUDA context setup ─────────────────────────────────────────────────────
@@ -1058,6 +1110,35 @@ static bool vsr_command(struct mp_filter *f, struct mp_filter_command *cmd)
             }
             return true;
         }
+        if (strcmp(cmd->cmd, "stereo") == 0) {
+            // 3D 每眼映射：`stereo sbs|tab full|half`；`stereo off` = 回 2D 公式。
+            // 客户端（StereoController::stateChanged）在 3D 状态/布局/全半变化时推。
+            char lay[16] = {0}, hf[16] = {0};
+            if (sscanf(cmd->arg, "%15s %15s", lay, hf) < 1)
+                return false;
+            int nlayout, nhalf = 0;
+            if (strcmp(lay, "off") == 0) {
+                nlayout = -1;
+            } else if (strcmp(lay, "sbs") == 0) {
+                nlayout = 0;
+            } else if (strcmp(lay, "tab") == 0) {
+                nlayout = 1;
+            } else {
+                return false;
+            }
+            if (nlayout >= 0) {
+                if (strcmp(hf, "half") == 0)      nhalf = 1;
+                else if (strcmp(hf, "full") == 0) nhalf = 0;
+                else return false;
+            }
+            if (p->opts->stereo_layout != nlayout || p->opts->stereo_half != nhalf) {
+                MP_INFO(f, "vsr: stereo map: layout=%s half=%d (auto scale per-eye)\n",
+                        nlayout < 0 ? "off" : (nlayout ? "tab" : "sbs"), nhalf);
+                p->opts->stereo_layout = nlayout;
+                p->opts->stereo_half = nhalf;
+            }
+            return true;
+        }
         if (strcmp(cmd->cmd, "seek-target") == 0) {
             // 客户端绝对 seek 前调用：pts < 目标的帧直接丢弃（0 = 清除）。
             char *end = NULL;
@@ -1214,6 +1295,7 @@ static struct mp_filter *vf_vsr_create(struct mp_filter *parent, void *options)
                       && p->opts->denoise == -1);
     p->warmup_done = false;
     p->effective_scale = 1;
+    p->auto_logged = -1;
 
     if (p->passthrough) {
         MP_VERBOSE(f, "vsr: passthrough mode (scale=%.2f, denoise=%d)\n",

@@ -268,6 +268,55 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - ⚠ 旋转在 VFG **之前** → 横转竖会让 VFG 输入变成竖屏（如 720x1280）走慢路径
   （见插帧一节的竖屏实测），竖转横则相反。这是"VFX 之前旋转"的固有代价。
 
+### 3D 下的 VSR auto 倍率（2026-10-26，**按每眼算**）
+
+**结论**：`scale=auto` 在 3D 下必须按"**单眼视口 vs 单眼源像素**"算，不能用整帧 vs
+整块 framebuffer（那是 2D 的算法）。
+
+```
+eyeW = outW/2, eyeH = outH          （输出 framebuffer 恒为 SBS）
+imgW/imgH（单眼源像素）:
+  SBS 全: (srcW/2, srcH)      SBS 半: (srcW, srcH)
+  TAB 全: (srcW, srcH/2)      TAB 半: (srcW, srcH)
+need = min(eyeW/imgW, eyeH/imgH)    → 再按 SDK 支持集取档（4/3,1.5,2,3,4；≤1 → 1×）
+```
+
+- **SBS 全与 2D 公式代数等价**（`min((outW/2)/(W/2), outH/H) = min(outW/W, outH/H)`）
+  → 历史上只用 SBS 全测试，所以一直没暴露。
+- **TAB 全会偏软**：源每眼只取半高，2D 公式按整高比 → 实测 960×720 TAB 在
+  3840×1080 上应 2.0×，旧公式只给 1.5×；1440×1080 TAB 应 1.33×，旧给 1.0×。
+- **半幅会偏大**（源已沿 split 轴拉伸到整帧）：1920×360 SBS 半 应 1×，旧公式 2×。
+
+**实现**：`vf_vsr` 两个选项 `stereo-layout`(-1|0|1) / `stereo-half`(0|1) 进**链串**
+（所以链重建后自动恢复），运行期 `vf-command vsr stereo <sbs|tab> <full|half>|off`
+热切（不重建链）。客户端由 `PlayerViewModel::setStereoMap()` 在
+`StereoController::stateChanged`（含 J/K/L）时推。
+
+⚠ **链重建会抹掉运行期 vf-command**：mpv 在解码器软硬切换/格式变化时用
+**加载时的 vf 选项串**重建用户滤镜链（不只是 3D——rot/truehdr/vfg 的运行期值同样
+受影响）。实测 3D 倍率在软硬解码切换后回到 2D 公式。修法 = 客户端挂
+`MPV_EVENT_VIDEO_RECONFIG` → `replayStereoMap()` 补推（链串里也带值，双保险）。
+
+**实测（本机 3840×1080 framebuffer，30fps 源 + VFG×2 → 60fps；目标 1080p@60）**：
+
+| 场景 | 倍率 | VSR cost | 实测 fps | 丢帧 |
+|---|---|---|---|---|
+| 3840×1080 SBS 全（1080p 每眼） | 1.00 | passthrough | 60.0 | 0 |
+| 3840×1080 SBS 半 | 1.00 | passthrough | 60.0 | 0 |
+| 1920×1080 SBS 全 | 1.00 | passthrough | — | 0 |
+| 1920×2160 TAB 全 | 1.00 | passthrough | 60.0 | 0 |
+| 1280×720 SBS 全 | 1.50 | 3.4 ms | **60.00** | 0 |
+| 960×720 TAB 全 | 2.00 | 2.3 ms | **60.00** | 0 |
+| 640×360 SBS 全 | 3.00 | 1.0 ms | **60.00** | 0 |
+
+GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 5060 Ti）。
+即 1080p@60 在 3D 下有大把余量；VSR 真正活跃的只有低于 1080p/眼 的 3D 片源，
+最贵一档（1.5×）也只有 3.4 ms/源帧（×30 = 约 10% GPU）。
+
+⚠ 测试钩子（无眼镜时也能测 3D 路径）：`set-stereo-map off|<sbs|tab> <full|half>`
+（走客户端同一入口、会被重放）；另有通用 `vf-command <filter> <cmd> [arg]`。
+测 3D 的 framebuffer 尺寸时用 `resize 1920 540`（DP-3 是 dpr 2 → framebuffer 3840×1080）。
+
 ### 3D 输出（OSD + 视频映射，2026-10-25，分支 feat/stereo-osd-prototype）
 
 - 入口/流程：右键菜单 3D 三态 **Off / 3D片源 / 2D转3D**（运行期、不持久化，默认 Off）。
