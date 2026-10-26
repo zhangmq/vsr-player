@@ -184,12 +184,28 @@ void StereoController::start(int mode, int screenIndex) {
 
     // presentation：主窗口（Video/VO）移到眼镜屏，满屏、置顶、无边框、不收焦点。
     if (playerWin_) {
+        // ⚠ 已经是全屏时必须**先退出全屏**再 setScreen：KWin 把全屏窗口钉在
+        // 它所在输出上，setScreen 被忽略、showFullScreen 又是 no-op → 画面
+        // 留在原屏（2026-10-26 用户报"主窗口全屏状态下投不到眼镜屏"）。
+        // hide→show 是 Wayland 上唯一可靠的重放置时机（初始放置看 active
+        // output；映射中改 screen 同样不保证生效）。
+        const bool wasFullScreen =
+            (playerWin_->visibility() == QWindow::FullScreen);
+        if (wasFullScreen)
+            playerWin_->hide();
         playerWin_->setFlags(origFlags_ | Qt::FramelessWindowHint |
                              Qt::WindowStaysOnTopHint |
                              Qt::WindowDoesNotAcceptFocus);
         playerWin_->setCursor(Qt::BlankCursor);
         playerWin_->setScreen(s);
         playerWin_->showFullScreen();
+        // 只记屏幕名 + 是否原本全屏：窗口 geometry 在 showFullScreen 后还没
+        // 稳定（记出来是旧值），物理/逻辑分辨率由下面那行 "presentation on"
+        // 负责（那条来自 screens 列表，含 kscreen-doctor 的物理尺寸）。
+        QScreen *ps = playerWin_->screen();
+        MLOG_INFO("stereo: presentation window -> %s (was%s fullscreen)",
+                  ps ? ps->name().toUtf8().constData() : "?",
+                  wasFullScreen ? "" : " not");
     }
 
     preferredScreenName_ = s->name();
@@ -213,6 +229,10 @@ void StereoController::stop() {
         controlWin_->hide();
 
     if (playerWin_) {
+        // 与 start 同理：全屏窗口必须**先 hide** 才能改 screen（KWin 把全屏
+        // 窗口钉在所在输出上，直接 setScreen 被忽略 → 退出 3D 后画面留在
+        // 眼镜屏，2026-10-26 实测）。
+        playerWin_->hide();
         playerWin_->setFlags(origFlags_);
         playerWin_->setCursor(origCursor_);
         if (origScreen_)
@@ -224,6 +244,9 @@ void StereoController::stop() {
             if (origGeom_.isValid())
                 playerWin_->setGeometry(origGeom_);
         }
+        QScreen *rs = playerWin_->screen();
+        MLOG_INFO("stereo: presentation restored to %s (fullscreen=%d)",
+                  rs ? rs->name().toUtf8().constData() : "?", int(origFullScreen_));
     }
 
     active_ = false;

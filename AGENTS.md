@@ -363,6 +363,17 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   主窗口（Video+UI）在桌面；3D 时主窗口去眼镜屏做 presentation，controlView 在主窗口
   原来的屏幕/几何上显示，主 UI 不消失。3D 快捷键只在 control 窗口启用（两个窗口都载入
   main.qml，避免 `Qt.ApplicationShortcut` 重复触发）。
+- **⚠ 主窗口全屏时投不到眼镜屏（2026-10-26 用户报，已修）**：KWin 把**全屏窗口
+  钉在它所在的输出上** —— 对全屏窗口调 `setScreen()` 被忽略，`showFullScreen()`
+  又是 no-op（本来就是全屏），于是窗口留在原屏；`get-stereo` 会显示
+  `out=3840x2160`（原屏）而不是眼镜的 3840×1080。**修法**：换屏前先 `hide()`
+  （`showNormal()` 不够），再 `setFlags` → `setScreen` → `showFullScreen`；
+  `stop()` 恢复正常屏幕时同理（否则退出 3D 后画面留在眼镜屏）。两处都要，
+  只修 start 会出现"进得去、出不来"。实测（DP-3 3840×2160 全屏 ↔ DP-1 眼镜
+  3840×1080）：`全屏 3840×2160 → 3D 3839×1080 → 退出 3840×2160`；窗口态
+  `2560×1440 → 3839×1080 → 2560×1440`，可重复进出。
+  ⚠ 日志只记屏幕名（`stereo: presentation window -> DP-1 (was fullscreen)`）：
+  窗口 `geometry()` 在 `showFullScreen()` 之后还没稳定，记出来是旧值，会误判。
 - **presentation** = 主窗口（Video/VO）：`setScreen(眼镜屏)` + `showFullScreen`，加
   `FramelessWindowHint | WindowStaysOnTopHint | WindowDoesNotAcceptFocus`，光标 Blank；
   主窗口 uiLayer 在 3D 时隐藏；3D 快捷键帮助面板是 presentation 内的 `StereoHotkeyHelp.qml` 覆盖层
