@@ -32,6 +32,27 @@ mv /tmp/ffmvc ~/.cache/mvc-work/ffmvc
 
 ---
 
+## 0.1 转换脚本（**已就绪，直接用**）
+
+`~/mvc-tools/convert_all.sh` —— 一条命令转全部 6 个 title：
+
+```bash
+~/mvc-tools/convert_all.sh /home/zmq/mvc-out          # 全部
+~/mvc-tools/convert_all.sh /home/zmq/mvc-out 5        # 只转 title 5
+```
+
+- 自动探测挂载点（`/run/media/zmq/CW3DBD*`，每次挂载后缀会变：`CW3DBD_04` / `_041` …）
+- 2D → `ffmpeg -i <clip>.m2ts`（视频重编、音频转 FLAC）
+- 3D → `ssif_to_mvc.py`（SSIF→MVC，流式）→ `mvc2sbs`（解码+拼 SBS，**已改流式**）→ `hevc_nvenc`
+- title 4 的三段 clip：分别编码后 `concat` 拼接，音频同样拼接
+- **计时输出**：`<out>/timings.csv`（title/playlist/kind/时长/clip/耗时/大小/码率）
+  + `~/.cache/mvc-work/log_t{N}.log`（分阶段：SSIF→MVC 耗时、解码+编码耗时）
+  + `<out>/run.log`（整体进度）
+- 中间文件：`~/.cache/mvc-work/<clip>.264`（每个 title 转完即删）
+
+冒烟测试（title 1，10 s）：5 秒完成，输出 3840×1080 Main10 + FLAC，6.7 MB / 5.58 Mbps，
+严格解码通过、时长正确。
+
 ## 1. 任务规格
 
 ### 输入
@@ -107,6 +128,32 @@ gcc -O2 -o ~/mvc-tools/mvc2sbs ~/mvc-tools/mvc2sbs.c -I. \
 
 ---
 
+## 2.5 长任务必须用工具的后台作业（**踩过**）
+
+`nohup ... &` 起的转换进程在父 shell 退出时**被整组杀掉**（实测：主片跑到 2:23 时进程消失，
+日志无任何错误、`pgrep` 空、`run.log` 停更）。长任务一律用 agent 工具的
+**后台作业**（`run_in_background: true`），不要用 `nohup &`。
+
+进程被杀的后果与补救：
+- 中间文件保留 → 不需要重跑前置阶段。主片这次已生成 `~/.cache/mvc-work/00006.264`
+  （**17 GB**：base 13.1 GB + dep 5.8 GB 的纯 payload，比 SSIF 略小是正常的），
+  直接复用即可，省掉 58 s 的 SSIF→MVC；
+- 脚本：`~/mvc-tools/finish_t5.sh`（复用已合并的 00006.264，只做解码+编码+合音轨）。
+
+## 2.6 内存：`mvc2sbs` 的帧缓冲泄漏（**已修，别再引入**）
+
+现象：主片转换跑到一半整机内存被吃光，`mvc2sbs` RSS 涨到 **17.6 GB**，被 OOM killer `SIGKILL`
+（用户看到"内核总报内存不足"）。日志无任何错误、进程凭空消失。
+
+根因：配对成功写出 SBS 帧后**只 `av_frame_unref(frm)`，忘了 `av_frame_unref(base)`** →
+每个 AU 泄漏一个 1920×1080 帧缓冲（≈3 MB），5600 个 AU ≈ 17 GB。
+
+修法（`~/mvc-tools/mvc2sbs.c`）：写完一对之后 `av_frame_unref(base);`。
+修复后实测 25 秒峰值 RSS **241 MB**（平稳），之前 20 秒就能涨到 GB 级。
+
+⚠ 顺带记住：**`/tmp` 是 tmpfs（内存盘）**，写大文件等于吃内存（之前往 `/tmp` 写 3 GB 的
+Raw YUV 就是内存压力的来源之一）。中间文件一律 `~/.cache/mvc-work/`。
+
 ## 3. 已知坑（都踩过，别再踩）
 
 1. **`/tmp` 是 tmpfs**：19 GB 的中间文件会吃光内存盘并让工具链全部 ENOSPC。只用 `~/.cache/mvc-work/`。
@@ -172,3 +219,29 @@ gcc -O2 -o ~/mvc-tools/mvc2sbs ~/mvc-tools/mvc2sbs.c -I. \
 1. 输出放哪里（默认 `~/.cache/mvc-work/out/`，还是直接放 `~/视频/`？）
 2. 0:00 的 title 0（MPEG-2、无音轨、时长 0）要不要留（默认：转，但可以跳过）
 3. 音频转 FLAC 是否可接受（源是 PCM 2ch；FLAC 无损、约省 40%）
+
+---
+
+## 8. 已完成（2026-10-27 01:31）——结果与耗时记录
+
+全部 6 个 title 已转到 `/home/zmq/mvc-out/`（全部通过 ffprobe + 严格解码校验）：
+
+| title | playlist | 处理 | 时长 | 输出 | 码率 | 耗时 |
+|---|---|---|---|---|---|---|
+| 0 | 00004 | 2D 直接压（单帧） | 0.04 s | 49 KB | — | 0 s |
+| 1 | 00002 | 3D → SBS | 10 s | 6.7 MB | 5.58 Mbps | 5 s |
+| 2 | 00000 | 2D 直接压 | 30 s | 6.4 MB | 1.70 Mbps | 8 s |
+| 3 | 00001 | 2D 直接压（MPEG-2 源） | 1:30 | 117 MB | 10.31 Mbps | 14 s |
+| 4 | 00005 | 3D → SBS（3 段拼接） | 4:00 | 336 MB | 11.20 Mbps | 81 s |
+| 5 | 00003 | 3D → SBS（**主片**） | 1:18:30 | **12.26 GB** | 20.82 Mbps | **1518 s（25.3 min）** |
+
+- 合计：**84.7 分钟素材 → 12.73 GB，总耗时 1626 s ≈ 27 分钟**
+  （主片另有一次 58 s 的 SSIF→MVC 是在被杀的那次跑里完成的，从零算 ≈ 28 分钟）
+- 压缩比：12.73 GB / ISO 20.6 GB = **0.62**（3D 流 18.96 GB 的 0.67）
+- 主片实测：编码 76 fps = **3.18× 实时**（解码+拼帧+编码流水线整体）；
+  112939 AU → 112923 SBS 帧；输出 3840×1080 Main10 + FLAC
+
+产物清单（`~/mvc-out/`）：`t0_00004_2d.mkv`、`t1_00002_3dsbs.mkv`、`t2_00000_2d.mkv`、
+`t3_00001_2d.mkv`、`t4_00005_3dsbs.mkv`、`t5_00003_3dsbs.mkv`、`timings.csv`、`run.log`
+
+播放：2D 的按普通视频放；SBS 的用播放器「3D片源 + 左右并排 + 全」。
