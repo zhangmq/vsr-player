@@ -487,6 +487,8 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   3D 面板现在是两组：**输出设备**（`XR 眼镜`，值为 `stereo.outputType`，默认 0）
   + **显示方式**（不使用/3D片源/2D转3D，值为 `stereo.mode`）。`outputType` 目前
   不影响渲染路径，是前向占位（将来接 3D 电视需 SBS-half 拉伸几何、VR 头显需 OpenXR）。
+  ⚠ **分组分隔线只在两组之间**（用户 2026-10-26 定）：第一个 header 上方不画线
+  （`visible: isHeader && index > 0`），否则面板顶部会多一条贴边线。
   ⚠ **面板不能超出主菜单高度**：popup 高度 = 主菜单高度，二级面板是自绘子项，
   超出会被裁掉 → `subY` 按 `mainPanelH - subPanelH` 做底部钳制并整体上移；
   `subPanelH` 按实际行高累加（header 行矮 4px）。

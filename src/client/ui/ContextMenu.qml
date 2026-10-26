@@ -309,9 +309,10 @@ PopupBase {
                         anchors.fill: parent
                         color: !isHeader && subHover.containsMouse ? "#33ffffff" : "transparent"
                     }
-                    // 分组标题：顶部细线 + 灰字（不可点，鼠标穿到面板本身）
+                    // 分组标题：灰字（不可点）。分隔线**只在两组之间**——第一个
+                    // 分组上方不加（否则面板顶部会多一条贴边线）。
                     Rectangle {
-                        visible: isHeader
+                        visible: isHeader && index > 0
                         anchors { left: parent.left; leftMargin: 8; right: parent.right; rightMargin: 8; top: parent.top }
                         height: 1; color: "#22ffffff"
                     }
