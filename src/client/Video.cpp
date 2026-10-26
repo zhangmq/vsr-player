@@ -115,6 +115,16 @@ Video::Video(QQuickItem *parent) : QQuickItem(parent) {
     setFlag(ItemHasContents);
 }
 
+void Video::setBlank(bool on) {
+    if (blank_.exchange(on) == on)
+        return;
+    // 清空时最后一帧还在 rtImage 里，必须重绘一次才能变黑；复用时也要
+    // 立刻重画（新文件首帧到达前的空窗）。
+    renderRequested_.store(true);
+    update();
+    MLOG_INFO("video: %s", on ? "blank (no media)" : "content");
+}
+
 void Video::requestRender() {
     // GUI 线程（mpv update callback 经 QMetaObject::invokeMethod
     // QueuedConnection 驱动——Qt 官方跨线程通道，社区标准模式）。
@@ -321,6 +331,7 @@ StereoCompositeParams Video::stereoParams(int outW, int outH) const {
             p.srcH = s.height();
         }
     }
+    p.blank = blank_.load() ? 1 : 0;
     if (!stereo_ || !stereo_->active()) {
         if (stereo_)
             stereo_->setMapSnapshot(0, p.layout, p.swap, p.halfMode,

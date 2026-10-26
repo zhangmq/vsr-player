@@ -60,12 +60,40 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
    `lconvert -i x.qm -o -` 反查确认译文真进了 .qm（**不能只看 .ts**）。
 
 
-## 已知问题（待修）
+## 已修问题的两个易复发点（2026-10-26，用户报"像是修过的 bug 复现"）
 
-- **播放列表有条目时，点播放无反应**（2026-10-25 用户报告；先不修、不排查）。
-  - 现象：播放列表已有条目，点播放按钮/播放键无响应。
-  - 当前分支：`feat/stereo-osd-prototype`；根因未查，留待后续单独安排。
-  - ⚠ 未调查前不要把它归因到 3D/control 改动；恢复播放行为时再按正常排查流程处理。
+### 1) 播放列表清空后画面停在最后一帧
+
+- **根因不在 mpv**：清空（`playlist-clear`+`playlist-remove 0` 或逐个删到空）后
+  mpv 确实 `idle=yes`、`core-idle=yes`，但**我们的渲染循环是"有新帧才画"**
+  （`Video::requestRender` 判 `mpv_->update()>0`）：idle 之后不再有新帧，
+  `rtImage` 里留着最后一帧，合成节点每帧照旧采样它 → 画面永远停在最后状态。
+- **修法**：`Video::blank_` + 合成 shader 的 `blank` 标志（`CompositeParams.h`
+  与 `composite.frag` 的 push constant 各加一个字段）。`PlayerViewModel` 在
+  **列表非空 → 空**的跃迁和 `stop()` 上发 `playlistEmptied()` → `Video::setBlank(true)`
+  → 请求一次重绘，shader 直接输出 `vec4(0)`；`MPV_EVENT_FILE_LOADED` 时复位。
+  这样**任何一次重绘**（包括锁屏后解锁、切窗口）都是黑的，不依赖 mpv 清帧。
+- ⚠ 不要改成"靠 mpv 自己清 rtImage"：`mpv_render_context_render` 在没有帧时
+  是否清屏取决于 vo/gpu 内部状态，实测清空列表后窗口仍是最后一帧。
+
+### 2) 重启后点播放无反应（概率性）
+
+- **根因**：`playlist` 观察器在 `files.isEmpty()` 时无条件清
+  `lastPath_`/`idlePlayIndex_`（那是为"移除后别复活"加的）。但**启动 idle**
+  时 `restorePlaylistIdle()` 先把重播目标设好，随后观察器投递的**初始空快照**
+  会把它抹掉 → `play()` 的 `!fileLoaded_` 分支无目标、直接 return。事件与启动
+  代码的先后不定 → 表现为**概率性**（用户："似乎存在一定几率触发"）。
+- **修法**：只在**非空 → 空**的跃迁上清（`PlayerViewModel::playlistCount_`
+  记录上次条目数）；初始空快照不再算"用户清空了列表"。`play()` 的早退分支
+  会记 `play: nothing to resume (...)`，下次复现直接看日志。
+- 验证：连续 3 次"重启（idle，count=1/pos=-1）→ 点播放"→ 每次都 `pos=0`、
+  `path` 正确、`video-params/w=1920`。
+
+### 3) stop 也走同一条置黑路径
+
+`stop()`（`stop keep-playlist`，列表保留、媒体卸载）以前同样停在最后一帧，
+现在也 `emit playlistEmptied()`；重播时 `FILE_LOADED` 复位。实测
+`stop → video: blank` / `play → video: content`，并回到原条目。
 
 ## 技术现状（已对照 master 代码修正）
 

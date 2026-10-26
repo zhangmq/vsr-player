@@ -65,7 +65,7 @@ bool CompositePipeline::create(VkDevice dev, VkDescriptorSetLayout dsLayout,
         return false;
     }
 
-    // 片元阶段 push constants：3D 合成参数（24 B）。
+    // 片元阶段 push constants：合成参数（含 blank 标志；大小随结构体）。
     VkPushConstantRange pcr = {
         VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(StereoCompositeParams)
     };

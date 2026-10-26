@@ -71,6 +71,12 @@ public:
     /// render to consume pending VO work; see vo_libmpv flip_page).
     std::atomic<bool> renderRequested_{false};
 
+    /// 没有可显示的画面（播放列表被清空）：合成阶段直接输出纯黑。
+    /// 不能指望 mpv 清掉 rtImage —— 渲染循环是"有新帧才画"，清空后没有
+    /// 新帧，rtImage 里留着最后一帧（用户实测："列表清空了，画面还停在
+    /// 最后播放状态"）。
+    std::atomic<bool> blank_{false};
+
     /// Benchmark counters (updated on the render/main thread, read by the
     /// event thread on END_FILE — hence atomic).
     std::atomic<int> benchFrames_{0};
@@ -81,6 +87,8 @@ public:
 
 public slots:
     void kickstart();
+    /// 标记"无画面"：true 时合成输出纯黑（播放列表清空），有新文件载入时复位。
+    void setBlank(bool on);
     /// mpv update callback（核心线程）invokeMethod(QueuedConnection) 驱动
     /// 的渲染请求（社区标准模式，见 trin94/qtquick-mpv）。GUI 线程执行：
     /// 条件检查（need_render）→ update() + postEvent 投递渲染请求。

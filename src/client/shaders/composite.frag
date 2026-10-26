@@ -17,12 +17,19 @@ layout(push_constant) uniform Push {
     int srcH;
     int outW;
     int outH;
+    int blank;      // 1 = 无画面（播放列表清空/已停止）→ 纯黑，不再采样旧帧
 } pc;
 
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    // 播放列表清空后 mpv 不再产帧，rtImage 里是最后一帧的残留。
+    // 渲染循环是"有新帧才画"，所以这里显式输出黑，避免画面停在最后一帧。
+    if (pc.blank != 0) {
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
     vec2 uv = fragUV;
     if (pc.enabled == 0) {
         outColor = texture(srcTex, uv);

@@ -14,4 +14,5 @@ struct StereoCompositeParams {
     int32_t srcH = 0;           ///< 源视频整帧像素高
     int32_t outW = 0;           ///< 输出 framebuffer 宽
     int32_t outH = 0;           ///< 输出 framebuffer 高
+    int32_t blank = 0;          ///< 1 = 没有可显示的画面（播放列表已清空）→ 输出纯黑
 };

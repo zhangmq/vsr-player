@@ -847,6 +847,12 @@ int main(int argc, char *argv[]) {
                              &app, syncSessionIdle);
             QObject::connect(&viewModel, &PlayerViewModel::overlaysVisibleChanged,
                              &app, syncSessionIdle);
+            // 播放列表被清空（全部移除 / 逐个删完）→ 合成输出纯黑。
+            // mpv idle 后不再产帧，rtImage 里留着最后一帧；渲染循环是
+            // "有新帧才画"，所以必须主动置黑（用户实测：画面停在最后状态）。
+            QObject::connect(&viewModel, &PlayerViewModel::playlistEmptied, video,
+                             [video] { video->setBlank(true); });
+
             // 直播/线性流：resume 不适用 → 撤销暂停，直接跟最新
             QObject::connect(&viewModel, &PlayerViewModel::liveSourceDetected,
                              &app, [&viewModel]() {
@@ -892,6 +898,9 @@ int main(int argc, char *argv[]) {
             // 修复曲目切换后播放/暂停 UI 卡在错误状态（path 清空窗口）。
             if (ev->event_id == MPV_EVENT_FILE_LOADED) {
                 viewModel.onFileLoadedFromEventThread();
+                // 有新文件真正载入 → 撤掉"无画面"置黑（清空列表时设的）
+                QMetaObject::invokeMethod(video, "setBlank", Qt::QueuedConnection,
+                                          Q_ARG(bool, false));
                 return;
             }
             // seek 完成（目标帧已显示）→ 连续快进/快退门控放行下一步。

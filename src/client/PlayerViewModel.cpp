@@ -239,13 +239,21 @@ void PlayerViewModel::attach(MpvController *mpv) {
             // 否则 play() 的 !fileLoaded_ 分支会走 resumeLastPath()，把刚被
             // 移除的文件 append-play **重新加回列表**（用户实测："删了当前
             // 文件，画面只是停住，再点播放又回来了"）。
-            if (files.isEmpty()) {
+            // ⚠ 只在**非空 → 空**的这次跃迁上清（2026-10-26 修）：
+            // 启动 idle 时（restorePlaylistIdle 已经把 lastPath_/idlePlayIndex_
+            // 设好）playlist 观察器会先投递一次**初始空快照**，无条件清空会把
+            // 刚设好的重播目标抹掉 → "重启后点播放无反应"，且取决于事件与
+            // 启动代码的先后，表现为**概率性**（用户实测）。
+            const bool hadEntries = playlistCount_ > 0;
+            playlistCount_ = files.size();
+            if (files.isEmpty() && hadEntries) {
                 lastPath_.clear();
                 idlePlayIndex_ = -1;
                 if (!videoInfo_.isEmpty()) {   // 标题别停在已移除的文件上
                     videoInfo_.clear();
                     emit videoInfoChanged();
                 }
+                emit playlistEmptied();        // → Video 置黑（见 setBlank）
             }
             // 启动 idle：列表只有排队条目、mpv 无 current（cur<0）→ 用记录的
             // 目标索引高亮"按播放将载入的那一条"（否则列表看起来没有选中项）。
@@ -927,7 +935,10 @@ void PlayerViewModel::play() {
     if (!mpv_) return;
     if (!fileLoaded_) {
         // 没有任何重播目标（列表为空）→ 保持 idle，不要凭空载入/追加
-        if (lastPath_.isEmpty() && idlePlayIndex_ < 0) return;
+        if (lastPath_.isEmpty() && idlePlayIndex_ < 0) {
+            MLOG_INFO("play: nothing to resume (no replay target; playlist empty)");
+            return;
+        }
         resumeLastPath();
     }
     playing_ = true;
@@ -1031,6 +1042,9 @@ void PlayerViewModel::stop() {
     // async：GUI 线程不阻塞 core-lock（同 seek；同步命令会与软解 DR 帧
     // 分配互锁，见 path 观察器注释）。
     mpv_->commandAsync({"stop", "keep-playlist", nullptr});
+    // 停止后 mpv 不再产帧，rtImage 里留着最后一帧 → 主动置黑
+    //（与"清空播放列表"同一条路径，见 playlistEmptied 的注释）。
+    emit playlistEmptied();
 }
 
 void PlayerViewModel::seekAbsolute(int64_t ms) {

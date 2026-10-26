@@ -517,6 +517,8 @@ signals:
     void volumeChanged();
     /// 快捷键调了音量（UI 滑杆/API 不发）——音量提示 OSD 的触发源。
     void volumeNudged();
+    /// 播放列表由非空变为空（清空/删完）→ 画面置黑。
+    void playlistEmptied();
     /// 快捷键快进/快退（拖进度条走 seekAbsolute，不发）——进度提示 OSD 的触发源。
     void seekNudged();
     void qualityChanged();
@@ -779,6 +781,9 @@ private:
     /// 当前蓝光 ISO（mpv 的 bluray-device 是全局选项）：bd:// 条目离开它
     /// 就打不开，所以随播放列表一起持久化，启动恢复前先设回去。
     QString blurayDevice_;
+    /// 上一次 playlist 快照的条目数（判断"非空 → 空"的跃迁；启动时的
+    /// 初始空快照不能当成"用户清空了列表"）。
+    int playlistCount_ = 0;
     // 启动 idle：列表已排队但**没有 current 条目**（媒体未载入）。记住
     // 播放键第一次要载入的目标索引；同时供 playlist 观察器在 mpv 报
     // cur<0（无 current）时高亮"按播放将载入的那一条"。
