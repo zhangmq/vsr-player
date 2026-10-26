@@ -577,9 +577,12 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 
 ### 蓝光 ISO / BDMV（2026-10-26，按"文件夹"展开）
 
-**交互（用户定）**：打开 `.iso`（或含 `BDMV/` 的目录）不再直接播最长 title，
-而是把盘上**所有 title 作为播放列表条目列出来、不自动播放**（mpv 保持 idle），
-用户自己挑。与"打开文件夹 = mpv 原生目录展开"同一套心智。
+**交互（用户 2026-10-26 定，含一次修正）**：ISO 与普通文件**同等对待**——
+展开成多个 title 条目后**按播放列表顺序播放**（首条播放、其余 append 排队），
+命令行 / 打开文件 / 打开文件夹 / 拖入 dropzone 四条入口一致。
+（最初实现是"列出来但不自动播放"，用户否掉："符合一般播放习惯，应该按顺序播放"。）
+⚠ 蓝光 3D 盘的第 1 个 title 常常是 0:00 的 logo/警告片，按顺序播放会瞬间跳过它
+再进第 2 个——这是"按顺序"的正常结果，不是 bug。
 
 **实现**：
 - `src/client/BlurayDisc.{h,cpp}`：进程内链 **libbluray**（meson 里
@@ -588,9 +591,10 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   返回 `{index, mpls, durationMs, chapterCount, clipCount, label}`。
   ⚠ 命名空间不能叫 `bluray`——libbluray 头里有 `struct bluray`，同名会
   "redeclared as different kind of entity"（实测）。
-- `PlayerViewModel::openFiles`：识别 ISO → 设全局选项 `bluray-device=<iso>` →
-  逐个 `loadfile bd://mpls/<n> append`（**append 不 replace** → 不进播放）→
-  用户点条目即播。
+- `PlayerViewModel::openFiles`：先把 ISO 展开成 `{bd://mpls/<n>, 所属 ISO}` 的
+  条目列表（保持输入顺序，普通文件原样混排），再走统一入列逻辑：首条
+  `loadfile`（播放）、其余 `append`；`mode == 1`（追加到播放列表）全部 append。
+  每条 bd:// 入列前若设备变了就设全局选项 `bluray-device`（命令队列有序）。
   ⚠ 用 **mpls 编号**而不是 title index：libbluray 的 title 索引随
   `TITLES_*` 过滤条件变化，mpls 是盘上稳定标识。
   ⚠ 设备只能走全局选项：`bd://<title>/<device>` 的 URL 解析会在第一个 `/`

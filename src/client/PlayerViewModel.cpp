@@ -801,10 +801,10 @@ void PlayerViewModel::applyPlaybackSettings() {
 /// 否则 mpv 会去开"默认光驱"（不存在）→ 条目全部打不开。
 void PlayerViewModel::restoreBlurayDevice(const QStringList &files) {
     if (!mpv_) return;
-    bool needBd = false;
+    int bdCount = 0;
     for (const QString &f : files)
-        if (f.startsWith("bd://")) { needBd = true; break; }
-    if (!needBd) return;
+        if (f.startsWith("bd://")) bdCount++;
+    if (!bdCount) return;
     const QString dev = settings_.value("blurayDevice").toString();
     if (dev.isEmpty()) return;
     blurayDevice_ = dev;
@@ -812,7 +812,7 @@ void PlayerViewModel::restoreBlurayDevice(const QStringList &files) {
     // "GUI 线程不得同步调 mpv API" 例外条款。
     mpv_->setPropertyString("bluray-device", dev.toStdString());
     MLOG_INFO("bluray: restored device %s for %d bd:// entr(ies)",
-              qUtf8Printable(QFileInfo(dev).fileName()), int(files.size()));
+              qUtf8Printable(QFileInfo(dev).fileName()), bdCount);
 }
 
 void PlayerViewModel::restorePlaylist() {
@@ -1536,85 +1536,71 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
         }
         return;
     }
-    if (mode == 4) {   // 打开 URL：网络流播放（toLocalPath 原样透传），
-        // 跳过混拖分类（URL 以 .srt 结尾会被误判为字幕 sub-add）
-        bool first = true;
-        for (const QString &p : paths) {
-            if (first) mpv_->commandAsync({"loadfile", p.toUtf8().constData(), nullptr});
-            else       mpv_->commandAsync({"loadfile", p.toUtf8().constData(), "append", nullptr});
-            first = false;
-        }
-        return;
-    }
-    // 文件夹不在此扫描：目录路径原样交给 mpv 的 loadfile，由 mpv 的
-    // demux_playlist 展开（--directory-mode 默认 lazy）——顶层媒体按 mpv
-    // 的扩展名表（video/audio/image/archive/playlist）展开，子目录作为
-    // 条目留在列表里、点击时才再展开。与拖放（mode 0/1）同一条通路，
-    // 所以"打开文件夹"与拖入文件夹的行为一致。
-    // ── 蓝光 ISO / BDMV 目录：按"文件夹"处理 ─────────────────────
-    // 用户 2026-10-26 定：不自动播最长 title，而是把盘上所有 title 作为播放
-    // 列表条目列出来（append，不 replace → mpv 保持 idle），由用户自己挑。
-    // 关键点：mpv 的 bd:// 设备来自全局选项 --bluray-device（URL 里带绝对
-    // 路径会被 "bd://<title>/<device>" 的解析吃掉前导斜杠），所以先把
-    // bluray-device 设成本 ISO，再追加 bd://mpls/<n> 条目。
-    {
-        QStringList bdPaths;
-        for (const QString &p : paths)
-            if (bdisc::isBlurayPath(p)) bdPaths.append(p);
-        if (!bdPaths.isEmpty()) {
-            for (const QString &p : paths)
-                if (!bdPaths.contains(p)) {
-                    // 与蓝光混在一起的其他文件：照常入列（append），不打断
-                    mpv_->commandAsync({"loadfile", p.toUtf8().constData(),
-                                        "append", nullptr});
-                }
-            for (const QString &iso : bdPaths) {
-                const BlurayDiscInfo info = bdisc::enumerate(iso);
-                if (!info.ok) {
-                    // 枚举失败 → 退回"直接播最长 title"（mpv 的默认行为），
-                    // 至少不会什么都不发生。
-                    MLOG_WARN("bluray: %s: %s -> fallback to bd:// default title",
-                              qUtf8Printable(QFileInfo(iso).fileName()),
-                              qUtf8Printable(info.error));
-                    bdisc::registerLabel(QStringLiteral("bd://"),
-                                         QFileInfo(iso).fileName());
-                    blurayDevice_ = iso;
-                    saveSettings("blurayDevice", iso);
-                    settings_.sync();   // 蓝光设备是"播放列表能否打开"的前提，立即落盘
-                    mpv_->setPropertyStringAsync("bluray-device", iso.toStdString());
-                    mpv_->commandAsync({"loadfile", "bd://", nullptr});
-                    continue;
-                }
-                blurayDevice_ = iso;
-                saveSettings("blurayDevice", iso);
-                settings_.sync();
-                mpv_->setPropertyStringAsync("bluray-device", iso.toStdString());
-                for (const BlurayTitle &t : info.titles) {
-                    // 用 mpls 编号而不是 title index：libbluray 的 title 索引
-                    // 会随 TITLES_* 过滤条件变化，mpls 编号是盘上稳定标识。
-                    const std::string url = "bd://mpls/" + std::to_string(t.playlist);
-                    mpv_->commandAsync({"loadfile", url.c_str(), "append", nullptr});
-                }
-                MLOG_INFO("bluray: %s queued %d title(s) into playlist (no autoplay)",
-                          qUtf8Printable(QFileInfo(iso).fileName()),
-                          int(info.titles.size()));
-            }
-            return;
-        }
-    }
-
-    // 混拖分类：字幕文件 → sub-add，其余 → loadfile（混合目录场景）
-    bool first = true;
+    // ── 展开蓝光 ISO / BDMV 目录 ───────────────────────────────────
+    // 用户 2026-10-26 定：**不特殊对待**——和普通文件一样按顺序播放（首条
+    // 播放、其余排队），ISO 只是把自己展开成多个 title 条目。
+    // 关键点：mpv 的 bd:// 设备来自全局选项 bluray-device（URL 里带绝对路径
+    // 会被 "bd://<title>/<device>" 的解析吃掉前导斜杠），所以每条 bd://
+    // 条目记下它属于哪张盘，入列前把设备切过去（命令队列有序）。
+    struct Item {
+        QString path;
+        QString device;   // 非空 = 蓝光条目，入列前要设 bluray-device
+    };
+    QVector<Item> items;
+    items.reserve(paths.size());
     for (const QString &p : paths) {
-        if (isSubtitleFile(p)) {
-            mpv_->commandAsync({"sub-add", p.toUtf8().constData(), "select", nullptr});
-            noteExternalSubAdded(p);   // 即时落盘（pending 暂存未回写路径）
+        if (mode != 4 && !isSubtitleFile(p) && bdisc::isBlurayPath(p)) {
+            const BlurayDiscInfo info = bdisc::enumerate(p);
+            if (!info.ok) {
+                // 枚举失败 → 退回 bd://（mpv 会播最长 title），至少不哑火
+                MLOG_WARN("bluray: %s: %s -> fallback to bd:// default title",
+                          qUtf8Printable(QFileInfo(p).fileName()),
+                          qUtf8Printable(info.error));
+                bdisc::registerLabel(QStringLiteral("bd://"), QFileInfo(p).fileName());
+                items.append({QStringLiteral("bd://"), p});
+                continue;
+            }
+            for (const BlurayTitle &t : info.titles) {
+                // mpls 编号而不是 title index：后者随 libbluray 的 TITLES_*
+                // 过滤条件变化，mpls 是盘上稳定标识。
+                items.append({QStringLiteral("bd://mpls/%1").arg(t.playlist), p});
+            }
+            MLOG_INFO("bluray: %s expanded to %d title(s) in playlist order",
+                      qUtf8Printable(QFileInfo(p).fileName()), int(info.titles.size()));
             continue;
         }
-        if (mode == 1 || !first)
-            mpv_->commandAsync({"loadfile", p.toUtf8().constData(), "append", nullptr});
+        items.append({p, QString()});
+    }
+
+    // 蓝光设备是全局选项：随播放列表一起记住，重启后恢复（见 restoreBlurayDevice）
+    for (const Item &it : items) {
+        if (it.device.isEmpty()) continue;
+        blurayDevice_ = it.device;
+        saveSettings("blurayDevice", it.device);
+        settings_.sync();   // 掉电/SIGTERM 也要留住——否则 bd:// 条目重启后全打不开
+        break;
+    }
+
+    // ── 按顺序入列：首条播放，其余 append ──────────────────────────
+    // mode 4（打开 URL）跳过混拖分类：URL 以 .srt 结尾会被误判成字幕。
+    // mode 1（追加到播放列表）全部 append、不打断当前播放。
+    QString lastDevice;
+    bool first = true;
+    for (const Item &it : items) {
+        if (!it.device.isEmpty() && it.device != lastDevice) {
+            mpv_->setPropertyStringAsync("bluray-device", it.device.toStdString());
+            lastDevice = it.device;
+        }
+        const QByteArray p = it.path.toUtf8();
+        if (mode != 4 && isSubtitleFile(it.path)) {
+            mpv_->commandAsync({"sub-add", p.constData(), "select", nullptr});
+            noteExternalSubAdded(it.path);
+            continue;   // 字幕不算"首条"，不消耗播放位
+        }
+        if (first && mode != 1)
+            mpv_->commandAsync({"loadfile", p.constData(), nullptr});
         else
-            mpv_->commandAsync({"loadfile", p.toUtf8().constData(), nullptr});
+            mpv_->commandAsync({"loadfile", p.constData(), "append", nullptr});
         first = false;
     }
 }
