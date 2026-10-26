@@ -158,6 +158,17 @@ stock FFmpeg 9 已有 `view_ids`（本机 `ffmpeg -h decoder=hevc` 可见），*
 - 对真 3D 蓝光还需 MVC 解码先落地（依赖视图不能单独解）。
 详见 `AGENTS.md`「待实现需求」。
 
+## 4.9 决策（2026-10-27）：**不做内建 MVC**
+
+用户决定**放弃**播放器内建 MVC 解码（"太麻烦没必要"）。因此路线 B 作废，只保留：
+- 路线 A：**离线转全宽 SBS**（工具在仓库外，`~/mvc-tools/`），播放用现有 3D 能力；
+- 路线 C：MV-HEVC（stock FFmpeg 9 已支持）留作以后按需再评估。
+
+编码侧实测（30 s 样片）：HEVC NVENC `p7 + uhq + AQ + lookahead 32 + multipass fullres`
+≈ 73 fps（3.0× 实时）、20.4 Mbps、PSNR-Y 41.0 / VMAF 99.37；全片 ≈26 min / ≈12 GB。
+AV1 NVENC 因 [FFmpeg #11390](https://trac.ffmpeg.org/ticket/11390)（非法码流，驱动侧
+bug 未修）**不用于归档**。
+
 ## 5. 结论
 
 - **能解**：FFmpeg PR #24303（软件、未合并、作者承诺维护）+ popcornmix 的 Kodi 栈
