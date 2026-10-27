@@ -297,6 +297,13 @@ PopupBase {
                         anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 10 }
                         height: 1; color: "#22ffffff"; visible: isSep
                     }
+                    // 分组上方的细线（与二级面板"两组之间"的分隔线同款；
+                    // 第一个条目不加，避免贴边线）
+                    Rectangle {
+                        visible: isHeader && index > 0
+                        anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 10; top: parent.top }
+                        height: 1; color: "#22ffffff"
+                    }
                     // 一级分组标题（与二级面板的分组标题同款：灰字、不可点）
                     Text {
                         anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter }
