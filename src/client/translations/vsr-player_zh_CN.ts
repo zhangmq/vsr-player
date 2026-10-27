@@ -140,24 +140,24 @@
 <context>
     <name>ContextMenu</name>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="74"/>
-        <location filename="../ui/ContextMenu.qml" line="122"/>
+        <location filename="../ui/ContextMenu.qml" line="76"/>
+        <location filename="../ui/ContextMenu.qml" line="124"/>
         <source>Auto</source>
         <translation>自动</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="75"/>
-        <location filename="../ui/ContextMenu.qml" line="123"/>
+        <location filename="../ui/ContextMenu.qml" line="77"/>
+        <location filename="../ui/ContextMenu.qml" line="125"/>
         <source>Force</source>
         <translation>强制</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="73"/>
-        <location filename="../ui/ContextMenu.qml" line="82"/>
-        <location filename="../ui/ContextMenu.qml" line="93"/>
-        <location filename="../ui/ContextMenu.qml" line="124"/>
-        <location filename="../ui/ContextMenu.qml" line="139"/>
-        <location filename="../ui/ContextMenu.qml" line="159"/>
+        <location filename="../ui/ContextMenu.qml" line="75"/>
+        <location filename="../ui/ContextMenu.qml" line="84"/>
+        <location filename="../ui/ContextMenu.qml" line="95"/>
+        <location filename="../ui/ContextMenu.qml" line="126"/>
+        <location filename="../ui/ContextMenu.qml" line="141"/>
+        <location filename="../ui/ContextMenu.qml" line="161"/>
         <source>Off</source>
         <translation>关闭</translation>
     </message>
@@ -197,113 +197,118 @@
         <translation>删除文件</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="68"/>
+        <location filename="../ui/ContextMenu.qml" line="69"/>
+        <source>Picture processing</source>
+        <translation>画面处理</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="70"/>
         <source>Deinterlace</source>
         <translation>反交错</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="77"/>
+        <location filename="../ui/ContextMenu.qml" line="79"/>
         <source>Rotate</source>
         <translation>旋转</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="83"/>
-        <location filename="../ui/ContextMenu.qml" line="157"/>
+        <location filename="../ui/ContextMenu.qml" line="85"/>
+        <location filename="../ui/ContextMenu.qml" line="159"/>
         <source>90°</source>
         <translation>90°</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="84"/>
-        <location filename="../ui/ContextMenu.qml" line="158"/>
+        <location filename="../ui/ContextMenu.qml" line="86"/>
+        <location filename="../ui/ContextMenu.qml" line="160"/>
         <source>270°</source>
         <translation>270°</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="87"/>
+        <location filename="../ui/ContextMenu.qml" line="89"/>
         <source>3D</source>
         <translation>3D</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="88"/>
+        <location filename="../ui/ContextMenu.qml" line="90"/>
         <source>Output mode</source>
         <translation>输出方式</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="94"/>
-        <location filename="../ui/ContextMenu.qml" line="137"/>
+        <location filename="../ui/ContextMenu.qml" line="96"/>
+        <location filename="../ui/ContextMenu.qml" line="139"/>
         <source>3D glasses</source>
         <translation>眼镜 3D</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="97"/>
+        <location filename="../ui/ContextMenu.qml" line="99"/>
         <source>Source layout</source>
         <translation>片源格式</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="102"/>
+        <location filename="../ui/ContextMenu.qml" line="104"/>
         <source>Side by side · full</source>
         <translation>左右 · 全幅</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="103"/>
+        <location filename="../ui/ContextMenu.qml" line="105"/>
         <source>Side by side · half</source>
         <translation>左右 · 半幅</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="104"/>
+        <location filename="../ui/ContextMenu.qml" line="106"/>
         <source>Top and bottom · full</source>
         <translation>上下 · 全幅</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="105"/>
+        <location filename="../ui/ContextMenu.qml" line="107"/>
         <source>Top and bottom · half</source>
         <translation>上下 · 半幅</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="107"/>
+        <location filename="../ui/ContextMenu.qml" line="109"/>
         <source>Output option</source>
         <translation>输出选项</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="147"/>
+        <location filename="../ui/ContextMenu.qml" line="149"/>
         <source>Top and bottom</source>
         <translation>上下并列</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="147"/>
+        <location filename="../ui/ContextMenu.qml" line="149"/>
         <source>Side by side</source>
         <translation>左右并排</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="148"/>
+        <location filename="../ui/ContextMenu.qml" line="150"/>
         <source>half</source>
         <translation>半</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="148"/>
+        <location filename="../ui/ContextMenu.qml" line="150"/>
         <source>full</source>
         <translation>全</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="113"/>
-        <location filename="../ui/ContextMenu.qml" line="152"/>
+        <location filename="../ui/ContextMenu.qml" line="115"/>
+        <location filename="../ui/ContextMenu.qml" line="154"/>
         <source>Right eye</source>
         <translation>右眼</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="112"/>
-        <location filename="../ui/ContextMenu.qml" line="152"/>
+        <location filename="../ui/ContextMenu.qml" line="114"/>
+        <location filename="../ui/ContextMenu.qml" line="154"/>
         <source>Left eye</source>
         <translation>左眼</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="95"/>
-        <location filename="../ui/ContextMenu.qml" line="138"/>
+        <location filename="../ui/ContextMenu.qml" line="97"/>
+        <location filename="../ui/ContextMenu.qml" line="140"/>
         <source>2D output</source>
         <translation>2D 输出</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="116"/>
+        <location filename="../ui/ContextMenu.qml" line="118"/>
         <source>Quit</source>
         <translation>退出</translation>
     </message>

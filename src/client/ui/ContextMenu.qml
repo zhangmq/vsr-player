@@ -65,6 +65,8 @@ PopupBase {
         {icon: "󰆴", text: qsTr("Delete file"), hint: "Shift+Del", sig: "deleteFileRequested",
          visibleWhen: function() { return viewModel.hasMedia && viewModel.canDeleteCurrentFile }},
         {sep: true},
+        // ── 画面处理（反交错 / 旋转 等"处理画面"的选项归成一组）──────────
+        {header: qsTr("Picture processing")},
         {icon: "󰉸", text: qsTr("Deinterlace"),
          hint: function() { return root.deintLabel() },
          subSig: "deinterlaceSelected",
