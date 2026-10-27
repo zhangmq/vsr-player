@@ -275,6 +275,7 @@ PopupBase {
                     // modelData 字段缺失时为 undefined——显式 bool/默认值
                     //（undefined 赋 bool/QString 报 "Unable to assign"）
                     property bool isSep: modelData.sep === true
+                    property bool isHeader: modelData.header !== undefined
                     property bool hasSub: modelData.submenu !== undefined
                     property var hintSrc: modelData.hint
                     property string hintText: typeof hintSrc === "function" ? hintSrc() : (hintSrc || "")
@@ -282,12 +283,13 @@ PopupBase {
                     // 供 subY 用实际委托位置对齐二级面板（见 subY 注释）
                     readonly property int itemIndex: index
                     width: parent.width
-                    height: !shown ? 0 : (isSep ? 1 : root.rowH)
+                    height: !shown ? 0 : (isSep ? 1 : (isHeader ? root.rowH - 4 : root.rowH))
                     visible: shown
 
                     Rectangle {
                         anchors.fill: parent
-                        color: !isSep && miHover.containsMouse ? "#33ffffff" : "transparent"
+                        color: !isSep && !isHeader && miHover.containsMouse
+                               ? "#33ffffff" : "transparent"
                         visible: !isSep
                     }
                     // 分隔线（sep 行）
@@ -295,10 +297,18 @@ PopupBase {
                         anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 10 }
                         height: 1; color: "#22ffffff"; visible: isSep
                     }
+                    // 一级分组标题（与二级面板的分组标题同款：灰字、不可点）
+                    Text {
+                        anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter }
+                        visible: isHeader
+                        text: modelData.header || ""
+                        color: "#808080"
+                        font.pixelSize: 13
+                    }
                     Row {
                         anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
                         spacing: 8
-                        visible: !isSep
+                        visible: !isSep && !isHeader
                         Text { font.family: iconFont; font.pixelSize: 16; text: modelData.icon || ""
                             color: "#e0e0e0"; renderType: Text.NativeRendering }
                         Text { text: modelData.text || ""; color: "#e0e0e0"; font.pixelSize: 13 }
@@ -307,7 +317,7 @@ PopupBase {
                     Row {
                         anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
                         spacing: 4
-                        visible: !isSep
+                        visible: !isSep && !isHeader
                         Text { text: hintText; color: "#808080"; font.pixelSize: 13
                             visible: hintText !== ""; anchors.verticalCenter: parent.verticalCenter }
                         Text { font.family: iconFont; font.pixelSize: 14; text: "󰅂"
@@ -318,7 +328,8 @@ PopupBase {
                     MouseArea {
                         id: miHover
                         anchors.fill: parent
-                        hoverEnabled: true
+                        hoverEnabled: !isHeader
+                        enabled: !isHeader
                         visible: !isSep
                         cursorShape: Qt.PointingHandCursor
                         // 悬停即展开本条目的二级菜单；移到无子菜单的条目上收起
