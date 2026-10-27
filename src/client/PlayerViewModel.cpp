@@ -2455,6 +2455,16 @@ void PlayerViewModel::setEyeState(int mode, int layout, int half) {
               nl ? "tab" : "sbs", nh ? "half" : "full");
 }
 
+void PlayerViewModel::setEyePref(int pref) {
+    const int np = pref ? 1 : 0;
+    if (eyePref_.exchange(np) != np)
+        emit eyePrefChanged();
+    // 只改偏好；若单眼模式正在跑，把当前显示的眼同步成新偏好（同一个选项的
+    // 即时生效，不是跨选项联动）。
+    if (eyeMode_.load() != 0)
+        setEyeState(np ? 2 : 1, -1, -1);
+}
+
 void PlayerViewModel::syncVfOptions() {
     if (!mpv_) return;
     if (!aiAvailable_.load()) return;   // 链上没插滤镜，vf-command 无处可发

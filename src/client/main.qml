@@ -304,12 +304,8 @@ Item {
                     return
                 }
                 if (group === 2) {
-                    if (stereo.active) {
-                        if ((stereo.swap ? 1 : 0) !== mode) stereo.swapEyes()
-                    } else {
-                        viewModel.setEyeState(mode === 1 ? 2 : 1,
-                                              stereo.layout, stereo.half ? 1 : 0)
-                    }
+                    // 输出选项 = 只看"单眼输出用哪只眼"这一个独立状态
+                    viewModel.setEyePref(mode)
                     return
                 }
                 // group 0：三种输出方式互斥
@@ -327,10 +323,12 @@ Item {
                     // 同帧叠放/抢 grab。
                     Qt.callLater(function() { stereoPicker.openForMode(1) })
                 } else {
-                    // 单眼 2D：不进 3D 独占模式、不动眼镜屏，只让滤镜链裁成一只眼。
+                    // 单眼 2D：不进 3D 独占模式、不动眼镜屏，只让滤镜链裁成
+                    // "输出选项"里选的那只眼。
                     stereo.stop()
                     viewModel.setStereoMap(false, 0, 0)
-                    viewModel.setEyeState(1, stereo.layout, stereo.half ? 1 : 0)
+                    viewModel.setEyeState(viewModel.eyePref === 1 ? 2 : 1,
+                                          stereo.layout, stereo.half ? 1 : 0)
                 }
             }
             onQuitRequested: Qt.quit()   // 走标准退出路径（watch-later 落盘）

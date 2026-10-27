@@ -479,11 +479,24 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             response = formatResponse("no view model");
         } else {
             char buf[96];
-            snprintf(buf, sizeof buf, "layout=%d half=%d eye=%d hint=%d",
+            snprintf(buf, sizeof buf, "layout=%d half=%d eye=%d pref=%d hint=%d",
                      stereo_->layout(), stereo_->half() ? 1 : 0,
                      vm->property("eyeMode").toInt(),
+                     vm->property("eyePref").toInt(),
                      vm->property("sourceLayoutHint").toInt());
             response = formatResponse("success", "\"" + std::string(buf) + "\"");
+        }
+    } else if (cmd == "set-eye-pref") {
+        // 输出选项 = 单眼输出用哪只眼（独立状态，不改输出方式）。
+        // 用法：set-eye-pref left|right
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.size() < 1 || (args[0] != "left" && args[0] != "right")) {
+            response = formatResponse("usage: set-eye-pref left|right");
+        } else {
+            QMetaObject::invokeMethod(vm, "setEyePref", Qt::QueuedConnection,
+                                      Q_ARG(int, args[0] == "right" ? 1 : 0));
+            response = formatResponse("success");
         }
     } else if (cmd == "get-video-size") {
         // 滤镜链输出帧尺寸（video-out-params/w×h）—— 验证 vf_eye 裁切/拉伸、

@@ -114,6 +114,9 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(int eyeMode READ eyeMode NOTIFY eyeModeChanged)
     /// 片源格式自动判定（-1 未判定 / 0 左右 / 1 上下；目前只判"全幅"）。
     Q_PROPERTY(int sourceLayoutHint READ sourceLayoutHint NOTIFY sourceLayoutHintChanged)
+    /// 单眼输出的眼别偏好（0=左 1=右）。与 eyeMode 分开：关闭状态下菜单也能
+    /// 选"左眼/右眼"，下次进单眼模式直接用这个偏好。
+    Q_PROPERTY(int eyePref READ eyePref NOTIFY eyePrefChanged)
     // Info（解码器状态分三个概念，别混用）：
     //  · hwDecoding        = **实际**是否在硬解（= mpv `hwdec-current` != no）
     //  · hwDecodeEnabled   = **用户偏好**（我们下发给 mpv 的 hwdec 开关；
@@ -329,6 +332,7 @@ public:
     QString aspect() const      { return aspect_; }
     int eyeMode() const         { return eyeMode_.load(); }
     int sourceLayoutHint() const { return sourceLayoutHint_.load(); }
+    int eyePref() const         { return eyePref_.load(); }
     bool hwDecoding() const     { return hwDecoding_.load(); }
     bool hwDecodeEnabled() const   { return hwDecodeEnabled_.load(); }
     bool hwDecodeAvailable() const { return hwDecodeAvailable_.load(); }
@@ -419,6 +423,8 @@ public slots:
     /// 与 setStereoMap 分开：3D 关闭时 vf_vsr 走 2D 公式（stereoLayout_=-1），
     /// 而 vf_eye 始终需要真实布局/尺寸。
     void setEyeState(int mode, int layout, int half);
+    /// 只设置眼别偏好（0=左 1=右）；若单眼模式正在跑，同时切换显示的眼。
+    void setEyePref(int pref);
     /// 链重建后重放 3D 每眼映射（事件线程调用 → 内部 async 命令）。
     /// mpv 在解码器软硬切换/格式变化时会用**加载时的 vf 选项串**重建用户
     /// 滤镜链，运行期 vf-command 设的值随之丢失（2026-10-26 实测：3D 倍率
@@ -561,6 +567,7 @@ signals:
     /// 用**粘性属性**而不是一次性信号：判定可能发生在 QML 就绪之前
     ///（benchmark/命令行直接载入），QML 在 completed 时按 sourceLayoutHint 补应用。
     void sourceLayoutHintChanged();
+    void eyePrefChanged();
     void eyeModeChanged();
     void hwDecodingChanged();
     void hwDecodeEnabledChanged();
@@ -684,6 +691,7 @@ private:
     int sourceFormatLayout_ = -1;                // 上次判定结果（-1 = 未判定）
     int sourceFormatHalf_ = 0;
     std::atomic<int> sourceLayoutHint_{-1};      // QML 可见的判定结果
+    std::atomic<int> eyePref_{0};                // 单眼偏好：0=左 1=右
     QString aspectApplied_ = QStringLiteral("no");  // 上次下发给 mpv 的值
     QString aspect_ = QStringLiteral("no");    // no=容器比例（mpv 0.41 -1 已弃用，no 等价无警告）
     std::atomic<bool> hwDecoding_{false};      // 实际（hwdec-current != no）

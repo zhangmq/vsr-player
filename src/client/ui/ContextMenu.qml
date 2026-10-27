@@ -106,10 +106,12 @@ PopupBase {
          ]},
         {icon: "", text: qsTr("Output option"),
          hint: function() { return root.eyeLabel() },
-         visibleWhen: function() { return root.stereoOutputMode() !== 0 },
          subSig: "stereoSelected",
-         current: function(g) { return g === 2 ? root.eyeIndex() : -1 },
-         submenu: root.eyeOptions()},
+         current: function(g) { return g === 2 ? viewModel.eyePref : -1 },
+         submenu: [
+             {label: qsTr("Left eye"),  value: 0, group: 2},
+             {label: qsTr("Right eye"), value: 1, group: 2}
+         ]},
         {sep: true},
         {icon: "󰐥", text: qsTr("Quit"),               hint: "Ctrl+Q", sig: "quitRequested"}
     ]
@@ -145,29 +147,10 @@ PopupBase {
         return (stereo.layout === 1 ? qsTr("Top and bottom") : qsTr("Side by side"))
              + " · " + (stereo.half ? qsTr("half") : qsTr("full"))
     }
-    /// 输出选项：单眼模式 = 左/右眼；眼镜模式 = 正常/交换眼序；关闭时不显示。
-    function eyeIndex() {
-        if (stereoOutputMode() === 1) return stereo.swap ? 1 : 0
-        return viewModel.eyeMode === 2 ? 1 : 0
-    }
+    /// 输出选项：单眼输出用哪只眼（独立状态，不随输出方式变）。
     function eyeLabel() {
-        if (stereoOutputMode() === 1)
-            return stereo.swap ? qsTr("Swapped eyes") : qsTr("Normal eyes")
-        return viewModel.eyeMode === 2 ? qsTr("Right eye") : qsTr("Left eye")
+        return viewModel.eyePref === 1 ? qsTr("Right eye") : qsTr("Left eye")
     }
-    function eyeOptions() {
-        if (stereoOutputMode() === 1) {
-            return [
-                {label: qsTr("Normal eyes"), value: 0, group: 2},
-                {label: qsTr("Swapped eyes"), value: 1, group: 2}
-            ]
-        }
-        return [
-            {label: qsTr("Left eye"), value: 0, group: 2},
-            {label: qsTr("Right eye"), value: 1, group: 2}
-        ]
-    }
-
     /// 旋转角度文案（0=Off / 90=顺时针 / 270=逆时针 90°）。
     function rotLabel() {
         switch (viewModel.rotMode) {
