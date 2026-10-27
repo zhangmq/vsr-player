@@ -48,12 +48,30 @@ to skip if you already have it, plus `--no-install` / `--jobs N`.
 
 For when you would rather not compile, or your distro lacks FFmpeg 9.x development packages.
 
-| | standard (the only distributed prebuilt package) | full (source build only — `--variant=full`, bundles Qt) |
+| | standard (the only distributed prebuilt package) | full (source build only — `--variant=full`) |
 |---|---|---|
-| Bundles | libmpv + ffmpeg ×7 + CUDA runtime + **optical-media stack** (libcdio/libdvd/libbluray) + fonts/translations/licenses. **VFG backend only**: no TensorRT libraries (`libnvinfer*`), no `engines/` | the same **+ Qt6** (libs / platform plugins / QML modules) |
-| Still needs from the system | **Qt ≥ 6.12**, Vulkan loader, Wayland/X11 client libs, NVIDIA driver | Vulkan loader, Wayland/X11 client libs, NVIDIA driver |
-| For | rolling-release distros (Arch/CachyOS/Fedora…) | distros with Qt < 6.12 (Debian stable, Ubuntu LTS…) — build it yourself with `--variant=full` |
-| Size | ~56 MB | ~78 MB (self-built via `--variant=full`) |
+| What it ships | **thin package (~6 MB)**: `vsr-player`, `mpv-vsr`, `libmpv.so.2`, the two Wayland helper modules (`libvsr-color-feedback`, `libvsr-idle-wayland`), icon font, translations, licenses, desktop assets, `COMPONENTS.md` | the same **+ Qt6** (libraries / platform plugins / QML modules) |
+| Comes from the system | **everything else**: FFmpeg 9.x (`libav*`), the optical-media stack (libcdio/libdvd/libbluray), CUDA driver, Vulkan loader, Wayland/X11 client libs, mpv's optional deps (libass, libplacebo, libmujs, liblcms2, …), and **Qt ≥ 6.12** | the same minus Qt |
+| VFX runtime | **never bundled** (NVIDIA's SLA forbids redistribution) — `install.sh` downloads it from NVIDIA's index, or you place it in `~/.local/lib/vsr-player/` yourself | same |
+| For | rolling-release distros (Arch/CachyOS/Fedora…) with FFmpeg 9.x and Qt ≥ 6.12 | distros with Qt < 6.12, or when you want a self-contained Qt |
+
+The thin package is deliberate. Instead of bundling FFmpeg and the media stack, the
+binary's `NEEDED` entries for `libav*` are **de-versioned** (`libavcodec.so` without the
+soname suffix) and resolved against whatever the target system provides; `install.sh` then
+checks the resolved versions and **refuses to install silently broken combinations**:
+
+- `lib/vsr-player/VSR-FFMPEG-MAJOR` records the FFmpeg major version the package was built
+  against; the installer compares it with the target system and warns on mismatch.
+- A missing soname is reported explicitly (with a compatibility-symlink fallback that is
+  validated with `ldd -r` and rolled back if symbols are missing).
+- `ldd` resolving `libmpv.so.2` to a system mpv instead of the bundled one is a hard error —
+  that combination "runs" but silently loses every AI stage.
+- `COMPONENTS.md` (generated at package time from the artifacts) lists what the package
+  carries, what it expects from the system, and the mpv requirement per library.
+
+What that means in practice: a `standard` tarball is small and follows your system's
+libraries, so it needs a reasonably current distro. If your FFmpeg/Qt is older, build from
+source — that is the same trade-off, just compiled locally.
 
 ```bash
 tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz

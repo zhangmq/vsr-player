@@ -52,7 +52,8 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ./scripts/build-from-source.sh
 ```
 
-**Prebuilt tarball** (only `standard`, needs Qt ≥ 6.12, Vulkan loader, NVIDIA driver):
+**Prebuilt tarball** — `standard` is a thin ~6 MB package; FFmpeg, the media stack, CUDA and
+Qt ≥ 6.12 come from the system, VFX is fetched at install time:
 
 ```bash
 tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz

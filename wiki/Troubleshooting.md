@@ -60,7 +60,7 @@ source-build path is to make it disappear.
 | Install method | Action |
 |---|---|
 | **Source build** | Re-run `./scripts/build-from-source.sh` — one command rebuilds binaries that match your current system libraries. **This is the main reason the source path is recommended** |
-| **standard tarball** (a self-built full variant additionally bundles Qt) | What the package bundles (ffmpeg/CUDA/media stack) is unaffected; what breaks are the libraries it still takes **from the system** (Qt, Vulkan, Wayland/X11, mpv optional deps). In order: ① download a **newer tarball** ② switch to a source build ③ temporary workaround below |
+| **standard tarball** (thin package; a self-built full variant additionally bundles Qt) | It ships only `libmpv` and the two Wayland helper modules — FFmpeg, the media stack, CUDA, Vulkan and Qt all come from your system, so a soname bump hits it directly. In order: ① download a **newer tarball** ② switch to a source build ③ temporary workaround below |
 
 **Temporary workaround (not for the long term)**: create compatibility symlinks for the
 missing soname — **only safe when the old and new libraries are ABI-compatible**:

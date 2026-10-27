@@ -45,7 +45,7 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ./scripts/build-from-source.sh
 ```
 
-**预编译包**（仅 `standard`；需要 Qt ≥ 6.12、Vulkan loader、NVIDIA 驱动）：
+**预编译包** —— `standard` 是**约 6 MB 的薄包**：只带播放器本体、libmpv 与两个 Wayland 辅助模块；FFmpeg、光盘媒体栈、CUDA 与 **Qt ≥ 6.12** 全部来自系统（VFX 运行时在安装时下载）：
 
 ```bash
 tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz

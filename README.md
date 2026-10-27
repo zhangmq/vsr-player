@@ -52,7 +52,9 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ./scripts/build-from-source.sh
 ```
 
-**Prebuilt tarball** (`standard` only; needs Qt ≥ 6.12, Vulkan loader, NVIDIA driver):
+**Prebuilt tarball** — `standard` is a **thin ~6 MB package**: it ships the players, libmpv
+and the Wayland helper modules; FFmpeg, the media stack, CUDA and **Qt ≥ 6.12** come from
+your system (VFX is downloaded at install time):
 
 ```bash
 tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
