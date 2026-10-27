@@ -16,8 +16,8 @@ mpv.
 - **AI super-resolution + denoise** — real-time 2×/3×/4× (`vf_vsr`); denoise also works at scale=1
 - **AI frame interpolation** — VFX `VideoFrameGeneration` ×2/×3/×4, quality hot-switchable (`vf_vfg`)
 - **10-bit / HDR end to end** — RGB10A2 through the whole chain, automatic HDR10 output for HDR content, opt-in SDR→HDR10 upconversion (`vf_truehdr`)
-- **3D for XR glasses** — side-by-side / top-and-bottom sources, one half per eye, on a 3840×1080-class framebuffer
-- **Single-eye 2D output** — watch one eye of a 3D source as a normal full-frame picture, with VSR applied per eye (`vf_eye`)
+- **3D on XR glasses** — play 3D videos (side-by-side or top-and-bottom) on XR glasses in 3D mode: fullscreen picture on the glasses, controls stay on the desktop
+- **2D output** — watch one eye of a 3D source as a normal full-frame picture, with VSR applied per eye (`vf_eye`)
 - **Blu-ray ISO** — `.iso` behaves like a folder or m3u: titles are listed with names and durations, nothing auto-plays
 - **Everyday player** — NVDEC decode, Vulkan rendering, auto-hide QML UI, playlist, loop modes, speed, screenshots, JSON IPC, standalone `mpv-vsr` CLI
 
@@ -25,7 +25,7 @@ mpv.
 
 | Feature | Summary |
 |---|---|
-| **Single-eye 2D output** | New `vf_eye` filter extracts one eye *before* upscaling, so VSR runs on the per-eye picture. Half-width/height sources are stretched to natural size inside the filter, so aspect override, rotation and auto-scaling behave like ordinary 2D |
+| **2D output** | New `vf_eye` filter extracts one eye *before* upscaling, so VSR runs on the per-eye picture. Half-width/height sources are stretched to natural size inside the filter, so aspect override, rotation and auto-scaling behave like ordinary 2D |
 | **3D menu block** | The right-click menu gained a **3D** group with three independent entries: **Output mode** (Off / 3D glasses / 2D output), **Source layout** (side by side or top and bottom, full or half), **Output option** (left or right eye) |
 | **Aspect ratio aligned with mpv** | The bottom-bar popup and a new `A` hotkey cycle mpv's own list — `16:9`, `4:3`, `2.35:1`, `no`. In 3D the value means *per-eye* aspect and is converted before reaching mpv |
 | **Picture processing group** | Deinterlace and rotation are grouped under one menu header |
