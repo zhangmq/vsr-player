@@ -23,7 +23,14 @@
 set -euo pipefail
 
 NO_VFX=0
-[ "${1:-}" = "--no-vfx" ] && NO_VFX=1
+FORCE_DEV=0
+for arg in "$@"; do
+    case "$arg" in
+        --no-vfx) NO_VFX=1 ;;
+        --dev)    FORCE_DEV=1 ;;   # 强制用 build/ dev 树（忽略可能过期的 dist 树）
+        *) echo "未知参数: $arg" >&2; exit 2 ;;
+    esac
+done
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
@@ -39,8 +46,9 @@ SRC="$HERE"
 if [ ! -x "$SRC/vsr-player" ] && [ ! -f "$SRC/lib/vsr-player/libmpv.so.2" ]; then
     SRC="$(cd "$HERE/.." && pwd)"   # 仓库根
     MODE=dev
-    # dist 构建树（build_release.sh 产物）优先，dev 树（build/）兜底
-    if [ -x "$SRC/build/client-dist/src/client/vsr-player" ]; then
+    # dist 构建树（build_release.sh 产物）优先，dev 树（build/）兜底；
+    # --dev 强制忽略 dist（发布树可能是很久以前建的 → 装回旧版本）
+    if [ "$FORCE_DEV" -eq 0 ] && [ -x "$SRC/build/client-dist/src/client/vsr-player" ]; then
         GUI_BIN="$SRC/build/client-dist/src/client/vsr-player"
         CLI_BIN="$SRC/build/mpv-dist/_build/mpv"
         LIB_SRC="$SRC/build/release-staging/lib/vsr-player"
@@ -49,6 +57,9 @@ if [ ! -x "$SRC/vsr-player" ] && [ ! -f "$SRC/lib/vsr-player/libmpv.so.2" ]; the
         GUI_BIN="$SRC/build/src/client/vsr-player"
         CLI_BIN="$SRC/build/mpv/_build/mpv"
         LIB_SRC="$SRC/third_party/nvvfx/lib"     # dev：VFX 目录即库源
+        # dev：libmpv 来自 mpv 构建树 —— 必须一起装，否则装出来的播放器用的
+        # 还是旧 libmpv（新滤镜/补丁全部不生效，且没有任何报错）。
+        MPV_LIB_SRC="$SRC/build/mpv/_build"
         ENG_SRC="$SRC/build/tests/fruc"          # dev：engine 构建目录
         DEV_VFX_COPY=1                            # dev：VFX 一并复制
     else
@@ -147,6 +158,17 @@ echo "  ✅ $BIN_DIR/vsr-player"
 if [ -x "$CLI_BIN" ]; then
     install_bin "$CLI_BIN" "$BIN_DIR/mpv-vsr"
     echo "  ✅ $BIN_DIR/mpv-vsr"
+fi
+if [ -n "${MPV_LIB_SRC:-}" ] && [ -d "$MPV_LIB_SRC" ]; then
+    # dev 树：libmpv.so / .so.2 / .so.2.5.0（copy_into 内部 -L 跟随软链并原子替换）。
+    # ⚠ 只能用 -f 过滤：glob 还会匹配 meson 的构建子目录 libmpv.so.2.5.0.p/，
+    # `cp -L` 拷目录会失败（set -e 直接中止安装，实测）。
+    mpv_libs=()
+    for f in "$MPV_LIB_SRC"/libmpv.so "$MPV_LIB_SRC"/libmpv.so.*; do
+        [ -f "$f" ] && mpv_libs+=("$f")
+    done
+    [ ${#mpv_libs[@]} -gt 0 ] && copy_into "$LIB_DIR" "${mpv_libs[@]}"
+    echo "  ✅ libmpv（dev 构建树，${#mpv_libs[@]} 个）→ $LIB_DIR/"
 fi
 if [ -d "$LIB_SRC" ]; then
     # ⚠ 必须**原子替换**（临时文件 + rename）：`cp` 直接覆盖会被
