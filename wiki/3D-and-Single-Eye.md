@@ -92,7 +92,9 @@ cases are low-resolution sources, not the 3D path itself.
 
 ## Converting 3D Blu-ray to SBS
 
-MVC (H.264 Stereo High) discs are not decoded in the player on purpose — the offline route
-is simpler and more reliable. `docs/handover-3d-conversion.md` describes the pipeline
+MVC (H.264 Stereo High) discs are not decoded in the player on purpose — it needs software
+decoding of two dependent views and changes the whole GPU pipeline, which is not worth it for
+a once-per-disc operation. The offline route is simpler and more reliable, and the scripts
+used here are public: <https://gist.github.com/zhangmq/cb457cb5263f2101b7adf36d81b46e31>. `docs/handover-3d-conversion.md` describes the pipeline
 (`ssif_to_mvc.py` + `mvc2sbs`) that turns a 3D Blu-ray into full-width SBS files playable
 with "3D glasses · Side by side · full".

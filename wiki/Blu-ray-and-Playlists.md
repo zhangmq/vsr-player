@@ -1,6 +1,6 @@
 # Blu-ray and Playlists
 
-## Blu-ray ISO
+## Blu-ray ISO (2D titles)
 
 A `.iso` (or a BDMV directory) is treated like a folder or an m3u container: mpv expands it
 into its titles and the player lists them, but **nothing is played automatically** — you pick
@@ -14,8 +14,11 @@ the title you want.
 - Both a mounted disc directory and a plain `.iso` file work; the image does not have to be
   mounted.
 
-To play 3D Blu-ray (MVC) content, convert it to SBS first — see
-[3D and Single-Eye](3D-and-Single-Eye) and `docs/handover-3d-conversion.md`.
+**3D Blu-ray (MVC) is not supported** — it would need software decoding of two dependent
+views and changes the whole GPU pipeline. Convert the disc to full-width SBS offline first,
+then play that with "3D glasses · side by side · full". The conversion scripts are public:
+<https://gist.github.com/zhangmq/cb457cb5263f2101b7adf36d81b46e31> (also described in
+[docs/handover-3d-conversion.md](https://github.com/zhangmq/vsr-player/blob/master/docs/handover-3d-conversion.md)).
 
 ## Playlist persistence
 
