@@ -17,15 +17,13 @@ PopupBase {
 
     width: 180; padding: 12
 
+    /// 与 mpv 对齐：取 `third_party/mpv/etc/input.conf:156` 的
+    /// `cycle-values video-aspect-override "16:9" "4:3" "2.35:1" "no"` 四项、同顺序。
+    /// 这个选项只是**片源比例不对时**的修正手段，常用 16:9 / 4:3，不需要长列表。
     readonly property var aspectModel: [
-        {label: "16:9", value: "16:9"},
-        {label: "16:10", value: "16:10"},
-        {label: "4:3", value: "4:3"},
-        {label: "5:4", value: "5:4"},
+        {label: "16:9",   value: "16:9"},
+        {label: "4:3",    value: "4:3"},
         {label: "2.35:1", value: "2.35:1"},
-        {label: "2.39:1", value: "2.39:1"},
-        {label: "1.85:1", value: "1.85:1"},
-        {label: "1:1", value: "1:1"},
         {label: qsTr("No override"), value: "no"}
     ]
 

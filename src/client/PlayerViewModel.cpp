@@ -789,7 +789,16 @@ void PlayerViewModel::applyPlaybackSettings() {
     setVolume(settings_.value("volume", 1.0).toDouble());
     setSpeed(settings_.value("speed", 1.0).toDouble());
     setLoopMode(settings_.value("loopMode", 0).toInt());
-    setAspect(settings_.value("aspect", QStringLiteral("no")).toString());
+    {
+        // 存储值只保留 mpv 的四个档位（16:9 / 4:3 / 2.35:1 / no）；旧版本存过
+        // 16:10 之类已移除的值 → 退回 no（否则弹窗里没有任何一项是高亮的）。
+        QString a = settings_.value("aspect", QStringLiteral("no")).toString();
+        if (a != "16:9" && a != "4:3" && a != "2.35:1" && a != "no") {
+            MLOG_INFO("aspect: unsupported legacy value '%s' -> no", a.toStdString().c_str());
+            a = QStringLiteral("no");
+        }
+        setAspect(a);
+    }
     applyDeinterlace();   // mpv 选项（非 vf）——链重建后也由 FILE_LOADED 重放
 
     // 解码偏好初值 = mpv 当前的 `hwdec` 选项（含 `-- --hwdec=no` 透传）。
