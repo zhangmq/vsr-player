@@ -9,39 +9,6 @@
 
 namespace bdisc {
 
-static QHash<QString, QString> &labels()
-{
-    static QHash<QString, QString> m;
-    return m;
-}
-
-QString labelFor(const QString &url)
-{
-    const QString exact = labels().value(url);
-    if (!exact.isEmpty())
-        return exact;
-    // 兼容：旧持久化里存的是不带设备的 bd://mpls/N
-    const int sep = url.indexOf(QStringLiteral("//"));
-    if (sep > 0)
-        return labels().value(url.left(sep));
-    return QString();
-}
-
-void registerLabel(const QString &url, const QString &label)
-{
-    labels().insert(url, label);
-}
-
-QString urlFor(const QString &isoPath, int mpls)
-{
-    // 绝对路径去掉自己的前导 '/'：URL 里固定用 `//` 作分隔，否则会变成
-    // `///home/...`（设备串多一个斜杠，posix 下虽多半能用但不该这么依赖）。
-    QString dev = QFileInfo(isoPath).absoluteFilePath();
-    if (dev.startsWith('/'))
-        dev.remove(0, 1);
-    return QStringLiteral("bd://mpls/%1//%2").arg(mpls).arg(dev);
-}
-
 QString formatDuration(qint64 ms)
 {
     const qint64 s = ms / 1000;
@@ -97,10 +64,6 @@ BlurayDiscInfo enumerate(const QString &path)
         t.durationMs = qint64(ti->duration) * 1000 / 90000;   // 90 kHz 时钟
         t.chapterCount = int(ti->mark_count);
         t.clipCount = int(ti->clip_count);
-        // 名字：Title <idx+1> · 时长（idx 从 0 起，展示用 1 起更像"第几个"）
-        t.label = QStringLiteral("Title %1 · %2").arg(i + 1).arg(formatDuration(t.durationMs));
-        // 播放列表用 mpls 编号定位条目 → 名字登记在同一 key 上
-        labels().insert(QStringLiteral("bd://mpls/%1").arg(t.playlist), t.label);
         out.titles.append(t);
         bd_free_title_info(ti);
     }

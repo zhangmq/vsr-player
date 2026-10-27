@@ -618,6 +618,10 @@ private:
     /// restoredCurrentFile()（启动暂停判定）与 restorePlaylist()（实际装载）
     /// 共用——避免"哪一条会被播放"的规则分叉。
     QStringList restoredFiles(int *cur) const;
+    /// 上次播放列表的快照文件（m3u8，带 #EXTINF 标题）。
+    QString playlistSnapshotPath() const;
+    void writePlaylistSnapshot(const QStringList &files,
+                               const QStringList &titles, int cur) const;
     /// 段内统计重置（停止/暂停翻转/seek 完成/新文件）。主线程调用。
     void resetSegmentCounters(int64_t dropBase);
     /// 标记当前文件为直播/线性流（幂等）；why 仅用于日志。

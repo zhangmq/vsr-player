@@ -659,7 +659,7 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                         mpv_node *e = &node.u.list->values[i];
                         if (e->format != MPV_FORMAT_NODE_MAP) continue;
                         std::string fn, ti;
-                        bool cur = false;
+                        bool cur = false, playing = false;
                         for (int j = 0; j < e->u.list->num; j++) {
                             const char *k = e->u.list->keys[j];
                             mpv_node *v = &e->u.list->values[j];
@@ -669,8 +669,10 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                                 ti = v->u.string;
                             else if (!strcmp(k, "current") && v->format == MPV_FORMAT_FLAG)
                                 cur = v->u.flag != 0;
+                            else if (!strcmp(k, "playing") && v->format == MPV_FORMAT_FLAG)
+                                playing = v->u.flag != 0;
                         }
-                        out += (cur ? "* " : "  ");
+                        out += (cur ? "*" : " ") + std::string(playing ? "P" : " ");
                         out += std::to_string(i) + ": title='" + ti + "' file='" + fn + "'\n";
                     }
                 }

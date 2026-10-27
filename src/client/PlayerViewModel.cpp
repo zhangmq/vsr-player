@@ -15,6 +15,9 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QSet>
+#include <QSaveFile>
+#include <QStandardPaths>
+#include <QTextStream>
 #include <QLocale>
 
 #include <cstdio>
@@ -266,9 +269,10 @@ void PlayerViewModel::attach(MpvController *mpv) {
             if (shown < 0 && idlePlayIndex_ >= 0 && idlePlayIndex_ < files.size())
                 shown = idlePlayIndex_;
             playlistModel_.setSnapshot(files, shown, titles);
-            // 持久化上次播放列表（启动 restorePlaylist 用；清空也写）
-            saveSettings("playlist", files);
-            saveSettings("playlistCurrent", shown);
+            // 持久化上次播放列表：写**m3u8 快照**（带 #EXTINF 标题），恢复时
+            // 交给 mpv 的 `loadlist` —— 条目名由 demux_playlist 解析出来，
+            // 客户端不再自己维护"路径→名字"表（蓝光 title 因此天然保留）。
+            writePlaylistSnapshot(files, titles, shown);
         });
     });
 
@@ -843,12 +847,16 @@ void PlayerViewModel::restorePlaylist() {
     QStringList files = restoredFiles(&cur);
     if (files.isEmpty()) return;
     restoreBlurayDevice(files);
-    // 首条 replace 开始播放，其余 append 排队；最后定位上次条目。
-    // loadfile 全部同步命令（mpv 启动阶段无 core-lock 竞争）。
-    mpv_->commandV({"loadfile", files[0].toUtf8().constData(), nullptr});
-    for (int i = 1; i < files.size(); i++)
-        mpv_->commandV({"loadfile", files[i].toUtf8().constData(), "append", nullptr});
-    if (cur != 0)
+    // 快照存在 → loadlist 一次性展开（条目名来自 #EXTINF）；否则退回逐条 loadfile。
+    const QString snap = playlistSnapshotPath();
+    if (QFile::exists(snap)) {
+        mpv_->commandV({"loadlist", snap.toUtf8().constData(), nullptr});
+    } else {
+        mpv_->commandV({"loadfile", files[0].toUtf8().constData(), nullptr});
+        for (int i = 1; i < files.size(); i++)
+            mpv_->commandV({"loadfile", files[i].toUtf8().constData(), "append", nullptr});
+    }
+    if (cur > 0)
         mpv_->commandV({"playlist-play-index", std::to_string(cur).c_str(), nullptr});
 }
 
@@ -865,8 +873,15 @@ void PlayerViewModel::restorePlaylistIdle() {
     const QStringList files = restoredFiles(&cur);
     if (files.isEmpty()) return;
     restoreBlurayDevice(files);
-    for (const QString &f : files)
-        mpv_->commandV({"loadfile", f.toUtf8().constData(), "append", nullptr});
+    // `loadlist` = mpv 原生"把播放列表文件展开进当前列表"：条目名来自
+    // #EXTINF（demux_playlist），与 ISO 展开同一套机制。缺快照时退回逐条 append。
+    const QString snap = playlistSnapshotPath();
+    if (QFile::exists(snap)) {
+        mpv_->commandV({"loadlist", snap.toUtf8().constData(), "append", nullptr});
+    } else {
+        for (const QString &f : files)
+            mpv_->commandV({"loadfile", f.toUtf8().constData(), "append", nullptr});
+    }
     // lastPath_ = 播放键要载入的条目（play() 的 !fileLoaded_ 分支据此走
     // resumeLastPath；path 观察器在未载入时不会覆盖它）。
     if (cur >= 0 && cur < files.size()) {
@@ -875,11 +890,66 @@ void PlayerViewModel::restorePlaylistIdle() {
     }
 }
 
+// 上次播放列表的快照路径（m3u8，带 #EXTINF 标题）。
+// 放 AppDataLocation（~/.local/share/vsr-player/），与 fonts 同级。
+QString PlayerViewModel::playlistSnapshotPath() const
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return dir + QStringLiteral("/last-playlist.m3u8");
+}
+
+// 写快照：#EXTM3U + 当前索引（自定义注释）+ 每条 "#EXTINF:-1,<标题>" + 路径。
+// ⚠ 标题里的换行会破坏 m3u 行结构 → 替换成空格（文件名同理，极罕见）。
+void PlayerViewModel::writePlaylistSnapshot(const QStringList &files,
+                                           const QStringList &titles, int cur) const
+{
+    const QString path = playlistSnapshotPath();
+    const QString dir = QFileInfo(path).absolutePath();
+    QDir().mkpath(dir);
+    QSaveFile f(path);              // 原子写：崩溃/断电不会留下半个列表
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        MLOG_WARN("playlist snapshot: cannot write %s", qUtf8Printable(path));
+        return;
+    }
+    QTextStream out(&f);
+    out << "#EXTM3U\n";
+    out << "#VSR-CURRENT:" << cur << "\n";
+    for (int i = 0; i < files.size(); i++) {
+        QString t = i < titles.size() ? titles[i] : QString();
+        if (!t.isEmpty())
+            out << "#EXTINF:-1," << QString(t).replace(QLatin1Char('\n'), QLatin1Char(' ')) << "\n";
+        out << QString(files[i]).replace(QLatin1Char('\n'), QLatin1Char(' ')) << "\n";
+    }
+    if (!f.commit())
+        MLOG_WARN("playlist snapshot: commit failed for %s", qUtf8Printable(path));
+}
+
 // 恢复列表的持久化来源 + 合法化当前索引：restoredCurrentFile()（启动暂停
 // 判定）与 restorePlaylist()（实际装载）共用同一规则，避免两处分叉。
 QStringList PlayerViewModel::restoredFiles(int *cur) const {
-    const QStringList files = settings_.value("playlist").toStringList();
-    int c = settings_.value("playlistCurrent", -1).toInt();
+    QStringList files;
+    int c = -1;
+    // 先读 m3u8 快照（标题由 mpv 解析）；没有快照再退回旧 settings 的纯路径表
+    QFile f(playlistSnapshotPath());
+    if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream in(&f);
+        while (!in.atEnd()) {
+            const QString line = in.readLine();
+            if (line.startsWith(QStringLiteral("#VSR-CURRENT:"))) {
+                bool ok = false;
+                const int v = line.mid(13).trimmed().toInt(&ok);
+                if (ok) c = v;
+            } else if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
+                continue;           // 注释 / EXTINF：条目名交给 mpv
+            } else {
+                files << line;
+            }
+        }
+    }
+    if (files.isEmpty()) {
+        files = settings_.value("playlist").toStringList();
+        c = settings_.value("playlistCurrent", -1).toInt();
+    }
     if (!files.isEmpty() && (c < 0 || c >= files.size()))
         c = 0;
     if (cur) *cur = c;
@@ -1641,29 +1711,15 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
             // 客户端只做两件事：① 把 ISO 路径原样交给 mpv；
             // ② 顺便枚举一次登记友好名（播放列表里显示 "Title 6 · 1:18:30"
             //    而不是一长串 URL）。失败不影响播放（mpv 会自己报错）。
+            // ISO 由 mpv 自己展开（demux_playlist 的 parse_bluray），条目名也由
+            // 它给（"Title N · H:MM:SS"）。客户端只枚举一次做日志/设备记录，
+            // 不再自己维护条目名（恢复列表走 m3u8 快照 + loadlist，同样由 mpv
+            // 解析 #EXTINF 得到名字）。
             const BlurayDiscInfo info = bdisc::enumerate(p);
-            if (info.ok) {
-                for (const BlurayTitle &t : info.titles) {
-                    // mpv 用 %05u 拼 mpls；两种写法都登记，短名给兼容路径用
-                    for (const QString &url : {
-                             QStringLiteral("bd://mpls/%1//%2")
-                                 .arg(t.playlist, 5, 10, QChar('0'))
-                                 .arg(QFileInfo(p).absoluteFilePath().mid(1)),
-                             QStringLiteral("bd://mpls/%1//%2")
-                                 .arg(t.playlist)
-                                 .arg(QFileInfo(p).absoluteFilePath().mid(1)),
-                             QStringLiteral("bd://mpls/%1").arg(t.playlist),
-                             QStringLiteral("bd://mpls/%1")
-                                 .arg(t.playlist, 5, 10, QChar('0')) })
-                        bdisc::registerLabel(url, t.label);
-                }
-                MLOG_INFO("bluray: %s -> %d title(s) (expanded by mpv, playlist order)",
-                          qUtf8Printable(QFileInfo(p).fileName()), int(info.titles.size()));
-            } else {
+            if (!info.ok)
                 MLOG_WARN("bluray: %s: %s (mpv will report the real error)",
                           qUtf8Printable(QFileInfo(p).fileName()),
                           qUtf8Printable(info.error));
-            }
             items.append({p, p});
             continue;
         }

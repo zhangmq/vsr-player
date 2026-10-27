@@ -34,11 +34,6 @@ QHash<int, QByteArray> PlaylistModel::roleNames() const
 
 QString PlaylistModel::displayName(const QString &path)
 {
-    // 蓝光条目（bd://mpls/N）：用枚举时登记的 "Title N · 时长"，
-    // 否则列表里会显示成一串 URL（basename 只取到编号）。
-    const QString bdLabel = bdisc::labelFor(path);
-    if (!bdLabel.isEmpty())
-        return bdLabel;
     // 本地文件：basename。URL/异常输入：取最后一段，空则原样返回。
     QString name = QFileInfo(path).fileName();
     if (name.isEmpty()) {
