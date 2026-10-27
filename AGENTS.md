@@ -248,6 +248,16 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   - 验证钩子：RPC `get-playlist` 打印 mpv 侧 `title/filename`（带 `*`=current、`P`=playing）
     与模型侧 `model.display`。实测：ISO 会话与无参数重启都显示
     `Title 1 · 0:00:00 … Title 6 · 1:18:30`；普通视频列表仍显示文件名，索引也随快照恢复。
+  - ⚠ **恢复后的 bd:// 条目一开始点不动（2026-10-27 修）**：`bd` stream 的
+    `stream_origin` 是 **UNSAFE**，mpv 的 origin 检查只放行 DIRECT 来源；m3u 快照
+    是本地文件（FS 来源）→ 里面的 `bd://` 条目被拒。而 `stream_create()` 的循环把
+    UNSAFE 当 NO_MATCH 继续，最终**报成 "No protocol handler found"**（很容易误判成
+    "URL 存错了"）。ISO 展开那条路径没事，是因为 `parse_bluray` 分支已把条目提升为
+    DIRECT（我们自己的 patch）。修法（`src/mpv/demux/demux_playlist.c`）：本地
+    播放列表（`demuxer->stream_origin == STREAM_ORIGIN_FS`）里以 `bd:`/`bluray:`
+    开头的条目逐条提升为 `STREAM_ORIGIN_DIRECT`；**远程列表仍按 mpv 原始策略拒绝**。
+    验证：重启→列表有 title→点任一 title 正常播放（日志 `Playing: bd://…` 后直接出
+    音频/视频流，无协议错误）。
 - **打开文件夹 = mpv 原生目录展开（2026-10-21）**：`openFiles` **不扫描目录**，目录路径原样交给 mpv `loadfile`（`main.qml` 的 FolderDialog 用 mode 0，与拖入窗口的 DropArea 同一条通路）。mpv `demux_playlist` 按 `--directory-mode`（默认 lazy）与 `directory-filter-types`（默认 video/audio/image/archive/playlist）展开：顶层媒体成条目（文件在前、目录在后，`mp_natural_sort_cmp`）、**子目录作为条目留在列表**、点击时再展开（`playlist-play-index` 后目录条目原地替换为其内容，`PlaylistModel` 前缀 diff 照常处理）。旧实现（mode 3）用 Qt `QDir::entryList` 只扫顶层固定扩展名表 → 子目录/图片/播放列表全丢，与拖放不一致，已删除。证据：测试目录（2 媒体 + 1 子目录 + 1 软链目录 + txt/srt）装载后 mpv 与播放器均 4 条目，点目录条目展开为其中文件。
 - **播放列表面板"空白"根因与修法（2026-10-21）**：`PlaylistPanel` 是 `Drawer`（Popup）。关闭时 popup 内容从场景树摘除；**关闭期间**播放列表增删（换片/追加/目录展开）后，ListView 的 delegate 保持旧几何（实测 120→20 条重开后 delegate y 仍是 4326..4872，而 contentHeight=840）→ 视口内没有任何条目 = 面板空白，且**不自愈**（第一次滚轮才跳回）。修法：ListView 放进 `Loader`，`onOpened` 创建 / `onClosed` 销毁（每次打开都是全新布局）；另加 `clampScroll()`（`contentHeight/height/count` 变化时 `Qt.callLater` 夹 contentY，`boundsBehavior: StopAtBounds`）与滚轮 handler 对**全部** wheel 帧 `accept`、写入前 `cancelFlick()`（避免手写 contentY 与 Flickable 的 wheel flick 两套滚动互相打断）。验证：修复前重开截图为空，修复后显示 20 条；120 条滚到底 contentY=4368、末条 120 可见。新 ListView 全新建局 → 每次打开都会重建；`onLoaded` 里 `positionViewAtIndex(currentIndex, ListView.Center)` 把当前播放条目居中（实测 index 61/120 → contentY=2205，前后各 ~16 条可见），无 current（`currentIndex<0`）时回到顶部。
 - **两个拖放区（2026-10-21 确认）**：A = 窗口级 `DropArea`（`main.qml`）→ mode 0，**完全重置**播放列表（首条 replace 播放、其余 append 排队）；B = `PlaylistPanel` 的 `DropArea` → mode 1，**追加**（不打断当前播放）。面板打开时 B 在 popup overlay（`QQuickOverlay` 是 contentItem 的子项、创建在 QML 根之后）里叠在 A 之上，Qt 的拖放投递按 `paintOrderChildItems()` **从上到下找第一个接受者**（`qquickdeliveryagent.cpp: deliverDragEvent`），所以两个区不会同时触发。**追加目录**同样走 mpv 原生语义：`loadfile <dir> append` 只留一个目录条目、点击才展开（实测：追加后列表 = `[/tmp/vsr-dir-test]`，点击 → 4 条目并播放首条）。

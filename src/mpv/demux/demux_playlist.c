@@ -760,6 +760,27 @@ static int open_file(struct demuxer *demuxer, enum demux_check check)
         playlist_set_stream_flags(p->pl, STREAM_ORIGIN_DIRECT);
     } else {
         playlist_set_stream_flags(p->pl, demuxer->stream_origin);
+        // 本地播放列表里的 bd:// 条目：蓝光 stream 的 stream_origin 是 UNSAFE
+        // （设备路径可指向任意文件），mpv 的 origin 检查只放行 DIRECT →
+        // **本地 m3u 恢复出来的 bd:// 会被拒**，而 stream_create() 的循环会把
+        // UNSAFE 当成 NO_MATCH 继续，最终报成
+        // "No protocol handler found"（实测 2026-10-27：从 m3u8 快照恢复的
+        // 蓝光 title 点播放必失败，而 ISO 展开的条目正常——后者走上面的
+        // bluray 分支已被提升为 DIRECT）。
+        // 这里只在**播放列表本身来自本地 FS** 时把这些条目提升为 DIRECT：
+        // 远程列表仍按 mpv 原始策略拒绝，不放宽攻击面；本地 m3u 里的 bd://
+        // 条目本身也只是"用光盘读取器打开一个本地镜像"，没有引入新能力。
+        if (ok && demuxer->stream_origin == STREAM_ORIGIN_FS) {
+            for (int n = 0; n < p->pl->num_entries; n++) {
+                struct playlist_entry *e = p->pl->entries[n];
+                bstr url = bstr0(e->filename);
+                if (bstr_startswith0(url, "bd:") ||
+                    bstr_startswith0(url, "bluray:")) {
+                    e->stream_flags = STREAM_ORIGIN_DIRECT;
+                    MP_VERBOSE(p, "playlist: local bd:// entry -> DIRECT\n");
+                }
+            }
+        }
     }
     demuxer->playlist = talloc_steal(demuxer, p->pl);
     demuxer->filetype = p->format ? p->format : fmt->name;
