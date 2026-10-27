@@ -110,6 +110,10 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
     // Aspect ratio（mpv video-aspect-override：-1=auto, no=不覆盖, 或 16:9 等）
     Q_PROPERTY(QString aspect READ aspect NOTIFY aspectChanged)
+    // 单眼 2D 输出（0=off / 1=左眼 / 2=右眼）；运行期状态，不持久化。
+    Q_PROPERTY(int eyeMode READ eyeMode NOTIFY eyeModeChanged)
+    /// 片源格式自动判定（-1 未判定 / 0 左右 / 1 上下；目前只判"全幅"）。
+    Q_PROPERTY(int sourceLayoutHint READ sourceLayoutHint NOTIFY sourceLayoutHintChanged)
     // Info（解码器状态分三个概念，别混用）：
     //  · hwDecoding        = **实际**是否在硬解（= mpv `hwdec-current` != no）
     //  · hwDecodeEnabled   = **用户偏好**（我们下发给 mpv 的 hwdec 开关；
@@ -323,6 +327,8 @@ public:
     bool frucMaxFpsAvailable() const;
     double speed() const        { return speed_.load(); }
     QString aspect() const      { return aspect_; }
+    int eyeMode() const         { return eyeMode_.load(); }
+    int sourceLayoutHint() const { return sourceLayoutHint_.load(); }
     bool hwDecoding() const     { return hwDecoding_.load(); }
     bool hwDecodeEnabled() const   { return hwDecodeEnabled_.load(); }
     bool hwDecodeAvailable() const { return hwDecodeAvailable_.load(); }
@@ -409,6 +415,10 @@ public slots:
     /// 3D 每眼映射（vf_vsr 的 auto 倍率按"眼视口 vs 眼源像素"算）。
     /// active=false → 回 2D 公式。链重建后由 syncVfOptions 重放。
     void setStereoMap(bool active, int layout, int half);
+    /// 单眼 2D 输出（vf_eye）：mode 0=off/1=left/2=right；layout 0=SBS/1=TAB；half 0/1。
+    /// 与 setStereoMap 分开：3D 关闭时 vf_vsr 走 2D 公式（stereoLayout_=-1），
+    /// 而 vf_eye 始终需要真实布局/尺寸。
+    void setEyeState(int mode, int layout, int half);
     /// 链重建后重放 3D 每眼映射（事件线程调用 → 内部 async 命令）。
     /// mpv 在解码器软硬切换/格式变化时会用**加载时的 vf 选项串**重建用户
     /// 滤镜链，运行期 vf-command 设的值随之丢失（2026-10-26 实测：3D 倍率
@@ -423,6 +433,8 @@ public slots:
     void toggleHwaccel();
     void setSpeed(double speed);
     Q_INVOKABLE void setAspect(const QString &v);
+    /// 触发一次瞬态提示（3D 与 2D 都会显示）。
+    Q_INVOKABLE void flashMessage(const QString &value) { emit messageFlashed(value); }
     void toggleFullscreen();
     void setOverlaysVisible(bool v);
     void toggleOsd();
@@ -542,6 +554,14 @@ signals:
     void upHdrDebandingChanged();
     void speedChanged();
     void aspectChanged();
+    /// 瞬态提示（键位操作反馈：比例/布局等）。文案由 QML 组合（qsTr），
+    /// 这里只传值。"no" = 不覆盖。
+    void messageFlashed(const QString &value);
+    /// 片源格式自动判定结果的变化通知（-1 = 无结论 / 0 = 左右 / 1 = 上下）。
+    /// 用**粘性属性**而不是一次性信号：判定可能发生在 QML 就绪之前
+    ///（benchmark/命令行直接载入），QML 在 completed 时按 sourceLayoutHint 补应用。
+    void sourceLayoutHintChanged();
+    void eyeModeChanged();
     void hwDecodingChanged();
     void hwDecodeEnabledChanged();
     void hwDecodeAvailableChanged();
@@ -659,6 +679,12 @@ private:
     double volume_ = 1.0;    // 初始与持久化默认一致（0.65 从未生效——观察器首轮回填覆盖）
     double savedVolume_ = 0.5;   // 静音前音量（toggle mute 恢复用；未静音过则 0.5）
     std::atomic<double> speed_{1.0};
+    void applyAspect();                          // 按 2D/3D 语义下发比例
+    void guessSourceFormat(int w, int h);        // 按原生像素尺寸猜片源格式
+    int sourceFormatLayout_ = -1;                // 上次判定结果（-1 = 未判定）
+    int sourceFormatHalf_ = 0;
+    std::atomic<int> sourceLayoutHint_{-1};      // QML 可见的判定结果
+    QString aspectApplied_ = QStringLiteral("no");  // 上次下发给 mpv 的值
     QString aspect_ = QStringLiteral("no");    // no=容器比例（mpv 0.41 -1 已弃用，no 等价无警告）
     std::atomic<bool> hwDecoding_{false};      // 实际（hwdec-current != no）
     std::atomic<bool> hwDecodeEnabled_{true};  // 用户偏好（我们下发的 hwdec 开关）
@@ -817,4 +843,10 @@ private:
     std::atomic<int> rotMode_{0};    // 当前旋转角度（RPC 线程读）
     std::atomic<int> stereoLayout_{-1};  // 3D 布局（-1=非3D, 0=SBS, 1=上下；RPC 线程读）
     std::atomic<int> stereoHalf_{0};     // 3D 全/半（0=全 1=半）
+    // 单眼 2D 输出（vf_eye）：0=off / 1=left / 2=right。运行期状态、不持久化。
+    // 布局/全半与 3D 共用语义（J/L），但**与 stereoLayout_ 分开存**：3D 关闭时
+    // stereoLayout_ 是 -1（vf_vsr 走 2D 公式），而 vf_eye 仍需要真实布局。
+    std::atomic<int> eyeMode_{0};
+    std::atomic<int> eyeLayout_{0};      // 0=SBS 1=上下
+    std::atomic<int> eyeHalf_{0};        // 0=全 1=半
 };

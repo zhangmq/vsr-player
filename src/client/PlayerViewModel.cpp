@@ -366,6 +366,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
                 if (videoWidth_ != w || videoHeight_ != h) {
                     videoWidth_.store(w); videoHeight_.store(h);
                     emit osdDataChanged();
+                    guessSourceFormat(w, h);
                 }
                 if (decoderPixelFormat_ != QString::fromStdString(pix)) {
                     decoderPixelFormat_ = QString::fromStdString(pix);
@@ -1439,8 +1440,65 @@ void PlayerViewModel::setAspect(const QString &v) {
     if (!mpv_) return;
     if (aspect_ != v) { aspect_ = v; emit aspectChanged(); }
     saveSettings("aspect", v);
+    applyAspect();
+}
+
+// 画面比例下发。**3D 眼镜模式**下 UI 里的值语义是"每眼比例"（用户关心的是
+// 每只眼看到的画幅），而 mpv 的 override 作用于整帧，所以要按 layout×half 换算：
+//   左右·全 = R×2（每眼占帧宽一半）    左右·半 = R（合成时半幅已拉伸成整帧）
+//   上下·全 = R÷2                      上下·半 = R
+// 2D / 单眼模式原样下发（单眼帧已烘焙成标准画幅）。
+// 换算结果变化时（进/出 3D、切布局、切全半）都要重下发 → 那几个入口都调这里。
+// 片源格式自动判定的输入必须是**原生像素尺寸**（video-params/w,h）：
+// 用 aspect 会被用户设的 video-aspect-override 污染（见 applyAspect 的换算）。
+// 判据（与 3D 映射的语义一致）：
+//   宽/高 ≥ 2.6 → 左右并排·全幅（如 3840×1080 = 3.556）
+//   宽/高 ≤ 1.25 → 上下并列·全幅（如 1920×2160 = 0.889；注意 4:3 = 1.333 不会被误判）
+//   其它（16:9 / 4:3 等）→ 不猜（半幅无法从尺寸区分，只能手选）
+void PlayerViewModel::guessSourceFormat(int w, int h) {
+    if (w <= 0 || h <= 0)
+        return;
+    const double a = double(w) / double(h);
+    int layout = -1, half = 0;
+    if (a >= 2.6)       { layout = 0; half = 0; }
+    else if (a <= 1.25) { layout = 1; half = 0; }
+    else return;
+    // 只在判定结果与当前不同时发（避免每帧刷）
+    if (layout == sourceFormatLayout_ && half == sourceFormatHalf_)
+        return;
+    sourceFormatLayout_ = layout;
+    sourceFormatHalf_ = half;
+    MLOG_INFO("source format: %dx%d (aspect %.3f) -> %s %s", w, h, a,
+              layout == 0 ? "sbs" : "tab", half ? "half" : "full");
+    if (sourceLayoutHint_.exchange(layout) != layout)
+        emit sourceLayoutHintChanged();
+}
+
+void PlayerViewModel::applyAspect() {
+    if (!mpv_) return;
+    QString out = aspect_;
+    const int layout = stereoLayout_.load();   // -1 = 非 3D
+    if (layout >= 0 && out != QLatin1String("no")) {
+        const QStringList parts = out.split(':');
+        bool ok = false;
+        double v = 0;
+        if (parts.size() == 2) v = parts[0].toDouble(&ok) / parts[1].toDouble(&ok);
+        else                   v = out.toDouble(&ok);
+        if (ok && v > 0.01) {
+            const bool half = stereoHalf_.load() != 0;
+            double f = 1.0;
+            if (!half) f = (layout == 0) ? 2.0 : 0.5;
+            out = QString::number(v * f, 'f', 4);
+        }
+    }
+    if (out != aspectApplied_) {
+        aspectApplied_ = out;
+        MLOG_INFO("aspect: %s -> %s%s", aspect_.toStdString().c_str(),
+                  out.toStdString().c_str(),
+                  layout >= 0 ? " (per-eye)" : "");
+    }
     // async（主线程 UI 操作——同步 set 死锁风险同 FILE_LOADED 根因）
-    mpv_->setPropertyStringAsync("video-aspect-override", v.toStdString());
+    mpv_->setPropertyStringAsync("video-aspect-override", out.toStdString());
 }
 
 void PlayerViewModel::setSpeed(double speed) {
@@ -2050,6 +2108,16 @@ std::string PlayerViewModel::vfOption() const {
                                  : ("@hwup:hwup=cuda-uuid=" + aiCudaUuid_);
     // 旋转（CUDA 零拷贝）：hwup 之后、vsr/vfg 之前。链上恒有（angle=0
     // =直通），运行期 vf-command 只改实例选项、不重建链。
+    // 单眼输出（CUDA 零拷贝）：hwup 之后、rot/vsr 之前 —— 先把帧裁成一只眼，
+    // 下游（rot/vsr/truehdr/vfg/VO）就都按普通 2D 单眼帧工作（VSR auto 自然也按
+    // 单眼画幅算）。eye=off 时直通。布局/全半进链串，链重建后自动恢复。
+    static const char *kEyeNames[] = {"off", "left", "right"};
+    static const char *kLayoutNames[] = {"sbs", "tab"};
+    const int eyeModeNow = eyeMode_.load();
+    const std::string eye = std::string("@eye:eye:mode=")
+                          + kEyeNames[eyeModeNow < 0 || eyeModeNow > 2 ? 0 : eyeModeNow]
+                          + ":layout=" + kLayoutNames[eyeLayout_.load() ? 1 : 0]
+                          + ":half=" + std::to_string(eyeHalf_.load() ? 1 : 0);
     const std::string rot = "@rot:rot=angle=" + std::to_string(rotMode_.load());
     // stereo-layout/-half 进链串：3D 每眼映射要能在**链重建后自动恢复**
     //（解码器软硬切换、格式变化都会重建用户滤镜链，只靠 vf-command 会被抹掉
@@ -2089,11 +2157,11 @@ std::string PlayerViewModel::vfOption() const {
             fprintf(stderr, "[truehdr] upconversion is not supported with --fruc-order pre "
                             "(design §8.1); the truehdr filter is not inserted in this order\n");
         }
-        return hwup + "," + rot + "," + vfg + "," + vsr;
+        return hwup + "," + eye + "," + rot + "," + vfg + "," + vsr;
     }
-    return hwup + "," + rot + "," + vsr + "," + up + "," + vfg;
+    return hwup + "," + eye + "," + rot + "," + vsr + "," + up + "," + vfg;
 #else
-    std::string vf = hwup + "," + rot + ",";
+    std::string vf = hwup + "," + eye + "," + rot + ",";
     if (fruc == 2 || fruc == 3 || fruc == 4) {
         vf += std::string("@") + frucFilterName() + ":" + frucFilterName()
             + ":fps=off:scale=" + std::to_string(fruc) + ",";
@@ -2336,6 +2404,13 @@ void PlayerViewModel::replayStereoMap() {
            l < 0 ? "off"
                  : std::string(l ? "tab " : "sbs ")
                        + (stereoHalf_.load() ? "half" : "full"));
+    // 单眼输出同样要重放（链重建会把运行期 vf-command 全部抹掉）
+    static const char *kNames[] = {"off", "left", "right"};
+    const int em = eyeMode_.load();
+    pushVf("eye", "eye", kNames[em < 0 || em > 2 ? 0 : em]);
+    pushVf("eye", "eye",
+           std::string("stereo ") + (eyeLayout_.load() ? "tab " : "sbs ")
+                 + (eyeHalf_.load() ? "half" : "full"));
 }
 
 void PlayerViewModel::setStereoMap(bool active, int layout, int half) {
@@ -2350,6 +2425,34 @@ void PlayerViewModel::setStereoMap(bool active, int layout, int half) {
     pushVf("vsr", "stereo",
            nl < 0 ? "off"
                   : std::string(nl ? "tab " : "sbs ") + (nh ? "half" : "full"));
+    applyAspect();   // 3D 的每眼比例换算因子随 layout/half/active 变化
+}
+
+void PlayerViewModel::setEyeState(int mode, int layout, int half) {
+    const int nm = (mode < 0 || mode > 2) ? 0 : mode;
+    // layout/half < 0 = 保持当前源格式（RPC/菜单只改眼别时不必重复传布局）
+    const int nl = (layout < 0) ? eyeLayout_.load() : (layout == 1 ? 1 : 0);
+    const int nh = (half < 0) ? eyeHalf_.load() : (half ? 1 : 0);
+    const int oldMode = eyeMode_.exchange(nm);
+    const int oldLayout = eyeLayout_.exchange(nl);
+    const int oldHalf = eyeHalf_.exchange(nh);
+    if (oldMode == nm && oldLayout == nl && oldHalf == nh)
+        return;
+    if (nm != oldMode)
+        emit eyeModeChanged();
+    if (!mpv_)
+        return;
+    // 链上没插 eye 时（AI 不可用 → 只有 hwup+rot）vf-command 无处可发；
+    // 链重建后由 syncVfOptions() 重放。
+    if (!aiAvailable_.load())
+        return;
+    static const char *kNames[] = {"off", "left", "right"};
+    pushVf("eye", "eye", kNames[nm]);
+    pushVf("eye", "eye",
+           std::string("stereo ") + (nl ? "tab " : "sbs ") + (nh ? "half" : "full"));
+    applyAspect();   // 同上：源格式变化会影响 3D 下的每眼换算
+    MLOG_INFO("eye: mode=%s layout=%s size=%s", kNames[nm],
+              nl ? "tab" : "sbs", nh ? "half" : "full");
 }
 
 void PlayerViewModel::syncVfOptions() {
@@ -2378,6 +2481,15 @@ void PlayerViewModel::syncVfOptions() {
     // 旋转：链重建后回到链串里的 angle（初始值 = 持久化值，正常情况
     // 无需重放；这里仍推一次，保证运行期改过角度后换片不丢）。
     pushVf("rot", "angle", std::to_string(rotMode_.load()));
+    // 单眼输出（vf_eye）：链重建后运行期 vf-command 全被抹掉 → 重放模式与源格式。
+    {
+        static const char *kEyeNames[] = {"off", "left", "right"};
+        const int em = eyeMode_.load();
+        pushVf("eye", "eye", kEyeNames[em < 0 || em > 2 ? 0 : em]);
+        pushVf("eye", "eye",
+               std::string("stereo ") + (eyeLayout_.load() ? "tab " : "sbs ")
+                     + (eyeHalf_.load() ? "half" : "full"));
+    }
     MLOG_INFO("syncVfOptions: truehdr enable=%d lum=%d sat=%d contrast=%d mg=%d deband=%d",
               int(upconvertOn_), effectiveUpHdrLuminance(), upHdrSaturation_,
               upHdrContrast_, upHdrMiddleGray_, int(upHdrDebanding_));

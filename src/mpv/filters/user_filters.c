@@ -108,6 +108,7 @@ const struct mp_user_filter_entry *vf_list[] = {
 #endif
     &vf_hwup,
     &vf_rot,
+    &vf_eye,
     &vf_vsr,
     &vf_vfg,
     &vf_truehdr,

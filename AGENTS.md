@@ -855,58 +855,67 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 
 ## 待实现需求（用户已提出，**暂缓、不要动手**）
 
-### 单眼 2D 输出（只看左眼 / 右眼，**2D 满屏 + 按单眼画幅超分**）
+### 单眼 2D 输出（vf_eye，**已实现 2026-10-27**）
 
-**需求（用户 2026-10-26/27 定稿）**：不看 3D 时，主窗口按**单眼正常画幅**满屏播放，
-且**超分按单眼算**（VSR 输入 1920×1080，不是整帧 SBS）。
+**需求**：不看 3D 时，主窗口按**单眼正常画幅**满屏播放，且**超分按单眼算**
+（VSR 输入 1920×1080，不是整帧 SBS）。
 
-#### 菜单结构（3D 作为一级菜单里的小分组，三段）
+#### 实现
 
-```
-── 3D ──────────────────────────
-   输出方式 ▸   单眼 2D        （关闭 / 眼镜 3D / 单眼 2D）
-   片源格式 ▸   左右 · 全幅     （左右·全 / 左右·半 / 上下·全 / 上下·半）
-   输出选项 ▸   左眼           （单眼时：左眼/右眼；眼镜 3D 时：正常/交换眼序）
-── (sep) ──────────────────────
-```
-- 每行右侧 `hint` 显示当前值（同 Deinterlace / Rotate 的既有做法）。
-- **状态全部复用**：`mode`（0=关闭/1=眼镜 3D/**2=单眼 2D** 新增）、`layout`+`half`（= J/L）、
-  `eyeSwap`（= K）。只有"单眼 2D"这个模式是新的。
-- 去掉菜单里的「输出设备」组（只有 XR 眼镜一项；点"眼镜 3D"的选择器本来就能选屏）。
-- 「2D 转 3D」未实现 → **暂不出现**。
-- 互斥：选眼镜 3D / 单眼 2D 时另一个自动退；选"关闭"清立体映射。
-- `片源格式` 打开文件时**自动猜**（用原生 `video-params/w,h`，不能用 aspect——会被比例覆盖污染）：
-  宽/高 ≥ 2.6 → 左右·全幅；≤ 0.8 → 上下·全幅；否则保持上次。
+- **新滤镜 `vf_eye`**（`src/mpv/video/filter/vf_eye.c`，CUDA 零拷贝，仿 `vf_rot`）：
+  - 选项 `mode=off|left|right`、`layout=sbs|tab`、`half=0|1`；
+  - **全幅 = 1:1 拷贝裁半幅**；**半幅 = 裁半幅 + 沿 split 轴重采样回自然画幅**
+    （SBS 半 960×1080 → 1920×1080；TAB 半 1920×540 → 1920×1080）。
+    Y 用双线性（scale=1 时退化为精确拷贝），UV 用最近邻（NV12/P010 的 U/V 是
+    pair，不能把 pair 当整数插值——进位会串）；
+  - 输出帧尺寸 = **单眼画面**：`sbs 全 →(W/2,H)`、`sbs 半 →(W,H)`、
+    `tab 全 →(W,H/2)`、`tab 半 →(W,H)`；hwctx 按输出尺寸自建
+    （借用源尺寸会错乱/崩溃——`vf_rot` 的旧坑）；
+  - 运行期命令：`vf-command eye <off|left|right>` / `vf-command eye stereo <sbs|tab> <full|half>`。
+- **链上位置**：`hwup → eye → rot → vsr → truehdr → vfg`（`vfOption()` 的**三个 return
+  分支**都插入了——VFG 主链、`--fruc-order pre` 链、RIFE 链；漏一个就会出现
+  "eye 滤镜根本不在链上"而 vf-command 静默失败）。
+- **⚠ 半幅必须真拉伸，不能只设像素宽高比**：底栏「画面比例」用 mpv
+  `video-aspect-override`，一旦用户设了固定比例就会覆盖 p_w/p_h → 半幅被压扁；
+  而且 `vf_vsr` 的 `scale=auto` 按帧 w/h 算倍率（960×1080 会算偏大）。
+  烘焙成标准单眼帧后，比例/旋转/VSR auto/VFG 全按普通 2D 工作，客户端零特例。
+- **客户端**：`PlayerViewModel::setEyeState(mode, layout, half)`（layout/half < 0 =
+  保持当前值）；链串带 `@eye:eye:mode=…:layout=…:half=…` 初值；
+  `syncVfOptions()` 与 `replayStereoMap()` 都会重放（**链重建抹运行期 vf-command**）。
+- **UI**：右键菜单一级的「3D」小块 = 三条入口
+  **输出方式**（关闭 / 眼镜 3D / 单眼 2D）、**片源格式**（左右·全/半、上下·全/半）、
+  **输出选项**（单眼：左眼/右眼；眼镜：正常/交换眼序；关闭时不显示）。
+  输出方式三态互斥：进 3D 先关单眼，进单眼先 `stereo.stop()`。
+- **快捷键**：`J`/`L`（布局、全半）、`K`（眼镜=交换眼序 / 单眼=换眼）在**两种模式下都生效**；
+  `A`/`Shift+A` = 画面比例循环（列表照抄 mpv，见下）——3D 下也能用（戴眼镜直接调）。
+- **片源格式自动判定**：按**原生像素尺寸**（`video-params/w,h`，不能用 aspect——会被
+  override 污染）：宽/高 ≥ 2.6 → 左右·全；**≤ 1.25 → 上下·全**（1920×2160 = 0.889；
+  4:3 = 1.333 不会误判）；其余不猜（半幅无法从尺寸区分）。结果经**粘性属性**
+  `sourceLayoutHint` 给 QML（判定可能发生在 QML 就绪前，`Component.onCompleted` 补应用）。
+- **布局/全半是片源属性**：`StereoController` 持久化（`stereoLayout`/`stereoHalf`）并在
+  构造时恢复；**`start()` 不再重置**（进 3D 不该清掉用户设的片源格式）。
+- **RPC**：`set-eye off|left|right [sbs|tab] [full|half]`、`get-eye`、
+  `get-video-size`（滤镜链输出帧尺寸，验证裁切/倍率不用截图）、
+  `get-source-format`（layout/half/eye/hint 状态）。
 
-#### 实现路线（裁切必须在滤镜链之前）
+#### 验证（headless，`--benchmark` + RPC，不需要上屏）
 
-- ⚠ `--video-crop` **不能用**：DOCS 写明 "applied … by the VO"，`player/video.c:1010
-  apply_video_crop()` 在 `write_video()` 里改 `next_frames` 的 `params.crop`，即**滤镜链之后**
-  → VSR/VFG 仍处理整帧、倍率仍按整帧算。
-- 新滤镜 **`vf_eye`**（仿 `vf_rot`，CUDA 零拷贝，约 120–150 行）：
-  `eye=off|left|right  layout=sbs|tab  half=0|1`；运行期 `vf-command eye <…>`。
-  链上位置 `hwup → eye → rot → vsr → truehdr → vfg`（先裁再转）。
-- **半幅必须真拉伸**（不是设像素宽高比）：SBS 半 960×1080 → 拉伸 ×2 → 1920×1080；
-  TAB 半 1920×540 → 纵向 ×2。否则底栏"视频比例"一选固定值就会把半幅拉伸覆盖掉，
-  且 VSR auto 会按 960×1080 算错倍率。拉伸放在同一个 CUDA kernel 里（后面本来也要过 VSR）。
-- 输出帧恒为**标准 16:9 单眼画面** → 底栏比例、旋转、VSR auto、VFG 全部按普通 2D 工作，
-  **不需要任何特例分支**。
-- 链串带 `@eye:eye=off:layout=sbs:half=0` 初值 + 挂 `MPV_EVENT_VIDEO_RECONFIG`
-  重放（链重建会抹运行期 vf-command，3D 倍率上踩过）。
+| 操作 | `get-video-size` |
+|---|---|
+| SBS 3840×1080 整帧 | 3840×1080 |
+| `set-eye left sbs full` | **1920×1080** |
+| `set-eye right sbs full` | **1920×1080** |
+| `set-eye left tab full`（对 3840×1080） | **3840×540** |
+| `set-eye left sbs half` | **3840×1080**（拉回帧尺寸） |
+| TAB 1920×2160 + `set-eye left`（自动判定 layout=tab） | **1920×1080** |
 
-#### 视频比例（底栏）与 3D 的关系
+#### ⚠ 构建陷阱（踩过）
 
-- 单眼模式：完全按普通 2D 处理（因为帧已烘焙成 16:9）。
-- **3D 眼镜模式**：比例语义改成"**每眼比例**"，下发时按 layout×half 换算：
-  左右·全 = R×2；左右·半 = R；上下·全 = R÷2；上下·半 = R。
-- **`A` 快捷键（2026-10-27 用户定：与 mpv 对齐）**：`A` 正序 / `Shift+A` 逆序，
-  列表与顺序**照抄 mpv 的 `input.conf:156`**：`"16:9" "4:3" "2.35:1" "no"`；
-  当前值不在列表里时取第一个（= mpv `cmd_cycle_values` 的 "Picking default" 语义）。
-  底栏弹窗仍保留全部 9 档（16:9/16:10/4:3/5:4/2.35:1/2.39:1/1.85:1/1:1/不覆盖）。
-  OSD toast 提示当前值，3D 下显示 `每眼 16:9` 这种形式（走 `StereoProgress` 那套）。
-  `A` 加进 `StereoKeyFilter`（装在 `qApp` 上，两窗口都能收）+ HotKeys 帮助面板右列。
+`ninja -C build` **不会**重编 `src/mpv/` 的 overlay：libmpv 由 `scripts/build_mpv.sh`
+单独构建（输出 `build/mpv/_build/libmpv.so`，370 个目标）。改了滤镜必须：
+`./scripts/build_mpv.sh && ninja -C build`。否则表现为"代码明明改了、链里没这个滤镜"。
+另：新增 QML 文件必须登记进 `src/client/resources.qrc`，否则启动即失败（QML 类型不存在）。
 
-#### 状态：已设计定稿，**未实现**
 ## 相关文档
 
 - `README.md`/`README_zh.md`（功能/构建/分发/CLI）、`docs/`（设计记录与参考索引）。调试守则/方法论在 `~/.dsh/AGENTS.md`（全局）

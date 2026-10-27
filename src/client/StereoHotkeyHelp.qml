@@ -76,8 +76,11 @@ Item {
                             }
                             HotkeyRow {
                                 keyText: "K"
-                                options: [qsTr("Normal Eyes"), qsTr("Swapped Eyes")]
-                                current: stereo.swap ? 1 : 0
+                                options: stereo.active
+                                         ? [qsTr("Normal Eyes"), qsTr("Swapped Eyes")]
+                                         : [qsTr("Left Eye"), qsTr("Right Eye")]
+                                current: stereo.active ? (stereo.swap ? 1 : 0)
+                                                       : (viewModel.eyeMode === 2 ? 1 : 0)
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
@@ -123,6 +126,14 @@ Item {
                             HotkeyRow {
                                 keyText: "↓"
                                 actionText: qsTr("Volume down")
+                                fontPixelSize: root.helpFontSize
+                            }
+                            HotkeyRow {
+                                keyText: "A"
+                                options: [ "16:9", "4:3", "2.35:1", qsTr("No override") ]
+                                current: viewModel.aspect === "16:9" ? 0
+                                       : viewModel.aspect === "4:3" ? 1
+                                       : viewModel.aspect === "2.35:1" ? 2 : 3
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {

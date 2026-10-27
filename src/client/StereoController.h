@@ -63,6 +63,10 @@ public:
     Q_INVOKABLE void cycleLayout();   // SBS / 上下
     Q_INVOKABLE void swapEyes();
     Q_INVOKABLE void toggleHalf();    // SBS：全宽/半宽；TAB：全高/半高
+    /// 显式设置布局/全半（菜单用）：片源格式是**片源属性**，单眼 2D 模式下
+    /// 也要能改（这时 active_ 为 false），因此不做 active 前置判断。
+    Q_INVOKABLE void setLayout(int layout);
+    Q_INVOKABLE void setHalf(bool half);
     // ── 合成映射快照（给 RPC `get-stereo` 读：不截图也能判断满不满屏）──
     // Video 每次算出 push constants 时写入，RPC 线程只读；与日志 `stereo map:` 同源。
     void setMapSnapshot(int active, int layout, int swap, int half,

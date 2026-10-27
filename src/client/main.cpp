@@ -147,6 +147,44 @@ protected:
 
 class StereoKeyFilter : public QObject
 {
+    /// 画面比例循环：`A` 正序 / `Shift+A` 逆序，列表与顺序照抄 mpv
+    /// （third_party/mpv/etc/input.conf:156：
+    ///  cycle-values video-aspect-override "16:9" "4:3" "2.35:1" "no"）。
+    /// 当前值不在列表里时取第一个（= mpv cmd_cycle_values 的 "Picking default"）。
+    bool aspectKey(QEvent *event)
+    {
+        if (event->type() != QEvent::KeyPress)
+            return false;
+        auto *ke = static_cast<QKeyEvent *>(event);
+        if (ke->key() != Qt::Key_A)
+            return false;
+        if (ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))
+            return false;
+        if (ke->isAutoRepeat())
+            return true;
+        static const char *kList[] = {"16:9", "4:3", "2.35:1", "no"};
+        const int n = int(sizeof(kList) / sizeof(kList[0]));
+        const QString cur = viewModel_->aspect();
+        int idx = -1;
+        for (int i = 0; i < n; i++)
+            if (cur == QLatin1String(kList[i])) idx = i;
+        const int dir = (ke->modifiers() & Qt::ShiftModifier) ? -1 : 1;
+        int next = (idx < 0) ? (dir > 0 ? 0 : n - 1) : (idx + dir + n) % n;
+        viewModel_->setAspect(QString::fromLatin1(kList[next]));
+        // 瞬态提示：值交给 QML 组合文案（3D 下显示"每眼比例"，2D/单眼显示"画面比例"）。
+        viewModel_->flashMessage(QString::fromLatin1(kList[next]));
+        return true;
+    }
+
+    /// 布局/全半变化后把新的源格式推给两个滤镜（vf_vsr 的 3D 倍率 + vf_eye）。
+    void syncStereoSource()
+    {
+        viewModel_->setStereoMap(stereo_->active(), stereo_->layout(),
+                                 stereo_->half() ? 1 : 0);
+        viewModel_->setEyeState(viewModel_->eyeMode(), stereo_->layout(),
+                                stereo_->half() ? 1 : 0);
+    }
+
 public:
     StereoKeyFilter(StereoController *stereo, PlayerViewModel *vm, QObject *parent = nullptr)
         : QObject(parent), stereo_(stereo), viewModel_(vm) {}
@@ -155,8 +193,12 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
         Q_UNUSED(watched);
-        if (!stereo_->active())
-            return false;
+        const bool stereo3d = stereo_->active();
+        const bool eyeMode = viewModel_->eyeMode() != 0;
+        // J/K/L 在「眼镜 3D」与「单眼 2D」下都生效（同一份布局/全半/眼别状态）；
+        // A（画面比例）任何时候都生效——2D 也要能修正片源比例。
+        if (!stereo3d && !eyeMode)
+            return aspectKey(event);
         // 3D 下 Esc 一律吞掉：先吃 ShortcutOverride，再吃 KeyPress，
         // 避免 QML Shortcut / 窗口层把全屏切回去。
         if (event->type() == QEvent::ShortcutOverride) {
@@ -191,9 +233,28 @@ protected:
             return false;
         }
         switch (ke->key()) {
-        case Qt::Key_J: if (repeat) return true; stereo_->cycleLayout(); return true;
-        case Qt::Key_K: if (repeat) return true; stereo_->swapEyes(); return true;
-        case Qt::Key_L: if (repeat) return true; stereo_->toggleHalf(); return true;
+        case Qt::Key_A:
+            return aspectKey(event);
+        case Qt::Key_J:
+            if (repeat) return true;
+            stereo_->cycleLayout();
+            syncStereoSource();
+            return true;
+        case Qt::Key_K:
+            if (repeat) return true;
+            if (stereo3d) {
+                stereo_->swapEyes();
+            } else {
+                // 单眼模式：K = 换到另一只眼
+                viewModel_->setEyeState(viewModel_->eyeMode() == 2 ? 1 : 2,
+                                        stereo_->layout(), stereo_->half() ? 1 : 0);
+            }
+            return true;
+        case Qt::Key_L:
+            if (repeat) return true;
+            stereo_->toggleHalf();
+            syncStereoSource();
+            return true;
         case Qt::Key_Tab:
         case Qt::Key_Backtab:
             // 3D 下用 Tab 切**管线状态 OSD**（调试用；H 仍切快捷键帮助面板）。
@@ -472,6 +533,8 @@ int main(int argc, char *argv[]) {
         viewModel.initDeinterlace(deintCli);
     }
     std::string vf = viewModel.vfOption();
+    // 链串打一行 INFO（排障用：filter 是否插上、顺序、初始选项）。
+    MLOG_INFO("vf chain: %s", vf.empty() ? "(none)" : vf.c_str());
 
     // ── mpv ─────────────────────────────────────────────────────────────
     // 启动策略（无参数启动 = 恢复上次列表）：

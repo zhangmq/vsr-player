@@ -1868,6 +1868,8 @@ if features['vsr']
         'video/filter/vf_hwup.c',
         # CUDA 零拷贝旋转（hwup 之后、vsr/vfg 之前；angle=0 时直通）。
         'video/filter/vf_rot.c',
+        # 单眼输出（SBS/TAB → 一只眼的 2D 画面；eye=off 时直通）。
+        'video/filter/vf_eye.c',
         # VFG（VFX SDK VideoFrameGeneration）= 默认 FRUC 后端；与 VSR 共用
         # vfx_loader 的库加载层。无条件编入（与 vsr_proc/vfx_loader 同处），
         # 注册项在 filters/user_filters.c。

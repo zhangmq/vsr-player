@@ -83,19 +83,33 @@ PopupBase {
              {label: qsTr("90°"),  value: 90},
              {label: qsTr("270°"), value: 270}
          ]},
-        {icon: "󰟽", text: qsTr("3D"),
-         hint: function() { return root.stereoLabel() },
+        // ── 立体（3D 分组 = 一级菜单里的小块，三条入口）──────────────────
+        {header: qsTr("3D")},
+        {icon: "", text: qsTr("Output mode"),
+         hint: function() { return root.stereoModeLabel() },
          subSig: "stereoSelected",
-         // 二级面板分两组：group 1 = 输出设备，group 0（默认）= 显示方式
-         current: function(g) { return g === 1 ? stereo.outputType : stereo.mode },
+         current: function(g) { return g === 0 ? root.stereoOutputMode() : -1 },
          submenu: [
-             {header: qsTr("Output device")},
-             {label: qsTr("XR glasses"), value: 0, group: 1},
-             {header: qsTr("Display mode")},
-             {label: qsTr("Off"),        value: 0},
-             {label: qsTr("3D source"),  value: 1},
-             {label: qsTr("2D to 3D"),   value: 2}
+             {label: qsTr("Off"),        value: 0, group: 0},
+             {label: qsTr("3D glasses"), value: 1, group: 0},
+             {label: qsTr("Single eye"), value: 2, group: 0}
          ]},
+        {icon: "", text: qsTr("Source layout"),
+         hint: function() { return root.layoutLabel() },
+         subSig: "stereoSelected",
+         current: function(g) { return g === 1 ? root.layoutIndex() : -1 },
+         submenu: [
+             {label: qsTr("Side by side · full"), value: 0, group: 1},
+             {label: qsTr("Side by side · half"), value: 1, group: 1},
+             {label: qsTr("Top and bottom · full"), value: 2, group: 1},
+             {label: qsTr("Top and bottom · half"), value: 3, group: 1}
+         ]},
+        {icon: "", text: qsTr("Output option"),
+         hint: function() { return root.eyeLabel() },
+         visibleWhen: function() { return root.stereoOutputMode() !== 0 },
+         subSig: "stereoSelected",
+         current: function(g) { return g === 2 ? root.eyeIndex() : -1 },
+         submenu: root.eyeOptions()},
         {sep: true},
         {icon: "󰐥", text: qsTr("Quit"),               hint: "Ctrl+Q", sig: "quitRequested"}
     ]
@@ -109,13 +123,49 @@ PopupBase {
         }
     }
 
-    /// 3D 三态文案（0=Off / 1=3D片源 / 2=2D转3D）。
-    function stereoLabel() {
-        switch (stereo.mode) {
-        case 1: return qsTr("3D source")
-        case 2: return qsTr("2D to 3D")
+    /// 输出方式三态：0=关闭 / 1=眼镜 3D / 2=单眼 2D。
+    /// 3D 的 active 由 StereoController 管，单眼由 viewModel.eyeMode 管（两者互斥，
+    /// 互斥在 main.qml 的 onStereoSelected 里保证）。
+    function stereoOutputMode() {
+        if (stereo.active) return 1
+        return viewModel.eyeMode !== 0 ? 2 : 0
+    }
+    function stereoModeLabel() {
+        switch (stereoOutputMode()) {
+        case 1: return qsTr("3D glasses")
+        case 2: return qsTr("Single eye")
         default: return qsTr("Off")
         }
+    }
+    /// 片源格式：0=左右·全 / 1=左右·半 / 2=上下·全 / 3=上下·半。
+    function layoutIndex() {
+        return (stereo.layout === 1 ? 2 : 0) + (stereo.half ? 1 : 0)
+    }
+    function layoutLabel() {
+        return (stereo.layout === 1 ? qsTr("Top and bottom") : qsTr("Side by side"))
+             + " · " + (stereo.half ? qsTr("half") : qsTr("full"))
+    }
+    /// 输出选项：单眼模式 = 左/右眼；眼镜模式 = 正常/交换眼序；关闭时不显示。
+    function eyeIndex() {
+        if (stereoOutputMode() === 1) return stereo.swap ? 1 : 0
+        return viewModel.eyeMode === 2 ? 1 : 0
+    }
+    function eyeLabel() {
+        if (stereoOutputMode() === 1)
+            return stereo.swap ? qsTr("Swapped eyes") : qsTr("Normal eyes")
+        return viewModel.eyeMode === 2 ? qsTr("Right eye") : qsTr("Left eye")
+    }
+    function eyeOptions() {
+        if (stereoOutputMode() === 1) {
+            return [
+                {label: qsTr("Normal eyes"), value: 0, group: 2},
+                {label: qsTr("Swapped eyes"), value: 1, group: 2}
+            ]
+        }
+        return [
+            {label: qsTr("Left eye"), value: 0, group: 2},
+            {label: qsTr("Right eye"), value: 1, group: 2}
+        ]
     }
 
     /// 旋转角度文案（0=Off / 90=顺时针 / 270=逆时针 90°）。

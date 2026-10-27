@@ -136,9 +136,11 @@ void StereoController::start(int mode, int screenIndex) {
         stop();
 
     mode_ = mode;
-    layout_ = 0;
+    // 片源格式（布局 / 全半）是**片源属性**，与 3D 是否激活无关：
+    // 菜单、J/L 键、单眼模式共用同一份状态，因此持久化并在构造时恢复。
+    layout_ = settings_.value("stereoLayout", 0).toInt() == 1 ? 1 : 0;
     swap_ = false;
-    half_ = false;
+    half_ = settings_.value("stereoHalf", false).toBool();
     helpVisible_ = true;
     screenName_ = s->name();
     active_ = true;
@@ -259,6 +261,23 @@ void StereoController::stop() {
     screenName_.clear();
     emit stateChanged();
     MLOG_INFO("stereo: stopped");
+}
+
+void StereoController::setLayout(int layout) {
+    const int nl = layout == 1 ? 1 : 0;
+    if (layout_ == nl)
+        return;
+    layout_ = nl;
+    settings_.setValue("stereoLayout", layout_);
+    emit stateChanged();
+}
+
+void StereoController::setHalf(bool half) {
+    if (half_ == half)
+        return;
+    half_ = half;
+    settings_.setValue("stereoHalf", half_);
+    emit stateChanged();
 }
 
 void StereoController::cycleLayout() {

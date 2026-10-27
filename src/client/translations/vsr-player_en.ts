@@ -141,23 +141,23 @@
     <name>ContextMenu</name>
     <message>
         <location filename="../ui/ContextMenu.qml" line="74"/>
-        <location filename="../ui/ContextMenu.qml" line="106"/>
+        <location filename="../ui/ContextMenu.qml" line="120"/>
         <source>Auto</source>
         <translation>Auto</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="75"/>
-        <location filename="../ui/ContextMenu.qml" line="107"/>
+        <location filename="../ui/ContextMenu.qml" line="121"/>
         <source>Force</source>
         <translation>Force</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="73"/>
         <location filename="../ui/ContextMenu.qml" line="82"/>
-        <location filename="../ui/ContextMenu.qml" line="95"/>
-        <location filename="../ui/ContextMenu.qml" line="108"/>
-        <location filename="../ui/ContextMenu.qml" line="117"/>
-        <location filename="../ui/ContextMenu.qml" line="126"/>
+        <location filename="../ui/ContextMenu.qml" line="93"/>
+        <location filename="../ui/ContextMenu.qml" line="122"/>
+        <location filename="../ui/ContextMenu.qml" line="137"/>
+        <location filename="../ui/ContextMenu.qml" line="176"/>
         <source>Off</source>
         <translation>Off</translation>
     </message>
@@ -208,50 +208,114 @@
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="83"/>
-        <location filename="../ui/ContextMenu.qml" line="124"/>
+        <location filename="../ui/ContextMenu.qml" line="174"/>
         <source>90°</source>
         <translation>90°</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="84"/>
-        <location filename="../ui/ContextMenu.qml" line="125"/>
+        <location filename="../ui/ContextMenu.qml" line="175"/>
         <source>270°</source>
         <translation>270°</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="86"/>
+        <location filename="../ui/ContextMenu.qml" line="87"/>
         <source>3D</source>
         <translation>3D</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="92"/>
-        <source>Output device</source>
-        <translation>Output device</translation>
-    </message>
-    <message>
-        <location filename="../ui/ContextMenu.qml" line="93"/>
-        <source>XR glasses</source>
-        <translation>XR glasses</translation>
+        <location filename="../ui/ContextMenu.qml" line="88"/>
+        <source>Output mode</source>
+        <translation>Output mode</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="94"/>
-        <source>Display mode</source>
-        <translation>Display mode</translation>
+        <location filename="../ui/ContextMenu.qml" line="135"/>
+        <source>3D glasses</source>
+        <translation>3D glasses</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="96"/>
-        <location filename="../ui/ContextMenu.qml" line="115"/>
-        <source>3D source</source>
-        <translation>3D source</translation>
+        <location filename="../ui/ContextMenu.qml" line="95"/>
+        <location filename="../ui/ContextMenu.qml" line="136"/>
+        <source>Single eye</source>
+        <translation>Single eye</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="97"/>
-        <location filename="../ui/ContextMenu.qml" line="116"/>
-        <source>2D to 3D</source>
-        <translation>2D to 3D</translation>
+        <source>Source layout</source>
+        <translation>Source layout</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="100"/>
+        <location filename="../ui/ContextMenu.qml" line="102"/>
+        <source>Side by side · full</source>
+        <translation>Side by side · full</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="103"/>
+        <source>Side by side · half</source>
+        <translation>Side by side · half</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="104"/>
+        <source>Top and bottom · full</source>
+        <translation>Top and bottom · full</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="105"/>
+        <source>Top and bottom · half</source>
+        <translation>Top and bottom · half</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="107"/>
+        <source>Output option</source>
+        <translation>Output option</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="145"/>
+        <source>Top and bottom</source>
+        <translation>Top and bottom</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="145"/>
+        <source>Side by side</source>
+        <translation>Side by side</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="146"/>
+        <source>half</source>
+        <translation>half</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="146"/>
+        <source>full</source>
+        <translation>full</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="155"/>
+        <location filename="../ui/ContextMenu.qml" line="162"/>
+        <source>Swapped eyes</source>
+        <translation>Swapped eyes</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="155"/>
+        <location filename="../ui/ContextMenu.qml" line="161"/>
+        <source>Normal eyes</source>
+        <translation>Normal eyes</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="156"/>
+        <location filename="../ui/ContextMenu.qml" line="167"/>
+        <source>Right eye</source>
+        <translation>Right eye</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="156"/>
+        <location filename="../ui/ContextMenu.qml" line="166"/>
+        <source>Left eye</source>
+        <translation>Left eye</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="114"/>
         <source>Quit</source>
         <translation>Quit</translation>
     </message>
@@ -343,59 +407,59 @@
         <translation>120 fps</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2562"/>
-        <location filename="../PlayerViewModel.cpp" line="2570"/>
+        <location filename="../PlayerViewModel.cpp" line="2663"/>
+        <location filename="../PlayerViewModel.cpp" line="2671"/>
         <source>Source</source>
         <translation>Source</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2596"/>
+        <location filename="../PlayerViewModel.cpp" line="2697"/>
         <source>Output</source>
         <translation>Output</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2603"/>
+        <location filename="../PlayerViewModel.cpp" line="2704"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2631"/>
+        <location filename="../PlayerViewModel.cpp" line="2732"/>
         <source>VSR</source>
         <translation>VSR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2656"/>
+        <location filename="../PlayerViewModel.cpp" line="2757"/>
         <source>FRUC</source>
         <translation>FRUC</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2675"/>
-        <location filename="../PlayerViewModel.cpp" line="2680"/>
+        <location filename="../PlayerViewModel.cpp" line="2776"/>
+        <location filename="../PlayerViewModel.cpp" line="2781"/>
         <source>Decoder</source>
         <translation>Decoder</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2685"/>
+        <location filename="../PlayerViewModel.cpp" line="2786"/>
         <source>Speed</source>
         <translation>Speed</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2687"/>
+        <location filename="../PlayerViewModel.cpp" line="2788"/>
         <source>Time</source>
         <translation>Time</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2691"/>
+        <location filename="../PlayerViewModel.cpp" line="2792"/>
         <source>Frames</source>
         <translation>Frames</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2695"/>
+        <location filename="../PlayerViewModel.cpp" line="2796"/>
         <source>GPU</source>
         <translation>GPU</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2698"/>
+        <location filename="../PlayerViewModel.cpp" line="2799"/>
         <source>Audio</source>
         <translation>Audio</translation>
     </message>
@@ -555,69 +619,107 @@
         <translation>Top-and-Bottom</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="79"/>
+        <location filename="../StereoHotkeyHelp.qml" line="80"/>
         <source>Normal Eyes</source>
         <translation>Normal Eyes</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="79"/>
+        <location filename="../StereoHotkeyHelp.qml" line="80"/>
         <source>Swapped Eyes</source>
         <translation>Swapped Eyes</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="85"/>
+        <location filename="../StereoHotkeyHelp.qml" line="81"/>
+        <source>Left Eye</source>
+        <translation>Left Eye</translation>
+    </message>
+    <message>
+        <location filename="../StereoHotkeyHelp.qml" line="81"/>
+        <source>Right Eye</source>
+        <translation>Right Eye</translation>
+    </message>
+    <message>
+        <location filename="../StereoHotkeyHelp.qml" line="88"/>
         <source>Full</source>
         <translation>Full</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="85"/>
+        <location filename="../StereoHotkeyHelp.qml" line="88"/>
         <source>Half</source>
         <translation>Half</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="95"/>
+        <location filename="../StereoHotkeyHelp.qml" line="98"/>
         <source>Play / Pause</source>
         <translation>Play / Pause</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="100"/>
+        <location filename="../StereoHotkeyHelp.qml" line="103"/>
         <source>Seek -5s</source>
         <translation>Seek -5s</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="105"/>
+        <location filename="../StereoHotkeyHelp.qml" line="108"/>
         <source>Seek +5s</source>
         <translation>Seek +5s</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="110"/>
+        <location filename="../StereoHotkeyHelp.qml" line="113"/>
         <source>Seek -10s</source>
         <translation>Seek -10s</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="115"/>
+        <location filename="../StereoHotkeyHelp.qml" line="118"/>
         <source>Seek +10s</source>
         <translation>Seek +10s</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="120"/>
+        <location filename="../StereoHotkeyHelp.qml" line="123"/>
         <source>Volume up</source>
         <translation>Volume up</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="125"/>
+        <location filename="../StereoHotkeyHelp.qml" line="128"/>
         <source>Volume down</source>
         <translation>Volume down</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="130"/>
+        <location filename="../StereoHotkeyHelp.qml" line="133"/>
+        <source>No override</source>
+        <translation>No override</translation>
+    </message>
+    <message>
+        <location filename="../StereoHotkeyHelp.qml" line="141"/>
         <source>Previous</source>
         <translation>Previous</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="135"/>
+        <location filename="../StereoHotkeyHelp.qml" line="146"/>
         <source>Next</source>
         <translation>Next</translation>
+    </message>
+</context>
+<context>
+    <name>StereoMessage</name>
+    <message>
+        <location filename="../ui/StereoMessage.qml" line="15"/>
+        <source>Per-eye aspect %1</source>
+        <translation>Per-eye aspect %1</translation>
+    </message>
+    <message>
+        <location filename="../ui/StereoMessage.qml" line="16"/>
+        <source>Aspect %1</source>
+        <translation>Aspect %1</translation>
+    </message>
+    <message>
+        <location filename="../ui/StereoMessage.qml" line="23"/>
+        <source>Per-eye aspect: no override</source>
+        <translation>Per-eye aspect: no override</translation>
+    </message>
+    <message>
+        <location filename="../ui/StereoMessage.qml" line="23"/>
+        <source>Aspect: no override</source>
+        <translation>Aspect: no override</translation>
     </message>
 </context>
 <context>
@@ -837,59 +939,54 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="525"/>
+        <location filename="../main.qml" line="561"/>
         <source>Open media</source>
         <translation>Open media</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="537"/>
+        <location filename="../main.qml" line="573"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="529"/>
-        <location filename="../main.qml" line="538"/>
+        <location filename="../main.qml" line="565"/>
+        <location filename="../main.qml" line="574"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="309"/>
-        <source>2D to 3D is not implemented yet</source>
-        <translation>2D to 3D is not implemented yet</translation>
-    </message>
-    <message>
-        <location filename="../main.qml" line="516"/>
+        <location filename="../main.qml" line="552"/>
         <source>Add folder to playlist</source>
         <translation>Add folder to playlist</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="517"/>
+        <location filename="../main.qml" line="553"/>
         <source>Open folder</source>
         <translation>Open folder</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="530"/>
-        <location filename="../main.qml" line="539"/>
+        <location filename="../main.qml" line="566"/>
+        <location filename="../main.qml" line="575"/>
         <source>All files (*)</source>
         <translation>All files (*)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="532"/>
+        <location filename="../main.qml" line="568"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="533"/>
+        <location filename="../main.qml" line="569"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</source>
         <translation>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="536"/>
+        <location filename="../main.qml" line="572"/>
         <source>Blu-ray images (*.iso)</source>
         <translation>Blu-ray images (*.iso)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="659"/>
+        <location filename="../main.qml" line="695"/>
         <source>请戴上眼镜观看</source>
         <translation>Please put on your glasses</translation>
     </message>

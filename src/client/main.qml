@@ -291,25 +291,67 @@ Item {
             onDeinterlaceSelected: function(mode) { viewModel.setDeintMode(mode) }
             onRotateSelected: function(mode) { viewModel.setRotMode(mode) }
             onStereoSelected: function(mode, group) {
-                if (group === 1) {          // 输出设备（本期只有 XR 眼镜）
-                    stereo.setOutputType(mode);
-                    return;
+                // group 0 = 输出方式（0 关闭 / 1 眼镜 3D / 2 单眼 2D）
+                // group 1 = 片源格式（0 左右·全 / 1 左右·半 / 2 上下·全 / 3 上下·半）
+                // group 2 = 输出选项（单眼：0 左 / 1 右；眼镜：0 正常 / 1 交换眼序）
+                if (group === 1) {
+                    const tab = mode >= 2
+                    const half = (mode & 1) !== 0
+                    stereo.setLayout(tab ? 1 : 0)
+                    stereo.setHalf(half)
+                    viewModel.setStereoMap(stereo.active, stereo.layout, stereo.half ? 1 : 0)
+                    viewModel.setEyeState(viewModel.eyeMode, stereo.layout, stereo.half ? 1 : 0)
+                    return
                 }
+                if (group === 2) {
+                    if (stereo.active) {
+                        if ((stereo.swap ? 1 : 0) !== mode) stereo.swapEyes()
+                    } else {
+                        viewModel.setEyeState(mode === 1 ? 2 : 1,
+                                              stereo.layout, stereo.half ? 1 : 0)
+                    }
+                    return
+                }
+                // group 0：三种输出方式互斥
                 // ContextMenu 是 Popup.Item，内容挂在窗口 overlay 上；打开另一个
                 // Popup 不会自动关它（Qt 文档/源码无此语义），必须先显式关闭，
                 // 否则它会留在选择器下面，随后跟着主窗口一起移到眼镜屏。
                 contextMenu.close()
                 if (mode === 0) {
                     stereo.stop()
+                    viewModel.setEyeState(0, stereo.layout, stereo.half ? 1 : 0)
                 } else if (mode === 1) {
+                    // 进 3D 前先关单眼（互斥），再开选择器。
+                    viewModel.setEyeState(0, stereo.layout, stereo.half ? 1 : 0)
                     // 等当前 popup 的 close 处理完再开选择器，避免两个 popup
                     // 同帧叠放/抢 grab。
                     Qt.callLater(function() { stereoPicker.openForMode(1) })
                 } else {
-                    stereoToast.show(qsTr("2D to 3D is not implemented yet"))
+                    // 单眼 2D：不进 3D 独占模式、不动眼镜屏，只让滤镜链裁成一只眼。
+                    stereo.stop()
+                    viewModel.setStereoMap(false, 0, 0)
+                    viewModel.setEyeState(1, stereo.layout, stereo.half ? 1 : 0)
                 }
             }
             onQuitRequested: Qt.quit()   // 走标准退出路径（watch-later 落盘）
+        }
+
+        // 片源格式自动判定（宽/高 ≥2.6 → 左右·全；≤0.8 → 上下·全；其它不猜）。
+        // 只改"片源格式"，不动 3D/单眼模式。判定是**粘性属性**（可能在 QML
+        // 就绪前就发生），所以变化时应用 + 组件完成时补一次。
+        Connections {
+            target: viewModel
+            function onSourceLayoutHintChanged() { applySourceHint() }
+            Component.onCompleted: applySourceHint()
+            function applySourceHint() {
+                const hint = viewModel.sourceLayoutHint
+                if (hint < 0)
+                    return
+                stereo.setLayout(hint)
+                stereo.setHalf(false)
+                viewModel.setStereoMap(stereo.active, stereo.layout, 0)
+                viewModel.setEyeState(viewModel.eyeMode, stereo.layout, 0)
+            }
         }
 
         StereoPicker { id: stereoPicker }
@@ -662,6 +704,21 @@ Item {
         }
     }
 
+    // 瞬态提示（画面比例/每眼比例等键位操作反馈）。2D 用主 UI，3D 用
+    // presentation 内那一份（下面 progressOsd 旁边）。
+    StereoMessage {
+        id: messageOsd2d
+        anchors.fill: parent
+        z: 98
+        active: !controlMode && !stereo.active
+    }
+    Connections {
+        target: viewModel
+        function onMessageFlashed(value) {
+            if (!stereo.active) messageOsd2d.flash(value)
+        }
+    }
+
     // 进度提示：快捷键快进/快退时短暂显示当前进度（机制同音量提示）。
     // 只在 3D 显示——2D 桌面 UI 本身有进度条。
     StereoProgress {
@@ -671,6 +728,19 @@ Item {
         active: !controlMode && stereo.active
         position: viewModel.currentTime
         duration: viewModel.duration
+    }
+
+    StereoMessage {
+        id: messageOsd3d
+        anchors.fill: parent
+        z: 99
+        active: !controlMode && stereo.active
+    }
+    Connections {
+        target: viewModel
+        function onMessageFlashed(value) {
+            if (stereo.active) messageOsd3d.flash(value)
+        }
     }
 
     // 3D 快捷键帮助面板：presentation 内覆盖层（不是独立窗口）；H 只切显示。

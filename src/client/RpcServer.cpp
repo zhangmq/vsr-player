@@ -472,6 +472,68 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             QMetaObject::invokeMethod(vm, "toggleOsd", Qt::QueuedConnection);
             response = formatResponse("success");
         }
+    } else if (cmd == "get-source-format") {
+        // 片源格式状态（排障/验证自动判定用）：layout 0=左右 1=上下；half 0/1；
+        // eyeMode 0=off 1=左 2=右；hint = 自动判定结果（-1 未判定）。
+        if (!vm || !stereo_) {
+            response = formatResponse("no view model");
+        } else {
+            char buf[96];
+            snprintf(buf, sizeof buf, "layout=%d half=%d eye=%d hint=%d",
+                     stereo_->layout(), stereo_->half() ? 1 : 0,
+                     vm->property("eyeMode").toInt(),
+                     vm->property("sourceLayoutHint").toInt());
+            response = formatResponse("success", "\"" + std::string(buf) + "\"");
+        }
+    } else if (cmd == "get-video-size") {
+        // 滤镜链输出帧尺寸（video-out-params/w×h）—— 验证 vf_eye 裁切/拉伸、
+        // VSR 倍率等改动时不用截图，直接读尺寸。
+        if (!mpv_) {
+            response = formatResponse("no mpv");
+        } else {
+            int64_t w = 0, h = 0;
+            mpv_get_property(mpv_->handle(), "video-out-params/w", MPV_FORMAT_INT64, &w);
+            mpv_get_property(mpv_->handle(), "video-out-params/h", MPV_FORMAT_INT64, &h);
+            char buf[64];
+            snprintf(buf, sizeof buf, "%lldx%lld", (long long)w, (long long)h);
+            response = formatResponse("success", "\"" + std::string(buf) + "\"");
+        }
+    } else if (cmd == "set-eye") {
+        // 测试钩子：单眼 2D 输出（vf_eye）。
+        // 用法：set-eye off|left|right [sbs|tab] [full|half]
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: set-eye off|left|right [sbs|tab] [full|half]");
+        } else {
+            int mode = -1;
+            if (args[0] == "off") mode = 0;
+            else if (args[0] == "left") mode = 1;
+            else if (args[0] == "right") mode = 2;
+            if (mode < 0) {
+                response = formatResponse("usage: set-eye off|left|right [sbs|tab] [full|half]");
+            } else {
+                // 省略布局/尺寸时保持当前值（-1），便于只切眼别
+                int layout = -1, half = -1;
+                if (args.size() > 1)
+                    layout = (args[1] == "tab") ? 1 : (args[1] == "sbs" ? 0 : -1);
+                if (args.size() > 2)
+                    half = (args[2] == "half") ? 1 : (args[2] == "full" ? 0 : -1);
+                QMetaObject::invokeMethod(vm, "setEyeState", Qt::QueuedConnection,
+                                          Q_ARG(int, mode), Q_ARG(int, layout),
+                                          Q_ARG(int, half));
+                response = formatResponse("success");
+            }
+        }
+    } else if (cmd == "get-eye") {
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            const int m = vm->property("eyeMode").toInt();
+            static const char *kNames[] = {"off", "left", "right"};
+            response = formatResponse("success",
+                                      "\"" + std::string(kNames[m < 0 || m > 2 ? 0 : m]) + "\"");
+        }
     } else if (cmd == "set-stereo-map") {
         // 测试钩子：设置 3D 每眼映射（等价于真 3D 状态下客户端推给 vf_vsr 的值）。
         // 走 viewModel 同一入口，因此会被 syncVfOptions 重放（不会被链重建抹掉）——
