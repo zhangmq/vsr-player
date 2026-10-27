@@ -32,6 +32,7 @@
 
 #include <cuda.h>
 #include <nvrtc.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -58,6 +59,14 @@ static const struct m_option vf_opts_fields[] = {
 static const struct vf_rot_opts vf_rot_opts_def = {
     .angle = 0,
 };
+
+// 进程内"最后一次 vf-command 的 angle"。滤镜实例被 mpv 重建时用它覆盖链串里的
+// 初始值——链串是**加载时**的快照，若与当前状态不一致且该选项会改变输出尺寸
+// （rot 90/270 交换 w/h），重建后尺寸再变一次 → 又触发重配 → 无限重建/尺寸来回
+// 翻转（实测 2026-10-27：关掉旋转后每次重建又回到 90，日志刷出几十轮
+// "rot: 90 deg ... -> angle 90 -> 0"）。
+// -1 = 还没被命令设置过（用链串值）。
+static _Atomic int g_last_angle = -1;
 
 // ── Filter private state ───────────────────────────────────────────────────
 
@@ -525,6 +534,7 @@ static bool rot_command(struct mp_filter *f, struct mp_filter_command *cmd)
     long v = strtol(cmd->arg, &end, 10);
     if (!end || *end || v < 0 || v > 270 || (v % 90) != 0)
         return false;
+    atomic_store(&g_last_angle, (int)v);
     if (p->opts->angle != (int)v) {
         MP_INFO(f, "rot: angle %d -> %ld (vf-command)\n", p->opts->angle, v);
         p->opts->angle = (int)v;
@@ -558,6 +568,10 @@ static struct mp_filter *vf_rot_create(struct mp_filter *parent, void *options)
 
     struct priv *p = f->priv;
     p->opts = talloc_steal(p, options);
+    // 继承最后一次运行期状态（见 g_last_angle 的注释）
+    int last = atomic_load(&g_last_angle);
+    if (last >= 0 && last <= 270 && (last % 90) == 0)
+        p->opts->angle = last;
     p->last_angle = -1;
     return f;
 }

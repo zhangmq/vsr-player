@@ -46,6 +46,7 @@
 
 #include <cuda.h>
 #include <nvrtc.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -77,6 +78,13 @@ static const struct vf_eye_opts vf_eye_opts_def = {
     .layout = 0,
     .half = 0,
 };
+
+// 同 vf_rot：进程内"最后一次 vf-command 的状态"，滤镜实例重建时覆盖链串初值。
+// 这里三个选项**都会改变输出尺寸**（模式 off↔on、layout sbs↔tab、half 0↔1），
+// 不继承就会像 rot 一样形成"重建 → 尺寸变 → 再重建"的循环。
+static _Atomic int g_last_mode   = -1;
+static _Atomic int g_last_layout = -1;
+static _Atomic int g_last_half   = -1;
 
 // ── Filter private state ───────────────────────────────────────────────────
 
@@ -606,6 +614,8 @@ static bool eye_command(struct mp_filter *f, struct mp_filter_command *cmd)
                     lay == 0 ? "sbs" : "tab", half ? "half" : "full");
             p->opts->layout = lay;
             p->opts->half = half;
+            atomic_store(&g_last_layout, lay);
+            atomic_store(&g_last_half, half);
             p->last_eye = -1;   // 下一帧重新打印
         }
         return true;
@@ -621,6 +631,7 @@ static bool eye_command(struct mp_filter *f, struct mp_filter_command *cmd)
         static const char *names[] = {"off", "left", "right"};
         MP_INFO(f, "eye: %s (vf-command)\n", names[v]);
         p->opts->mode = v;
+        atomic_store(&g_last_mode, v);
         p->last_eye = -1;
         p->warned = false;
     }
@@ -651,6 +662,13 @@ static struct mp_filter *vf_eye_create(struct mp_filter *parent, void *options)
 
     struct priv *p = f->priv;
     p->opts = talloc_steal(p, options);
+    // 继承最后一次运行期状态（见 g_last_* 注释）
+    int m = atomic_load(&g_last_mode);
+    if (m >= 0 && m <= 2) p->opts->mode = m;
+    int lay = atomic_load(&g_last_layout);
+    if (lay >= 0 && lay <= 1) p->opts->layout = lay;
+    int hf = atomic_load(&g_last_half);
+    if (hf >= 0 && hf <= 1) p->opts->half = hf;
     p->last_eye = -1;
     return f;
 }
