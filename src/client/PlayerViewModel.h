@@ -441,6 +441,9 @@ public slots:
     Q_INVOKABLE void setAspect(const QString &v);
     /// 触发一次瞬态提示（3D 与 2D 都会显示）。
     Q_INVOKABLE void flashMessage(const QString &value) { emit messageFlashed(value); }
+    /// 播放列表里实际显示的条目名（面板 = PlaylistModel.display）。
+    Q_INVOKABLE QStringList playlistDisplayNames() const
+    { return playlistModel_.displayNames(); }
     void toggleFullscreen();
     void setOverlaysVisible(bool v);
     void toggleOsd();

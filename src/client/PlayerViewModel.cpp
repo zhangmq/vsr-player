@@ -203,6 +203,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
 
     mpv_->observeProperty("playlist", MPV_FORMAT_NODE, [this, post] {
         QStringList files;
+        QStringList titles;
         int cur = -1;
         mpv_node node;
         if (mpv_get_property(mpv_->handle(), "playlist", MPV_FORMAT_NODE,
@@ -212,17 +213,20 @@ void PlayerViewModel::attach(MpvController *mpv) {
                     mpv_node *entry = &node.u.list->values[i];
                     if (entry->format != MPV_FORMAT_NODE_MAP)
                         continue;
-                    QString fn;
+                    QString fn, ti;
                     for (int j = 0; j < entry->u.list->num; j++) {
                         const char *k = entry->u.list->keys[j];
                         mpv_node *v = &entry->u.list->values[j];
                         if (!strcmp(k, "filename") && v->format == MPV_FORMAT_STRING)
                             fn = v->u.string;
+                        else if (!strcmp(k, "title") && v->format == MPV_FORMAT_STRING)
+                            ti = v->u.string;
                         else if (!strcmp(k, "current") && v->format == MPV_FORMAT_FLAG
                                  && v->u.flag)
                             cur = i;
                     }
                     files.append(fn);
+                    titles.append(ti);
                 }
             }
             mpv_free_node_contents(&node);
@@ -230,7 +234,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
         // 全量快照 → PlaylistModel 前缀 diff 增量生效（切歌只刷
         // current 行高亮，不重建列表——QStringList 属性全量 reset
         // 是大列表卡顿主因）
-        post([this, files, cur] {
+        post([this, files, titles, cur] {
             // 缓存的 current 索引（= mpv playlist-pos，-1 = 无当前条目）。
             // "移除当前条目"用它，避免在 GUI 线程同步读 playlist-pos
             //（同 path 观察器注释：同步 mpv API 会和 DR 帧分配互锁）。
@@ -261,7 +265,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
             int shown = cur;
             if (shown < 0 && idlePlayIndex_ >= 0 && idlePlayIndex_ < files.size())
                 shown = idlePlayIndex_;
-            playlistModel_.setSnapshot(files, shown);
+            playlistModel_.setSnapshot(files, shown, titles);
             // 持久化上次播放列表（启动 restorePlaylist 用；清空也写）
             saveSettings("playlist", files);
             saveSettings("playlistCurrent", shown);

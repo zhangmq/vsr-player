@@ -51,7 +51,8 @@ QString PlaylistModel::displayName(const QString &path)
     return name;
 }
 
-void PlaylistModel::setSnapshot(const QStringList &paths, int current)
+void PlaylistModel::setSnapshot(const QStringList &paths, int current,
+                                const QStringList &titles)
 {
     // ── 前缀 diff：公共前缀保留，尾部增删增量通知 ──
     const int oldN = paths_.size();
@@ -66,13 +67,16 @@ void PlaylistModel::setSnapshot(const QStringList &paths, int current)
         beginRemoveRows({}, keep, oldN - 1);
         paths_.resize(keep);
         display_.resize(keep);
+        titles_.resize(keep);
         endRemoveRows();
     }
     if (newN > keep) {
         beginInsertRows({}, keep, newN - 1);
         for (int i = keep; i < newN; i++) {
             paths_.append(paths[i]);
-            display_.append(displayName(paths[i]));
+            const QString t = i < titles.size() ? titles[i] : QString();
+            titles_.append(t);
+            display_.append(t.isEmpty() ? displayName(paths[i]) : t);
         }
         endInsertRows();
     }

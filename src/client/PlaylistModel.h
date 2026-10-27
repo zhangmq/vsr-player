@@ -35,7 +35,10 @@ public:
 
     /// 全量快照替换（增量生效）。paths 为完整路径列表，current 为
     /// 当前播放条目索引（-1 = 无）。
-    void setSnapshot(const QStringList &paths, int current);
+    /// titles 可选：与 paths 等长的显示名覆盖（mpv playlist 条目的 `title`
+    /// 字段，如蓝光展开后的 "Title 6 · 1:18:30"）；空串表示按路径推导。
+    void setSnapshot(const QStringList &paths, int current,
+                     const QStringList &titles = {});
 
     int currentIndex() const { return current_; }
     int count() const { return paths_.size(); }
@@ -43,6 +46,8 @@ public:
     /// stop 后列表保留（keep-playlist），重播用 playlist-play-index
     /// 播放原条目而非 loadfile replace（后者清空整个列表）。
     int indexOfPath(const QString &path) const { return paths_.indexOf(path); }
+    /// 当前显示名快照（面板渲染的就是它；排障/脚本用）。
+    QStringList displayNames() const { return display_; }
 
 signals:
     void currentIndexChanged();
@@ -52,6 +57,7 @@ private:
     static QString displayName(const QString &path);
 
     QVector<QString> paths_;      // 完整路径（与 mpv playlist filename 一致）
-    QVector<QString> display_;    // 显示名（basename）
+    QVector<QString> display_;    // 显示名（titles_ 优先，否则 basename）
+    QVector<QString> titles_;     // 显示名覆盖（mpv playlist entry 的 title）
     int current_ = -1;
 };

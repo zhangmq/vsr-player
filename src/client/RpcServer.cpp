@@ -646,6 +646,44 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             }, Qt::QueuedConnection);
             response = formatResponse("success");
         }
+    } else if (cmd == "get-playlist") {
+        // 播放列表条目（filename + title）——验证蓝光 ISO 展开后的命名等。
+        if (!mpv_) {
+            response = formatResponse("no mpv");
+        } else {
+            mpv_node node;
+            std::string out;
+            if (mpv_get_property(mpv_->handle(), "playlist", MPV_FORMAT_NODE, &node) >= 0) {
+                if (node.format == MPV_FORMAT_NODE_ARRAY) {
+                    for (int i = 0; i < node.u.list->num; i++) {
+                        mpv_node *e = &node.u.list->values[i];
+                        if (e->format != MPV_FORMAT_NODE_MAP) continue;
+                        std::string fn, ti;
+                        bool cur = false;
+                        for (int j = 0; j < e->u.list->num; j++) {
+                            const char *k = e->u.list->keys[j];
+                            mpv_node *v = &e->u.list->values[j];
+                            if (!strcmp(k, "filename") && v->format == MPV_FORMAT_STRING)
+                                fn = v->u.string;
+                            else if (!strcmp(k, "title") && v->format == MPV_FORMAT_STRING)
+                                ti = v->u.string;
+                            else if (!strcmp(k, "current") && v->format == MPV_FORMAT_FLAG)
+                                cur = v->u.flag != 0;
+                        }
+                        out += (cur ? "* " : "  ");
+                        out += std::to_string(i) + ": title='" + ti + "' file='" + fn + "'\n";
+                    }
+                }
+                mpv_free_node_contents(&node);
+            }
+            if (vm) {
+                const QStringList names = vm->playlistDisplayNames();
+                out += "-- model.display --\n";
+                for (int i = 0; i < names.size(); i++)
+                    out += std::to_string(i) + ": '" + names[i].toStdString() + "'\n";
+            }
+            response = formatResponse("success", "\"" + jsonEscape(out) + "\"");
+        }
     } else if (cmd == "grab-window") {
         // 测试用：抓主窗口（锁屏/无眼镜时检查 UI）
         if (!win_) {
