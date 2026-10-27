@@ -92,7 +92,7 @@ PopupBase {
          submenu: [
              {label: qsTr("Off"),        value: 0, group: 0},
              {label: qsTr("3D glasses"), value: 1, group: 0},
-             {label: qsTr("Single eye"), value: 2, group: 0}
+             {label: qsTr("2D output"),  value: 2, group: 0}
          ]},
         {icon: "", text: qsTr("Source layout"),
          hint: function() { return root.layoutLabel() },
@@ -135,7 +135,7 @@ PopupBase {
     function stereoModeLabel() {
         switch (stereoOutputMode()) {
         case 1: return qsTr("3D glasses")
-        case 2: return qsTr("Single eye")
+        case 2: return qsTr("2D output")
         default: return qsTr("Off")
         }
     }

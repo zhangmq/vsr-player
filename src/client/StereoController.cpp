@@ -136,11 +136,13 @@ void StereoController::start(int mode, int screenIndex) {
         stop();
 
     mode_ = mode;
-    // 片源格式（布局 / 全半）是**片源属性**，与 3D 是否激活无关：
-    // 菜单、J/L 键、单眼模式共用同一份状态，因此持久化并在构造时恢复。
-    layout_ = settings_.value("stereoLayout", 0).toInt() == 1 ? 1 : 0;
+    // 片源格式（布局 / 全半）是**片源属性**：与 3D 是否激活无关，菜单 / J/L 键 /
+    // 2D 输出共用同一份状态；但**不跨会话保留**（用户 2026-10-27 定：除非做到
+    // 按文件保存，否则启动一律回到默认，由打开文件时的自动判定补齐）。
+    layout_ = 0;
+
     swap_ = false;
-    half_ = settings_.value("stereoHalf", false).toBool();
+    half_ = false;
     helpVisible_ = true;
     screenName_ = s->name();
     active_ = true;
@@ -268,7 +270,6 @@ void StereoController::setLayout(int layout) {
     if (layout_ == nl)
         return;
     layout_ = nl;
-    settings_.setValue("stereoLayout", layout_);
     emit stateChanged();
 }
 
@@ -276,7 +277,6 @@ void StereoController::setHalf(bool half) {
     if (half_ == half)
         return;
     half_ = half;
-    settings_.setValue("stereoHalf", half_);
     emit stateChanged();
 }
 

@@ -884,7 +884,7 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   `syncVfOptions()` 与 `replayStereoMap()` 都会重放（**链重建抹运行期 vf-command**）。
 - **UI**：右键菜单一级的「3D」小块 = 三条入口
   **输出方式**（关闭 / 眼镜 3D / 单眼 2D）、**片源格式**（左右·全/半、上下·全/半）、
-  **输出选项**（左眼 / 右眼）。
+  **输出选项**（左眼 / 右眼）；输出方式里第三项文案 = **2D 输出**（不是"单眼 2D"）。
   ⚠ **三条目彼此独立，不做联动**（2026-10-27 用户明确要求）：
   - 不加 `visibleWhen` 隐藏、不按模式切标签、不因某个选项自动改另一个选项；
   - 输出选项只写"单眼输出用哪只眼"这一个独立状态 `eyePref`（0=左 1=右），
@@ -899,8 +899,12 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   override 污染）：宽/高 ≥ 2.6 → 左右·全；**≤ 1.25 → 上下·全**（1920×2160 = 0.889；
   4:3 = 1.333 不会误判）；其余不猜（半幅无法从尺寸区分）。结果经**粘性属性**
   `sourceLayoutHint` 给 QML（判定可能发生在 QML 就绪前，`Component.onCompleted` 补应用）。
-- **布局/全半是片源属性**：`StereoController` 持久化（`stereoLayout`/`stereoHalf`）并在
-  构造时恢复；**`start()` 不再重置**（进 3D 不该清掉用户设的片源格式）。
+- **布局/全半是片源属性，但"不跨会话保留"**（用户 2026-10-27 定；要做按文件保存才会持久化）：
+  `StereoController` 构造时一律 `layout_=0 / half_=false`，**不读也不写** `stereoLayout`/
+  `stereoHalf`；`main.cpp` 启动时用独立 QSettings 一次性清掉旧版本遗留的这两个键
+  （放在最前面 + `sync()`：两个控制器各有 QSettings 缓存，从别处 remove 会被它们
+  随后的 sync 写回去）。打开文件时的自动判定仍然生效（只在内存里改）。
+  `start()` 也不重置（进 3D 不该清掉当前片源格式）。
 - **RPC**：`set-eye off|left|right [sbs|tab] [full|half]`、`get-eye`、
   `get-video-size`（滤镜链输出帧尺寸，验证裁切/倍率不用截图）、
   `get-source-format`（layout/half/eye/hint 状态）。

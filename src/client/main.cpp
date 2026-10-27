@@ -294,6 +294,20 @@ private:
 int main(int argc, char *argv[]) {
     setbuf(stdout, nullptr); setbuf(stderr, nullptr);
     MLOG_INFO("=== vsr-player ===");
+    // 一次性迁移：旧版本把片源格式（布局/全半）持久化过；现在改为"不跨会话
+    // 保留"（用户 2026-10-27 定），启动时清掉遗留键。放在最前面、用独立
+    // QSettings + sync：PlayerViewModel/StereoController 各有自己的 QSettings
+    // 缓存，从别处 remove 会被它们随后的 sync 写回去。
+    {
+        QSettings legacy(QStringLiteral("vsr-player"), QStringLiteral("vsr-player"));
+        if (legacy.contains("stereoLayout") || legacy.contains("stereoHalf")) {
+            legacy.remove("stereoLayout");
+            legacy.remove("stereoHalf");
+            legacy.sync();
+            MLOG_INFO("settings: dropped legacy stereoLayout/stereoHalf "
+                      "(source format is no longer persisted)");
+        }
+    }
 
     // ── CLI ──────────────────────────────────────────────────────────────
     Options opts;
