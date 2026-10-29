@@ -602,7 +602,7 @@ private:
     void updateTime(int64_t t, int64_t d);
     void updateVolume(double v);
     void updateSpeed(double s);
-    void updateHwDecoding(bool hw);
+    void updateHwDecoding(bool hw, bool announce = true);
     /// 由 hwdec-current / 解码器 / video-params 观察器与 FILE_LOADED 调用：
     /// 刷新"当前文件能否硬解"（偏好=硬解 ∧ 解码器已就绪 ∧ 实际软解 → 不可）。
     void refreshHwDecodeAvailability(int forceReason = 0);
@@ -702,6 +702,7 @@ private:
     QString aspectApplied_ = QStringLiteral("no");  // 上次下发给 mpv 的值
     QString aspect_ = QStringLiteral("no");    // no=容器比例（mpv 0.41 -1 已弃用，no 等价无警告）
     std::atomic<bool> hwDecoding_{false};      // 实际（hwdec-current != no）
+    bool hwdecKnown_ = false;                  // hwdec-current 读到过真实值（false = 解码器未建立/属性不可用）
     std::atomic<bool> hwDecodeEnabled_{true};  // 用户偏好（我们下发的 hwdec 开关）
     std::atomic<bool> hwDecodeAvailable_{true};// 当前文件能否硬解（UI 禁用依据）
     std::atomic<int> hwDecodeReason_{0};       // 0=可切换 1=设备无 CUDA 2=codec 限制

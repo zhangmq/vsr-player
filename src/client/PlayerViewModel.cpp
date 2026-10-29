@@ -151,10 +151,28 @@ void PlayerViewModel::attach(MpvController *mpv) {
 
     // hwdec-active 在 mpv 0.41 已移除（读不到 → UI 永远显示"软解"），
     // 用 hwdec-current 替代（与 main.cpp benchmark OSD 同口径）。
+    //
+    // ⚠ `hwdec-current` 在**解码器还没建立**时是 M_PROPERTY_UNAVAILABLE，不是
+    // "no"（mpv player/command.c: mp_property_hwdec_current → 没有 track->dec
+    // 直接返回 UNAVAILABLE）。这里必须把"读不到"与"读到 no"分开：
+    //   - 读不到 → 保持上一次状态、不重算可用性（解码器还没起来）；
+    //   - 读到 no → mpv 真的在用软解（文件只能软解 / 损坏文件被
+    //     hwdec-software-fallback 回退）。
+    // 旧实现把两者混为一谈，于是**每个文件起播那一刻**都会误报
+    // "decode toggle disabled: this file is software-only" 并把 UI 的软/硬
+    // 切换按钮禁用一瞬（实测本地 h264 在 809ms、网络条目在 2.5s 各误报一次，
+    // 而 mpv 同一时刻的日志是 "Using hardware decoding (nvdec)."）。
     mpv_->observeProperty("hwdec-current", MPV_FORMAT_STRING, [this, post] {
-        std::string s = mpv_->propertyString("hwdec-current");
-        post([this, s] {
-            updateHwDecoding(!s.empty() && s != "no");
+        std::string s;
+        const bool known = mpv_->propertyStringIfAvailable("hwdec-current", s);
+        post([this, s, known] {
+            if (!known) {
+                hwdecKnown_ = false;      // 解码器未建立 → 状态"未知"，不做判定
+                return;
+            }
+            const bool firstReading = !hwdecKnown_;
+            hwdecKnown_ = true;
+            updateHwDecoding(!s.empty() && s != "no", /*announce=*/!firstReading);
             refreshHwDecodeAvailability();
             if (hwdecName_ != QString::fromStdString(s)) {
                 hwdecName_ = QString::fromStdString(s);
@@ -2600,13 +2618,17 @@ void PlayerViewModel::updateSpeed(double s) {
     if (speed_.load() != s) { speed_.store(s); emit speedChanged(); }
 }
 
-void PlayerViewModel::updateHwDecoding(bool hw) {
+// announce=false：这是**本文件第一次**读到真实状态（此前解码器还没建立、
+// hwdec-current 不可用）→ 只设值不打"X -> Y"日志，否则会凭空造出一次
+// 并不存在的软/硬切换（旧行为：每个文件起播都打一条 software -> hardware）。
+void PlayerViewModel::updateHwDecoding(bool hw, bool announce) {
     if (hwDecoding_.load() != hw) {
         hwDecoding_.store(hw);
-        MLOG_INFO("decoder: actual %s -> %s (preference=%s hwdec=%s)",
-                  hw ? "software" : "hardware", hw ? "hardware" : "software",
-                  hwDecodeEnabled_.load() ? "hardware" : "software",
-                  hwdecInit_.empty() ? "?" : hwdecInit_.c_str());
+        if (announce)
+            MLOG_INFO("decoder: actual %s -> %s (preference=%s hwdec=%s)",
+                      hw ? "software" : "hardware", hw ? "hardware" : "software",
+                      hwDecodeEnabled_.load() ? "hardware" : "software",
+                      hwdecInit_.empty() ? "?" : hwdecInit_.c_str());
         emit hwDecodingChanged();
     }
 }
@@ -2615,7 +2637,10 @@ void PlayerViewModel::updateHwDecoding(bool hw) {
 //   - 用户偏好 = 软解（hwDecodeEnabled_=false）→ 视为"可切换"（随时能切回
 //     硬解，只是这个文件能不能硬解要切了才知道）
 //   - 解码器尚未就绪（decoderName_ 空）→ 保持原值，避免加载瞬间误禁用
-//   - 偏好=硬解、解码器已就绪、但 hwdec-current = no → **mpv 回退了**，
+//   - hwdec-current 还**没读到过**（hwdecKnown_=false，解码器刚建立但 mpv
+//     尚未报告）→ 保持原值；否则会把"还没开始解码"当成"软解回退"，
+//     起播瞬间误禁用开关（2026-10-29 修，见 hwdec-current 观察器注释）
+//   - 偏好=硬解、解码器已就绪、hwdec-current 明确=no → **mpv 回退了**，
 //     即该文件只能软解 → false（UI 显示"软解"并禁用切换按钮）
 void PlayerViewModel::refreshHwDecodeAvailability(int forceReason) {
     bool avail;
@@ -2623,6 +2648,8 @@ void PlayerViewModel::refreshHwDecodeAvailability(int forceReason) {
     if (!hwDecodeEnabled_.load())        // 用户偏好=软解 → 随时可切回硬解
         avail = true;
     else if (decoderName_.isEmpty())     // 解码器还没起来（加载中）→ 保持原值
+        return;
+    else if (!hwdecKnown_)               // 解码器在，但 hwdec-current 还没读到
         return;
     else {                               // 偏好=硬解却实际软解 → 不能硬解
         avail = hwDecoding_.load();

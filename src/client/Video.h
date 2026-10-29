@@ -128,6 +128,19 @@ private:
 
     std::function<void()> frameRenderedCb_;
 
+    // ── 临时诊断：帧级黑帧探测（VSR_LOG_BLACK=1 时启用）─────────────────
+    // 渲染完 mpv 的一帧后，从 rtImage 中心读回一小块，算平均亮度并按帧打
+    // 一行日志。用途：判断"切集黑屏"是 mpv 真的输出黑帧，还是合成器/
+    // 上屏环节的问题——只在本机排查时开，正常播放零开销。
+    bool blackProbe_ = false;
+    VkBuffer blackBuf_ = VK_NULL_HANDLE;
+    VkDeviceMemory blackMem_ = VK_NULL_HANDLE;
+    void *blackMap_ = nullptr;
+    void probeFrameBlack();
+    /// 读回 rtImage 中心 32x32 的平均亮度（0 = 全黑）。成功返回 true。
+    bool sampleRtMean(double &mean);
+
+
     // ── RT resize 节流（稳定计数）─────────────────────────────────
     // resize 拖动时每帧尺寸变化，直接 ensureRenderTarget 会每帧重建
     // rt + 触发 mpv reconfig（VSR 分辨率重配）→ 卡顿。改为：尺寸连续

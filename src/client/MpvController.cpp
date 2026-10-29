@@ -236,6 +236,15 @@ bool MpvController::setPropertyString(const char *name, const std::string &value
     return mpv_set_property_string(mpv_, name, value.c_str()) >= 0;
 }
 
+bool MpvController::propertyStringIfAvailable(const char *name, std::string &out) {
+    char *s = nullptr;
+    if (mpv_get_property(mpv_, name, MPV_FORMAT_STRING, &s) < 0 || !s)
+        return false;
+    out.assign(s);
+    mpv_free(s);
+    return true;
+}
+
 // ── Async property set / command ───────────────────────────────────────
 // 主线程调用不阻塞：请求投递到 mpv 核心队列异步执行。参数在调用时
 // 同步复制（mpv_set_property_async → m_option_copy；mpv_command_async
@@ -306,6 +315,7 @@ void MpvController::observeProperty(const char *name, mpv_format format,
 uint64_t MpvController::update() {
     return mpv_render_context_update(mctx_);
 }
+
 
 void MpvController::setHdrTarget(bool hdr, float minLuma, float maxLuma) {
     hdrTarget_  = hdr;
