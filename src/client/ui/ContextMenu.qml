@@ -45,6 +45,8 @@ PopupBase {
     closePolicy: Popup.CloseOnPressOutside
     /// 键盘焦点是否在二级面板内（决定 ↑↓←→/Enter 作用在哪个面板）
     property bool focusSub: false
+    /// 键盘焦点是否在「字幕延迟」「音频延迟」的 −/+/↺ 控件上（Enter 进入）
+    property bool focusControl: false
     /// 指针上次的窗口坐标：只有**指针真的移动**才改当前行——固定高度列表
     /// 滚动时指针底下的行会变，但指针没动，不该把当前行夺走（滚轮不参与）。
     property point lastPointerPos: Qt.point(-1, -1)
@@ -389,7 +391,8 @@ PopupBase {
         return kind === "audio" ? viewModel.audioDelay : viewModel.subDelay
     }
     function delayText(sec) {
-        var ms = Math.round(sec * 1000)
+        // |0 把 -0 归一成 0（否则会显示 "-0ms"）
+        var ms = Math.round(sec * 1000) | 0
         return (ms > 0 ? "+" : "") + ms + "ms"
     }
 
@@ -476,6 +479,11 @@ PopupBase {
         if (it.sep === true || it.header !== undefined) return false
         return root.itemShown(it)
     }
+    /// 这一行是「字幕延迟」/「音频延迟」（行内有 −/+/↺ 控件）
+    function isDelayRow(i) {
+        var it = root.items[i]
+        return !!it && it.control === "delay"
+    }
     function hasSubRow(i) {
         var it = root.items[i]
         return !!it && it.submenu !== undefined
@@ -494,6 +502,7 @@ PopupBase {
         if (i === root.currentIndex) return
         root.currentIndex = i
         root.focusSub = false
+        root.focusControl = false
         if (root.hasSubRow(i)) {
             root.subVisible = true
             root.subCurrentIndex = root.initialSubRow()
@@ -556,6 +565,12 @@ PopupBase {
         }
         var i = root.currentIndex
         if (i < 0) return
+        // 「字幕延迟」/「音频延迟」：Enter 进/出 −/+/↺ 控件态，
+        // 之后 ←/→ 调值（±50ms），Esc/Enter/↑↓ 退出
+        if (root.isDelayRow(i)) {
+            root.focusControl = !root.focusControl
+            return
+        }
         if (root.hasSubRow(i)) {
             root.subVisible = true
             root.focusSub = true
@@ -571,6 +586,12 @@ PopupBase {
     ///（「字幕延迟」「音频延迟」的 −/+/↺ 是鼠标操作；键盘要调值需另行设计
     /// 行内可聚焦目标，不在本期）。
     function arrowHorizontal(dir) {
+        // 行内控件态：←/→ 调值（±50ms）——这是"Enter 后才调值"的那条路径，
+        // 平时方向键只导航（用户 2026-11-02 定）
+        if (root.focusControl) {
+            root.delayNudge(root.items[root.currentIndex].kind, dir * 0.05)
+            return
+        }
         if (root.focusSub) {
             if (dir < 0) root.focusSub = false
             return
@@ -601,9 +622,11 @@ PopupBase {
     function handleKey(key) {
         switch (key) {
         case "up":
+            root.focusControl = false
             if (root.focusSub) root.moveSub(-1); else root.moveCurrent(-1)
             break
         case "down":
+            root.focusControl = false
             if (root.focusSub) root.moveSub(1); else root.moveCurrent(1)
             break
         case "left":  root.arrowHorizontal(-1); break
@@ -623,13 +646,16 @@ PopupBase {
         // 偏移快捷键（与窗口级 z/Z/Alt+z、x/X/Alt+x 完全同一套语义）：
         // 窗口级 Shortcut 在"有 popup 打开"时禁用，所以菜单里要自己接一份，
         // 否则开着菜单按键没反应。
-        case "z":       root.delayNudge("sub", -0.05); break
-        case "shift+z": root.delayNudge("sub", 0.05); break
-        case "alt+z":   root.delayReset("sub"); break
-        case "x":       root.delayNudge("audio", -0.05); break
-        case "shift+x": root.delayNudge("audio", 0.05); break
-        case "alt+x":   root.delayReset("audio"); break
+        // 与窗口级完全同一套（对齐 mpv）：字幕 z / Shift+Z，音频 Ctrl++ / Ctrl+-，
+        // 归零 Ctrl+0（字幕）、Ctrl+Alt+0（音频）
+        case "z":         root.delayNudge("sub", -0.05); break
+        case "shift+z":   root.delayNudge("sub", 0.05); break
+        case "ctrl+0":    root.delayReset("sub"); break
+        case "audio-up":  root.delayNudge("audio", 0.05); break
+        case "audio-down":root.delayNudge("audio", -0.05); break
+        case "ctrl+alt+0":root.delayReset("audio"); break
         case "esc":
+            if (root.focusControl) { root.focusControl = false; break }
             if (root.subVisible) {
                 root.subVisible = false
                 root.focusSub = false
@@ -652,6 +678,7 @@ PopupBase {
         }
         return "cur=" + root.currentIndex + "(" + cur + ") sub=" + (root.subVisible ? 1 : 0)
                + "[" + root.subCurrentIndex + ":" + sub + "] focusSub=" + (root.focusSub ? 1 : 0)
+               + " ctl=" + (root.focusControl ? 1 : 0)
     }
 
     /// 二级面板的 y：与所属条目行对齐。
@@ -893,12 +920,16 @@ PopupBase {
             else if (ev.key === Qt.Key_End) k = "end"
             else if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter) k = "enter"
             else if (ev.key === Qt.Key_Escape) k = "esc"
-            else if (ev.key === Qt.Key_Z)
-                k = (ev.modifiers & Qt.AltModifier) ? "alt+z"
-                  : (ev.modifiers & Qt.ShiftModifier) ? "shift+z" : "z"
-            else if (ev.key === Qt.Key_X)
-                k = (ev.modifiers & Qt.AltModifier) ? "alt+x"
-                  : (ev.modifiers & Qt.ShiftModifier) ? "shift+x" : "x"
+            else if (ev.key === Qt.Key_Z && (ev.modifiers & Qt.ControlModifier) === 0)
+                k = (ev.modifiers & Qt.ShiftModifier) ? "shift+z" : "z"
+            else if (ev.key === Qt.Key_0 && (ev.modifiers & Qt.ControlModifier)) {
+                k = (ev.modifiers & Qt.AltModifier) ? "ctrl+alt+0" : "ctrl+0"
+            }
+            else if (ev.modifiers & Qt.ControlModifier
+                     && (ev.key === Qt.Key_Plus || ev.key === Qt.Key_Equal))
+                k = "audio-up"
+            else if (ev.modifiers & Qt.ControlModifier && ev.key === Qt.Key_Minus)
+                k = "audio-down"
             if (k !== "") { root.handleKey(k); ev.accepted = true }
         }
         implicitWidth: root.menuWidth
@@ -979,6 +1010,15 @@ PopupBase {
                     // ── 延迟控件行：[−] 值 [+] │ 重置 ─────────────────────
                     // 点按钮**不关菜单**（可连点）；写入在 PlayerViewModel 里
                     // 按 500ms debounce 合并，避免音频反复重同步。
+                    // 控件态外框（Enter 进入后才有；用项目强调色，不新增样式语言）
+                    Rectangle {
+                        visible: isControl && root.focusControl && index === root.currentIndex
+                        anchors.fill: delayCtl
+                        anchors.margins: -4
+                        radius: 6
+                        color: "transparent"
+                        border { width: 1; color: "#ffcc00" }
+                    }
                     Row {
                         id: delayCtl
                         visible: isControl

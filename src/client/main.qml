@@ -539,30 +539,36 @@ Item {
             enabled: root.shortcutsEnabled; sequence: "Ctrl+L"
             onActivated: urlPopup.open()
         }
-        // 字幕/音频偏移：z/Z 与 x/X 成对（步进 50ms），Alt+ 同名键重置。
-        // 与 mpv 自己的 z/Z（sub-delay）习惯一致；x/X 因 mpv 无默认绑定。
+        // 偏移快捷键（对齐 mpv：字幕 z/Z、音频 Ctrl++/Ctrl+-；Qt 会归一化大小写，
+        // 所以 Shift 必须显式写成 "Shift+Z"——写成 "Z" 与 "z" 是同一条键）。
+        // 归零：字幕 Ctrl+0、音频 Ctrl+Alt+0（用户 2026-11-02 定）。
         Shortcut {
             enabled: root.shortcutsEnabled && !stereo.active; sequence: "z"
             onActivated: viewModel.adjustSubDelay(-0.05)
         }
         Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Z"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Shift+Z"
             onActivated: viewModel.adjustSubDelay(0.05)
         }
         Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Alt+z"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+0"
             onActivated: viewModel.resetSubDelay()
         }
+        // 音频：mpv 惯例 Ctrl++ / Ctrl+-；另绑 Ctrl+=（很多键盘 + 要按 Shift，避免按不出来）
         Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "x"
-            onActivated: viewModel.adjustAudioDelay(-0.05)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "X"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl++"
             onActivated: viewModel.adjustAudioDelay(0.05)
         }
         Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Alt+x"
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+="
+            onActivated: viewModel.adjustAudioDelay(0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+-"
+            onActivated: viewModel.adjustAudioDelay(-0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+Alt+0"
             onActivated: viewModel.resetAudioDelay()
         }
         Shortcut {
