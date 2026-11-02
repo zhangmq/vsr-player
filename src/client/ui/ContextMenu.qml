@@ -89,11 +89,12 @@ PopupBase {
         // 轨道/流入口**不显示当前值**：轨道名/流标题都很长（实测 39 条轨道、
         // "1080P 高清 · AV1 · 1.9M" 这类），在 230px 宽的菜单里会盖住条目名。
         // 当前值在二级面板里用勾选表达。
+        // 「视频」= 网络流（选哪条码流）+ 视频轨道（当前码流内的第几条轨）。
+        // 两者是**不同层级**：edition 决定源（分辨率/编码/码率），vid 只是源内的轨。
+        // 网络视频每个 edition 恒 1 条视频轨，本地多视频轨 MKV 才有第二段。
         {icon: "󰕧", text: qsTr("Video"),
-         subSig: "videoTrackPicked",
-         current: function() { return root.selectedTrackId("video") },
-         submenu: function() { return root.videoTracksMenu() },
-         visibleWhen: function() { return root.hasTracks() }},
+         submenu: function() { return root.videoMenu() },
+         visibleWhen: function() { return root.hasVideoMenu() }},
         {icon: "󰝚", text: qsTr("Audio"),
          subSig: "audioTrackPicked",
          current: function() { return root.selectedTrackId("audio") },
@@ -110,11 +111,6 @@ PopupBase {
          visibleWhen: function() { return root.hasTracks() }},
         {control: "delay", kind: "audio", text: qsTr("Audio delay"),
          visibleWhen: function() { return root.hasTracks() }},
-        {icon: "󱜠", text: qsTr("Network stream"),
-         subSig: "editionPicked",
-         current: function() { return viewModel.currentEdition },
-         submenu: function() { return root.editionsMenu() },
-         visibleWhen: function() { return viewModel.networkSource && root.hasEditions() }},
 
         // ── 画面处理（反交错 / 旋转 等"处理画面"的选项归成一组）──────────
         {sep: true},
@@ -220,12 +216,39 @@ PopupBase {
         return qsTr("Auto")
     }
 
-    function videoTracksMenu() {
-        var out = [{label: qsTr("Auto"), value: -2}]
+    /// 「视频」二级面板：网络流 + 视频轨道两段（各自固定高度滚动区）。
+    /// 行自带 `current`（勾选）与 `subSig`（点它调哪个信号）——两段语义不同，
+    /// 不能再共用父条目的 subSig。
+    function videoMenu() {
+        var out = []
+        if (root.hasEditions()) {
+            out.push({header: qsTr("Network stream")})
+            var eds = viewModel.editions
+            for (var i = 0; i < eds.length; i++)
+                out.push({label: root.editionLabel(eds[i].title),
+                          value: eds[i].id,
+                          subSig: "editionPicked",
+                          current: eds[i].id === viewModel.currentEdition,
+                          section: "editions", sectionRows: root.editionSectionRows})
+        }
         var ts = root.tracksOf("video")
-        for (var i = 0; i < ts.length; i++)
-            out.push({label: root.trackLabel(ts[i]), value: ts[i].id})
+        if (ts.length > 1) {          // 单视频轨的文件没必要占一行
+            if (out.length > 0) out.push({sep: true})
+            out.push({header: qsTr("Video tracks")})
+            out.push({label: qsTr("Auto"), value: -2, subSig: "videoTrackPicked",
+                      section: "vtracks", sectionRows: root.trackSectionRows})
+            for (var j = 0; j < ts.length; j++)
+                out.push({label: root.trackLabel(ts[j]), value: ts[j].id,
+                          subSig: "videoTrackPicked",
+                          current: ts[j].id === root.selectedTrackId("video"),
+                          section: "vtracks", sectionRows: root.trackSectionRows})
+        }
         return out
+    }
+
+    /// 「视频」入口是否显示：有网络流可选，或本片有多条视频轨
+    function hasVideoMenu() {
+        return (viewModel.networkSource && root.hasEditions()) || root.tracksOf("video").length > 1
     }
 
     function audioTracksMenu() {
@@ -347,22 +370,6 @@ PopupBase {
         return parts.join(" · ")
     }
 
-    function editionsMenu() {
-        var out = []
-        var eds = viewModel.editions
-        for (var i = 0; i < eds.length; i++)
-            out.push({label: root.editionLabel(eds[i].title), value: eds[i].id})
-        return out
-    }
-
-    function editionHint() {
-        var eds = viewModel.editions
-        var cur = viewModel.currentEdition
-        for (var i = 0; i < eds.length; i++)
-            if (eds[i].id === cur) return root.editionLabel(eds[i].title)
-        return ""
-    }
-
     // ── 延迟（字幕 / 音频）：±50ms，显示统一用毫秒 ──────────────────────
     function delayValue(kind) {
         return kind === "audio" ? viewModel.audioDelay : viewModel.subDelay
@@ -469,6 +476,8 @@ PopupBase {
     /// 两个滚动区固定显示的行数（用户 2026-11-02：固定高度 + 上下小三角提示）
     readonly property int nearbySectionRows: 4
     readonly property int trackSectionRows: 8
+    /// 网络流滚动区显示行数（实测某条 B 站视频 12 条可选）
+    readonly property int editionSectionRows: 8
     /// 上下小三角所在行的高度
     readonly property int triH: 14
 
@@ -516,20 +525,26 @@ PopupBase {
     }
     readonly property real subViewH: root.subContentH
 
-    /// 某一行是否是"当前值"（勾选态）
+    /// 某一行是否是"当前值"（勾选态）。
+    /// 行自带 `current` 时优先用它（同一个入口里混了两种语义的分段：网络流/视频轨），
+    /// 否则退回父条目的 `current(group)` 老机制（反交错/旋转/3D 那三条）。
     function isCurrentSubRow(row) {
+        if (row.current !== undefined) return row.current === true
         var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
         if (!it || !it.current) return false
         if (row.header !== undefined || row.sep === true || row.sig !== undefined) return false
         return row.value === it.current(row.group || 0)
     }
 
-    /// 点击二级面板里的某一行：动作行发自己的 sig；普通行交给所属条目的 subSig
+    /// 点击二级面板里的某一行：动作行发自己的 sig；行自带 subSig 用它；
+    /// 否则交给所属条目的 subSig（老机制）。
     function activateSubRow(row) {
         var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
         if (row.sig !== undefined) {
             if (row.arg !== undefined) root[row.sig](row.arg)
             else root[row.sig]()
+        } else if (row.subSig) {
+            root[row.subSig](row.value, row.group || 0)
         } else if (it && it.subSig) {
             root[it.subSig](row.value, row.group || 0)
         }
