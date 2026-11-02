@@ -649,6 +649,30 @@ Item {
     }
     // 测试/调试入口：RPC 在指定位置打开右键菜单（正常从右键进入）。
     // 用于截图核对菜单排版/分组（RPC `open-menu <x> <y>`）。
+    /// RPC `open-menu` 用：写这个属性即打开菜单（属性写入不依赖 QML 方法
+    /// 签名匹配，比 invokeMethod 调 QML 函数可靠——后者会静默失败）。
+    property var pendingMenuOpen: null
+    onPendingMenuOpenChanged: {
+        if (!pendingMenuOpen) return
+        openMenuAt(pendingMenuOpen[0], pendingMenuOpen[1], pendingMenuOpen[2])
+        pendingMenuOpen = null
+    }
+
+    /// 菜单结构快照（RPC get-menu-state 读取，验证分组/高度不用截图）
+    property string menuDebugInfo: {
+        var c = contextMenu
+        if (!c) return ""
+        var parts = ["subOpen=" + (c.subOpen ? 1 : 0), "subIdx=" + c.subIndex,
+                     "contentH=" + Math.round(c.subContentH)]
+        var gs = c.subGroups
+        parts.push("groups=" + gs.length)
+        for (var i = 0; i < gs.length; i++)
+            parts.push("g" + i + "{sec=" + (gs[i].section === "" ? "-" : gs[i].section)
+                       + ",n=" + gs[i].items.length
+                       + ",h=" + Math.round(c.groupHeight(gs[i])) + "}")
+        return parts.join(" ")
+    }
+
     /// RPC `open-menu` 用：根对象上的信号 → 调 openMenuAt。
     /// 直接用 QMetaObject::invokeMethod(rootItem, "openMenuAt", Q_ARG(QVariant…))
     /// 调 QML 函数不可靠（参数类型对不上时静默失败）；信号名是 moc 生成的

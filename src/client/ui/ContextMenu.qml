@@ -31,8 +31,6 @@ PopupBase {
     readonly property int subMenuGap: 4
     readonly property int rowH: 30
     readonly property int padY: 8
-    /// 二级面板最多显示 12 行，超出后滚动（字幕轨/网络流可能几十条）
-    readonly property int subMaxRows: 12
 
     property bool subOpen: false
     /// 当前展开二级菜单的条目下标（-1 = 收起）。两个二级菜单共用面板。
@@ -252,28 +250,68 @@ PopupBase {
         return t ? root.trackLabel(t) : qsTr("Off")
     }
 
-    /// 字幕二级面板：关 / 已加载轨 / 加载字幕文件… / 移除外部字幕 / 附近字幕
-    function subtitleMenu() {
-        var out = [{label: qsTr("Off"), value: -1}]
+    /// 内嵌字幕轨（外部字幕不进"字幕轨道"区——它们属于"附近字幕"那一组）
+    function internalSubTracks() {
+        var out = []
         var ts = root.tracksOf("sub")
         for (var i = 0; i < ts.length; i++)
-            out.push({label: root.trackLabel(ts[i]), value: ts[i].id})
-        out.push({sep: true})
+            if (!ts[i].external) out.push(ts[i])
+        return out
+    }
+
+    /// 已加载的外部字幕：filename → track id（"附近字幕"里点已加载的项 = 选轨，不重复 sub-add）
+    function loadedExternalSubs() {
+        var map = ({})
+        var ts = root.tracksOf("sub")
+        for (var i = 0; i < ts.length; i++)
+            if (ts[i].external && ts[i].filename) map[String(ts[i].filename)] = ts[i].id
+        return map
+    }
+
+    /// 字幕二级面板。顺序（2026-11-02 用户定）：
+    ///   关 / 加载字幕文件… / 移除外部字幕
+    ///   ── 附近字幕（固定高度滚动区，内容超了显示上下小三角）
+    ///   ── 字幕轨道（固定高度滚动区）
+    /// 逻辑：用户既然往片源目录里放了字幕文件，就说明内嵌字幕不合适 —— 所以
+    /// "附近字幕"排在"字幕轨道"前面。
+    function subtitleMenu() {
+        var out = []
+        out.push({label: qsTr("Off"), value: -1})
         out.push({label: qsTr("Load subtitle file…"), sig: "subtitleFilePickRequested"})
         var cur = root.currentSubtitleTrack()
         if (cur && cur.external)
             out.push({label: qsTr("Remove external subtitle"),
                       sig: "externalSubtitleRemoveRequested", arg: cur.id})
-        // 目录里扫到但还没加载的字幕（点击 = sub-add 并选中）
+
         var files = viewModel.subtitleFiles
         if (files && files.length > 0) {
             out.push({sep: true})
             out.push({header: qsTr("Nearby subtitles")})
-            for (var j = 0; j < files.length; j++) {
-                var f = files[j]
-                out.push({label: String(f.name),
-                          sig: "nearbySubtitlePicked", arg: String(f.path)})
+            var loaded = root.loadedExternalSubs()
+            for (var i = 0; i < files.length; i++) {
+                var f = files[i]
+                var path = String(f.path)
+                var entry = {
+                    label: String(f.name),
+                    section: "nearby", sectionRows: root.nearbySectionRows
+                }
+                if (loaded[path] !== undefined)
+                    entry.value = loaded[path]      // 已加载 → 点击 = 选这条轨
+                else {
+                    entry.sig = "nearbySubtitlePicked"   // 未加载 → 点击 = sub-add + 选中
+                    entry.arg = path
+                }
+                out.push(entry)
             }
+        }
+
+        var ts = root.internalSubTracks()
+        if (ts.length > 0) {
+            out.push({sep: true})
+            out.push({header: qsTr("Subtitle tracks")})
+            for (var j = 0; j < ts.length; j++)
+                out.push({label: root.trackLabel(ts[j]), value: ts[j].id,
+                          section: "tracks", sectionRows: root.trackSectionRows})
         }
         return out
     }
@@ -428,17 +466,77 @@ PopupBase {
         return y
     }
 
-    /// 二级面板内容总高 / 可视高（超过 subMaxRows 行滚动）
-    readonly property real subContentH: {
-        var h = 0
+    /// 两个滚动区固定显示的行数（用户 2026-11-02：固定高度 + 上下小三角提示）
+    readonly property int nearbySectionRows: 4
+    readonly property int trackSectionRows: 8
+    /// 上下小三角所在行的高度
+    readonly property int triH: 14
+
+    /// 二级面板分组：连续的、带同一个 `section` 的条目归为一组（组内固定高度可滚动），
+    /// 其余条目按原样逐行渲染。返回 [{section, items, maxRows}]
+    readonly property var subGroups: {
         var m = root.subItems
-        for (var i = 0; i < m.length; i++)
-            h += root.subRowH(m[i])
+        var groups = []
+        var cur = null
+        for (var i = 0; i < m.length; i++) {
+            var it = m[i]
+            var sec = it.section !== undefined ? String(it.section) : ""
+            var rows = it.sectionRows !== undefined ? it.sectionRows : 4
+            if (cur && cur.section === sec && (sec !== "" || cur.items.length === 0)) {
+                cur.items.push(it); cur.maxRows = rows
+            } else {
+                cur = { section: sec, items: [it], maxRows: rows }
+                groups.push(cur)
+            }
+        }
+        return groups
+    }
+
+    function groupScrolls(g) {
+        return g.section !== "" && g.items.length > g.maxRows
+    }
+
+    /// 组高度：滚动组 = 固定行数 + 上下三角；其它 = 各行自然高度
+    function groupHeight(g) {
+        if (root.groupScrolls(g))
+            return g.maxRows * root.rowH + 2 * root.triH
+        var h = 0
+        for (var i = 0; i < g.items.length; i++)
+            h += root.subRowH(g.items[i])
         return h
     }
-    readonly property real subViewH: Math.min(root.subContentH,
-        Math.min(root.rowH * root.subMaxRows,
-                 (root.parent ? root.parent.height : 800) * 0.7))
+
+    /// 二级面板内容总高 / 可视高
+    readonly property real subContentH: {
+        var h = 0
+        var gs = root.subGroups
+        for (var i = 0; i < gs.length; i++)
+            h += root.groupHeight(gs[i])
+        return h
+    }
+    readonly property real subViewH: root.subContentH
+
+    /// 某一行是否是"当前值"（勾选态）
+    function isCurrentSubRow(row) {
+        var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
+        if (!it || !it.current) return false
+        if (row.header !== undefined || row.sep === true || row.sig !== undefined) return false
+        return row.value === it.current(row.group || 0)
+    }
+
+    /// 点击二级面板里的某一行：动作行发自己的 sig；普通行交给所属条目的 subSig
+    function activateSubRow(row) {
+        var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
+        if (row.sig !== undefined) {
+            if (row.arg !== undefined) root[row.sig](row.arg)
+            else root[row.sig]()
+        } else if (it && it.subSig) {
+            root[it.subSig](row.value, row.group || 0)
+        }
+        root.subOpen = false
+        root.subIndex = -1
+        root.close()
+    }
 
     /// 当前展开的二级菜单子项模型（subIndex 指向的条目；submenu 可为函数）
     readonly property var subItems: {
@@ -484,6 +582,51 @@ PopupBase {
             height: root.subViewH + 12
             color: "#d9111111"; radius: 8
             border { width: 1; color: "#22ffffff" }
+        }
+    }
+
+    // ── 二级面板的一行（分组标题 / 分隔线 / 普通项 / 动作项）──────────────
+    component SubRow: Item {
+        id: subRow
+        property var row
+        signal activated()
+        readonly property bool isSep: row.sep === true
+        readonly property bool isHeader: row.header !== undefined
+        readonly property bool cur: root.isCurrentSubRow(row)
+        width: parent ? parent.width : 0
+        height: isSep ? 1 : (isHeader ? root.rowH - 4 : root.rowH)
+        Rectangle {
+            anchors.fill: parent
+            color: !isHeader && !isSep && rowHover.containsMouse ? "#33ffffff" : "transparent"
+        }
+        Rectangle {
+            visible: isSep
+            anchors { left: parent.left; leftMargin: 8; right: parent.right; rightMargin: 8 }
+            height: 1; color: "#22ffffff"
+        }
+        Text {
+            anchors { left: parent.left; leftMargin: 12; right: parent.right
+                      rightMargin: subRow.cur ? 28 : 12
+                      verticalCenter: parent.verticalCenter }
+            text: isSep ? "" : (isHeader ? row.header : (row.label || ""))
+            color: isHeader ? "#808080" : (subRow.cur ? "#ffcc00" : "#e0e0e0")
+            font.pixelSize: 13
+            elide: Text.ElideRight
+            visible: !isSep
+        }
+        Text {
+            anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+            font.family: iconFont; font.pixelSize: 14; text: "󰄬"
+            color: "#ffcc00"; visible: subRow.cur
+            renderType: Text.NativeRendering
+        }
+        MouseArea {
+            id: rowHover
+            anchors.fill: parent
+            hoverEnabled: !isHeader && !isSep
+            enabled: !isHeader && !isSep
+            cursorShape: Qt.PointingHandCursor
+            onClicked: subRow.activated()
         }
     }
 
@@ -644,97 +787,105 @@ PopupBase {
             }
         }
 
-        // ── 二级菜单面板（反交错 / 轨道 / 网络流 …，超出限高可滚动）──────
-        Flickable {
-            id: subFlick
+        // ── 二级菜单面板 ────────────────────────────────────────────────
+        // 「附近字幕」「字幕轨道」是**固定高度的滚动区**（用户 2026-11-02 要求）：
+        // 内容超出时在区顶/区底显示上下小三角（可点，翻一行；灰=已到头）。
+        // 区内的滚轮由 Flickable 自己处理；面板本身不再整体滚动。
+        Item {
+            id: subPanel
             visible: root.subOpen
             x: root.menuWidth + root.subMenuGap
             y: root.subY
             width: root.subMenuWidth
             height: root.subViewH
-            contentWidth: width
-            contentHeight: subColumn.implicitHeight
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            interactive: contentHeight > height
-            flickableDirection: Flickable.VerticalFlick
 
             Column {
                 id: subColumn
-                width: subFlick.width
+                width: parent.width
                 Repeater {
-                    model: root.subItems
+                    model: root.subGroups
                     delegate: Item {
+                        id: groupItem
                         width: subColumn.width
-                        // 分组标题行矮一点、不可点、不参与勾选；分隔线 1px
-                        readonly property bool isSep: modelData.sep === true
-                        readonly property bool isHeader: modelData.header !== undefined
-                        readonly property bool isAction: modelData.sig !== undefined
-                        readonly property int myGroup: modelData.group || 0
-                        height: isSep ? 1 : (isHeader ? root.rowH - 4 : root.rowH)
-                        readonly property bool current: {
-                            var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
-                            return !isHeader && !isSep && !isAction && it && it.current
-                                   ? modelData.value === it.current(myGroup) : false
-                        }
-                        Rectangle {
-                            anchors.fill: parent
-                            color: !isHeader && !isSep && subHover.containsMouse
-                                   ? "#33ffffff" : "transparent"
-                        }
-                        // 分组标题：灰字（不可点）。分隔线**只在两组之间**——第一个
-                        // 分组上方不加（否则面板顶部会多一条贴边线）。
-                        Rectangle {
-                            visible: isHeader && index > 0
-                            anchors { left: parent.left; leftMargin: 8; right: parent.right; rightMargin: 8; top: parent.top }
-                            height: 1; color: "#22ffffff"
-                        }
-                        Rectangle {
-                            visible: isSep
-                            anchors { left: parent.left; leftMargin: 8; right: parent.right; rightMargin: 8 }
-                            height: 1; color: "#22ffffff"
-                        }
-                        Text {
-                            anchors { left: parent.left; leftMargin: 12; right: parent.right
-                                      rightMargin: current ? 28 : 12
-                                      verticalCenter: parent.verticalCenter }
-                            text: isSep ? "" : (isHeader ? modelData.header
-                                                         : (modelData.label || ""))
-                            color: isHeader ? "#808080"
-                                            : (current ? "#ffcc00" : "#e0e0e0")
-                            font.pixelSize: 13
-                            elide: Text.ElideRight
-                            visible: !isSep
-                        }
-                        Text {
-                            anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
-                            font.family: iconFont; font.pixelSize: 14; text: "󰄬"
-                            color: "#ffcc00"; visible: current && !isHeader && !isSep
-                            renderType: Text.NativeRendering
-                        }
-                        MouseArea {
-                            id: subHover
-                            anchors.fill: parent
-                            hoverEnabled: !isHeader && !isSep
-                            enabled: !isHeader && !isSep
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
-                                // 必须先发信号再 close：close 会拆 popup 的临时
-                                // grab/内容，之后 root[subSig] 的动态调用可能不生效
-                                // （2026-10-25 实测 3D 二级项点击无反应）。窗口移动
-                                // 前关闭 popup 由 StereoPicker 的 Start 负责。
-                                if (isAction) {
-                                    if (modelData.arg !== undefined)
-                                        root[modelData.sig](modelData.arg)
-                                    else
-                                        root[modelData.sig]()
-                                } else if (it && it.subSig) {
-                                    root[it.subSig](modelData.value, myGroup)
+                        height: root.groupHeight(modelData)
+                        readonly property var gitems: modelData.items
+                        readonly property bool scrolls: root.groupScrolls(modelData)
+                        readonly property int maxRows: modelData.maxRows
+
+                        // ── 非滚动组：逐行（分隔线/标题/普通项）──────────────
+                        Column {
+                            visible: !groupItem.scrolls
+                            width: parent.width
+                            Repeater {
+                                model: groupItem.gitems
+                                delegate: SubRow {
+                                    row: modelData
+                                    onActivated: root.activateSubRow(row)
                                 }
-                                root.subOpen = false
-                                root.subIndex = -1
-                                root.close()
+                            }
+                        }
+
+                        // ── 滚动组：▲ + 固定高度 Flickable + ▼ ────────────────
+                        Column {
+                            visible: groupItem.scrolls
+                            width: parent.width
+                            spacing: 0
+                            Item {   // 上小三角
+                                width: parent.width; height: root.triH
+                                Text {
+                                    anchors.centerIn: parent
+                                    font.family: iconFont; font.pixelSize: 12
+                                    text: "󱨊"; renderType: Text.NativeRendering
+                                    color: gFlick.contentY > 0
+                                           ? (upTri.containsMouse ? "#e0e0e0" : "#b0b0b0")
+                                           : "#505050"
+                                }
+                                MouseArea {
+                                    id: upTri
+                                    anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: gFlick.contentY = Math.max(0, gFlick.contentY - root.rowH)
+                                }
+                            }
+                            Flickable {
+                                id: gFlick
+                                width: parent.width
+                                height: groupItem.maxRows * root.rowH
+                                contentWidth: width
+                                contentHeight: rowsCol.height
+                                clip: true
+                                boundsBehavior: Flickable.StopAtBounds
+                                interactive: true
+                                Column {
+                                    id: rowsCol
+                                    width: gFlick.width
+                                    Repeater {
+                                        model: groupItem.gitems
+                                        delegate: SubRow {
+                                            row: modelData
+                                            onActivated: root.activateSubRow(row)
+                                        }
+                                    }
+                                }
+                            }
+                            Item {   // 下小三角
+                                width: parent.width; height: root.triH
+                                Text {
+                                    anchors.centerIn: parent
+                                    font.family: iconFont; font.pixelSize: 12
+                                    text: "󱨉"; renderType: Text.NativeRendering
+                                    color: gFlick.contentY < gFlick.contentHeight - gFlick.height - 1
+                                           ? (downTri.containsMouse ? "#e0e0e0" : "#b0b0b0")
+                                           : "#505050"
+                                }
+                                MouseArea {
+                                    id: downTri
+                                    anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: gFlick.contentY =
+                                        Math.min(gFlick.contentHeight - gFlick.height,
+                                                 gFlick.contentY + root.rowH)
+                                }
                             }
                         }
                     }

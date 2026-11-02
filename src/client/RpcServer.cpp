@@ -522,7 +522,16 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                      vm->hasMedia() ? 1 : 0, vm->networkSource() ? 1 : 0,
                      int(vm->trackList().size()), int(vm->editions().size()),
                      vm->currentEdition(), vm->subDelay() * 1000.0, vm->audioDelay() * 1000.0);
-            response = formatResponse("success", "\"" + jsonEscape(buf) + "\"");
+            std::string out = buf;
+            // 追加 QML 侧的菜单结构快照（分组/高度），用于不截图核对二级面板
+            if (auto *qv = qobject_cast<QQuickView *>(win_)) {
+                if (qv->rootObject()) {
+                    const QVariant md = qv->rootObject()->property("menuDebugInfo");
+                    if (md.isValid() && !md.toString().isEmpty())
+                        out += std::string(" | ") + md.toString().toStdString();
+                }
+            }
+            response = formatResponse("success", "\"" + jsonEscape(out) + "\"");
         }
     } else if (cmd == "set-eye") {
         // 测试钩子：单眼 2D 输出（vf_eye）。
@@ -635,13 +644,12 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             const int y = atoi(args[1].c_str());
             const int sub = args.size() >= 3 ? atoi(args[2].c_str()) : -1;
             QQuickItem *rootItem = qv->rootObject();
-            // 触发根对象的 QML 信号（见 main.qml 的注释：直接 invoke QML 函数
-            // 会因为参数类型不匹配静默失败，症状正是"RPC 返回 success 但菜单没开"）
-            bool ok = QMetaObject::invokeMethod(rootItem, "menuOpenRequested",
-                                               Qt::QueuedConnection,
-                                               Q_ARG(int, x), Q_ARG(int, y), Q_ARG(int, sub));
-            if (!ok)
-                RPCLOG("open-menu: signal invoke failed");
+            // 写 QML 属性来开菜单（属性写入不依赖方法签名匹配；直接
+            // invokeMethod 调 QML 函数会静默失败——症状正是"RPC 返回 success
+            // 但菜单没开"）。属性变更处理在 GUI 线程，这里排队投递。
+            QMetaObject::invokeMethod(rootItem, [rootItem, x, y, sub]() {
+                rootItem->setProperty("pendingMenuOpen", QVariantList{ x, y, sub });
+            }, Qt::QueuedConnection);
             response = formatResponse("success");
         }
     } else if (cmd == "stereo-picker") {
