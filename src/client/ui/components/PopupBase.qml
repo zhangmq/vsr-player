@@ -30,6 +30,12 @@ Popup {
     onOpened: positionToTarget()
     onAnchorTargetChanged: if (opened) positionToTarget()
 
+    /// 登记到全局弹窗计数（KeyRouter 据此在弹窗打开时让位）。
+    /// 用 watch() 而不是在这里写 onOpened/onClosed：那两条 handler 会被实例
+    /// 自己的 `onOpened: uiLayer.closeOtherPopups(...)` 覆盖掉（main.qml 里
+    /// 每个弹窗都写了），计数就会漏。watch 挂在 `opened` 属性变化上，不受影响。
+    Component.onCompleted: popups.watch(root)
+
     function positionToTarget() {
         if (!anchorTarget || !parent) return
         var p = anchorTarget.mapToItem(parent, 0, 0)

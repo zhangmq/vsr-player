@@ -899,6 +899,52 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 - **依赖漂移检测**：`scripts/check-deps.sh [--record]` 记录构建时**系统库**快照（路径+mtime+size，排除仓库内自建产物——否则每次重建都误报），系统升级替换后提示重建；staging 目标用 `LD_LIBRARY_PATH` 模拟安装态解析。**soname 变更导致启动失败 → 跑 `build-from-source.sh` 重建**；用户侧排查见 README「故障排查」。
 - `scripts/install.sh`（用户端）：~/.local；VFX 从 **NVIDIA 官方索引 `pypi.nvidia.com`** 取 nvidia-vfx wheel（pypi.org 仅占位 sdist，2026-09 实测），curl 提取不调 pip 不改系统；VFX ~0.6GB 不随 tarball 分发（SLA）。⚠️ `set -euo pipefail` 下所有探测命令（nvidia-smi / pkg-config / curl 管道）必须 `|| true` 兜底，否则"未检测到"会变成"安装静默中止"（本项目实测踩过两次）。
 
+### 按键 / 快捷键（键位表，2026-11-03 重构）
+
+**唯一来源 = `src/client/Keymap.cpp` 的表**（58 行 / 48 个动作）；执行 =
+`src/client/KeyRouter.cpp`（`qApp->installEventFilter` 的应用级过滤器）。
+**不再有** QML `Shortcut`（改版前 main.qml 35 条、两个窗口各注册一份）、
+`QShortcut`（main.cpp 的 `Qt::ApplicationShortcut` 兜底已删）、菜单里那份
+偏移键映射（ContextMenu.qml 现在只查表）。改一个键 = 改表中一行。
+
+表的模型是**动作 id × 上下文**，一行 = `{id, seqs, scope, owner, handler,
+popupOk, allowRepeat, helpKey}`：
+
+| 字段 | 取值 | 含义 |
+|---|---|---|
+| scope | `both` / `2d` / `3d` / `menu` | `2d` 在 3D/单眼态失效；`3d` 只在 3D/单眼态生效；`menu` 给菜单导航 |
+| owner | `shortcut` / `filter` / `menu` | 派发路径。`filter` 与 `shortcut` 都是同一过滤器，只用于表达"这是 3D 态专用键" |
+| handler | `cpp` / `qml` / `swallow` | `cpp` = KeyRouter 直接调 viewModel/stereo；`qml` = 发 `actionRequested` 给 UI（对话框/面板/菜单）；`swallow` = 只吞键（3D 的 Esc） |
+| popupOk | bool | 弹窗打开时仍派发（只有 6 个延迟动作；必须是 `cpp` —— 自检会拦） |
+| allowRepeat | bool | 按住是否重复触发（seek/音量/延迟 = 是；截图/删除/全屏 = 否） |
+
+- **弹窗门控是全局的**：`PopupRegistry`（`PopupBase.qml` 里 `Component.onCompleted:
+  popups.watch(root)`，挂在 `opened` 属性变化上——不能写 `onOpened:`，那会被实例
+  自己的 `onOpened: uiLayer.closeOtherPopups(...)` 覆盖掉）。弹窗打开 → 过滤器
+  整体让位（Esc 关弹窗、输入框打字、菜单导航由 ContextMenu 的 `Keys.onPressed`
+  处理，它调 `keys.menuAction()`/`keys.trigger()`，同一张表）。
+  ⚠ 旧的 `uiLayer.anyPopupOpen` 是**每窗口**的，3D 下两个窗口并存时另一个窗口
+  的动作照样生效（"菜单开着按 V 还切字幕"就是这一类），现在只用它做 auto-hide。
+- **两窗口只有一个执行**：`main.qml` 的 `handlesActions = stereo.active === controlMode`
+  （2D 主窗口 / 3D 桌面 control 窗口）。presentation 窗口只出画面。
+- **mode3d = `stereo.active() || eyeMode != 0`**（单眼 2D 也走 3D 键位分支，
+  与改版前的过滤器一致）。
+- **归一化（`keymap::normalized`）**——这几点都是踩过的坑：
+  - `QKeySequence("z")` 与 `"Z"` 完全等价（key 0x5A + 无修饰）→ Shift 必须显式写
+    `"Shift+Z"`；表里若同时写 `z`/`Z`，重启自检会报重复。
+  - 符号键的 Shift 已编码在键值里（`Shift+=` 报的是 `Key_Plus`）→ 比较时忽略
+    Shift，所以 `Ctrl++` 与 `Ctrl+Shift+=` 是同一个手势；`Ctrl+=` 单独一行作别名。
+    字母/数字/功能键保持严格比较（否则 `Ctrl+O` 与 `Ctrl+Shift+O` 撞车）。
+  - `Shift+Tab` 是 `Key_Backtab` → 归一成 `Tab+Shift`。
+  - 小键盘修饰位（`KeypadModifier`）一律去掉。
+- **自检**：启动时跑 `keymap::selfCheck()`（空 id / 序列解析失败 / 同上下文重复按键），
+  失败打 `MLOG_ERR` + `keymap: N bindings, self-check FAILED`。
+- **加一个新键的三步**：① 表里加一行；② `cpp` → 在 `KeyRouter::exec()` 加分支，
+  `qml` → 在 `main.qml` 的 `runAction()` 加分支；③ `./scripts/precommit.sh`
+  （T1 会检查"表里有动作但没人实现""QML 里引用了表里没有的 id"）。
+- **日志**：每次派发打 `MLOG_VERBOSE`（`VSR_LOG_VERBOSE=1` 才出）：
+  `key: z -> sub-delay-down (popup=0)`；RPC `key-log` 读同一份记录（含 scope/mode）。
+
 ## 环境速查
 
 - GPU：RTX 5060 Ti（Blackwell sm_120）；驱动 615.78.08（2026-10-17 实测）；KWin Wayland 6.8.0（纯 Wayland，无 X11）。显示器 DP-3 = LG ULTRAFINE 27" 4K：EDID 含 ST2084、峰值 400 nit、基色≈DCI-P3（HDR 可在 KWin 里开）
@@ -930,6 +976,18 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   2026-10-18 用它验证 OSD 标签 i18n（中文/英文标签一眼可见）
 - 关键文件：`src/mpv/video/filter/`（vf_vsr.c/vf_rife.c/vf_hwup.c/vsr_proc.c/rife_proc.c/rife_trt.cpp/cuda_shared.h/yuv_to_rgba.*）；`src/client/`（main.cpp/MpvController/PlayerViewModel/Video.cpp/Options.cpp/RpcServer.cpp）
 - 视觉问题数值化：`tests/verify_frames.sh`（baseline/test 两阶段 PSNR）——无 baseline 不改代码
+- **热键自动化**（2026-11-03）：`tests/hotkeys/check_keys.py`（T1，静态：编译真实
+  `Keymap.cpp` 用 Qt 自己的 `QKeySequence` 解析，断言无重复/无未实现动作/键位没回流
+  QML/关键键位仍在；进 `precommit.sh` 第 1 步，无显示器也能跑）+
+  `tests/hotkeys/test_hotkeys.py`（T2+T3，自己起播放器、用 RPC `key <序列>` 注入真实
+  按键：窗口级键、三种菜单键、弹窗让位、菜单状态机、单眼态 3D 分支）。RPC 侧钩子：
+  `key` / `key-log` / `clear-key-log` / `get-keys` / `get-focus` / `menu-key` / `open-menu` /
+  `get-menu-state`（`get-menu-state` 里的 `cur=` 是 edition 索引，导航那个是 `cur=N(行名)`）。
+  ⚠ **RPC 线程不许读 QML 属性**：读属性会求值绑定（跑 JS），非 GUI 线程求值 QML →
+  `QV4::ExecutionEngine::qmlContext()` 拿空上下文 → SIGSEGV（2026-11-03 实测 core：
+  `QQmlBinding::evaluate → resolveQmlContextPropertyLookupGetter`，`get-menu-state`
+  高频轮询几分钟内必踩）。所有 QML 侧快照一律 `Qt::BlockingQueuedConnection` 投到
+  GUI 线程读（见 RpcServer.cpp 的 menuDebugInfo/keyLog）。
 - **gdb 调试**（C/C++ 崩溃/卡死）：`gdb -batch -ex run -ex bt <binary>`（崩溃看调用栈；卡死看线程）——SIGSEGV→bt 定位非法访问；SIGABRT→bt+寄存器看 assert 条件；卡死→bt 看所有线程在等什么。通用排查流程见 `~/.dsh/AGENTS.md` 调试方法论
 
 ## 待实现需求（用户已提出，**暂缓、不要动手**）

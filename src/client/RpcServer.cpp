@@ -2,6 +2,8 @@
 #include "MpvController.h"
 #include "PlayerViewModel.h"
 #include "StereoController.h"
+#include "Keymap.h"
+#include "KeyRouter.h"
 #include <QQuickView>
 #include <QQuickItem>
 #include <QImage>
@@ -9,7 +11,13 @@
 #include <mpv/client.h>
 #include <QMetaObject>
 #include <QQuickWindow>
+#include <QGuiApplication>
+#include <QWindow>
 #include <QVariant>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -518,17 +526,28 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             response = formatResponse("no view model");
         } else {
             char buf[256];
-            snprintf(buf, sizeof buf, "media=%d net=%d tracks=%d editions=%d cur=%d subDelay=%.0fms audioDelay=%.0fms",
+            snprintf(buf, sizeof buf, "media=%d net=%d tracks=%d editions=%d cur=%d eye=%d subDelay=%.0fms audioDelay=%.0fms",
                      vm->hasMedia() ? 1 : 0, vm->networkSource() ? 1 : 0,
                      int(vm->trackList().size()), int(vm->editions().size()),
-                     vm->currentEdition(), vm->subDelay() * 1000.0, vm->audioDelay() * 1000.0);
+                     vm->currentEdition(), vm->eyeMode(),
+                     vm->subDelay() * 1000.0, vm->audioDelay() * 1000.0);
             std::string out = buf;
-            // 追加 QML 侧的菜单结构快照（分组/高度），用于不截图核对二级面板
+            // 追加 QML 侧的菜单结构快照（分组/高度），用于不截图核对二级面板。
+            // ⚠ 必须**投递到 GUI 线程**读：menuDebugInfo 是 QML 绑定，读属性会
+            // 求值绑定（跑 JS）。在 RPC 线程读 = 非 GUI 线程求值 QML →
+            // QV4::ExecutionEngine::qmlContext() 拿到空上下文 → SIGSEGV
+            //（2026-11-03 实测，core 栈：QQmlBinding::evaluate →
+            //  resolveQmlContextPropertyLookupGetter → ExecutionEngine::qmlContext）。
+            // 高频轮询这个命令的测试脚本几分钟内必踩。
             if (auto *qv = qobject_cast<QQuickView *>(win_)) {
-                if (qv->rootObject()) {
-                    const QVariant md = qv->rootObject()->property("menuDebugInfo");
-                    if (md.isValid() && !md.toString().isEmpty())
-                        out += std::string(" | ") + md.toString().toStdString();
+                if (QQuickItem *rootItem = qv->rootObject()) {
+                    QString md;
+                    QMetaObject::invokeMethod(
+                        rootItem,
+                        [rootItem, &md]() { md = rootItem->property("menuDebugInfo").toString(); },
+                        Qt::BlockingQueuedConnection);
+                    if (!md.isEmpty())
+                        out += std::string(" | ") + md.toStdString();
                 }
             }
             response = formatResponse("success", "\"" + jsonEscape(out) + "\"");
@@ -668,6 +687,66 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             }, Qt::QueuedConnection);
             response = formatResponse("success");
         }
+    } else if (cmd == "key") {
+        // 测试用：注入一条按键序列（QKeySequence 语法，如 "z"/"Shift+Z"/"Ctrl+0"/
+        // "Down"/"Menu"）。走真实投递链：应用级过滤器（KeyRouter）→ 窗口 →
+        // 焦点项（弹窗的 Keys.onPressed 也在这条链上），所以能覆盖
+        // "弹窗打开时按键去哪了" 这类只在真按键下才暴露的问题。
+        // 结果从 key-log 读（异步投递，本命令只表示"已接受"）。
+        if (!keys_) {
+            response = formatResponse("no key router");
+        } else if (args.empty()) {
+            response = formatResponse("usage: key <sequence>");
+        } else {
+            QString seq = QString::fromStdString(args[0]);
+            for (size_t i = 1; i < args.size(); ++i)
+                seq += QLatin1Char(' ') + QString::fromStdString(args[i]);
+            KeyRouter *k = keys_;
+            QMetaObject::invokeMethod(k, [k, seq]() { k->injectKey(seq); },
+                                      Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "key-log") {
+        // 最近派发的动作（#n id=<动作> key=<触发键> popup=0/1 mode=2d/3d）
+        if (!keys_) {
+            response = formatResponse("no key router");
+        } else {
+            QString out;
+            const bool ok = QMetaObject::invokeMethod(
+                keys_, "keyLog", Qt::BlockingQueuedConnection,
+                Q_RETURN_ARG(QString, out));
+            response = ok ? formatResponse("", "\"" + jsonEscape(out.toStdString()) + "\"")
+                          : formatResponse("keyLog failed");
+        }
+    } else if (cmd == "clear-key-log") {
+        if (!keys_) {
+            response = formatResponse("no key router");
+        } else {
+            KeyRouter *k = keys_;
+            QMetaObject::invokeMethod(k, [k]() { k->clearKeyLog(); },
+                                      Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "get-keys") {
+        // 键位表快照（动作 id / 序列 / 上下文 / 派发路径 / 是否弹窗内可用）。
+        // 静态数据，RPC 线程直接读（不碰 QObject 状态）。
+        QJsonArray arr;
+        for (const QVariant &v : keymap::dump())
+            arr.append(QJsonObject::fromVariantMap(v.toMap()));
+        response = formatResponse("",
+            QJsonDocument(arr).toJson(QJsonDocument::Compact).toStdString());
+    } else if (cmd == "get-focus") {
+        // 当前焦点对象（排查"按键到底进了哪个窗口/哪一项"）
+        QWindow *w = QGuiApplication::focusWindow();
+        QJsonObject o;
+        o.insert("focus_window", w ? QString::fromStdString(w->title().toStdString())
+                                  : QString());
+        o.insert("focus_item", w ? QString::fromLatin1(w->focusObject()
+                                                          ? w->focusObject()->metaObject()->className()
+                                                          : "")
+                                 : QString());
+        o.insert("visible_windows", int(QGuiApplication::topLevelWindows().size()));
+        response = formatResponse("", QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString());
     } else if (cmd == "stereo-picker") {
         // 测试用：打开 3D 选择器（正常入口 = 右键菜单 → 3D → 3D片源/2D转3D）
         auto *qv = qobject_cast<QQuickView *>(win_);

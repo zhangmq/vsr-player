@@ -3,6 +3,8 @@
 // 全屏窗口由 StereoController 在所选显示器上创建；本文件只负责把同一份
 // HotKeys 画在左右两半：SBS 下左半进左眼、右半进右眼，两只眼看到相同内容。
 // OSD 不参与任何视频/3D 映射。
+// 键名（keyText）一律来自 C++ 键位表（keys.helpKey(id)），不在这里重复写死：
+// 改键位只改 src/client/Keymap.cpp 一处（2026-11-03）。
 import QtQuick
 import "ui/components"
 
@@ -64,18 +66,18 @@ Item {
                             id: leftColumn
                             spacing: 6
                             HotkeyRow {
-                                keyText: "H"
+                                keyText: keys.helpKey("toggle-help")
                                 actionText: qsTr("Toggle HotKeys Help")
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "J"
+                                keyText: keys.helpKey("stereo-layout")
                                 options: [qsTr("Side-by-Side"), qsTr("Top-and-Bottom")]
                                 current: stereo.layout
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "K"
+                                keyText: keys.helpKey("stereo-swap")
                                 options: stereo.active
                                          ? [qsTr("Normal Eyes"), qsTr("Swapped Eyes")]
                                          : [qsTr("Left Eye"), qsTr("Right Eye")]
@@ -84,7 +86,7 @@ Item {
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "L"
+                                keyText: keys.helpKey("stereo-half")
                                 options: [qsTr("Full"), qsTr("Half")]
                                 current: stereo.half ? 1 : 0
                                 fontPixelSize: root.helpFontSize
@@ -94,42 +96,42 @@ Item {
                             id: rightColumn
                             spacing: 6
                             HotkeyRow {
-                                keyText: "Space"
+                                keyText: keys.helpKey("play-pause")
                                 actionText: qsTr("Play / Pause")
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "←"
+                                keyText: keys.helpKey("seek-back")
                                 actionText: qsTr("Seek -5s")
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "→"
+                                keyText: keys.helpKey("seek-fwd")
                                 actionText: qsTr("Seek +5s")
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "Shift+←"
+                                keyText: keys.helpKey("seek-back-10")
                                 actionText: qsTr("Seek -10s")
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "Shift+→"
+                                keyText: keys.helpKey("seek-fwd-10")
                                 actionText: qsTr("Seek +10s")
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "↑"
+                                keyText: keys.helpKey("volume-up")
                                 actionText: qsTr("Volume up")
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "↓"
+                                keyText: keys.helpKey("volume-down")
                                 actionText: qsTr("Volume down")
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "A"
+                                keyText: keys.helpKey("aspect-next")
                                 options: [ "16:9", "4:3", "2.35:1", qsTr("No override") ]
                                 current: viewModel.aspect === "16:9" ? 0
                                        : viewModel.aspect === "4:3" ? 1
@@ -137,12 +139,12 @@ Item {
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "Ctrl+←"
+                                keyText: keys.helpKey("playlist-prev")
                                 actionText: qsTr("Previous")
                                 fontPixelSize: root.helpFontSize
                             }
                             HotkeyRow {
-                                keyText: "Ctrl+→"
+                                keyText: keys.helpKey("playlist-next")
                                 actionText: qsTr("Next")
                                 fontPixelSize: root.helpFontSize
                             }

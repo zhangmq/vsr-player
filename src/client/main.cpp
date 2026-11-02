@@ -12,7 +12,6 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QQuickView>
-#include <QShortcut>
 #include <QCloseEvent>
 #include <QQuickWindow>
 #include <QQuickGraphicsDevice>
@@ -40,6 +39,9 @@
 #include "PlayerViewModel.h"
 #include "RpcServer.h"
 #include "StereoController.h"
+#include "Keymap.h"
+#include "KeyRouter.h"
+#include "PopupRegistry.h"
 #include "SessionIdle.h"
 #include "HdrOutput.h"
 
@@ -145,151 +147,9 @@ protected:
     }
 };
 
-class StereoKeyFilter : public QObject
-{
-    /// 画面比例循环：`A` 正序 / `Shift+A` 逆序，列表与顺序照抄 mpv
-    /// （third_party/mpv/etc/input.conf:156：
-    ///  cycle-values video-aspect-override "16:9" "4:3" "2.35:1" "no"）。
-    /// 当前值不在列表里时取第一个（= mpv cmd_cycle_values 的 "Picking default"）。
-    bool aspectKey(QEvent *event)
-    {
-        if (event->type() != QEvent::KeyPress)
-            return false;
-        auto *ke = static_cast<QKeyEvent *>(event);
-        if (ke->key() != Qt::Key_A)
-            return false;
-        if (ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))
-            return false;
-        if (ke->isAutoRepeat())
-            return true;
-        static const char *kList[] = {"16:9", "4:3", "2.35:1", "no"};
-        const int n = int(sizeof(kList) / sizeof(kList[0]));
-        const QString cur = viewModel_->aspect();
-        int idx = -1;
-        for (int i = 0; i < n; i++)
-            if (cur == QLatin1String(kList[i])) idx = i;
-        const int dir = (ke->modifiers() & Qt::ShiftModifier) ? -1 : 1;
-        int next = (idx < 0) ? (dir > 0 ? 0 : n - 1) : (idx + dir + n) % n;
-        viewModel_->setAspect(QString::fromLatin1(kList[next]));
-        // 瞬态提示：值交给 QML 组合文案（3D 下显示"每眼比例"，2D/单眼显示"画面比例"）。
-        viewModel_->flashMessage(QString::fromLatin1(kList[next]));
-        return true;
-    }
-
-    /// 布局/全半变化后把新的源格式推给两个滤镜（vf_vsr 的 3D 倍率 + vf_eye）。
-    void syncStereoSource()
-    {
-        viewModel_->setStereoMap(stereo_->active(), stereo_->layout(),
-                                 stereo_->half() ? 1 : 0);
-        viewModel_->setEyeState(viewModel_->eyeMode(), stereo_->layout(),
-                                stereo_->half() ? 1 : 0);
-    }
-
-public:
-    StereoKeyFilter(StereoController *stereo, PlayerViewModel *vm, QObject *parent = nullptr)
-        : QObject(parent), stereo_(stereo), viewModel_(vm) {}
-
-protected:
-    bool eventFilter(QObject *watched, QEvent *event) override
-    {
-        Q_UNUSED(watched);
-        const bool stereo3d = stereo_->active();
-        const bool eyeMode = viewModel_->eyeMode() != 0;
-        // J/K/L 在「眼镜 3D」与「单眼 2D」下都生效（同一份布局/全半/眼别状态）；
-        // A（画面比例）任何时候都生效——2D 也要能修正片源比例。
-        if (!stereo3d && !eyeMode)
-            return aspectKey(event);
-        // 3D 下 Esc 一律吞掉：先吃 ShortcutOverride，再吃 KeyPress，
-        // 避免 QML Shortcut / 窗口层把全屏切回去。
-        if (event->type() == QEvent::ShortcutOverride) {
-            auto *ke = static_cast<QKeyEvent *>(event);
-            if (ke->key() == Qt::Key_Escape) {
-                event->accept();
-                return true;
-            }
-            return false;
-        }
-        if (event->type() != QEvent::KeyPress)
-            return false;
-        auto *ke = static_cast<QKeyEvent *>(event);
-        if (ke->key() == Qt::Key_Escape) {
-            MLOG_INFO("stereo key: Escape -> swallowed");
-            return true;
-        }
-        if (ke->modifiers() & (Qt::AltModifier | Qt::MetaModifier))
-            return false;
-
-        const bool repeat = ke->isAutoRepeat();
-        // 上一个/下一个：全局 Ctrl+← / Ctrl+→（2D 由 QML 处理，3D 在这里处理）。
-        if (ke->modifiers() & Qt::ControlModifier) {
-            if (ke->key() == Qt::Key_Left) {
-                if (!repeat) viewModel_->playlistPrev();
-                return true;
-            }
-            if (ke->key() == Qt::Key_Right) {
-                if (!repeat) viewModel_->playlistNext();
-                return true;
-            }
-            return false;
-        }
-        switch (ke->key()) {
-        case Qt::Key_A:
-            return aspectKey(event);
-        case Qt::Key_J:
-            if (repeat) return true;
-            stereo_->cycleLayout();
-            syncStereoSource();
-            return true;
-        case Qt::Key_K:
-            if (repeat) return true;
-            if (stereo3d) {
-                stereo_->swapEyes();
-            } else {
-                // 单眼模式：K = 换到另一只眼
-                viewModel_->setEyeState(viewModel_->eyeMode() == 2 ? 1 : 2,
-                                        stereo_->layout(), stereo_->half() ? 1 : 0);
-            }
-            return true;
-        case Qt::Key_L:
-            if (repeat) return true;
-            stereo_->toggleHalf();
-            syncStereoSource();
-            return true;
-        case Qt::Key_Tab:
-        case Qt::Key_Backtab:
-            // 3D 下用 Tab 切**管线状态 OSD**（调试用；H 仍切快捷键帮助面板）。
-            // 由本过滤器吃掉并返回 true —— 否则 QML 的 Tab Shortcut 会再
-            // 触发一次，两次 toggle 抵消（等于没反应）。
-            if (repeat) return true;
-            MLOG_INFO("stereo key: Tab -> toggle pipeline OSD");
-            viewModel_->toggleOsd();
-            return true;
-        case Qt::Key_H:
-            MLOG_INFO("stereo key: H -> toggle OSD");
-            if (repeat) return true;
-            stereo_->toggleHelp();
-            return true;
-        case Qt::Key_Space: if (repeat) return true; viewModel_->togglePlayPause(); return true;
-        case Qt::Key_Left:
-            viewModel_->seekRelative((ke->modifiers() & Qt::ShiftModifier) ? -10000 : -5000);
-            return true;
-        case Qt::Key_Right:
-            viewModel_->seekRelative((ke->modifiers() & Qt::ShiftModifier) ? 10000 : 5000);
-            return true;
-        case Qt::Key_Up:
-            viewModel_->nudgeVolume(0.05);
-            return true;
-        case Qt::Key_Down:
-            viewModel_->nudgeVolume(-0.05);
-            return true;
-        default: return false;
-        }
-    }
-
-private:
-    StereoController *stereo_;
-    PlayerViewModel *viewModel_;
-};
+// 按键派发：键位表在 Keymap.cpp，执行在 KeyRouter（应用级事件过滤器）。
+// 改版前这里是 StereoKeyFilter + main.qml 的 35 条 QML Shortcut + 菜单内
+// 一份偏移键映射；现在只剩这一条通路（见 Keymap.h 文件头）。
 
 int main(int argc, char *argv[]) {
     setbuf(stdout, nullptr); setbuf(stderr, nullptr);
@@ -606,6 +466,14 @@ int main(int argc, char *argv[]) {
         // 声明在 view 之前 → 析构晚于 view，QML 绑定不会访问已销毁对象。
         StereoController stereo;
 
+        // 弹窗计数 + 按键派发。同样声明在 view 之前 → 析构晚于 QML，
+        // QML 里的 `popups` / `keys` 引用不会变成悬空指针。
+        PopupRegistry popups;
+        KeyRouter keyRouter(&viewModel, &stereo, &popups, &app);
+        // 应用级（不是窗口级）：3D 时焦点可能在 presentation / control 任一窗口，
+        // 只有应用级过滤器能稳定收到所有按键。
+        qApp->installEventFilter(&keyRouter);
+
         StereoView view;
         view.stereo = &stereo;
         view.setVulkanInstance(&qtVi);
@@ -650,6 +518,8 @@ int main(int argc, char *argv[]) {
         }
         view.rootContext()->setContextProperty("benchmarkMode", opts.benchmark);
         view.rootContext()->setContextProperty("controlMode", false);
+        view.rootContext()->setContextProperty("popups", &popups);
+        view.rootContext()->setContextProperty("keys", &keyRouter);
 
         // 桌面 control 窗口：同一份 main.qml，但 controlMode=true → 不创建
         // Video，只保留 UI。3D 时主窗口（Video/VO）去眼镜屏，control 窗口
@@ -666,6 +536,8 @@ int main(int argc, char *argv[]) {
         controlView.rootContext()->setContextProperty("iconFont", iconFont);
         controlView.rootContext()->setContextProperty("benchmarkMode", false);
         controlView.rootContext()->setContextProperty("controlMode", true);
+        controlView.rootContext()->setContextProperty("popups", &popups);
+        controlView.rootContext()->setContextProperty("keys", &keyRouter);
         controlView.setSource(QUrl("qrc:/main.qml"));
         if (controlView.status() != QQuickView::Ready) {
             for (const auto &e : controlView.errors())
@@ -673,29 +545,6 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         stereo.setControlWindow(&controlView);
-        // 两个窗口都装：presentation 通常不接焦点；control 窗口失焦时也能收到，
-        // 且绕开 QML Shortcut 的大小写问题。
-        // 装在 QGuiApplication 上（不是两个 QQuickView 上）：3D 时焦点可能在
-        // presentation/control 任一窗口，应用级过滤器才能稳定收到所有按键。
-        auto *stereoKeyFilter = new StereoKeyFilter(&stereo, &viewModel, &app);
-        qApp->installEventFilter(stereoKeyFilter);
-
-
-
-        // QShortcut 作为第二道保险：J/K/L/H 都走应用级快捷键兜底。
-        auto addStereoShortcut = [&](Qt::Key key, auto action) {
-            auto *sc = new QShortcut(QKeySequence(key), &controlView);
-            sc->setContext(Qt::ApplicationShortcut);
-            sc->setAutoRepeat(false);
-            QObject::connect(sc, &QShortcut::activated, &controlView, [&stereo, action] {
-                if (stereo.active())
-                    action(stereo);
-            });
-        };
-
-        addStereoShortcut(Qt::Key_J, [](StereoController &s) { s.cycleLayout(); });
-        addStereoShortcut(Qt::Key_K, [](StereoController &s) { s.swapEyes(); });
-        addStereoShortcut(Qt::Key_L, [](StereoController &s) { s.toggleHalf(); });
         MLOG_INFO("control window ready");
 
         view.setSource(QUrl("qrc:/main.qml"));
@@ -1048,6 +897,7 @@ int main(int argc, char *argv[]) {
             rpc.setViewModel(&viewModel);
             rpc.setWindow(&view);   // resize 命令（逐级 resize 压测）
             rpc.setStereo(&stereo); // 3D OSD 原型（测试用 RPC）
+            rpc.setKeys(&keyRouter); // key / key-log 测试钩子
             rpc.setQuitCallback([&app]() {
                 // Cross-thread: RPC thread → Qt event loop.
                 QMetaObject::invokeMethod(&app, &QCoreApplication::quit,
