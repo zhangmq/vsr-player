@@ -221,8 +221,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
         bool idle = mpv_->propertyFlag("idle-active");
         int64_t drops = mpv_->propertyInt64("frame-drop-count");
         post([this, idle, drops] {
-            if (fileLoaded_ != !idle) emit hasMediaChanged();
-            fileLoaded_ = !idle;
+            setFileLoaded(!idle);
             if (idle) {
                 updatePlaying(false);
                 resetSegmentCounters(drops);   // 停止/播完 → 段重置
@@ -1193,13 +1192,19 @@ void PlayerViewModel::togglePlayPause() {
     mpv_->setPropertyFlagAsync("pause", !p);
 }
 
+void PlayerViewModel::setFileLoaded(bool v) {
+    if (fileLoaded_ == v) return;
+    fileLoaded_ = v;
+    emit hasMediaChanged();
+}
+
 void PlayerViewModel::stop() {
     if (!mpv_) return;
     playing_ = false;
     emit playingChanged();
     // 乐观复位 idle 状态——path 观察（事件线程→主线程队列）落地前
     // 快速点击播放不会误走"取消暂停"分支（mpv 已 idle，无效）。
-    fileLoaded_ = false;
+    setFileLoaded(false);
     // keep-playlist：mpv stop 默认清空播放列表（command.c cmd_stop
     // flags&1 → playlist_clear 跳过），单曲循环下停止后列表消失。
     // async：GUI 线程不阻塞 core-lock（同 seek；同步命令会与软解 DR 帧
@@ -2823,7 +2828,7 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
     const bool linear = !mpv_->propertyFlag("seekable")
                      || mpv_->propertyFlag("partially-seekable");
     QMetaObject::invokeMethod(this, [this, p, paused, drops, linear] {
-        fileLoaded_ = true;
+        setFileLoaded(true);
         idlePlayIndex_ = -1;   // 已有活动文件 → idle 的"待载入索引"作废
         // 按文件记忆：即时落盘保证旧文件状态已随动作写盘，无需在此保存。
         // external 轨随文件切换被 mpv 清除——pending 待确认列表作废

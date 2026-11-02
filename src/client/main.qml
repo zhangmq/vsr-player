@@ -664,6 +664,11 @@ Item {
         if (!c) return ""
         var parts = ["subOpen=" + (c.subOpen ? 1 : 0), "subIdx=" + c.subIndex,
                      "contentH=" + Math.round(c.subContentH)]
+        // 逐行几何（排查"分隔线粗细不一"这类排版问题：直接看 y/height）
+        var rg = c.rowGeom
+        for (var k = 0; k < rg.length; k++)
+            parts.push("r" + rg[k].idx + "{y=" + rg[k].y + ",h=" + rg[k].h
+                       + ",v=" + (rg[k].vis ? 1 : 0) + "}")
         var gs = c.subGroups
         parts.push("groups=" + gs.length)
         for (var i = 0; i < gs.length; i++)

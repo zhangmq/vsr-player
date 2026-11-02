@@ -350,6 +350,10 @@ public:
     bool aiAvailable() const { return aiAvailable_.load(); }
     bool canDeleteCurrentFile() const { return canDeleteCurrentFile_; }
     bool hasMedia() const { return fileLoaded_; }
+    /// 唯一写 fileLoaded_ 的入口：变更时发 hasMediaChanged（否则 QML 里
+    /// 依赖 hasMedia 的绑定会停在旧值——2026-11-02 实测：菜单"从播放列表
+    /// 移除/删除文件"两项在播放中仍不可见，就是因为 FILE_LOADED 只赋值不发信号）。
+    void setFileLoaded(bool v);
     bool networkSource() const { return networkSource_; }
     QString videoInfo() const   { return videoInfo_; }
     int videoWidth() const { return videoWidth_.load(); }

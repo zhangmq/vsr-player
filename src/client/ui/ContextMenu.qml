@@ -136,6 +136,7 @@ PopupBase {
              {label: qsTr("270°"), value: 270}
          ]},
         // ── 立体（3D 分组 = 一级菜单里的小块，三条入口）──────────────────
+        {sep: true},
         {header: qsTr("3D")},
         {icon: "", text: qsTr("Output mode"),
          hint: function() { return root.stereoModeLabel() },
@@ -439,6 +440,17 @@ PopupBase {
         return it.visibleWhen === undefined ? true : it.visibleWhen()
     }
 
+    /// 分隔线是否画：向上找第一个可见条目，如果它也是分隔线就不画。
+    /// 否则两条 1px 会叠成 2px（用户 2026-11-02 报"分割线从上到下越来越细"：
+    /// 相邻两组之间的行被 visibleWhen 隐藏时就会发生）。
+    function sepShown(idx) {
+        for (var i = idx - 1; i >= 0; i--) {
+            if (!root.itemShown(root.items[i])) continue
+            return root.items[i].sep !== true
+        }
+        return false
+    }
+
     /// 二级面板内容行数 → 高度（分组标题行矮 4px，分隔线 1px）
     function subRowH(item) {
         if (item.sep === true) return 1
@@ -562,6 +574,20 @@ PopupBase {
         return typeof sub === "function" ? sub() : (sub || [])
     }
 
+    /// 逐行几何快照（RPC get-menu-state 用）：mainColumn 是内部 id，外部
+    /// 读不到，这里显式暴露出来，排查"分隔线粗细/行高异常"不用截图。
+    readonly property var rowGeom: {
+        var out = []
+        if (!mainColumn) return out
+        for (var i = 0; i < mainColumn.children.length; i++) {
+            var c = mainColumn.children[i]
+            if (c.itemIndex === undefined) continue
+            out.push({ idx: c.itemIndex, y: Math.round(c.y), h: Math.round(c.height),
+                       vis: c.visible })
+        }
+        return out
+    }
+
     /// 每次打开都从收起状态开始（不记忆上次展开的子菜单）。
     onAboutToShow: { subOpen = false; subIndex = -1 }
     /// 展开二级面板时 panel 可能比主菜单高：把整个菜单往上推，避免面板出屏。
@@ -668,7 +694,7 @@ PopupBase {
                     property bool hasSub: modelData.submenu !== undefined
                     property var hintSrc: modelData.hint
                     property string hintText: typeof hintSrc === "function" ? hintSrc() : (hintSrc || "")
-                    property bool shown: root.itemShown(modelData)
+                    property bool shown: isSep ? root.sepShown(index) : root.itemShown(modelData)
                     // 供 subY 用实际委托位置对齐二级面板（见 subY 注释）
                     readonly property int itemIndex: index
                     width: parent.width
@@ -685,13 +711,6 @@ PopupBase {
                     Rectangle {
                         anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 10 }
                         height: 1; color: "#22ffffff"; visible: isSep
-                    }
-                    // 分组上方的细线（与二级面板"两组之间"的分隔线同款；
-                    // 第一个条目不加，避免贴边线）
-                    Rectangle {
-                        visible: isHeader && index > 0
-                        anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 10; top: parent.top }
-                        height: 1; color: "#22ffffff"
                     }
                     // 一级分组标题（与二级面板的分组标题同款：灰字、不可点）
                     Text {
