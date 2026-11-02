@@ -927,10 +927,16 @@ PopupBase {
             color: "#ffcc00"; visible: subRow.cur
             renderType: Text.NativeRendering
         }
+        // 悬停：把本行设成面板的当前行（高亮由 subCurrentIndex 驱动，
+        // 这样鼠标/键盘是同一套状态；重建 SubRow 时漏过这条 → 悬停没反应）
+        HoverHandler {
+            enabled: !subRow.isHeader && !subRow.isSep && subRow.rowIndex >= 0
+            onPointChanged: root.hoverSub(subRow.rowIndex, point.scenePosition)
+        }
         MouseArea {
             id: rowHover
             anchors.fill: parent
-            hoverEnabled: !isHeader && !isSep
+            hoverEnabled: false
             enabled: !isHeader && !isSep
             cursorShape: Qt.PointingHandCursor
             onClicked: subRow.activated()
