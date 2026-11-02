@@ -60,10 +60,54 @@ class Rpc:
     def clear_key_log(self) -> None:
         self.call("clear-key-log")
 
-    def menu_state(self) -> dict:
-        """get-menu-state 的字符串快照 → 常用字段字典。"""
-        text = self.data("get-menu-state")
-        out: dict = {"raw": text}
+    def screens(self) -> list[dict]:
+        """显示器列表（含物理分辨率）。3D 测试用它挑"副屏当眼镜屏"。"""
+        data = self.call("get-screens")["data"]
+        return data if isinstance(data, list) else []
+
+    def stereo(self) -> dict:
+        """get-stereo 的两段：`<合成映射> | <控制器状态>`。
+
+        映射段来自 Video 每帧写的快照（layout=sbs/tab），状态段来自控制器
+        （layout=0/1）；两段字段名有重叠，所以**分段解析**，别整体正则。
+        """
+        text = self.data("get-stereo")
+        parts = text.split(" | ", 1)
+        mapstr, statestr = parts[0], (parts[1] if len(parts) > 1 else "")
+        out = {"raw": text, "map": mapstr, "state": statestr}
+        out["map_active"] = int(self._grab(mapstr, r"active=(\d)", 0))
+        out["map_layout"] = self._grab(mapstr, r"\blayout=(\S+)", "")
+        out["map_src"] = self._grab(mapstr, r"\bsrc=(\S+)", "")
+        out["map_out"] = self._grab(mapstr, r"\bout=(\S+)", "")
+        out["map_eye"] = self._grab(mapstr, r"\beye=(\S+)", "")
+        out["active"] = int(self._grab(statestr, r"active=(\d)", 0))
+        out["mode"] = int(self._grab(statestr, r"mode=(\d+)", 0))
+        out["layout"] = int(self._grab(statestr, r"\blayout=(\d)", -1))
+        out["swap"] = int(self._grab(statestr, r"swap=(\d)", 0))
+        out["half"] = int(self._grab(statestr, r"half=(\d)", 0))
+        out["help"] = int(self._grab(statestr, r"help=(\d)", 0))
+        out["screen"] = self._grab(statestr, r"screen=(\S*)", "")
+        out["win"] = self._grab(statestr, r"win=(\S+)", "")
+        return out
+
+    def control_state(self) -> dict:
+        """3D 会话里桌面 UI（control）窗口的 UI 快照。"""
+        text = self.data("get-control-state")
+        out = self._parse_ui(text)
+        out["control"] = int(self._grab(text, r"control=(\d)", 0))
+        out["raw"] = text
+        return out
+
+    @staticmethod
+    def _grab(text: str, pattern: str, default=None):
+        m = re.search(pattern, text)
+        if not m:
+            return default
+        return m.group(1) if m.groups() else m.group(0)
+
+    @staticmethod
+    def _parse_ui(text: str) -> dict:
+        out: dict = {}
 
         def grab(pattern, cast=str, default=None):
             m = re.search(pattern, text)
@@ -83,6 +127,17 @@ class Rpc:
         out["audioDelay"] = grab(r"audioDelay=(-?\d+)ms", int, 0)
         m = re.search(r"ms=(-?\d+)/(-?\d+)", text)
         out["msSub"], out["msAudio"] = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+        return out
+
+    def menu_state(self, player: bool = False) -> dict:
+        """get-menu-state 的字符串快照 → 常用字段字典。
+
+        player=True 时读主窗口（presentation）那份，否则读"当前该干活的 UI
+        窗口"：2D 是主窗口，3D 是桌面 control 窗口。
+        """
+        text = self.data("get-menu-state", *(["player"] if player else []))
+        out = self._parse_ui(text)
+        out["raw"] = text
         return out
 
 

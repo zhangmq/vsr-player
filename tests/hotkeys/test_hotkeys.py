@@ -8,158 +8,36 @@
 （弹窗的 Keys.onPressed 也在这条链上）。
 
 覆盖：
-  T3-a 窗口级键：音量 / 快进 / 字幕延迟 / 音频延迟 / 播放暂停 / 播放列表
+  T3-a 窗口级键：音量 / 快进快退 / 字幕延迟 / 音频延迟 / 播放暂停 / 播放列表
   T3-b 打开菜单的三种键：Menu、Shift+F10、F10
   T3-c 弹窗让位（用户报过的 bug 类）：菜单开着时 ↓ 不许调音量、P 不许开面板
-  T3-d 弹窗内仍可用：菜单开着时 z / Shift+Z / Ctrl+0 调字幕延迟
+  T3-d 单眼态（set-eye）走 3D 键位分支且只派发一次
   T2   菜单状态机：Home/End/↑↓ 跳隐藏行、→/← 开合面板、Enter 进控件态、
        控件态 ←/→ ±50ms、Esc 两级退出
+  T4   Ctrl+Q 退出（进程真的结束；曾经在 3D 下只关掉眼镜窗口）
 
-用法：./tests/hotkeys/test_hotkeys.py [-v] [--keep]
+真 3D 会话（副屏当眼镜屏）另见 test_stereo_keys.py。
+
+用法：./tests/hotkeys/test_hotkeys.py [-v] [--keep] [--no-eye]
 退出码：0 = 通过。
 """
 from __future__ import annotations
 
-import json
-import os
-import subprocess
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from rpc import Rpc, wait_until, wait_value  # noqa: E402
+import harness
+from harness import (Player, check, ensure_fixture, expect_eq, nudge, section,
+                     settle, wait_until, wait_value)
 
-ROOT = Path(__file__).resolve().parents[2]
-BIN = ROOT / "build" / "src" / "client" / "vsr-player"
 SOCK = Path("/tmp/vsr-hotkeys.sock")
 LOG = Path("/tmp/vsr-hotkeys.log")
 FIXTURE = Path("/tmp/vsr-hotkey-fixture.mp4")
 
-verbose = "-v" in sys.argv
 keep = "--keep" in sys.argv
 no_eye = "--no-eye" in sys.argv
-
-failures: list[str] = []
-checks = 0
-
-
-def check(ok, what: str, detail: str = "") -> bool:
-    global checks
-    checks += 1
-    if ok:
-        if verbose:
-            print(f"  ✓ {what}")
-    else:
-        failures.append(f"{what}{(': ' + str(detail)) if detail else ''}")
-        print(f"  ✗ {what}{(': ' + str(detail)) if detail else ''}")
-    return ok
-
-
-def expect_eq(actual, want, what: str) -> bool:
-    return check(actual == want, what, f"实际 {actual!r} != 期望 {want!r}")
-
-
-def section(title: str) -> None:
-    print(f"\n── {title} ──")
-
-
-def ensure_fixture() -> None:
-    if FIXTURE.exists() and FIXTURE.stat().st_size > 100_000:
-        return
-    print(f"生成测试片 {FIXTURE} …")
-    subprocess.run(
-        ["ffmpeg", "-v", "error", "-f", "lavfi",
-         "-i", "testsrc2=size=640x360:rate=30:duration=60",
-         "-f", "lavfi", "-i", "sine=frequency=440:duration=60",
-         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "30",
-         "-c:a", "aac", "-shortest", "-y", str(FIXTURE)],
-        check=True)
-
-
-class Player:
-    def __init__(self):
-        self.proc: subprocess.Popen | None = None
-        self.rpc = Rpc(SOCK)
-
-    def __enter__(self):
-        SOCK.unlink(missing_ok=True)
-        LOG.unlink(missing_ok=True)
-        env = dict(os.environ, VSR_LOG_VERBOSE="1")
-        self.logf = LOG.open("wb")
-        self.proc = subprocess.Popen(
-            [str(BIN), "--lang", "en", "--scale", "off", "--fruc", "off",
-             "--rpc-socket", str(SOCK), str(FIXTURE),
-             "--", "--loop-file=inf"],
-            stdout=self.logf, stderr=subprocess.STDOUT, env=env)
-        wait_until(lambda: SOCK.exists(), "RPC 套接字出现", timeout=20)
-        wait_until(lambda: self.rpc.data("get-menu-state"), "QML 就绪", timeout=20)
-        wait_until(lambda: "media=1" in self.rpc.data("get-menu-state"),
-                   "媒体载入", timeout=30)
-        return self
-
-    def __exit__(self, *exc):
-        if self.proc and self.proc.poll() is None:
-            try:
-                self.rpc.call("quit", timeout=3)
-            except Exception:
-                pass
-            try:
-                self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.proc.terminate()
-                try:
-                    self.proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.proc.kill()
-        self.logf.close()
-        if not keep:
-            SOCK.unlink(missing_ok=True)
-
-    def log_text(self) -> str:
-        return LOG.read_text(encoding="utf-8", errors="replace")
-
-    # ── 便捷断言 ────────────────────────────────────────────────
-    def menu(self) -> dict:
-        return self.rpc.menu_state()
-
-    def open_menu(self) -> None:
-        self.rpc.call("open-menu", "500", "300")
-        wait_until(lambda: self.menu()["ctxVisible"] == 1, "菜单打开")
-
-    def close_menu(self) -> None:
-        if self.menu()["ctxVisible"]:
-            self.rpc.key("Escape")
-            wait_until(lambda: self.menu()["ctxVisible"] == 0, "菜单关闭")
-
-    def last_dispatch(self) -> str:
-        log = self.rpc.key_log()
-        return log[-1] if log else ""
-
-
-def nudge(p: Player, seq: str, direction: int, attempts: int = 4,
-          timeout: float = 4.0) -> tuple[float, float]:
-    """按一次方向键，返回 (before, after)；没动就重按（最多 attempts 次）。
-
-    为什么允许重按：连续 seek 有门控——上一次 seek 还没出帧时，本次步进是
-    **按设计丢弃**的（既不是丢键，也不是没响应；见 PlayerViewModel::
-    seekRelative）。所以每次尝试都用**当时**的位置当基准，不能拿几秒前的
-    旧值算预期（否则门控放行后目标已经跑偏，测出来就是假失败）。
-    """
-    rpc = p.rpc
-    for _ in range(attempts):
-        before = rpc.prop("time-pos")
-        threshold = before + direction * 3.0
-        rpc.key(seq)
-        try:
-            after = wait_until(
-                lambda: (lambda t: t if ((t < threshold) if direction < 0 else (t > threshold))
-                         else None)(rpc.prop("time-pos")),
-                f"{seq} 生效", timeout=timeout)
-            return before, after
-        except AssertionError:
-            continue
-    raise AssertionError(f"{seq} 按了 {attempts} 次都没有移动 3 秒以上")
 
 
 def t3_window_keys(p: Player) -> None:
@@ -283,21 +161,6 @@ def t3_popup_gating(p: Player) -> None:
     wait_until(lambda: p.menu()["subDelay"] == 0, "菜单内归零", timeout=4)
     p.close_menu()
     expect_eq(p.menu()["popups"], 0, "关菜单后弹窗计数归零")
-
-
-def settle(p: Player) -> dict:
-    """等菜单状态稳定：RPC 命令是异步投递的，处理前的采样会读到陈旧值。
-    两次采样间隔 > 一帧，键已被处理；连续两次完全一致才返回。"""
-    prev = None
-    deadline = time.monotonic() + 4.0
-    keys = ("ctxVisible", "cur", "subOpen", "ctl", "msSub", "msAudio", "playlist")
-    while time.monotonic() < deadline:
-        cur = p.menu()
-        if prev is not None and all(cur[k] == prev[k] for k in keys):
-            return cur
-        prev = cur
-        time.sleep(0.12)
-    return prev or {}
 
 
 def t2_menu_state_machine(p: Player) -> None:
@@ -471,21 +334,31 @@ def t_sanity(p: Player) -> None:
     check("keymap:" in log, "键位表已加载")
 
 
+def t4_quit(p: Player) -> None:
+    section("T4 退出（Ctrl+Q → 进程结束）")
+    p.rpc.key("Ctrl+Q")
+    wait_until(lambda: p.proc.poll() is not None, "应用退出", timeout=10)
+    check(p.proc.poll() is not None, "Ctrl+Q 退出进程", f"rc={p.proc.returncode}")
+    check("app.exec() returned" in p.log_text(), "走正常退出路径")
+
+
 def main() -> int:
-    if not BIN.exists():
-        print(f"✗ 找不到 {BIN}（先 ninja -C build）")
+    harness.configure(sys.argv)
+    if not harness.BIN.exists():
+        print(f"✗ 找不到 {harness.BIN}（先 ninja -C build）")
         return 2
-    ensure_fixture()
-    print(f"播放器：{BIN}")
+    ensure_fixture(FIXTURE)
+    print(f"播放器：{harness.BIN}")
     print(f"测试片：{FIXTURE}")
-    with Player() as p:
+    with Player(SOCK, LOG, [str(FIXTURE)], keep=keep) as p:
         phases = [("一致性", t_sanity), ("T3-a 窗口级按键", t3_window_keys),
                   ("T3-b 打开菜单", t3_menu_openers), ("T3-c 弹窗让位", t3_popup_gating)]
         if not no_eye:
             phases.append(("T3-d 单眼态分支", t3_stereo_branch))
         phases.append(("T2 菜单状态机", t2_menu_state_machine))
+        phases.append(("T4 退出", t4_quit))
         for name, fn in phases:
-            if p.proc.poll() is not None:
+            if not p.alive():
                 check(False, f"播放器在「{name}」前已退出（rc={p.proc.returncode}）")
                 break
             try:
@@ -494,18 +367,10 @@ def main() -> int:
                 check(False, f"{name} 中断：{e}")
                 print(f"    key-log: {p.rpc.key_log()[-4:]}")
                 print(f"    menu: {p.menu()['raw'][:200]}")
-        if failures:
+        if harness.failures:
             print("\n最近日志：")
             print("\n".join(p.log_text().splitlines()[-20:]))
-
-    print()
-    if failures:
-        print(f"✗ {len(failures)}/{checks} 项不通过")
-        for f in failures:
-            print(f"  - {f}")
-        return 1
-    print(f"✓ 全部 {checks} 项通过")
-    return 0
+    return harness.summary()
 
 
 if __name__ == "__main__":

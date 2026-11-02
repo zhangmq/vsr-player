@@ -46,6 +46,12 @@ public:
     void setQuitCallback(std::function<void()> cb) { quit_cb_ = std::move(cb); }
 
 private:
+    /// "这一刻 UI 在哪个窗口"：3D 会话里是桌面 control 窗口，2D 是主窗口。
+    /// 菜单类测试钩子（open-menu/menu-key/get-menu-state/stereo-picker）必须
+    /// 用它——否则 3D 下会往 presentation（眼镜屏）窗口投，菜单跑到眼镜屏上
+    ///（2026-11-03 用户报）。
+    QQuickWindow *uiWindow();
+
     void listenLoop();
     void handleClient(int fd);
     void handleLine(int fd, const std::string &line);

@@ -766,22 +766,22 @@
 <context>
     <name>StereoMessage</name>
     <message>
-        <location filename="../ui/StereoMessage.qml" line="15"/>
+        <location filename="../ui/StereoMessage.qml" line="19"/>
         <source>Per-eye aspect %1</source>
         <translation>Per-eye aspect %1</translation>
     </message>
     <message>
-        <location filename="../ui/StereoMessage.qml" line="16"/>
+        <location filename="../ui/StereoMessage.qml" line="20"/>
         <source>Aspect %1</source>
         <translation>Aspect %1</translation>
     </message>
     <message>
-        <location filename="../ui/StereoMessage.qml" line="23"/>
+        <location filename="../ui/StereoMessage.qml" line="27"/>
         <source>Per-eye aspect: no override</source>
         <translation>Per-eye aspect: no override</translation>
     </message>
     <message>
-        <location filename="../ui/StereoMessage.qml" line="23"/>
+        <location filename="../ui/StereoMessage.qml" line="27"/>
         <source>Aspect: no override</source>
         <translation>Aspect: no override</translation>
     </message>
@@ -789,37 +789,37 @@
 <context>
     <name>StereoPicker</name>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="43"/>
+        <location filename="../ui/StereoPicker.qml" line="87"/>
         <source>2D to 3D (prototype)</source>
         <translation>2D to 3D (prototype)</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="44"/>
+        <location filename="../ui/StereoPicker.qml" line="88"/>
         <source>3D playback (prototype)</source>
         <translation>3D playback (prototype)</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="49"/>
+        <location filename="../ui/StereoPicker.qml" line="93"/>
         <source>Switch the target display to its 3D / SBS mode first, then select that display below.</source>
         <translation>Switch the target display to its 3D / SBS mode first, then select that display below.</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="54"/>
+        <location filename="../ui/StereoPicker.qml" line="98"/>
         <source>Select the display that belongs to the glasses:</source>
         <translation>Select the display that belongs to the glasses:</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="92"/>
+        <location filename="../ui/StereoPicker.qml" line="136"/>
         <source>The main UI stays on this desktop; the selected display shows the 3D video and OSD.</source>
         <translation>The main UI stays on this desktop; the selected display shows the 3D video and OSD.</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="103"/>
+        <location filename="../ui/StereoPicker.qml" line="147"/>
         <source>Start</source>
         <translation>Start</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="127"/>
+        <location filename="../ui/StereoPicker.qml" line="164"/>
         <source>Cancel</source>
         <translation>Cancel</translation>
     </message>
@@ -919,54 +919,54 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="481"/>
+        <location filename="../main.qml" line="484"/>
         <source>Open media</source>
         <translation>Open media</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="493"/>
+        <location filename="../main.qml" line="496"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="485"/>
-        <location filename="../main.qml" line="494"/>
+        <location filename="../main.qml" line="488"/>
+        <location filename="../main.qml" line="497"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="472"/>
+        <location filename="../main.qml" line="475"/>
         <source>Add folder to playlist</source>
         <translation>Add folder to playlist</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="473"/>
+        <location filename="../main.qml" line="476"/>
         <source>Open folder</source>
         <translation>Open folder</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="486"/>
-        <location filename="../main.qml" line="495"/>
+        <location filename="../main.qml" line="489"/>
+        <location filename="../main.qml" line="498"/>
         <source>All files (*)</source>
         <translation>All files (*)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="488"/>
+        <location filename="../main.qml" line="491"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="489"/>
+        <location filename="../main.qml" line="492"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</source>
         <translation>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="492"/>
+        <location filename="../main.qml" line="495"/>
         <source>Blu-ray images (*.iso)</source>
         <translation>Blu-ray images (*.iso)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="670"/>
+        <location filename="../main.qml" line="677"/>
         <source>请戴上眼镜观看</source>
         <translation>Please put on your glasses</translation>
     </message>

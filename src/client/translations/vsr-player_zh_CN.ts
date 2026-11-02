@@ -766,22 +766,22 @@
 <context>
     <name>StereoMessage</name>
     <message>
-        <location filename="../ui/StereoMessage.qml" line="15"/>
+        <location filename="../ui/StereoMessage.qml" line="19"/>
         <source>Per-eye aspect %1</source>
         <translation>每眼比例 %1</translation>
     </message>
     <message>
-        <location filename="../ui/StereoMessage.qml" line="16"/>
+        <location filename="../ui/StereoMessage.qml" line="20"/>
         <source>Aspect %1</source>
         <translation>画面比例 %1</translation>
     </message>
     <message>
-        <location filename="../ui/StereoMessage.qml" line="23"/>
+        <location filename="../ui/StereoMessage.qml" line="27"/>
         <source>Per-eye aspect: no override</source>
         <translation>每眼比例：不覆盖</translation>
     </message>
     <message>
-        <location filename="../ui/StereoMessage.qml" line="23"/>
+        <location filename="../ui/StereoMessage.qml" line="27"/>
         <source>Aspect: no override</source>
         <translation>画面比例：不覆盖</translation>
     </message>
@@ -789,37 +789,37 @@
 <context>
     <name>StereoPicker</name>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="43"/>
+        <location filename="../ui/StereoPicker.qml" line="87"/>
         <source>2D to 3D (prototype)</source>
         <translation>2D转3D（原型）</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="44"/>
+        <location filename="../ui/StereoPicker.qml" line="88"/>
         <source>3D playback (prototype)</source>
         <translation>3D 播放（原型）</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="49"/>
+        <location filename="../ui/StereoPicker.qml" line="93"/>
         <source>Switch the target display to its 3D / SBS mode first, then select that display below.</source>
         <translation>先把目标显示器切到 3D / SBS 模式，然后在下面选择该显示器。</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="54"/>
+        <location filename="../ui/StereoPicker.qml" line="98"/>
         <source>Select the display that belongs to the glasses:</source>
         <translation>选择属于眼镜的显示器：</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="92"/>
+        <location filename="../ui/StereoPicker.qml" line="136"/>
         <source>The main UI stays on this desktop; the selected display shows the 3D video and OSD.</source>
         <translation>主界面保留在本桌面；所选显示器显示 3D 视频和 OSD。</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="103"/>
+        <location filename="../ui/StereoPicker.qml" line="147"/>
         <source>Start</source>
         <translation>开始</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="127"/>
+        <location filename="../ui/StereoPicker.qml" line="164"/>
         <source>Cancel</source>
         <translation>取消</translation>
     </message>
@@ -919,54 +919,54 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="481"/>
+        <location filename="../main.qml" line="484"/>
         <source>Open media</source>
         <translation>打开媒体</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="493"/>
+        <location filename="../main.qml" line="496"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>音频文件 (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="485"/>
-        <location filename="../main.qml" line="494"/>
+        <location filename="../main.qml" line="488"/>
+        <location filename="../main.qml" line="497"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>字幕文件 (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="472"/>
+        <location filename="../main.qml" line="475"/>
         <source>Add folder to playlist</source>
         <translation>追加文件夹到播放列表</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="473"/>
+        <location filename="../main.qml" line="476"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="486"/>
-        <location filename="../main.qml" line="495"/>
+        <location filename="../main.qml" line="489"/>
+        <location filename="../main.qml" line="498"/>
         <source>All files (*)</source>
         <translation>所有文件 (*)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="488"/>
+        <location filename="../main.qml" line="491"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>媒体文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="489"/>
+        <location filename="../main.qml" line="492"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</source>
         <translation>视频文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="492"/>
+        <location filename="../main.qml" line="495"/>
         <source>Blu-ray images (*.iso)</source>
         <translation>蓝光镜像 (*.iso)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="670"/>
+        <location filename="../main.qml" line="677"/>
         <source>请戴上眼镜观看</source>
         <translation>请戴上眼镜观看</translation>
     </message>

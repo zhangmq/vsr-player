@@ -346,7 +346,10 @@ Item {
                                           stereo.layout, stereo.half ? 1 : 0)
                 }
             }
-            onQuitRequested: Qt.quit()   // 走标准退出路径（watch-later 落盘）
+            // 不要用 Qt.quit()：QQuickView 的 QQmlEngine 没把 quit 信号接到
+            // QCoreApplication（QGuiApplication/QQmlApplicationEngine 才接），
+            // 3D 下更会变成"只关掉眼镜窗口"（2026-11-03 实测）。
+            onQuitRequested: keys.quitApplication()
         }
 
         // 片源格式自动判定（宽/高 ≥2.6 → 左右·全；≤0.8 → 上下·全；其它不猜）。
@@ -540,13 +543,17 @@ Item {
     property string pendingMenuKey: ""
     onPendingMenuKeyChanged: {
         if (pendingMenuKey === "") return
+        // 3D 下菜单在桌面 UI 窗口里，presentation 不该响应（RPC 已定向到 UI 窗口）
+        if (!uiLayer.handlesActions) { pendingMenuKey = ""; return }
         if (contextMenu) contextMenu.handleKey(pendingMenuKey)
         pendingMenuKey = ""
     }
     onPendingMenuOpenChanged: {
         if (!pendingMenuOpen) return
-        openMenuAt(pendingMenuOpen[0], pendingMenuOpen[1], pendingMenuOpen[2])
+        var p = pendingMenuOpen
         pendingMenuOpen = null
+        if (!uiLayer.handlesActions) return
+        openMenuAt(p[0], p[1], p[2])
     }
 
     /// 菜单结构快照（RPC get-menu-state 读取，验证分组/高度不用截图）

@@ -3,6 +3,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
+#include <functional>
 
 #include "Keymap.h"
 
@@ -27,8 +28,9 @@ class KeyRouter : public QObject
     Q_OBJECT
 
 public:
+    /// quitFn：退出应用（由 main.cpp 提供：置退出标志 → 退出 3D → quit()）。
     KeyRouter(PlayerViewModel *vm, StereoController *stereo, PopupRegistry *popups,
-              QObject *parent = nullptr);
+              std::function<void()> quitFn, QObject *parent = nullptr);
 
     bool eventFilter(QObject *watched, QEvent *event) override;
 
@@ -47,6 +49,12 @@ public:
     /// 菜单导航（menu-*）由 ContextMenu 自己执行，这里只记账——RPC key-log
     /// 靠它才能断言"打开菜单后按 ↓ 走的是菜单导航而不是调音量"。
     Q_INVOKABLE void noteNav(const QString &id);
+
+    /// 退出应用（键盘 Ctrl+Q 与右键菜单 Quit 共用同一条路径）。
+    /// QML 里**不要**用 `Qt.quit()`：QQuickView 的 QQmlEngine 没把 quit 信号接到
+    /// QCoreApplication（那是 QQmlApplicationEngine 的行为），3D 下更是只会
+    /// 走窗口关闭拦截 → 表现为"只关掉眼镜窗口、应用不退出"（2026-11-03 实测）。
+    Q_INVOKABLE void quitApplication();
 
     /// 帮助面板/文档：动作 id 的键名（表里声明，缺省取第一个序列）
     Q_INVOKABLE QString helpKey(const QString &id) const;
@@ -71,6 +79,7 @@ private:
     void logDispatch(const QString &id, int key, int mods, bool fromMenu,
                      keymap::Scope scope = keymap::Scope::TwoD);
 
+    std::function<void()> quitFn_;
     PlayerViewModel *vm_ = nullptr;
     StereoController *stereo_ = nullptr;
     PopupRegistry *popups_ = nullptr;

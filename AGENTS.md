@@ -74,7 +74,14 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
    - 方案只按**依赖顺序**拆成可执行步骤，每步给出**可验证判据**（能跑的命令 / RPC / 日志行），
      做完即报结果。
 
-9. **发版说明（release notes）的两条硬规则**（2026-10-27 用户要求，违反会被打回）：
+9. **PR 流程（2026-11-03 用户明确纠正）**——PR 开好就**停**，不要自己合并：
+   - **不许** `gh pr merge --admin` 绕过 `REVIEW_REQUIRED`，也不许 `--auto` 抢跑；
+   - 等用户 review/批准后再合并（合并动作由用户点头后的那一步做）；
+   - 一个 PR 一个主题，描述里贴验证输出（测试命令 + 关键断言结果）；
+   - 当天就犯过：L1/L2 键位重构的 PR #55 建好 2 分钟内用 `--admin` squash 合并，
+     分支保护本来就是"必须 review"，绕过它等于把 review 这一步删掉。
+
+10. **发版说明（release notes）的两条硬规则**（2026-10-27 用户要求，违反会被打回）：
    1. **必须覆盖"上一个版本 tag → 本次 tag"的全部变更**，不能只看最新一个 commit
       （哪怕最后一步是 squash 合并，也要把区间内的所有 PR/提交都过一遍）。
    2. **必须中英文双语**（先中文全文，`---` 之后英文全文；不是逐句对照）。
@@ -459,6 +466,14 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   主窗口一起移到眼镜屏。Qt 文档/源码（`qquickpopup.cpp` 的
   `adjustPopupItemParentAndWindow`、`qquickpopupwindow.cpp`）与社区报告
   （QTBUG-67684、QTBUG-35261）都是这个语义，不是 QScreen/合成器放错屏。
+- **3D 选择器支持键盘**（2026-11-03 用户要求）：`↑/↓` 选屏（循环）、`Enter` 开始、
+  `Esc` 取消。实现 = `contentItem` 里一个 `focus: true` 的 Item + `Keys.onPressed`
+  （弹窗打开时键位表整体让位，所以弹窗自己接键——与右键菜单同一套）。
+- **瞬态 OSD 必须按眼各一份、各自画在自己那一半**（2026-11-03 用户报"比例 OSD
+  没有左右眼分别显示"）：`StereoVolume.qml` / `StereoProgress.qml` 的写法是
+  delegate 宽 = 窗口一半、面板在本半居中、`±12px` 交叉视差。`StereoMessage.qml`
+  原先写成"两份都在窗口中心、只偏 ±12px"——面板横跨中缝，每只眼只看到半个面板。
+  新增这类 OSD 直接抄 `StereoVolume` 的 Repeater 结构。
 - **Context menu 仅 UI 窗口可用**（2026-10-25 用户要求）：`MouseArea` 与
   `ContextMenu.enabled = controlMode || !stereo.active` —— 2D 用 main 窗口，
   3D 用 control 窗口（桌面主 UI）；presentation 窗口禁用右键/菜单。
@@ -942,6 +957,26 @@ popupOk, allowRepeat, helpKey}`：
 - **加一个新键的三步**：① 表里加一行；② `cpp` → 在 `KeyRouter::exec()` 加分支，
   `qml` → 在 `main.qml` 的 `runAction()` 加分支；③ `./scripts/precommit.sh`
   （T1 会检查"表里有动作但没人实现""QML 里引用了表里没有的 id"）。
+- **3D 下 Esc 只由键位表负责**（2026-11-03）：`StereoView`/`ControlView` 里原先
+  还有一层"3D 时在 window event 里吞 Esc"的兜底——它会**抢在弹窗之前**把 Esc 吃掉，
+  于是 3D 会话里右键菜单的 Esc 关不掉（实测：`ctxVisible` 一直是 1）。已删除，
+  现在 3D 无弹窗 → `escape-swallow` 吞掉；有弹窗 → 过滤器让位、菜单自己关。
+- **退出只有一条路径**（2026-11-03 用户报"3D 下 Ctrl+Q / 菜单 Quit 只关掉眼镜
+  窗口、应用还在"）：`quitApp()`（`main.cpp`）= 置 `g_quitting` → 若 3D 活跃先
+  `stereo.stop()` → `QCoreApplication::quit()`。键盘 `quit` 动作与右键菜单 Quit
+  都走它（QML 里用 `keys.quitApplication()`，**不要** `Qt.quit()`——QQuickView 的
+  QQmlEngine 没把 quit 信号接到 QCoreApplication，那是 QQmlApplicationEngine 的
+  行为，`Qt.quit()` 在 `QQuickView` 里什么都不做）。
+  ⚠ 为什么必须先 stop 3D：Qt 的 quit 会给窗口投 CloseEvent，而 presentation 的
+  `closeEvent` 会"3D 活跃 → `e->ignore()` + `stereo->stop()`"——那次拦截会把 quit
+  吃掉。`closeEvent` 里另有 `g_quitting` 短路（退出中直接接受关闭）。
+- **键位测试注入（`KeyRouter::injectKey`）在 3D 下定向到桌面 UI 窗口**，不用
+  `QGuiApplication::focusWindow()`：弹窗开关会让焦点在窗口间跳，测试会偶发
+  "按键没派发"（实测 3D 下 Enter 偶尔不进菜单）。真实按键同理只会到 control 窗口
+  （presentation 带 `WindowDoesNotAcceptFocus`）。
+- **两窗口只执行一份 QML 动作**：3D 下 QML 动作（`P`/`Menu`/对话框）只在桌面
+  control 窗口执行（`handlesActions`），presentation 窗口不重复执行——
+  RPC `get-control-state` 才能看到它（`get-menu-state` 读的是主窗口）。
 - **日志**：每次派发打 `MLOG_VERBOSE`（`VSR_LOG_VERBOSE=1` 才出）：
   `key: z -> sub-delay-down (popup=0)`；RPC `key-log` 读同一份记录（含 scope/mode）。
 
@@ -982,7 +1017,33 @@ popupOk, allowRepeat, helpKey}`：
   `tests/hotkeys/test_hotkeys.py`（T2+T3，自己起播放器、用 RPC `key <序列>` 注入真实
   按键：窗口级键、三种菜单键、弹窗让位、菜单状态机、单眼态 3D 分支）。RPC 侧钩子：
   `key` / `key-log` / `clear-key-log` / `get-keys` / `get-focus` / `menu-key` / `open-menu` /
-  `get-menu-state`（`get-menu-state` 里的 `cur=` 是 edition 索引，导航那个是 `cur=N(行名)`）。
+  `get-menu-state`（`cur=` 是 edition 索引，导航那个是 `cur=N(行名)`）、
+  `get-screens` / `get-stereo`（映射 + 控制器状态 + presentation 落点）/
+  `get-control-state` / `warp-pointer`。
+  **真 3D 会话**：`tests/hotkeys/test_stereo_keys.py`（需要 ≥2 块屏，把副屏当眼镜屏；
+  会 hide→全屏搬窗口，所以不混进日常那份）——S1 进入 3D（presentation 满屏落在目标屏、
+  映射变 active）、S2 全部 3D 键（`H/J/K/L/Tab/A/Space/←→/↑↓/Ctrl+←→`，逐项验证
+  帮助/布局/眼序/全半/暂停/seek/音量/切集）、**S2b 眼睛映射视觉验证**（用"左红右蓝"
+  的 SBS 片源抓 presentation 窗口，ffmpeg 逐半取平均色：左眼红/右眼蓝，`K` 后互换）、
+  S3 两窗口派发（`P` 只开桌面窗口的列表、菜单开在桌面窗口、3D 下 Esc 吞掉但弹窗优先）、
+  S4 退出恢复（回原屏 1280x720、键位回 `scope=2d`）、
+  S5 3D 下菜单 Quit 必须真的退出进程。共 91 项，跑两遍全绿。
+  `harness.py` = 两个脚本共用的断言/进程/轮询件（`nudge` 处理连续 seek 门控、
+  `settle` 处理异步投递的陈旧读）。
+  **菜单类 RPC 必须定向到"当前 UI 窗口"**（`RpcServer::uiWindow()`：3D → control
+  窗口，2D → 主窗口）：`open-menu` / `menu-key` / `get-menu-state` / `stereo-picker`
+  都用它。曾经直接用 `win_`（主窗口）——3D 下菜单会开到眼镜屏上（用户 2026-11-03
+  报"右键菜单跑到眼镜窗口"，实际是我用 RPC 在 presentation 窗口开的）。
+  `get-menu-state` 可选参数 `player` 读主窗口那份（断言"眼镜窗口那边什么都没发生"）；
+  `get-screens` 的每项带 `primary` 标记。
+  ⚠ **3D 测试的目标屏别选主屏**（用户 2026-11-03 提醒）：control 窗口的落点逻辑
+  本来就假设"眼镜屏是另一块"，选主屏会让 control 无处可去，测出来的现象不代表
+  真实使用。脚本默认挑**非主屏**，`--screen` 可覆盖（覆盖成主屏会打印警告）。
+  ⚠ 菜单/弹窗**悬停即改当前行**：脚本会先用 `warp-pointer <x> <y>`（窗口相对，
+  内部 `QCursor::setPos`）把鼠标挪到窗口右下角，否则用户鼠标恰好压在菜单上时
+  "刚打开时没有当前行"这类断言会随机失败（2026-11-03 实测 cur=13）。
+  ⚠ `grab-window` 是投递到 GUI 线程异步写文件的（测试里要等文件大小稳定再读，
+  否则交给 ffmpeg 的是半张 PNG → exit 69）。
   ⚠ **RPC 线程不许读 QML 属性**：读属性会求值绑定（跑 JS），非 GUI 线程求值 QML →
   `QV4::ExecutionEngine::qmlContext()` 拿空上下文 → SIGSEGV（2026-11-03 实测 core：
   `QQmlBinding::evaluate → resolveQmlContextPropertyLookupGetter`，`get-menu-state`

@@ -85,6 +85,7 @@ void StereoController::refreshScreens() {
         const QSize physical = phys.value(s->name(), g.size());
         QVariantMap m;
         m.insert("index", i);
+        m.insert("primary", s == QGuiApplication::primaryScreen());
         m.insert("name", s->name());
         m.insert("model", s->model());
         m.insert("manufacturer", s->manufacturer());
