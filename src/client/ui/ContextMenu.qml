@@ -25,9 +25,11 @@ PopupBase {
     readonly property real mainPanelH: mainColumn
         ? mainColumn.implicitHeight + 2 * padY : 0
 
-    readonly property int menuWidth: 230
-    /// 二级面板加宽到能放下网络流标题（"1080P 高清 · AV1 · 1.9M"）
-    readonly property int subMenuWidth: 240
+    /// 英文界面下 "Add folder to playlist" + "Ctrl+Shift+O"、
+    /// "Subtitle delay" + 延迟控件 会顶到一起 → 230 不够（2026-11-02 实测重叠）
+    readonly property int menuWidth: 268
+    /// 二级面板：英文条目（"Remove external subtitle"）与网络流标题都要放得下
+    readonly property int subMenuWidth: 268
     readonly property int subMenuGap: 4
     readonly property int rowH: 30
     readonly property int padY: 8
@@ -699,14 +701,33 @@ PopupBase {
                         color: "#808080"
                         font.pixelSize: 13
                     }
+                    // 左侧标签：右边界锚到右侧控件（hint / 延迟控件）的左缘，
+                    // 并按剩余宽度省略——英文文本更长，单靠 menuWidth 兜不住
+                    // （2026-11-02 用户报英文界面文本重叠）。
                     Row {
-                        anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
+                        id: labelRow
+                        anchors {
+                            left: parent.left; leftMargin: 10
+                            right: isControl ? delayCtl.left
+                                             : (hintRow.visible ? hintRow.left : parent.right)
+                            rightMargin: 8
+                            verticalCenter: parent.verticalCenter
+                        }
                         spacing: 8
                         visible: !isSep && !isHeader
-                        Text { font.family: iconFont; font.pixelSize: 16; text: modelData.icon || ""
-                            color: "#e0e0e0"; visible: (modelData.icon || "") !== ""
-                            renderType: Text.NativeRendering }
-                        Text { text: modelData.text || ""; color: "#e0e0e0"; font.pixelSize: 13 }
+                        Text {
+                            id: iconText
+                            font.family: iconFont; font.pixelSize: 16
+                            text: modelData.icon || ""
+                            color: "#e0e0e0"; visible: text !== ""
+                            renderType: Text.NativeRendering
+                        }
+                        Text {
+                            text: modelData.text || ""; color: "#e0e0e0"; font.pixelSize: 13
+                            width: Math.max(0, labelRow.width -
+                                            (iconText.visible ? iconText.width + labelRow.spacing : 0))
+                            elide: Text.ElideRight
+                        }
                     }
                     // ── 延迟控件行：[−] 值 [+] │ 重置 ─────────────────────
                     // 点按钮**不关菜单**（可连点）；写入在 PlayerViewModel 里
@@ -764,6 +785,7 @@ PopupBase {
                     }
                     // 右侧：hint（键位/当前档位）+ 二级菜单箭头
                     Row {
+                        id: hintRow
                         anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
                         spacing: 4
                         visible: !isSep && !isHeader && !isControl

@@ -48,14 +48,20 @@ say()  { printf '%s\n' "$*"; }
 fail() { printf '  ✗ %s\n' "$*"; FAIL=1; }
 
 say "── 1/4 更新 .ts（lupdate）────────────────────────────────────"
-before="$(git status --porcelain -- src/client/translations | sort)"
 if ! ./scripts/update-translations.sh; then
     fail "update-translations.sh 执行失败"
 fi
-after="$(git status --porcelain -- src/client/translations | sort)"
 
-if [ "$before" != "$after" ]; then
-    fail "lupdate 改动了 .ts —— 说明有新增/变更的 UI 文案，必须补译文"
+# 只看"非 location"的 diff：lupdate 每次都会刷新所有 <location line=…>
+#（改了任何 QML 行号都会变），那不算文案变化；否则每次改注释都会误报。
+diff_all="$(git diff -- src/client/translations | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' || true)"
+diff_real="$(printf '%s\n' "$diff_all" | grep -vE '<location ' || true)"
+if [ -n "$diff_all" ] && [ -z "$diff_real" ]; then
+    say "  ✓ 只有 <location> 行号刷新（无文案变化）"
+fi
+
+if [ -n "$diff_real" ]; then
+    fail "lupdate 改动了 .ts 的**文案条目** —— 有新增/变更的 UI 文案，必须补译文"
     say "    受影响文件："
     git status --porcelain -- src/client/translations | sed 's/^/      /'
     say "    未完成条目："
