@@ -511,6 +511,19 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             snprintf(buf, sizeof buf, "%lldx%lld", (long long)w, (long long)h);
             response = formatResponse("success", "\"" + std::string(buf) + "\"");
         }
+    } else if (cmd == "get-menu-state") {
+        // 右键菜单的数据源快照（不截图验证"轨道组为什么不显示"这类问题）：
+        // 媒体/网络源标志、轨道数、edition 数、当前 edition、两条延迟。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            char buf[256];
+            snprintf(buf, sizeof buf, "media=%d net=%d tracks=%d editions=%d cur=%d subDelay=%.0fms audioDelay=%.0fms",
+                     vm->hasMedia() ? 1 : 0, vm->networkSource() ? 1 : 0,
+                     int(vm->trackList().size()), int(vm->editions().size()),
+                     vm->currentEdition(), vm->subDelay() * 1000.0, vm->audioDelay() * 1000.0);
+            response = formatResponse("success", "\"" + jsonEscape(buf) + "\"");
+        }
     } else if (cmd == "set-eye") {
         // 测试钩子：单眼 2D 输出（vf_eye）。
         // 用法：set-eye off|left|right [sbs|tab] [full|half]

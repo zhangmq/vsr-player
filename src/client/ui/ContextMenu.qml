@@ -88,20 +88,22 @@ PopupBase {
 
         // ── 轨道 / 流（按文件；无媒体时整块隐藏）──────────────────────
         {header: qsTr("Tracks"), visibleWhen: function() { return viewModel.hasMedia }},
+        // 轨道/流入口**不显示当前值**：轨道名/流标题都很长（实测 39 条轨道、
+        // "1080P 高清 · AV1 · 1.9M" 这类），在 230px 宽的菜单里会盖住条目名。
+        // 当前值在二级面板里用勾选表达。
         {icon: "󰕧", text: qsTr("Video"),
-         hint: function() { return root.trackHint("video") },
          subSig: "videoTrackPicked",
          current: function() { return root.selectedTrackId("video") },
          submenu: function() { return root.videoTracksMenu() },
          visibleWhen: function() { return viewModel.hasMedia }},
         {icon: "󰝚", text: qsTr("Audio"),
-         hint: function() { return root.trackHint("audio") },
          subSig: "audioTrackPicked",
          current: function() { return root.selectedTrackId("audio") },
          submenu: function() { return root.audioTracksMenu() },
          visibleWhen: function() { return viewModel.hasMedia }},
+        // 字幕**恒显示**（哪怕本片一条字幕轨都没有）：还要能"加载字幕文件…"
+        // 和从"附近字幕"里加，所以不能按"有没有字幕轨"来决定是否显示。
         {icon: "󰨖", text: qsTr("Subtitles"),
-         hint: function() { return root.subtitleHint() },
          subSig: "subtitlePicked",
          current: function() { return root.selectedTrackId("sub") },
          submenu: function() { return root.subtitleMenu() },
@@ -111,7 +113,6 @@ PopupBase {
         {control: "delay", kind: "audio", text: qsTr("Audio delay"),
          visibleWhen: function() { return viewModel.hasMedia }},
         {icon: "󱜠", text: qsTr("Network stream"),
-         hint: function() { return root.editionHint() },
          subSig: "editionPicked",
          current: function() { return viewModel.currentEdition },
          submenu: function() { return root.editionsMenu() },
@@ -604,8 +605,15 @@ PopupBase {
                         anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
                         spacing: 4
                         visible: !isSep && !isHeader && !isControl
-                        Text { text: hintText; color: "#808080"; font.pixelSize: 13
-                            visible: hintText !== ""; anchors.verticalCenter: parent.verticalCenter }
+                        Text {
+                            text: hintText; color: "#808080"; font.pixelSize: 13
+                            visible: hintText !== ""
+                            anchors.verticalCenter: parent.verticalCenter
+                            // 上限 = 菜单宽度一半，超出省略（防长值撑出菜单边界）
+                            width: Math.min(implicitWidth, root.menuWidth * 0.5)
+                            elide: Text.ElideRight
+                            horizontalAlignment: Text.AlignRight
+                        }
                         Text { font.family: iconFont; font.pixelSize: 14; text: "󰅂"
                             color: "#808080"; visible: hasSub
                             renderType: Text.NativeRendering
