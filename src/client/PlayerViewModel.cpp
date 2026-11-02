@@ -1882,7 +1882,10 @@ void PlayerViewModel::toggleSubtitles() {
 // 在最后一次操作 500ms 后发一条（绝对赋值，终值一定正确）。
 void PlayerViewModel::adjustSubDelay(double delta) {
     if (!mpv_) return;
-    subDelay_ += delta;
+    // 归到 1ms 网格并吸附浮点残渣：-50ms 后再 +50ms 会留下 ~1e-17 的残值，
+    // 显示是 0ms 但 `!== 0` 为真 → 数值仍显示成高亮色、↺ 仍可点（2026-11-02 用户报）
+    subDelay_ = std::round((subDelay_ + delta) * 1000.0) / 1000.0;
+    if (std::fabs(subDelay_) < 0.0005) subDelay_ = 0.0;
     emit subDelayChanged();
     delaySubDirty_ = true;
     delaySendTimer_.start();
@@ -1898,7 +1901,8 @@ void PlayerViewModel::resetSubDelay() {
 
 void PlayerViewModel::adjustAudioDelay(double delta) {
     if (!mpv_) return;
-    audioDelay_ += delta;
+    audioDelay_ = std::round((audioDelay_ + delta) * 1000.0) / 1000.0;
+    if (std::fabs(audioDelay_) < 0.0005) audioDelay_ = 0.0;
     emit audioDelayChanged();
     delayAudioDirty_ = true;
     delaySendTimer_.start();

@@ -392,6 +392,10 @@ PopupBase {
     function delayValue(kind) {
         return kind === "audio" ? viewModel.audioDelay : viewModel.subDelay
     }
+    /// 取整到毫秒（显示与"是否为 0"的判定都用它，避免浮点残值导致显示 0ms 却仍高亮）
+    function delayMs(kind) {
+        return Math.round(root.delayValue(kind) * 1000) | 0
+    }
     function delayText(sec) {
         // |0 把 -0 归一成 0（否则会显示 "-0ms"）
         var ms = Math.round(sec * 1000) | 0
@@ -687,6 +691,7 @@ PopupBase {
         return "cur=" + root.currentIndex + "(" + cur + ") sub=" + (root.subVisible ? 1 : 0)
                + "[" + root.subCurrentIndex + ":" + sub + "] focusSub=" + (root.focusSub ? 1 : 0)
                + " ctl=" + (root.focusControl ? 1 : 0)
+               + " ms=" + root.delayMs("sub") + "/" + root.delayMs("audio")
     }
 
     /// 二级面板的 y：与所属条目行对齐。
@@ -1064,7 +1069,7 @@ PopupBase {
                             width: 64; horizontalAlignment: Text.AlignHCenter
                             anchors.verticalCenter: parent.verticalCenter
                             text: root.delayText(root.delayValue(modelData.kind))
-                            color: root.delayValue(modelData.kind) !== 0 ? "#ffcc00" : "#e0e0e0"
+                            color: root.delayMs(modelData.kind) !== 0 ? "#ffcc00" : "#e0e0e0"
                             font.pixelSize: 13
                         }
                         Item {   // +
@@ -1083,7 +1088,7 @@ PopupBase {
                         }
                         Item {   // 重置（为 0 时置灰不可点）
                             width: 22; height: 22
-                            readonly property bool canReset: root.delayValue(modelData.kind) !== 0
+                            readonly property bool canReset: root.delayMs(modelData.kind) !== 0
                             Text {
                                 anchors.centerIn: parent
                                 font.family: iconFont; font.pixelSize: 14; text: "󰦛"

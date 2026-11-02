@@ -139,13 +139,13 @@
         <location filename="../ui/ContextMenu.qml" line="234"/>
         <location filename="../ui/ContextMenu.qml" line="256"/>
         <location filename="../ui/ContextMenu.qml" line="273"/>
-        <location filename="../ui/ContextMenu.qml" line="413"/>
+        <location filename="../ui/ContextMenu.qml" line="417"/>
         <source>Auto</source>
         <translation>自动</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="142"/>
-        <location filename="../ui/ContextMenu.qml" line="414"/>
+        <location filename="../ui/ContextMenu.qml" line="418"/>
         <source>Force</source>
         <translation>强制</translation>
     </message>
@@ -156,9 +156,9 @@
         <location filename="../ui/ContextMenu.qml" line="289"/>
         <location filename="../ui/ContextMenu.qml" line="291"/>
         <location filename="../ui/ContextMenu.qml" line="320"/>
-        <location filename="../ui/ContextMenu.qml" line="415"/>
-        <location filename="../ui/ContextMenu.qml" line="430"/>
-        <location filename="../ui/ContextMenu.qml" line="450"/>
+        <location filename="../ui/ContextMenu.qml" line="419"/>
+        <location filename="../ui/ContextMenu.qml" line="434"/>
+        <location filename="../ui/ContextMenu.qml" line="454"/>
         <source>Off</source>
         <translation>关闭</translation>
     </message>
@@ -249,13 +249,13 @@
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="150"/>
-        <location filename="../ui/ContextMenu.qml" line="448"/>
+        <location filename="../ui/ContextMenu.qml" line="452"/>
         <source>90°</source>
         <translation>90°</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="151"/>
-        <location filename="../ui/ContextMenu.qml" line="449"/>
+        <location filename="../ui/ContextMenu.qml" line="453"/>
         <source>270°</source>
         <translation>270°</translation>
     </message>
@@ -271,7 +271,7 @@
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="162"/>
-        <location filename="../ui/ContextMenu.qml" line="428"/>
+        <location filename="../ui/ContextMenu.qml" line="432"/>
         <source>3D glasses</source>
         <translation>眼镜 3D</translation>
     </message>
@@ -341,40 +341,40 @@
         <translation>字幕轨道</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="438"/>
+        <location filename="../ui/ContextMenu.qml" line="442"/>
         <source>Top and bottom</source>
         <translation>上下并列</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="438"/>
+        <location filename="../ui/ContextMenu.qml" line="442"/>
         <source>Side by side</source>
         <translation>左右并排</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="439"/>
+        <location filename="../ui/ContextMenu.qml" line="443"/>
         <source>half</source>
         <translation>半</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="439"/>
+        <location filename="../ui/ContextMenu.qml" line="443"/>
         <source>full</source>
         <translation>全</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="181"/>
-        <location filename="../ui/ContextMenu.qml" line="443"/>
+        <location filename="../ui/ContextMenu.qml" line="447"/>
         <source>Right eye</source>
         <translation>右眼</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="180"/>
-        <location filename="../ui/ContextMenu.qml" line="443"/>
+        <location filename="../ui/ContextMenu.qml" line="447"/>
         <source>Left eye</source>
         <translation>左眼</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="163"/>
-        <location filename="../ui/ContextMenu.qml" line="429"/>
+        <location filename="../ui/ContextMenu.qml" line="433"/>
         <source>2D output</source>
         <translation>2D 输出</translation>
     </message>
@@ -413,59 +413,59 @@
 <context>
     <name>PlayerViewModel</name>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2903"/>
-        <location filename="../PlayerViewModel.cpp" line="2911"/>
+        <location filename="../PlayerViewModel.cpp" line="2907"/>
+        <location filename="../PlayerViewModel.cpp" line="2915"/>
         <source>Source</source>
         <translation>源</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2937"/>
+        <location filename="../PlayerViewModel.cpp" line="2941"/>
         <source>Output</source>
         <translation>输出</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2944"/>
+        <location filename="../PlayerViewModel.cpp" line="2948"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2972"/>
+        <location filename="../PlayerViewModel.cpp" line="2976"/>
         <source>VSR</source>
         <translation>超分</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2997"/>
+        <location filename="../PlayerViewModel.cpp" line="3001"/>
         <source>FRUC</source>
         <translation>插帧</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3016"/>
-        <location filename="../PlayerViewModel.cpp" line="3021"/>
+        <location filename="../PlayerViewModel.cpp" line="3020"/>
+        <location filename="../PlayerViewModel.cpp" line="3025"/>
         <source>Decoder</source>
         <translation>解码器</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3026"/>
+        <location filename="../PlayerViewModel.cpp" line="3030"/>
         <source>Speed</source>
         <translation>速度</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3028"/>
+        <location filename="../PlayerViewModel.cpp" line="3032"/>
         <source>Time</source>
         <translation>时间</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3032"/>
+        <location filename="../PlayerViewModel.cpp" line="3036"/>
         <source>Frames</source>
         <translation>帧数</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3036"/>
+        <location filename="../PlayerViewModel.cpp" line="3040"/>
         <source>GPU</source>
         <translation>显卡</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3039"/>
+        <location filename="../PlayerViewModel.cpp" line="3043"/>
         <source>Audio</source>
         <translation>音频</translation>
     </message>
