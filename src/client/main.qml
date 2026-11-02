@@ -514,6 +514,19 @@ Item {
         }
         // 3D H/J/K/L：H 走 app filter + QShortcut + QML Shortcut；J/K/L 走
         // main.cpp 的 StereoKeyFilter（在 QML 之前按 event->key() 拦截，大小写无关）。
+        // 打开右键菜单：Menu 键 / Shift+F10（Windows 惯例）/ F10。
+        // 3D presentation 期间不响应（与右键一致：presentation 窗口不吃菜单）。
+        Shortcut {
+            id: menuOpenSc
+            enabled: root.shortcutsEnabled && (controlMode || !stereo.active)
+            sequences: ["Menu", "Shift+F10", "F10"]
+            onActivated: {
+                var x = root.lastMenuPos.x >= 0 ? root.lastMenuPos.x : window.width / 2
+                var y = root.lastMenuPos.y >= 0 ? root.lastMenuPos.y : window.height / 2
+                uiLayer.closeOtherPopups(contextMenu)
+                contextMenu.showAt(uiLayer, x, y)
+            }
+        }
         Shortcut {
             // Ctrl+Q 退出（与右键菜单 Quit 一致；走标准退出路径）
             enabled: root.shortcutsEnabled; sequence: "Ctrl+Q"
@@ -690,6 +703,8 @@ Item {
         var parts = ["ctxVisible=" + (c.visible ? 1 : 0),
                      "anyPopup=" + (uiLayer.anyPopupOpen ? 1 : 0),
                      "scEnabled=" + (root.shortcutsEnabled ? 1 : 0),
+                     "menuSc=" + (menuOpenSc.enabled ? 1 : 0),
+                     "winActive=" + (window ? (window.active ? 1 : 0) : -1),
                      "ctlWin=" + (controlMode ? 1 : 0),
                      "subOpen=" + (c.subVisible ? 1 : 0),
                      "subIdx=" + c.currentIndex,

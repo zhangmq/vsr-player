@@ -499,13 +499,15 @@ PopupBase {
         return true
     }
 
-    /// 设置主菜单当前行（并据它决定面板开合 / 面板当前行）
-    function setCurrentRow(i) {
+    /// 设置主菜单当前行。
+    /// openPanel=true（鼠标 hover）→ 有二级就展开；false（键盘 ↑↓）→ 不自动展开，
+    /// 由 →/Enter 显式打开（用户 2026-11-02：←/→ 必须有可见效果）。
+    function setCurrentRow(i, openPanel) {
         if (i === root.currentIndex) return
         root.currentIndex = i
         root.focusSub = false
         root.focusControl = false
-        if (root.hasSubRow(i)) {
+        if (root.hasSubRow(i) && openPanel === true) {
             root.subVisible = true
             root.subCurrentIndex = root.initialSubRow()
         } else {
@@ -521,7 +523,7 @@ PopupBase {
         var i = root.currentIndex
         for (var k = 0; k < n; k++) {
             i = (i + delta + n) % n
-            if (root.rowFocusable(i)) { root.setCurrentRow(i); return }
+            if (root.rowFocusable(i)) { root.setCurrentRow(i, false); return }
         }
     }
 
@@ -594,12 +596,16 @@ PopupBase {
             root.delayNudge(root.items[root.currentIndex].kind, dir * 0.05)
             return
         }
-        if (root.focusSub) {
-            if (dir < 0) root.focusSub = false
+        var i = root.currentIndex
+        if (dir < 0) {                      // ←：收起面板（有可见效果），不退到别处
+            if (root.subVisible) {
+                root.subVisible = false
+                root.focusSub = false
+                root.subCurrentIndex = -1
+            }
             return
         }
-        var i = root.currentIndex
-        if (dir > 0 && root.hasSubRow(i)) {
+        if (dir > 0 && root.hasSubRow(i)) { // →：展开面板并把焦点放进去
             root.subVisible = true
             root.focusSub = true
             root.subCurrentIndex = root.initialSubRow()
@@ -610,7 +616,7 @@ PopupBase {
     function hoverMain(i, pos) {
         if (!root.pointerMoved(pos)) return
         root.focusSub = false
-        root.setCurrentRow(root.rowFocusable(i) ? i : -1)
+        root.setCurrentRow(root.rowFocusable(i) ? i : -1, true)
     }
     /// 鼠标移动到二级面板某一行
     function hoverSub(j, pos) {
@@ -635,14 +641,14 @@ PopupBase {
         case "right": root.arrowHorizontal(1); break
         case "home":
             if (root.focusSub) { root.subCurrentIndex = root.initialSubRow() }
-            else root.setCurrentRow(root.firstFocusableRow(false))
+            else root.setCurrentRow(root.firstFocusableRow(false), false)
             break
         case "end":
             if (root.focusSub) {
                 var m = root.subItems
                 for (var j = m.length - 1; j >= 0; j--)
                     if (root.subRowFocusable(j)) { root.subCurrentIndex = j; break }
-            } else root.setCurrentRow(root.firstFocusableRow(true))
+            } else root.setCurrentRow(root.firstFocusableRow(true), false)
             break
         case "enter": root.activateCurrent(); break
         // 偏移快捷键（与窗口级 z/Z/Alt+z、x/X/Alt+x 完全同一套语义）：
