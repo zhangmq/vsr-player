@@ -480,10 +480,6 @@ PopupBase {
         var it = root.items[i]
         return !!it && it.submenu !== undefined
     }
-    function isDelayItem(i) {
-        var it = root.items[i]
-        return !!it && it.control === "delay"
-    }
 
     /// 指针真的移动了吗？内容滚动引起的 hover 变化不算。
     function pointerMoved(pos) {
@@ -570,18 +566,16 @@ PopupBase {
         if (it.sig) { root.close(); root[it.sig]() }
     }
 
-    /// ←/→：仅当当前行是「字幕延迟」「音频延迟」时调值（±50ms），
-    /// 其余情况 ← 从面板退回主菜单、→ 进入面板。
+    /// ←/→ 只做导航（用户 2026-11-02：方向键不做执行）：
+    /// ← 从面板退回主菜单；→ 进入当前行的二级面板。没有二级的行上两者都不做事
+    ///（「字幕延迟」「音频延迟」的 −/+/↺ 是鼠标操作；键盘要调值需另行设计
+    /// 行内可聚焦目标，不在本期）。
     function arrowHorizontal(dir) {
-        var i = root.currentIndex
-        if (!root.focusSub && root.isDelayItem(i)) {
-            root.delayNudge(root.items[i].kind, dir * 0.05)
-            return
-        }
         if (root.focusSub) {
             if (dir < 0) root.focusSub = false
             return
         }
+        var i = root.currentIndex
         if (dir > 0 && root.hasSubRow(i)) {
             root.subVisible = true
             root.focusSub = true
@@ -626,6 +620,15 @@ PopupBase {
             } else root.setCurrentRow(root.firstFocusableRow(true))
             break
         case "enter": root.activateCurrent(); break
+        // 偏移快捷键（与窗口级 z/Z/Alt+z、x/X/Alt+x 完全同一套语义）：
+        // 窗口级 Shortcut 在"有 popup 打开"时禁用，所以菜单里要自己接一份，
+        // 否则开着菜单按键没反应。
+        case "z":       root.delayNudge("sub", -0.05); break
+        case "shift+z": root.delayNudge("sub", 0.05); break
+        case "alt+z":   root.delayReset("sub"); break
+        case "x":       root.delayNudge("audio", -0.05); break
+        case "shift+x": root.delayNudge("audio", 0.05); break
+        case "alt+x":   root.delayReset("audio"); break
         case "esc":
             if (root.subVisible) {
                 root.subVisible = false
@@ -890,6 +893,12 @@ PopupBase {
             else if (ev.key === Qt.Key_End) k = "end"
             else if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter) k = "enter"
             else if (ev.key === Qt.Key_Escape) k = "esc"
+            else if (ev.key === Qt.Key_Z)
+                k = (ev.modifiers & Qt.AltModifier) ? "alt+z"
+                  : (ev.modifiers & Qt.ShiftModifier) ? "shift+z" : "z"
+            else if (ev.key === Qt.Key_X)
+                k = (ev.modifiers & Qt.AltModifier) ? "alt+x"
+                  : (ev.modifiers & Qt.ShiftModifier) ? "shift+x" : "x"
             if (k !== "") { root.handleKey(k); ev.accepted = true }
         }
         implicitWidth: root.menuWidth
