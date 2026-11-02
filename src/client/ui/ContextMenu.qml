@@ -87,7 +87,7 @@ PopupBase {
         {sep: true},
 
         // ── 轨道 / 流（按文件；无媒体时整块隐藏）──────────────────────
-        {header: qsTr("Tracks"), visibleWhen: function() { return viewModel.hasMedia }},
+        {header: qsTr("Tracks"), visibleWhen: function() { return root.hasTracks() }},
         // 轨道/流入口**不显示当前值**：轨道名/流标题都很长（实测 39 条轨道、
         // "1080P 高清 · AV1 · 1.9M" 这类），在 230px 宽的菜单里会盖住条目名。
         // 当前值在二级面板里用勾选表达。
@@ -95,23 +95,23 @@ PopupBase {
          subSig: "videoTrackPicked",
          current: function() { return root.selectedTrackId("video") },
          submenu: function() { return root.videoTracksMenu() },
-         visibleWhen: function() { return viewModel.hasMedia }},
+         visibleWhen: function() { return root.hasTracks() }},
         {icon: "󰝚", text: qsTr("Audio"),
          subSig: "audioTrackPicked",
          current: function() { return root.selectedTrackId("audio") },
          submenu: function() { return root.audioTracksMenu() },
-         visibleWhen: function() { return viewModel.hasMedia }},
+         visibleWhen: function() { return root.hasTracks() }},
         // 字幕**恒显示**（哪怕本片一条字幕轨都没有）：还要能"加载字幕文件…"
         // 和从"附近字幕"里加，所以不能按"有没有字幕轨"来决定是否显示。
         {icon: "󰨖", text: qsTr("Subtitles"),
          subSig: "subtitlePicked",
          current: function() { return root.selectedTrackId("sub") },
          submenu: function() { return root.subtitleMenu() },
-         visibleWhen: function() { return viewModel.hasMedia }},
+         visibleWhen: function() { return root.hasTracks() }},
         {control: "delay", kind: "sub", text: qsTr("Subtitle delay"),
-         visibleWhen: function() { return viewModel.hasMedia }},
+         visibleWhen: function() { return root.hasTracks() }},
         {control: "delay", kind: "audio", text: qsTr("Audio delay"),
-         visibleWhen: function() { return viewModel.hasMedia }},
+         visibleWhen: function() { return root.hasTracks() }},
         {icon: "󱜠", text: qsTr("Network stream"),
          subSig: "editionPicked",
          current: function() { return viewModel.currentEdition },
@@ -193,6 +193,10 @@ PopupBase {
         }
         return parts.join(" · ")
     }
+
+    /// 轨道组是否显示：直接看 track-list 有没有条目（媒体一加载就填充）。
+    /// 不用 hasMedia——那是个"fileLoaded_"标志位，多一层间接来源。
+    function hasTracks() { return viewModel.trackList.length > 0 }
 
     function tracksOf(type) {
         var out = []

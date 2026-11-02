@@ -649,6 +649,13 @@ Item {
     }
     // 测试/调试入口：RPC 在指定位置打开右键菜单（正常从右键进入）。
     // 用于截图核对菜单排版/分组（RPC `open-menu <x> <y>`）。
+    /// RPC `open-menu` 用：根对象上的信号 → 调 openMenuAt。
+    /// 直接用 QMetaObject::invokeMethod(rootItem, "openMenuAt", Q_ARG(QVariant…))
+    /// 调 QML 函数不可靠（参数类型对不上时静默失败）；信号名是 moc 生成的
+    /// 方法，invokeMethod 触发它 = emit，稳定。
+    signal menuOpenRequested(int x, int y, int sub)
+    onMenuOpenRequested: openMenuAt(x, y, sub)
+
     function openMenuAt(x, y, subIndex) {
         contextMenu.showAt(uiLayer, x, y)
         // 可选：直接展开第 subIndex 个条目的二级面板（截图核对分组排版用）。

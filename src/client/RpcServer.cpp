@@ -635,12 +635,13 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             const int y = atoi(args[1].c_str());
             const int sub = args.size() >= 3 ? atoi(args[2].c_str()) : -1;
             QQuickItem *rootItem = qv->rootObject();
-            QMetaObject::invokeMethod(rootItem, [rootItem, x, y, sub]() {
-                QMetaObject::invokeMethod(rootItem, "openMenuAt",
-                                          Q_ARG(QVariant, QVariant(x)),
-                                          Q_ARG(QVariant, QVariant(y)),
-                                          Q_ARG(QVariant, QVariant(sub)));
-            });
+            // 触发根对象的 QML 信号（见 main.qml 的注释：直接 invoke QML 函数
+            // 会因为参数类型不匹配静默失败，症状正是"RPC 返回 success 但菜单没开"）
+            bool ok = QMetaObject::invokeMethod(rootItem, "menuOpenRequested",
+                                               Qt::QueuedConnection,
+                                               Q_ARG(int, x), Q_ARG(int, y), Q_ARG(int, sub));
+            if (!ok)
+                RPCLOG("open-menu: signal invoke failed");
             response = formatResponse("success");
         }
     } else if (cmd == "stereo-picker") {
