@@ -198,7 +198,8 @@ mpv_dep = declare_dependency(
 
 # ── MOC ────────────────────────────────────────────────────────────────
 processed = qt6.preprocess(
-    moc_headers: ['Video.h', 'PlayerViewModel.h', 'PlaylistModel.h', 'StereoController.h'],
+    moc_headers: ['Video.h', 'PlayerViewModel.h', 'PlaylistModel.h', 'StereoController.h',
+                  'KeyRouter.h', 'PopupRegistry.h'],
     qresources: files('resources.qrc'),
     dependencies: qt6_dep,
 )
@@ -216,7 +217,7 @@ executable('vsr-player',
     'main.cpp', 'Options.cpp', 'VulkanContext.cpp',
     'CompositePipeline.cpp', 'MpvController.cpp', 'Video.cpp',
     'PlayerViewModel.cpp', 'PlaylistModel.cpp', 'RpcServer.cpp', 'Log.cpp',
-    'StereoController.cpp',
+    'StereoController.cpp', 'Keymap.cpp', 'KeyRouter.cpp', 'PopupRegistry.cpp',
     'SessionIdle.cpp', 'HdrOutput.cpp', 'CudaProbe.cpp', 'BlurayDisc.cpp',
     c_vert_h, c_frag_h, translations_qm, processed,
     # libbluray：ISO/BDMV 的 title 枚举（只有元数据；解码仍交给 libmpv）。

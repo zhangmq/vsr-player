@@ -663,102 +663,102 @@
 <context>
     <name>StereoHotkeyHelp</name>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="52"/>
+        <location filename="../StereoHotkeyHelp.qml" line="54"/>
         <source>HotKeys</source>
         <translation>热键</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="68"/>
+        <location filename="../StereoHotkeyHelp.qml" line="70"/>
         <source>Toggle HotKeys Help</source>
         <translation>显示/隐藏热键帮助</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="73"/>
+        <location filename="../StereoHotkeyHelp.qml" line="75"/>
         <source>Side-by-Side</source>
         <translation>左右并排</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="73"/>
+        <location filename="../StereoHotkeyHelp.qml" line="75"/>
         <source>Top-and-Bottom</source>
         <translation>上下并列</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="80"/>
+        <location filename="../StereoHotkeyHelp.qml" line="82"/>
         <source>Normal Eyes</source>
         <translation>正常眼序</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="80"/>
+        <location filename="../StereoHotkeyHelp.qml" line="82"/>
         <source>Swapped Eyes</source>
         <translation>交换眼序</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="81"/>
+        <location filename="../StereoHotkeyHelp.qml" line="83"/>
         <source>Left Eye</source>
         <translation>左眼</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="81"/>
+        <location filename="../StereoHotkeyHelp.qml" line="83"/>
         <source>Right Eye</source>
         <translation>右眼</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="88"/>
+        <location filename="../StereoHotkeyHelp.qml" line="90"/>
         <source>Full</source>
         <translation>全</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="88"/>
+        <location filename="../StereoHotkeyHelp.qml" line="90"/>
         <source>Half</source>
         <translation>半</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="98"/>
+        <location filename="../StereoHotkeyHelp.qml" line="100"/>
         <source>Play / Pause</source>
         <translation>播放 / 暂停</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="103"/>
+        <location filename="../StereoHotkeyHelp.qml" line="105"/>
         <source>Seek -5s</source>
         <translation>快退 5 秒</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="108"/>
+        <location filename="../StereoHotkeyHelp.qml" line="110"/>
         <source>Seek +5s</source>
         <translation>快进 5 秒</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="113"/>
+        <location filename="../StereoHotkeyHelp.qml" line="115"/>
         <source>Seek -10s</source>
         <translation>快退 10 秒</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="118"/>
+        <location filename="../StereoHotkeyHelp.qml" line="120"/>
         <source>Seek +10s</source>
         <translation>快进 10 秒</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="123"/>
+        <location filename="../StereoHotkeyHelp.qml" line="125"/>
         <source>Volume up</source>
         <translation>音量 +</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="128"/>
+        <location filename="../StereoHotkeyHelp.qml" line="130"/>
         <source>Volume down</source>
         <translation>音量 -</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="133"/>
+        <location filename="../StereoHotkeyHelp.qml" line="135"/>
         <source>No override</source>
         <translation>不覆盖</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="141"/>
+        <location filename="../StereoHotkeyHelp.qml" line="143"/>
         <source>Previous</source>
         <translation>上一个</translation>
     </message>
     <message>
-        <location filename="../StereoHotkeyHelp.qml" line="146"/>
+        <location filename="../StereoHotkeyHelp.qml" line="148"/>
         <source>Next</source>
         <translation>下一个</translation>
     </message>
@@ -919,54 +919,54 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="628"/>
+        <location filename="../main.qml" line="481"/>
         <source>Open media</source>
         <translation>打开媒体</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="640"/>
+        <location filename="../main.qml" line="493"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>音频文件 (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="632"/>
-        <location filename="../main.qml" line="641"/>
+        <location filename="../main.qml" line="485"/>
+        <location filename="../main.qml" line="494"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>字幕文件 (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="619"/>
+        <location filename="../main.qml" line="472"/>
         <source>Add folder to playlist</source>
         <translation>追加文件夹到播放列表</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="620"/>
+        <location filename="../main.qml" line="473"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="633"/>
-        <location filename="../main.qml" line="642"/>
+        <location filename="../main.qml" line="486"/>
+        <location filename="../main.qml" line="495"/>
         <source>All files (*)</source>
         <translation>所有文件 (*)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="635"/>
+        <location filename="../main.qml" line="488"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>媒体文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="636"/>
+        <location filename="../main.qml" line="489"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</source>
         <translation>视频文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="639"/>
+        <location filename="../main.qml" line="492"/>
         <source>Blu-ray images (*.iso)</source>
         <translation>蓝光镜像 (*.iso)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="816"/>
+        <location filename="../main.qml" line="670"/>
         <source>请戴上眼镜观看</source>
         <translation>请戴上眼镜观看</translation>
     </message>

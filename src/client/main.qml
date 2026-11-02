@@ -9,10 +9,6 @@ Item {
     id: root
     anchors.fill: parent
 
-    /// 有弹窗打开时禁用窗口级快捷键（所有 Shortcut 写的是 `root.shortcutsEnabled`；
-    /// 曾误把这条声明放进 uiLayer → `root.shortcutsEnabled` 读不到（undefined）→
-    /// 门控整个失效，右键菜单开着时 上/下 还在调音量，2026-11-02 用户报）。
-    readonly property bool shortcutsEnabled: !uiLayer.anyPopupOpen
     /// 最后一次鼠标位置（键盘打开右键菜单时用它定位；没记录过就开在窗口中间）
     property point lastMenuPos: Qt.point(-1, -1)
 
@@ -428,185 +424,42 @@ Item {
 
         focus: true
 
-        // ── 窗口级快捷键（Shortcut，与焦点无关）────────────────────
-        // 不能用 Keys.onPressed 做全局快捷键：Keys 只投递给 activeFocusItem，
-        // 任何可聚焦控件被点中就会把按键全部吃掉（进度条 Slider 在非 macOS 上
-        // focusPolicy = StrongFocus，点一下它，方向键就进了 Slider 自己的
-        // keyPressEvent——stepSize=0 时只改 0.1 ms，松手还会触发 seeked，
-        // 现象是"画面原地跳、快进快退失效"）。
-        // Shortcut 走 QShortcutMap：qguiapplication.cpp 的 processKeyEvent →
-        // handleShortcutEvent 在**把按键投递给焦点项之前**匹配，因此换焦点
-        // 不影响快捷键。
-        // 弹窗打开时整体禁用：URL 输入框里要能正常打字，弹窗内控件保留自己的
-        // 按键（Esc 由弹窗自己处理；播放列表 Drawer 不在 _popups 里，照常）。
+        // ── 按键（键位表驱动，C++ KeyRouter）─────────────────────────
+        // 35 条手写 Shortcut 已删除（2026-11-03）：键位定义只在
+        // src/client/Keymap.cpp，执行在 KeyRouter（应用级事件过滤器）。
+        // 这里只保留**必须 QML 上下文**的动作（对话框/播放列表面板/右键菜单）。
+        //
+        // 两个窗口加载同一份 main.qml，但只有"当前给人看的那一个"执行：
+        // 2D = 主窗口，3D = 桌面 control 窗口（presentation 只有画面）。
+        readonly property bool handlesActions: stereo.active === controlMode
 
-        Shortcut {
-            // 3D presentation 期间不响应 Esc（主窗口可能仍被合成器聚焦，
-            // Esc 退全屏会把窗口切回焦点屏）；退出用桌面 3D → Off。
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Escape"
-            onActivated: {
+        Connections {
+            target: keys
+            function onActionRequested(id) {
+                if (!uiLayer.handlesActions) return
+                uiLayer.runAction(id)
+            }
+        }
+
+        function runAction(id) {
+            if (id === "escape") {
                 // 全屏 → 退全屏；播放列表打开 → 关闭；其余不响应。Esc 不控制播放停止。
                 if (viewModel.fullscreen) viewModel.toggleFullscreen()
                 else if (playlistPanel.visible) playlistPanel.close()
+                return
             }
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Space"
-            onActivated: viewModel.togglePlayPause()
-        }
-        // 当前条目操作：Delete = 仅从列表移除；Shift+Delete = 连同文件移入回收站
-        //（破坏性操作不设确认弹窗，但回收站可恢复）。
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Delete"
-            onActivated: viewModel.removeCurrentFromPlaylist()
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Shift+Delete"
-            onActivated: viewModel.deleteCurrentFile()
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Left"
-            onActivated: viewModel.seekRelative(-5000)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Shift+Left"
-            onActivated: viewModel.seekRelative(-10000)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Right"
-            onActivated: viewModel.seekRelative(5000)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Shift+Right"
-            onActivated: viewModel.seekRelative(10000)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Up"
-            onActivated: viewModel.nudgeVolume(0.05)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Down"
-            onActivated: viewModel.nudgeVolume(-0.05)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "S"
-            onActivated: viewModel.screenshot()
-        }
-        Shortcut {
-            // 单帧步进（调试插帧帧序）：暂停态前进 1 帧
-            enabled: root.shortcutsEnabled; sequence: "."
-            onActivated: viewModel.frameStep(1)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: ","
-            onActivated: viewModel.frameStep(-1)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "h"
-            onActivated: stereo.active ? stereo.toggleHelp() : viewModel.toggleOsd()
-        }
-        Shortcut {
-            // 2D：Tab 显隐 mpv 的 OSD（3D 下不参与——3D 的帮助面板是 H，且 present-
-            // ation 窗口不收焦点，Tab 会退化成焦点遍历）。2026-10-26 用户报
-            // "2D 下 Tab 失效"：早前清理 3D 的 Tab 特判时把这条 2D 绑定一起删了。
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Tab"
-            onActivated: viewModel.toggleOsd()
-        }
-        // 3D H/J/K/L：H 走 app filter + QShortcut + QML Shortcut；J/K/L 走
-        // main.cpp 的 StereoKeyFilter（在 QML 之前按 event->key() 拦截，大小写无关）。
-        // 打开右键菜单：Menu 键 / Shift+F10（Windows 惯例）/ F10。
-        // 3D presentation 期间不响应（与右键一致：presentation 窗口不吃菜单）。
-        Shortcut {
-            id: menuOpenSc
-            enabled: root.shortcutsEnabled && (controlMode || !stereo.active)
-            sequences: ["Menu", "Shift+F10", "F10"]
-            onActivated: {
+            if (id === "open-menu") {
+                // 键盘打开：用最后记录的鼠标位置，没记录过就开在窗口中间
                 var x = root.lastMenuPos.x >= 0 ? root.lastMenuPos.x : window.width / 2
                 var y = root.lastMenuPos.y >= 0 ? root.lastMenuPos.y : window.height / 2
-                uiLayer.closeOtherPopups(contextMenu)
+                closeOtherPopups(contextMenu)
                 contextMenu.showAt(uiLayer, x, y)
+                return
             }
-        }
-        Shortcut {
-            // Ctrl+Q 退出（与右键菜单 Quit 一致；走标准退出路径）
-            enabled: root.shortcutsEnabled; sequence: "Ctrl+Q"
-            onActivated: Qt.quit()
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+Left"
-            onActivated: viewModel.playlistPrev()
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+Right"
-            onActivated: viewModel.playlistNext()
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "["
-            onActivated: viewModel.setSpeed(0.5)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "]"
-            onActivated: viewModel.setSpeed(2.0)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "\\"
-            onActivated: viewModel.setSpeed(1.0)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Ctrl+O"
-            onActivated: { fileDialog.mode = 0; fileDialog.open() }
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Ctrl+Shift+O"
-            onActivated: { folderDialog.mode = 0; folderDialog.open() }
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "Ctrl+L"
-            onActivated: urlPopup.open()
-        }
-        // 偏移快捷键（对齐 mpv：字幕 z/Z、音频 Ctrl++/Ctrl+-；Qt 会归一化大小写，
-        // 所以 Shift 必须显式写成 "Shift+Z"——写成 "Z" 与 "z" 是同一条键）。
-        // 归零：字幕 Ctrl+0、音频 Ctrl+Alt+0（用户 2026-11-02 定）。
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "z"
-            onActivated: viewModel.adjustSubDelay(-0.05)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Shift+Z"
-            onActivated: viewModel.adjustSubDelay(0.05)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+0"
-            onActivated: viewModel.resetSubDelay()
-        }
-        // 音频：mpv 惯例 Ctrl++ / Ctrl+-；另绑 Ctrl+=（很多键盘 + 要按 Shift，避免按不出来）
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl++"
-            onActivated: viewModel.adjustAudioDelay(0.05)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+="
-            onActivated: viewModel.adjustAudioDelay(0.05)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+-"
-            onActivated: viewModel.adjustAudioDelay(-0.05)
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+Alt+0"
-            onActivated: viewModel.resetAudioDelay()
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "V"
-            onActivated: viewModel.toggleSubtitles()
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "P"
-            onActivated: root.togglePlaylist()
-        }
-        Shortcut {
-            enabled: root.shortcutsEnabled; sequence: "F"
-            onActivated: viewModel.toggleFullscreen()
+            if (id === "open-file") { fileDialog.mode = 0; fileDialog.open(); return }
+            if (id === "open-folder") { folderDialog.mode = 0; folderDialog.open(); return }
+            if (id === "open-url") { urlPopup.open(); return }
+            if (id === "toggle-playlist") { root.togglePlaylist(); return }
         }
     }
 
@@ -702,8 +555,9 @@ Item {
         if (!c) return ""
         var parts = ["ctxVisible=" + (c.visible ? 1 : 0),
                      "anyPopup=" + (uiLayer.anyPopupOpen ? 1 : 0),
-                     "scEnabled=" + (root.shortcutsEnabled ? 1 : 0),
-                     "menuSc=" + (menuOpenSc.enabled ? 1 : 0),
+                     "popups=" + popups.count,
+                     "playlist=" + (playlistPanel.visible ? 1 : 0),
+                     "keysMode=" + (stereo.active ? "3d" : "2d"),
                      "winActive=" + (window ? (window.active ? 1 : 0) : -1),
                      "ctlWin=" + (controlMode ? 1 : 0),
                      "subOpen=" + (c.subVisible ? 1 : 0),

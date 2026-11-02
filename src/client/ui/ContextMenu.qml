@@ -630,9 +630,41 @@ PopupBase {
         root.focusSub = true
     }
 
-    /// 键盘事件入口（也供 RPC 测试钩子调用：menu-key）
-    function handleKey(key) {
-        switch (key) {
+    /// 键盘入口（键盘事件与 RPC menu-key 共用）。
+    /// 键位不再写在这个文件里：菜单导航键（menu-up/…）与"弹窗内可用动作"
+    /// （字幕/音频延迟，键位表里 popupOk 的行）都由 C++ 的同一张表回答，
+    /// 查不到就交还给默认处理（2026-11-03 删掉了这里的第二份偏移键映射）。
+    function runAction(id) {
+        // menu-* = 菜单导航；其余是 C++ 侧动作（KeyRouter::exec）
+        if (id.lastIndexOf("menu-", 0) === 0) {
+            keys.noteNav(id)          // 记账（RPC key-log 断言用）
+            root.navAction(id.substring(5))
+            return true
+        }
+        return keys.trigger(id)
+    }
+
+    function keyAction(key, modifiers) {
+        var id = keys.menuAction(key, modifiers)
+        if (id === "") return false
+        return root.runAction(id)
+    }
+
+    /// RPC menu-key 入口：nav 名称（up/down/left/right/home/end/enter/esc）
+    /// 或动作 id（如 sub-delay-down）
+    function handleKey(token) {
+        switch (token) {
+        case "up": case "down": case "left": case "right":
+        case "home": case "end": case "enter": case "esc": case "escape":
+            root.navAction(token === "esc" ? "escape" : token)
+            return
+        }
+        root.runAction(token)
+    }
+
+    /// 菜单导航（鼠标/键盘共用同一套"当前行"状态）
+    function navAction(nav) {
+        switch (nav) {
         case "up":
             root.focusControl = false
             if (root.focusSub) root.moveSub(-1); else root.moveCurrent(-1)
@@ -655,18 +687,7 @@ PopupBase {
             } else root.setCurrentRow(root.firstFocusableRow(true), false)
             break
         case "enter": root.activateCurrent(); break
-        // 偏移快捷键（与窗口级 z/Z/Alt+z、x/X/Alt+x 完全同一套语义）：
-        // 窗口级 Shortcut 在"有 popup 打开"时禁用，所以菜单里要自己接一份，
-        // 否则开着菜单按键没反应。
-        // 与窗口级完全同一套（对齐 mpv）：字幕 z / Shift+Z，音频 Ctrl++ / Ctrl+-，
-        // 归零 Ctrl+0（字幕）、Ctrl+Alt+0（音频）
-        case "z":         root.delayNudge("sub", -0.05); break
-        case "shift+z":   root.delayNudge("sub", 0.05); break
-        case "ctrl+0":    root.delayReset("sub"); break
-        case "audio-up":  root.delayNudge("audio", 0.05); break
-        case "audio-down":root.delayNudge("audio", -0.05); break
-        case "ctrl+alt+0":root.delayReset("audio"); break
-        case "esc":
+        case "escape":
             if (root.focusControl) { root.focusControl = false; break }
             if (root.subVisible) {
                 root.subVisible = false
@@ -947,26 +968,8 @@ PopupBase {
         id: contentRoot
         focus: true
         Keys.onPressed: function(ev) {
-            var k = ""
-            if (ev.key === Qt.Key_Up) k = "up"
-            else if (ev.key === Qt.Key_Down) k = "down"
-            else if (ev.key === Qt.Key_Left) k = "left"
-            else if (ev.key === Qt.Key_Right) k = "right"
-            else if (ev.key === Qt.Key_Home) k = "home"
-            else if (ev.key === Qt.Key_End) k = "end"
-            else if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter) k = "enter"
-            else if (ev.key === Qt.Key_Escape) k = "esc"
-            else if (ev.key === Qt.Key_Z && (ev.modifiers & Qt.ControlModifier) === 0)
-                k = (ev.modifiers & Qt.ShiftModifier) ? "shift+z" : "z"
-            else if (ev.key === Qt.Key_0 && (ev.modifiers & Qt.ControlModifier)) {
-                k = (ev.modifiers & Qt.AltModifier) ? "ctrl+alt+0" : "ctrl+0"
-            }
-            else if (ev.modifiers & Qt.ControlModifier
-                     && (ev.key === Qt.Key_Plus || ev.key === Qt.Key_Equal))
-                k = "audio-up"
-            else if (ev.modifiers & Qt.ControlModifier && ev.key === Qt.Key_Minus)
-                k = "audio-down"
-            if (k !== "") { root.handleKey(k); ev.accepted = true }
+            if (root.keyAction(ev.key, ev.modifiers))
+                ev.accepted = true
         }
         implicitWidth: root.menuWidth
         // 二级面板比主菜单高时，popup 也要跟着长高，否则面板被裁

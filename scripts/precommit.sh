@@ -7,8 +7,8 @@
 # 「Subtitle tracks 漏译」都是这一类）。
 #
 # 用法：
-#   ./scripts/precommit.sh                # 更新 .ts → lrelease → 完整性检查
-#   ./scripts/precommit.sh --no-build     # 跳过 ninja（只查 .ts，快）
+#   ./scripts/precommit.sh                # 键位表 → 更新 .ts → lrelease → 完整性检查
+#   ./scripts/precommit.sh --no-build     # 跳过 ninja（只查键位表与 .ts，快）
 #   ./scripts/precommit.sh --install-hook # 装成 .git/hooks/pre-commit（软链）
 #
 # 退出码：0 = 可以提交；1 = 需要处理（输出里会写清楚改什么）。
@@ -47,7 +47,17 @@ FAIL=0
 say()  { printf '%s\n' "$*"; }
 fail() { printf '  ✗ %s\n' "$*"; FAIL=1; }
 
-say "── 1/4 更新 .ts（lupdate）────────────────────────────────────"
+say "── 1/5 键位表静态检查（重复按键 / 未实现动作 / 键位回流 QML）──────"
+# 快捷键的 bug 几乎都是"同一件事写了多份、漏了一处"：QML 里多一条 Shortcut、
+# 菜单里另抄一份偏移键映射、某个 id 没人实现。编译/启动/截图都看不出来，只有
+# 用户按到那个组合才发现——所以放在最前面，改键位时第一时间拦住。
+if ./tests/hotkeys/check_keys.py; then
+    say "  ✓ 键位表一致"
+else
+    fail "键位表检查未通过（见上方输出）"
+fi
+
+say "── 2/5 更新 .ts（lupdate）────────────────────────────────────"
 if ! ./scripts/update-translations.sh; then
     fail "update-translations.sh 执行失败"
 fi
@@ -83,7 +93,7 @@ PY
 fi
 
 if [ "$DO_BUILD" = 1 ]; then
-    say "── 2/4 lrelease（ninja -C build）─────────────────────────────"
+    say "── 3/5 lrelease（ninja -C build）─────────────────────────────"
     if ! ninja -C build >/tmp/precommit-ninja.log 2>&1; then
         fail "构建失败，日志尾巴："
         tail -n 15 /tmp/precommit-ninja.log | sed 's/^/      /'
@@ -91,17 +101,17 @@ if [ "$DO_BUILD" = 1 ]; then
         say "  ✓ 构建通过（.qm 已刷新）"
     fi
 else
-    say "── 2/4 跳过构建（--no-build）─────────────────────────────────"
+    say "── 3/5 跳过构建（--no-build）─────────────────────────────────"
 fi
 
-say "── 3/4 完整性检查（--check）───────────────────────────────────"
+say "── 4/5 完整性检查（--check）───────────────────────────────────"
 if ./scripts/update-translations.sh --check; then
     say "  ✓ 字面量/译文完整"
 else
     fail "完整性检查未通过（见上方输出）"
 fi
 
-say "── 4/4 运行期抽查（.qm 里反查新文案）──────────────────────────"
+say "── 5/5 运行期抽查（.qm 里反查新文案）──────────────────────────"
 QM="build/src/client/vsr-player_zh_CN.qm"
 if [ ! -f "$QM" ]; then
     fail "$QM 不存在（构建产物缺失）"
