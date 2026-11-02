@@ -511,6 +511,28 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             snprintf(buf, sizeof buf, "%lldx%lld", (long long)w, (long long)h);
             response = formatResponse("success", "\"" + std::string(buf) + "\"");
         }
+    } else if (cmd == "get-menu-state") {
+        // 右键菜单的数据源快照（不截图验证"轨道组为什么不显示"这类问题）：
+        // 媒体/网络源标志、轨道数、edition 数、当前 edition、两条延迟。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            char buf[256];
+            snprintf(buf, sizeof buf, "media=%d net=%d tracks=%d editions=%d cur=%d subDelay=%.0fms audioDelay=%.0fms",
+                     vm->hasMedia() ? 1 : 0, vm->networkSource() ? 1 : 0,
+                     int(vm->trackList().size()), int(vm->editions().size()),
+                     vm->currentEdition(), vm->subDelay() * 1000.0, vm->audioDelay() * 1000.0);
+            std::string out = buf;
+            // 追加 QML 侧的菜单结构快照（分组/高度），用于不截图核对二级面板
+            if (auto *qv = qobject_cast<QQuickView *>(win_)) {
+                if (qv->rootObject()) {
+                    const QVariant md = qv->rootObject()->property("menuDebugInfo");
+                    if (md.isValid() && !md.toString().isEmpty())
+                        out += std::string(" | ") + md.toString().toStdString();
+                }
+            }
+            response = formatResponse("success", "\"" + jsonEscape(out) + "\"");
+        }
     } else if (cmd == "set-eye") {
         // 测试钩子：单眼 2D 输出（vf_eye）。
         // 用法：set-eye off|left|right [sbs|tab] [full|half]
@@ -622,12 +644,28 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             const int y = atoi(args[1].c_str());
             const int sub = args.size() >= 3 ? atoi(args[2].c_str()) : -1;
             QQuickItem *rootItem = qv->rootObject();
+            // 写 QML 属性来开菜单（属性写入不依赖方法签名匹配；直接
+            // invokeMethod 调 QML 函数会静默失败——症状正是"RPC 返回 success
+            // 但菜单没开"）。属性变更处理在 GUI 线程，这里排队投递。
             QMetaObject::invokeMethod(rootItem, [rootItem, x, y, sub]() {
-                QMetaObject::invokeMethod(rootItem, "openMenuAt",
-                                          Q_ARG(QVariant, QVariant(x)),
-                                          Q_ARG(QVariant, QVariant(y)),
-                                          Q_ARG(QVariant, QVariant(sub)));
-            });
+                rootItem->setProperty("pendingMenuOpen", QVariantList{ x, y, sub });
+            }, Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "menu-key") {
+        // 测试用：模拟一次菜单键盘操作（up/down/left/right/home/end/enter/esc），
+        // 用于不开图形界面核对"当前行"导航状态机。
+        auto *qv = qobject_cast<QQuickView *>(win_);
+        if (!qv || !qv->rootObject()) {
+            response = formatResponse("no window");
+        } else if (args.empty()) {
+            response = formatResponse("usage: menu-key <up|down|left|right|home|end|enter|esc>");
+        } else {
+            QQuickItem *rootItem = qv->rootObject();
+            const QString k = QString::fromStdString(args[0]);
+            QMetaObject::invokeMethod(rootItem, [rootItem, k]() {
+                rootItem->setProperty("pendingMenuKey", k);
+            }, Qt::QueuedConnection);
             response = formatResponse("success");
         }
     } else if (cmd == "stereo-picker") {

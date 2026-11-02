@@ -26,6 +26,12 @@ VkResult vkAllocateCommandBuffers(VkDevice, const VkCommandBufferAllocateInfo*, 
 void vkFreeCommandBuffers(VkDevice, VkCommandPool, uint32_t, const VkCommandBuffer*);
 VkResult vkQueueSubmit(VkQueue, uint32_t, const VkSubmitInfo*, VkFence);
 void vkCmdClearColorImage(VkCommandBuffer, VkImage, VkImageLayout, const VkClearColorValue*, uint32_t, const VkImageSubresourceRange*);
+VkResult vkCreateBuffer(VkDevice, const VkBufferCreateInfo*, const VkAllocationCallbacks*, VkBuffer*);
+void vkDestroyBuffer(VkDevice, VkBuffer, const VkAllocationCallbacks*);
+void vkGetBufferMemoryRequirements(VkDevice, VkBuffer, VkMemoryRequirements*);
+VkResult vkBindBufferMemory(VkDevice, VkBuffer, VkDeviceMemory, VkDeviceSize);
+VkResult vkMapMemory(VkDevice, VkDeviceMemory, VkDeviceSize, VkDeviceSize, VkMemoryMapFlags, void**);
+void vkCmdCopyImageToBuffer(VkCommandBuffer, VkImage, VkImageLayout, VkBuffer, uint32_t, const VkBufferImageCopy*);
 }
 
 static double now() {
@@ -113,6 +119,122 @@ public:
 
 Video::Video(QQuickItem *parent) : QQuickItem(parent) {
     setFlag(ItemHasContents);
+    blackProbe_ = getenv("VSR_LOG_BLACK") != nullptr;
+}
+
+// ── 临时诊断：帧级黑帧探测 ────────────────────────────────────────────
+// 在 mpv 渲染完一帧（vkQueueWaitIdle 之后）从 rtImage 中心读回 32x32 像素，
+// 算平均亮度并打一行日志：
+//   2026-10-29 排查"网络播放列表切下一集偶尔黑屏"用。两路证据（窗口截图 +
+//   mpv 自身 screenshot-to-file）同时为黑，说明黑帧来自 mpv 输出；但 mpv
+//   的截图采样率只有 ~2Hz，抓不到 0.3~0.9s 的黑窗。这里逐帧读回，能精确
+//   定位黑帧边界，并和 `Playing:` / `decoder:` / `vf chain` 日志对时间。
+// 只在 VSR_LOG_BLACK=1 时启用（默认零开销）。
+bool Video::sampleRtMean(double &meanOut) {
+    const int bw = 32, bh = 32;
+    if (!rtImage_ || w_ < bw || h_ < bh)
+        return false;
+    const int x = (w_ - bw) / 2, y = (h_ - bh) / 2;
+    const VkDeviceSize need = VkDeviceSize(bw) * bh * 4;
+
+    if (!blackBuf_) {
+        VkBufferCreateInfo bci = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        bci.size = need;
+        bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        if (vkCreateBuffer(dev_, &bci, nullptr, &blackBuf_) != VK_SUCCESS)
+            return false;
+        VkMemoryRequirements mr;
+        vkGetBufferMemoryRequirements(dev_, blackBuf_, &mr);
+        VkPhysicalDeviceMemoryProperties mp;
+        vkGetPhysicalDeviceMemoryProperties(pd_, &mp);
+        uint32_t idx = 0;
+        for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
+            if ((mr.memoryTypeBits & (1u << i)) &&
+                (mp.memoryTypes[i].propertyFlags &
+                 (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                    (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+                idx = i;
+                break;
+            }
+        }
+        VkMemoryAllocateInfo mai = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+        mai.allocationSize = mr.size;
+        mai.memoryTypeIndex = idx;
+        if (vkAllocateMemory(dev_, &mai, nullptr, &blackMem_) != VK_SUCCESS ||
+            vkBindBufferMemory(dev_, blackBuf_, blackMem_, 0) != VK_SUCCESS ||
+            vkMapMemory(dev_, blackMem_, 0, need, 0, &blackMap_) != VK_SUCCESS) {
+            return false;
+        }
+    }
+
+    VkCommandBufferAllocateInfo cbai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    cbai.commandPool = cmdPool_;
+    cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cbai.commandBufferCount = 1;
+    VkCommandBuffer cb;
+    if (vkAllocateCommandBuffers(dev_, &cbai, &cb) != VK_SUCCESS)
+        return false;
+    VkCommandBufferBeginInfo cbbi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    if (vkBeginCommandBuffer(cb, &cbbi) != VK_SUCCESS) {
+        vkFreeCommandBuffers(dev_, cmdPool_, 1, &cb);
+        return false;
+    }
+    // mpv 把帧交给我们时 image 处于 VK_IMAGE_LAYOUT_GENERAL
+    //（src/mpv/video/out/vulkan/libmpv_vk.c: pl_vulkan_hold_ex(.layout=GENERAL)），
+    // 读回后必须原样交还 GENERAL，否则下一帧 mpv 的布局假设被破坏。
+    VkImageMemoryBarrier b = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+    b.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b.image = rtImage_;
+    b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    b.subresourceRange.levelCount = b.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    VkBufferImageCopy region = {};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = { x, y, 0 };
+    region.imageExtent = { (uint32_t)bw, (uint32_t)bh, 1 };
+    vkCmdCopyImageToBuffer(cb, rtImage_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           blackBuf_, 1, &region);
+    VkImageMemoryBarrier b2 = b;
+    b2.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &b2);
+    vkEndCommandBuffer(cb);
+    VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cb;
+    vkQueueSubmit(queue_, 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(queue_);
+    vkFreeCommandBuffers(dev_, cmdPool_, 1, &cb);
+
+    const unsigned char *px = static_cast<const unsigned char *>(blackMap_);
+    unsigned long long sum = 0;
+    const int n = bw * bh;
+    for (int i = 0; i < n; i++) {
+        const unsigned char *p = px + i * 4;
+        sum += (unsigned)p[0] + p[1] + p[2];   // R8/RGB10 低字节都够用于"是否全黑"
+    }
+    meanOut = double(sum) / double(n * 3);
+    return true;
+}
+
+// 开发用逐帧探针（VSR_LOG_BLACK=1）：每帧一行，用来精确定位黑帧边界
+// 并与 `Playing:` / `decoder:` / `vf chain` 日志对时间。
+void Video::probeFrameBlack() {
+    double mean = 0.0;
+    if (!sampleRtMean(mean))
+        return;
+    // flags: 1=PRESENT 2=REDRAW 4=REPEAT 8=BLOCK_VSYNC
+    // blank/ds/img/view 一起打：判"粘住的黑屏"到底是
+    //   ① blank_ 卡住（合成器直接输出 vec4(0)）→ mean 亮但 blank=1；
+    //   ② descriptor 里的 image view 过期（重建后没更新）→ ds 不变而 view 变了；
+    //   ③ mpv 真的在输出黑帧 → mean=0 且 blank=0。
+    MLOG_INFO("black probe: mean=%.1f (0=全黑) blank=%d rt=%dx%d", mean,
+              blank_.load() ? 1 : 0, w_, h_);
 }
 
 void Video::setBlank(bool on) {
@@ -476,6 +598,9 @@ QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
             double t_wait0 = now();
             vkQueueWaitIdle(queue_);
             double t_wait1 = now();
+            if (blackProbe_) {
+                probeFrameBlack();
+            }
             VLOG("#%-5d upn up=%.0fus rnd=%.0fus wait=%.0fus tot=%.0fus",
                  fc, (t_upd1 - t_upd0) * 1e6, (t_rnd1 - t_rnd0) * 1e6,
                  (t_wait1 - t_wait0) * 1e6, (t_wait1 - t_upn) * 1e6);

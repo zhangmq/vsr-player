@@ -9,6 +9,13 @@ Item {
     id: root
     anchors.fill: parent
 
+    /// 有弹窗打开时禁用窗口级快捷键（所有 Shortcut 写的是 `root.shortcutsEnabled`；
+    /// 曾误把这条声明放进 uiLayer → `root.shortcutsEnabled` 读不到（undefined）→
+    /// 门控整个失效，右键菜单开着时 上/下 还在调音量，2026-11-02 用户报）。
+    readonly property bool shortcutsEnabled: !uiLayer.anyPopupOpen
+    /// 最后一次鼠标位置（键盘打开右键菜单时用它定位；没记录过就开在窗口中间）
+    property point lastMenuPos: Qt.point(-1, -1)
+
     // ── 渲染层（z 最低）────────────────────────────────────────────
     // controlMode = 桌面 UI 窗口：不创建 Video（视频只在 presentation 主窗口）。
     Loader {
@@ -89,19 +96,25 @@ Item {
         }
         Component.onCompleted: {
             _popups = [volumePopup, qualityPopup, trueHdrAdvancedPopup, speedPopup,
-                       aspectPopup, contextMenu, tracksPopup, openMenu, urlPopup]
+                       aspectPopup, contextMenu, openMenu, urlPopup]
             // 启动即按当前状态应用 auto-hide（onShowUiChanged 只在翻转时触发）
             viewModel.overlaysVisible = showUi
         }
 
         // 右键菜单触发器（最底层：右击未被按钮/弹窗消费时到达此处）
         MouseArea {
+            id: menuTrigger
             anchors.fill: parent
             acceptedButtons: Qt.RightButton
+            hoverEnabled: true
+            /// 键盘打开右键菜单时没有鼠标位置——用这里记录的最后位置，
+            /// 没记录过就开在窗口中间。
+            onPositionChanged: { lastMenuPos = Qt.point(mouse.x, mouse.y) }
             // 3D presentation（主窗口在眼镜屏）不响应右键；此时 UI 在 control 窗口。
             enabled: controlMode || !stereo.active
             onClicked: {
                 if (mouse.button === Qt.RightButton) {
+                    lastMenuPos = Qt.point(mouse.x, mouse.y)
                     uiLayer.closeOtherPopups(contextMenu)
                     contextMenu.showAt(uiLayer, mouse.x, mouse.y)
                 }
@@ -143,7 +156,6 @@ Item {
             volumePopupOpen: volumePopup.visible
             qualityPopupOpen: qualityPopup.visible
             speedPopupOpen: speedPopup.visible
-            tracksPopupOpen: tracksPopup.visible
             aspectPopupOpen: aspectPopup.visible
             playlistOpen: playlistPanel.visible
             onSeeked: function(ms) { viewModel.seekAbsolute(ms) }
@@ -155,7 +167,6 @@ Item {
             onQualityClicked: qualityPopup.visible ? qualityPopup.close() : qualityPopup.open()
             onHwaccelClicked: viewModel.toggleHwaccel()
             onSpeedClicked: speedPopup.visible ? speedPopup.close() : speedPopup.open()
-            onTracksClicked: tracksPopup.visible ? tracksPopup.close() : tracksPopup.open()
             onAspectClicked: aspectPopup.visible ? aspectPopup.close() : aspectPopup.open()
             onFullscreenClicked: viewModel.toggleFullscreen()
             onPlaylistClicked: root.togglePlaylist()
@@ -259,18 +270,6 @@ Item {
             onOpened: uiLayer.closeOtherPopups(aspectPopup)
         }
 
-        TracksPopup {
-            id: tracksPopup
-            // modal 居中呈现（无需 anchorTarget）
-            trackList: viewModel.trackList
-            subVisible: viewModel.subVisible
-            subDelay: viewModel.subDelay
-            onTrackSelected: function(type, id) { viewModel.selectTrack(type, id) }
-            onSubDelayAdjusted: function(d) { viewModel.adjustSubDelay(d) }
-            onSubFileDialogRequested: function() { fileDialog.mode = 2; fileDialog.open() }
-            onOpened: uiLayer.closeOtherPopups(tracksPopup)
-        }
-
         // ── Playlist Panel ─────────────────────────────────────────
         PlaylistPanel {
             id: playlistPanel
@@ -290,6 +289,26 @@ Item {
             onDeleteFileRequested: viewModel.deleteCurrentFile()
             onDeinterlaceSelected: function(mode) { viewModel.setDeintMode(mode) }
             onRotateSelected: function(mode) { viewModel.setRotMode(mode) }
+            // ── 轨道 / 流（底栏轨道弹窗已移除，2026-11-02）──────────────
+            // value == -2 = "自动"（vid/aid auto）；字幕 -1 = 关（sid no）
+            onVideoTrackPicked: function(id) {
+                if (id === -2) viewModel.selectTrackAuto("video")
+                else viewModel.selectTrack("video", id)
+            }
+            onAudioTrackPicked: function(id) {
+                if (id === -2) viewModel.selectTrackAuto("audio")
+                else viewModel.selectTrack("audio", id)
+            }
+            onSubtitlePicked: function(id) { viewModel.selectTrack("sub", id) }
+            onSubtitleFilePickRequested: { fileDialog.mode = 2; fileDialog.open() }
+            onExternalSubtitleRemoveRequested: function(id) { viewModel.removeTrack("sub", id) }
+            onNearbySubtitlePicked: function(path) { viewModel.loadExternalSubtitle(path) }
+            onEditionPicked: function(id) { viewModel.setEdition(id) }
+            // 延迟：UI 立即乐观更新，PlayerViewModel 内 500ms debounce 后写 mpv
+            onSubDelayNudged: function(d) { viewModel.adjustSubDelay(d) }
+            onSubDelayResetRequested: { viewModel.resetSubDelay() }
+            onAudioDelayNudged: function(d) { viewModel.adjustAudioDelay(d) }
+            onAudioDelayResetRequested: { viewModel.resetAudioDelay() }
             onStereoSelected: function(mode, group) {
                 // group 0 = 输出方式（0 关闭 / 1 眼镜 3D / 2 单眼 2D）
                 // group 1 = 片源格式（0 左右·全 / 1 左右·半 / 2 上下·全 / 3 上下·半）
@@ -420,7 +439,6 @@ Item {
         // 不影响快捷键。
         // 弹窗打开时整体禁用：URL 输入框里要能正常打字，弹窗内控件保留自己的
         // 按键（Esc 由弹窗自己处理；播放列表 Drawer 不在 _popups 里，照常）。
-        readonly property bool shortcutsEnabled: !uiLayer.anyPopupOpen
 
         Shortcut {
             // 3D presentation 期间不响应 Esc（主窗口可能仍被合成器聚焦，
@@ -496,6 +514,19 @@ Item {
         }
         // 3D H/J/K/L：H 走 app filter + QShortcut + QML Shortcut；J/K/L 走
         // main.cpp 的 StereoKeyFilter（在 QML 之前按 event->key() 拦截，大小写无关）。
+        // 打开右键菜单：Menu 键 / Shift+F10（Windows 惯例）/ F10。
+        // 3D presentation 期间不响应（与右键一致：presentation 窗口不吃菜单）。
+        Shortcut {
+            id: menuOpenSc
+            enabled: root.shortcutsEnabled && (controlMode || !stereo.active)
+            sequences: ["Menu", "Shift+F10", "F10"]
+            onActivated: {
+                var x = root.lastMenuPos.x >= 0 ? root.lastMenuPos.x : window.width / 2
+                var y = root.lastMenuPos.y >= 0 ? root.lastMenuPos.y : window.height / 2
+                uiLayer.closeOtherPopups(contextMenu)
+                contextMenu.showAt(uiLayer, x, y)
+            }
+        }
         Shortcut {
             // Ctrl+Q 退出（与右键菜单 Quit 一致；走标准退出路径）
             enabled: root.shortcutsEnabled; sequence: "Ctrl+Q"
@@ -532,6 +563,38 @@ Item {
         Shortcut {
             enabled: root.shortcutsEnabled; sequence: "Ctrl+L"
             onActivated: urlPopup.open()
+        }
+        // 偏移快捷键（对齐 mpv：字幕 z/Z、音频 Ctrl++/Ctrl+-；Qt 会归一化大小写，
+        // 所以 Shift 必须显式写成 "Shift+Z"——写成 "Z" 与 "z" 是同一条键）。
+        // 归零：字幕 Ctrl+0、音频 Ctrl+Alt+0（用户 2026-11-02 定）。
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "z"
+            onActivated: viewModel.adjustSubDelay(-0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Shift+Z"
+            onActivated: viewModel.adjustSubDelay(0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+0"
+            onActivated: viewModel.resetSubDelay()
+        }
+        // 音频：mpv 惯例 Ctrl++ / Ctrl+-；另绑 Ctrl+=（很多键盘 + 要按 Shift，避免按不出来）
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl++"
+            onActivated: viewModel.adjustAudioDelay(0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+="
+            onActivated: viewModel.adjustAudioDelay(0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+-"
+            onActivated: viewModel.adjustAudioDelay(-0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Ctrl+Alt+0"
+            onActivated: viewModel.resetAudioDelay()
         }
         Shortcut {
             enabled: root.shortcutsEnabled; sequence: "V"
@@ -617,6 +680,60 @@ Item {
     }
     // 测试/调试入口：RPC 在指定位置打开右键菜单（正常从右键进入）。
     // 用于截图核对菜单排版/分组（RPC `open-menu <x> <y>`）。
+    /// RPC `open-menu` 用：写这个属性即打开菜单（属性写入不依赖 QML 方法
+    /// 签名匹配，比 invokeMethod 调 QML 函数可靠——后者会静默失败）。
+    property var pendingMenuOpen: null
+    /// RPC menu-key 用：写这个属性即模拟一次键盘操作（测试导航状态机）
+    property string pendingMenuKey: ""
+    onPendingMenuKeyChanged: {
+        if (pendingMenuKey === "") return
+        if (contextMenu) contextMenu.handleKey(pendingMenuKey)
+        pendingMenuKey = ""
+    }
+    onPendingMenuOpenChanged: {
+        if (!pendingMenuOpen) return
+        openMenuAt(pendingMenuOpen[0], pendingMenuOpen[1], pendingMenuOpen[2])
+        pendingMenuOpen = null
+    }
+
+    /// 菜单结构快照（RPC get-menu-state 读取，验证分组/高度不用截图）
+    property string menuDebugInfo: {
+        var c = contextMenu
+        if (!c) return ""
+        var parts = ["ctxVisible=" + (c.visible ? 1 : 0),
+                     "anyPopup=" + (uiLayer.anyPopupOpen ? 1 : 0),
+                     "scEnabled=" + (root.shortcutsEnabled ? 1 : 0),
+                     "menuSc=" + (menuOpenSc.enabled ? 1 : 0),
+                     "winActive=" + (window ? (window.active ? 1 : 0) : -1),
+                     "ctlWin=" + (controlMode ? 1 : 0),
+                     "subOpen=" + (c.subVisible ? 1 : 0),
+                     "subIdx=" + c.currentIndex,
+                     "contentH=" + Math.round(c.subContentH),
+                     c.navState]
+        // 逐行几何（排查"分隔线粗细不一"这类排版问题：直接看 y/height）
+        var rg = c.rowGeom
+        for (var k = 0; k < rg.length; k++)
+            parts.push("r" + rg[k].idx + "{y=" + rg[k].y + ",h=" + rg[k].h
+                       + ",v=" + (rg[k].vis ? 1 : 0) + "}")
+        var gs = c.subGroups
+        parts.push("groups=" + gs.length)
+        if (c.subScrolls)
+            for (var q = 0; q < c.subScrolls.length; q++)
+                parts.push("scroll" + q + "=" + Math.round(c.subScrolls[q]))
+        for (var i = 0; i < gs.length; i++)
+            parts.push("g" + i + "{sec=" + (gs[i].section === "" ? "-" : gs[i].section)
+                       + ",n=" + gs[i].items.length
+                       + ",h=" + Math.round(c.groupHeight(gs[i])) + "}")
+        return parts.join(" ")
+    }
+
+    /// RPC `open-menu` 用：根对象上的信号 → 调 openMenuAt。
+    /// 直接用 QMetaObject::invokeMethod(rootItem, "openMenuAt", Q_ARG(QVariant…))
+    /// 调 QML 函数不可靠（参数类型对不上时静默失败）；信号名是 moc 生成的
+    /// 方法，invokeMethod 触发它 = emit，稳定。
+    signal menuOpenRequested(int x, int y, int sub)
+    onMenuOpenRequested: openMenuAt(x, y, sub)
+
     function openMenuAt(x, y, subIndex) {
         contextMenu.showAt(uiLayer, x, y)
         // 可选：直接展开第 subIndex 个条目的二级面板（截图核对分组排版用）。

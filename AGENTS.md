@@ -46,6 +46,10 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
    `ninja -C build`（meson 的 custom_target 跑 `lrelease` → `<build>/src/client/*.qm`，`main.cpp`
    按 locale 经 `VSR_TRANSLATIONS_DIR` 载入；日志会打 `translation: vsr-player_zh_CN`），最后
    `./scripts/update-translations.sh --check` 验收。
+   ⚠ **提交前主动跑 `./scripts/precommit.sh`**（用户 2026-11-02：不要 git 钩子，由 agent 主动查）：
+   它一把跑完 lupdate → 检测 .ts 是否被改动（改动 = 有新增/变更文案，必须补译文）→
+   `ninja -C build`（lrelease 刷 .qm）→ `--check` → 用 `lconvert` 反查 .qm 里新文案是否真的编进去。
+   只看 .ts 不够：`vanished`/漏 lupdate 输入的条目在 .ts 里查得到但 .qm 里没有，运行期静默回退英文。
    ⚠ **输入清单必须包含带 `QT_TRANSLATE_NOOP()` 的头**（当前 = `src/client/FrucBackend.h`）：
    C++ 侧用 `tr(变量)` 翻译档位标签（`frucModel`/`frucQualityModel`/`frucMaxFpsModel`），
    字符串靠 `QT_TRANSLATE_NOOP("PlayerViewModel", "…")` 标记——lupdate 没吃这个头就看不到它们，

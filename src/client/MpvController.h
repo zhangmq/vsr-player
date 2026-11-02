@@ -66,6 +66,11 @@ public:
     double propertyDouble(const char *name);
     bool propertyFlag(const char *name);
     std::string propertyString(const char *name);
+    /// 同 propertyString，但区分"属性不可用/读失败"与"读到空串"。
+    /// 用途：`hwdec-current` 在**解码器还没建**时返回 M_PROPERTY_UNAVAILABLE
+    /// （mpv player/command.c: mp_property_hwdec_current 没有 track->dec 就返回
+    /// UNAVAILABLE），而不是 "no"；把它当 "no" 会把"还没开始解码"误判成软解。
+    bool propertyStringIfAvailable(const char *name, std::string &out);
     bool setPropertyString(const char *name, const std::string &value);
     // 注意：FLAG/DOUBLE 同步 set（setPropertyFlag/setPropertyDouble）已删——
     // 405e7fb 起一律走下方 Async 版本（主线程同步 set 会与解码 DR 分配互等死锁）

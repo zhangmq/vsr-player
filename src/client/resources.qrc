@@ -14,7 +14,6 @@
         <file>ui/AspectPopup.qml</file>
         <file>ui/SpeedPopup.qml</file>
         <file>ui/ContextMenu.qml</file>
-        <file>ui/TracksPopup.qml</file>
         <file>ui/OpenMenu.qml</file>
         <file>ui/UrlPopup.qml</file>
         <file>ui/PlaylistPanel.qml</file>
