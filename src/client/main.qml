@@ -9,6 +9,13 @@ Item {
     id: root
     anchors.fill: parent
 
+    /// 有弹窗打开时禁用窗口级快捷键（所有 Shortcut 写的是 `root.shortcutsEnabled`；
+    /// 曾误把这条声明放进 uiLayer → `root.shortcutsEnabled` 读不到（undefined）→
+    /// 门控整个失效，右键菜单开着时 上/下 还在调音量，2026-11-02 用户报）。
+    readonly property bool shortcutsEnabled: !uiLayer.anyPopupOpen
+    /// 最后一次鼠标位置（键盘打开右键菜单时用它定位；没记录过就开在窗口中间）
+    property point lastMenuPos: Qt.point(-1, -1)
+
     // ── 渲染层（z 最低）────────────────────────────────────────────
     // controlMode = 桌面 UI 窗口：不创建 Video（视频只在 presentation 主窗口）。
     Loader {
@@ -96,12 +103,18 @@ Item {
 
         // 右键菜单触发器（最底层：右击未被按钮/弹窗消费时到达此处）
         MouseArea {
+            id: menuTrigger
             anchors.fill: parent
             acceptedButtons: Qt.RightButton
+            hoverEnabled: true
+            /// 键盘打开右键菜单时没有鼠标位置——用这里记录的最后位置，
+            /// 没记录过就开在窗口中间。
+            onPositionChanged: { lastMenuPos = Qt.point(mouse.x, mouse.y) }
             // 3D presentation（主窗口在眼镜屏）不响应右键；此时 UI 在 control 窗口。
             enabled: controlMode || !stereo.active
             onClicked: {
                 if (mouse.button === Qt.RightButton) {
+                    lastMenuPos = Qt.point(mouse.x, mouse.y)
                     uiLayer.closeOtherPopups(contextMenu)
                     contextMenu.showAt(uiLayer, mouse.x, mouse.y)
                 }
@@ -426,7 +439,6 @@ Item {
         // 不影响快捷键。
         // 弹窗打开时整体禁用：URL 输入框里要能正常打字，弹窗内控件保留自己的
         // 按键（Esc 由弹窗自己处理；播放列表 Drawer 不在 _popups 里，照常）。
-        readonly property bool shortcutsEnabled: !uiLayer.anyPopupOpen
 
         Shortcut {
             // 3D presentation 期间不响应 Esc（主窗口可能仍被合成器聚焦，
@@ -675,7 +687,11 @@ Item {
     property string menuDebugInfo: {
         var c = contextMenu
         if (!c) return ""
-        var parts = ["subOpen=" + (c.subVisible ? 1 : 0),
+        var parts = ["ctxVisible=" + (c.visible ? 1 : 0),
+                     "anyPopup=" + (uiLayer.anyPopupOpen ? 1 : 0),
+                     "scEnabled=" + (root.shortcutsEnabled ? 1 : 0),
+                     "ctlWin=" + (controlMode ? 1 : 0),
+                     "subOpen=" + (c.subVisible ? 1 : 0),
                      "subIdx=" + c.currentIndex,
                      "contentH=" + Math.round(c.subContentH),
                      c.navState]

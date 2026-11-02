@@ -43,6 +43,8 @@ PopupBase {
     property bool subVisible: false
     /// Esc 由 handleKey 两段式处理（先收面板、再关菜单），不让 Popup 直接关
     closePolicy: Popup.CloseOnPressOutside
+    /// 打开时抢键盘焦点：否则方向键/Enter 会被窗口级 Keys/Shortcut 吃掉
+    focus: true
     /// 键盘焦点是否在二级面板内（决定 ↑↓←→/Enter 作用在哪个面板）
     property bool focusSub: false
     /// 键盘焦点是否在「字幕延迟」「音频延迟」的 −/+/↺ 控件上（Enter 进入）
