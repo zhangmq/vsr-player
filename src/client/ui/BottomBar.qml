@@ -17,7 +17,6 @@ Item {
     property bool volumePopupOpen: false
     property bool qualityPopupOpen: false
     property bool speedPopupOpen: false
-    property bool tracksPopupOpen: false
     property bool aspectPopupOpen: false
     property bool playlistOpen: false
     property int loopMode: 0    // 0=No loop, 1=Loop file, 2=Loop playlist
@@ -30,7 +29,6 @@ Item {
     signal qualityClicked()
     signal hwaccelClicked()
     signal speedClicked()
-    signal tracksClicked()
     signal aspectClicked()
     signal fullscreenClicked()
     signal playlistClicked()
@@ -52,7 +50,6 @@ Item {
     property alias volumeBtn: volBtn
     property alias qualityBtn: qualBtn
     property alias speedBtn: spdBtn
-    property alias tracksBtn: trkBtn
     property alias aspectBtn: aspBtn
 
     // bottombar(48) + 进度条(14) + 热区(40) 一体
@@ -117,13 +114,6 @@ Item {
             anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 12 }
             spacing: 4
 
-            // 轨道选择 = 按文件记忆（其余按钮 = 全局设置）——置前并
-            // 以纵向分割线与全局按钮区分（2026-08-06）
-            IconButton { id: trkBtn; codepoint: "󰨖"; size: 22; tooltip: qsTr("Tracks")
-                highlighted: root.tracksPopupOpen
-                onClicked: root.tracksClicked() }
-            Rectangle { width: 1; height: 20; color: "#0fffffff"
-                anchors.verticalCenter: parent.verticalCenter }
             IconButton { id: volBtn
                 // 静音状态由图标表达（与 VolumePopup 同字形 󰖁/󰕾）
                 codepoint: root.muted ? "󰖁" : "󰕾"; size: 22; tooltip: qsTr("Volume")

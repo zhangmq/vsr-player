@@ -89,7 +89,7 @@ Item {
         }
         Component.onCompleted: {
             _popups = [volumePopup, qualityPopup, trueHdrAdvancedPopup, speedPopup,
-                       aspectPopup, contextMenu, tracksPopup, openMenu, urlPopup]
+                       aspectPopup, contextMenu, openMenu, urlPopup]
             // 启动即按当前状态应用 auto-hide（onShowUiChanged 只在翻转时触发）
             viewModel.overlaysVisible = showUi
         }
@@ -143,7 +143,6 @@ Item {
             volumePopupOpen: volumePopup.visible
             qualityPopupOpen: qualityPopup.visible
             speedPopupOpen: speedPopup.visible
-            tracksPopupOpen: tracksPopup.visible
             aspectPopupOpen: aspectPopup.visible
             playlistOpen: playlistPanel.visible
             onSeeked: function(ms) { viewModel.seekAbsolute(ms) }
@@ -155,7 +154,6 @@ Item {
             onQualityClicked: qualityPopup.visible ? qualityPopup.close() : qualityPopup.open()
             onHwaccelClicked: viewModel.toggleHwaccel()
             onSpeedClicked: speedPopup.visible ? speedPopup.close() : speedPopup.open()
-            onTracksClicked: tracksPopup.visible ? tracksPopup.close() : tracksPopup.open()
             onAspectClicked: aspectPopup.visible ? aspectPopup.close() : aspectPopup.open()
             onFullscreenClicked: viewModel.toggleFullscreen()
             onPlaylistClicked: root.togglePlaylist()
@@ -259,18 +257,6 @@ Item {
             onOpened: uiLayer.closeOtherPopups(aspectPopup)
         }
 
-        TracksPopup {
-            id: tracksPopup
-            // modal 居中呈现（无需 anchorTarget）
-            trackList: viewModel.trackList
-            subVisible: viewModel.subVisible
-            subDelay: viewModel.subDelay
-            onTrackSelected: function(type, id) { viewModel.selectTrack(type, id) }
-            onSubDelayAdjusted: function(d) { viewModel.adjustSubDelay(d) }
-            onSubFileDialogRequested: function() { fileDialog.mode = 2; fileDialog.open() }
-            onOpened: uiLayer.closeOtherPopups(tracksPopup)
-        }
-
         // ── Playlist Panel ─────────────────────────────────────────
         PlaylistPanel {
             id: playlistPanel
@@ -290,6 +276,26 @@ Item {
             onDeleteFileRequested: viewModel.deleteCurrentFile()
             onDeinterlaceSelected: function(mode) { viewModel.setDeintMode(mode) }
             onRotateSelected: function(mode) { viewModel.setRotMode(mode) }
+            // ── 轨道 / 流（底栏轨道弹窗已移除，2026-11-02）──────────────
+            // value == -2 = "自动"（vid/aid auto）；字幕 -1 = 关（sid no）
+            onVideoTrackPicked: function(id) {
+                if (id === -2) viewModel.selectTrackAuto("video")
+                else viewModel.selectTrack("video", id)
+            }
+            onAudioTrackPicked: function(id) {
+                if (id === -2) viewModel.selectTrackAuto("audio")
+                else viewModel.selectTrack("audio", id)
+            }
+            onSubtitlePicked: function(id) { viewModel.selectTrack("sub", id) }
+            onSubtitleFilePickRequested: { fileDialog.mode = 2; fileDialog.open() }
+            onExternalSubtitleRemoveRequested: function(id) { viewModel.removeTrack("sub", id) }
+            onNearbySubtitlePicked: function(path) { viewModel.loadExternalSubtitle(path) }
+            onEditionPicked: function(id) { viewModel.setEdition(id) }
+            // 延迟：UI 立即乐观更新，PlayerViewModel 内 500ms debounce 后写 mpv
+            onSubDelayNudged: function(d) { viewModel.adjustSubDelay(d) }
+            onSubDelayResetRequested: { viewModel.resetSubDelay() }
+            onAudioDelayNudged: function(d) { viewModel.adjustAudioDelay(d) }
+            onAudioDelayResetRequested: { viewModel.resetAudioDelay() }
             onStereoSelected: function(mode, group) {
                 // group 0 = 输出方式（0 关闭 / 1 眼镜 3D / 2 单眼 2D）
                 // group 1 = 片源格式（0 左右·全 / 1 左右·半 / 2 上下·全 / 3 上下·半）
@@ -532,6 +538,32 @@ Item {
         Shortcut {
             enabled: root.shortcutsEnabled; sequence: "Ctrl+L"
             onActivated: urlPopup.open()
+        }
+        // 字幕/音频偏移：z/Z 与 x/X 成对（步进 50ms），Alt+ 同名键重置。
+        // 与 mpv 自己的 z/Z（sub-delay）习惯一致；x/X 因 mpv 无默认绑定。
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "z"
+            onActivated: viewModel.adjustSubDelay(-0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Z"
+            onActivated: viewModel.adjustSubDelay(0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Alt+z"
+            onActivated: viewModel.resetSubDelay()
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "x"
+            onActivated: viewModel.adjustAudioDelay(-0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "X"
+            onActivated: viewModel.adjustAudioDelay(0.05)
+        }
+        Shortcut {
+            enabled: root.shortcutsEnabled && !stereo.active; sequence: "Alt+x"
+            onActivated: viewModel.resetAudioDelay()
         }
         Shortcut {
             enabled: root.shortcutsEnabled; sequence: "V"

@@ -84,6 +84,13 @@ const char *denoiseName(int v) {
 }  // namespace
 
 PlayerViewModel::PlayerViewModel(QObject *parent) : QObject(parent) {
+    // 延迟写入 debounce（500ms）：连点 ± 时合并成一次 set_property。
+    // 注意这不是"用 QTimer 解决渲染/事件架构问题"（AGENTS 规则 2 禁止的那类），
+    // 而是把用户连点合并成一次写入——mpv 每条 audio-delay 都会让音频重新
+    // 对齐（重同步），逐条发会听到连续的"咔哒"。
+    delaySendTimer_.setSingleShot(true);
+    delaySendTimer_.setInterval(500);
+    connect(&delaySendTimer_, &QTimer::timeout, this, [this] { flushDelayWrites(); });
     // TrueHDR 总开关的**默认值** = env `VSR_UPHDR`（无持久化设置时生效）；
     // loadSettings() 读到设置后以设置为准（benchmark 不读设置 → 保持 env 语义）。
     persistUpHdrEnabled_ = hdr::upconvertOptedIn();
@@ -187,6 +194,12 @@ void PlayerViewModel::attach(MpvController *mpv) {
     mpv_->observeProperty("path", MPV_FORMAT_STRING, [this, post] {
         std::string p = mpv_->propertyString("path");
         post([this, p] {
+            // 网络源判定（右键菜单"网络流"的显示条件）：路径带 "://"
+            {
+                const QString qp = QString::fromStdString(p);
+                const bool net = qp.contains(QStringLiteral("://"));
+                if (networkSource_ != net) { networkSource_ = net; emit networkSourceChanged(); }
+            }
             // ⚠ 这个 lambda 在 GUI 线程执行，**绝不能**再同步调 mpv API：
             // 软解 + vo=libmpv 时 DR 帧分配靠 GUI 线程在
             // mpv_render_context_update() 里服务（vo_libmpv.c），GUI 线程
@@ -560,6 +573,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
                     t["selected"] = false;
                     t["external"] = false;
                     t["filename"] = QString();
+                    t["codec"] = QString();
                     for (int j = 0; j < e->u.list->num; j++) {
                         const char *k = e->u.list->keys[j];
                         mpv_node *v = &e->u.list->values[j];
@@ -577,6 +591,8 @@ void PlayerViewModel::attach(MpvController *mpv) {
                             t["external"] = v->u.flag != 0;
                         else if (!strcmp(k, "external-filename") && v->format == MPV_FORMAT_STRING)
                             t["filename"] = QString::fromUtf8(v->u.string);   // 外部轨完整路径（mpv 字段名）
+                        else if (!strcmp(k, "codec") && v->format == MPV_FORMAT_STRING)
+                            t["codec"] = QString::fromUtf8(v->u.string);       // 右键菜单轨道行显示"语言 · 编码" 
                     }
                     tracks.append(t);
                 }
@@ -597,6 +613,51 @@ void PlayerViewModel::attach(MpvController *mpv) {
     mpv_->observeProperty("sub-delay", MPV_FORMAT_DOUBLE, [this, post] {
         double d = mpv_->propertyDouble("sub-delay");
         post([this, d] { if (subDelay_ != d) { subDelay_ = d; emit subDelayChanged(); } });
+    });
+    mpv_->observeProperty("audio-delay", MPV_FORMAT_DOUBLE, [this, post] {
+        double d = mpv_->propertyDouble("audio-delay");
+        post([this, d] { if (audioDelay_ != d) { audioDelay_ = d; emit audioDelayChanged(); } });
+    });
+
+    // ── 网络流（ytdl_hook 把每个可选格式做成一个 edition）─────────────
+    // edition-list = [{id,title}]，本地视频通常是 1 条（等于没有可选流）；
+    // current-edition 是**实际生效**的 id（mpv 的 `edition` 选项可能是 auto）。
+    mpv_->observeProperty("edition-list", MPV_FORMAT_NODE, [this, post] {
+        QVariantList list;
+        mpv_node node;
+        if (mpv_get_property(mpv_->handle(), "edition-list", MPV_FORMAT_NODE, &node) >= 0) {
+            if (node.format == MPV_FORMAT_NODE_ARRAY) {
+                for (int i = 0; i < node.u.list->num; i++) {
+                    mpv_node *e = &node.u.list->values[i];
+                    if (e->format != MPV_FORMAT_NODE_MAP) continue;
+                    QVariantMap m;
+                    m["id"] = qlonglong(i);
+                    m["title"] = QString();
+                    for (int j = 0; j < e->u.list->num; j++) {
+                        const char *k = e->u.list->keys[j];
+                        mpv_node *v = &e->u.list->values[j];
+                        if (!strcmp(k, "id") && v->format == MPV_FORMAT_INT64)
+                            m["id"] = qlonglong(v->u.int64);
+                        else if (!strcmp(k, "title") && v->format == MPV_FORMAT_STRING)
+                            m["title"] = QString::fromUtf8(v->u.string);
+                    }
+                    list.append(m);
+                }
+            }
+            mpv_free_node_contents(&node);
+        }
+        post([this, list] { if (editions_ != list) { editions_ = list; emit editionsChanged(); } });
+    });
+    mpv_->observeProperty("current-edition", MPV_FORMAT_INT64, [this, post] {
+        // propertyInt64() 读不到时返回 0（会把"没有 edition"误报成 0）——
+        // 这里要区分"不可用"，否则勾选会落在第一个流上。
+        int64_t v = 0;
+        const bool ok = mpv_get_property(mpv_->handle(), "current-edition",
+                                         MPV_FORMAT_INT64, &v) >= 0;
+        post([this, ok, v] {
+            const int e = ok ? int(v) : -1;
+            if (currentEdition_ != e) { currentEdition_ = e; emit currentEditionChanged(); }
+        });
     });
 }
 
@@ -1767,6 +1828,14 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
     }
 }
 
+/// 轨道回到"自动"（mpv 的 vid/aid = auto）：右键菜单"视频/音频 → 自动"用。
+void PlayerViewModel::selectTrackAuto(const QString &type) {
+    if (!mpv_) return;
+    if (type == "audio")      mpv_->setPropertyStringAsync("aid", "auto");
+    else if (type == "video") mpv_->setPropertyStringAsync("vid", "auto");
+    saveTrackMemory();
+}
+
 void PlayerViewModel::selectTrack(const QString &type, qlonglong id) {
     if (!mpv_) return;
     if (type == "audio")      { mpv_->setPropertyInt64Async("aid", id); }
@@ -1803,20 +1872,71 @@ void PlayerViewModel::toggleSubtitles() {
     saveTrackMemory();   // 即时落盘（按文件；subVisible_ 已乐观更新）
 }
 
+// 偏移写入 = 乐观本地值 + 500ms debounce（连点合并成一次 set_property）。
+// 本地值立即更新 → 菜单上的数值/OSD 无延迟；真正写 mpv 由 flushDelayWrites()
+// 在最后一次操作 500ms 后发一条（绝对赋值，终值一定正确）。
 void PlayerViewModel::adjustSubDelay(double delta) {
     if (!mpv_) return;
-    // 乐观累加（绝对赋值：连续两次调节后终值正确）
     subDelay_ += delta;
     emit subDelayChanged();
-    mpv_->setPropertyDoubleAsync("sub-delay", subDelay_);
-    saveTrackMemory();   // 即时落盘（按文件；subDelay_ 已乐观更新）
+    delaySubDirty_ = true;
+    delaySendTimer_.start();
 }
 
 void PlayerViewModel::resetSubDelay() {
     if (!mpv_) return;
     if (subDelay_ != 0.0) { subDelay_ = 0.0; emit subDelayChanged(); }
+    delaySubDirty_ = false;          // 丢弃尚未发出的累加值
     mpv_->setPropertyDoubleAsync("sub-delay", 0.0);
     saveTrackMemory();   // 即时落盘（按文件；subDelay_ 已乐观更新）
+}
+
+void PlayerViewModel::adjustAudioDelay(double delta) {
+    if (!mpv_) return;
+    audioDelay_ += delta;
+    emit audioDelayChanged();
+    delayAudioDirty_ = true;
+    delaySendTimer_.start();
+}
+
+void PlayerViewModel::resetAudioDelay() {
+    if (!mpv_) return;
+    if (audioDelay_ != 0.0) { audioDelay_ = 0.0; emit audioDelayChanged(); }
+    delayAudioDirty_ = false;
+    mpv_->setPropertyDoubleAsync("audio-delay", 0.0);
+    saveTrackMemory();
+}
+
+/// debounce 到期：把积攒的偏移一次性写进 mpv（只写脏的那条）。
+void PlayerViewModel::flushDelayWrites() {
+    if (!mpv_) return;
+    bool wrote = false;
+    if (delaySubDirty_) {
+        delaySubDirty_ = false;
+        mpv_->setPropertyDoubleAsync("sub-delay", subDelay_);
+        wrote = true;
+    }
+    if (delayAudioDirty_) {
+        delayAudioDirty_ = false;
+        mpv_->setPropertyDoubleAsync("audio-delay", audioDelay_);
+        wrote = true;
+    }
+    if (wrote) saveTrackMemory();   // 落盘一次（值已乐观更新）
+}
+
+void PlayerViewModel::setEdition(int id) {
+    if (!mpv_ || id < 0) return;
+    // mpv 会就地换轨（ytdl_hook 的 EDL 是 edition_is_track_mapping），
+    // 位置由 mpv 自己维持；UI 的勾选由 current-edition 观察器回填。
+    if (currentEdition_ != id) { currentEdition_ = id; emit currentEditionChanged(); }
+    mpv_->setPropertyInt64Async("edition", id);
+}
+
+void PlayerViewModel::removeTrack(const QString &type, qlonglong id) {
+    if (!mpv_ || id < 0 || type != "sub") return;
+    const std::string sid = std::to_string(id);
+    mpv_->commandAsync({"sub-remove", sid.c_str(), nullptr});
+    saveTrackMemory();
 }
 
 void PlayerViewModel::playlistRemove(int index) {
@@ -1979,8 +2099,9 @@ void PlayerViewModel::saveTrackMemory() {
     }
     if (!mem.contains("sel") && !pendingSubs_.isEmpty())
         mem["sel"] = pendingSubs_.constLast();
-    // 字幕偏移（可见性无独立配置：是否显示由 sid 决定，2026-08-06）
+    // 字幕/音频偏移（可见性无独立配置：是否显示由 sid 决定，2026-08-06）
     mem["subDelay"] = subDelay_;
+    mem["audioDelay"] = audioDelay_;
     // LRU：trackMem 按 path 键存内容；trackMemOrder 记录访问序
     //（头部 = 最近使用）。超上限（10）淘汰最久未用。
     QVariantMap all = settings_.value("trackMem").toMap();
@@ -2031,6 +2152,8 @@ void PlayerViewModel::restoreTrackMemory(const QString &path) {
     // 字幕偏移（可见性无独立记忆——是否显示由 sid 决定）
     if (mem.contains("subDelay"))
         mpv_->setPropertyDoubleAsync("sub-delay", mem["subDelay"].toDouble());
+    if (mem.contains("audioDelay"))
+        mpv_->setPropertyDoubleAsync("audio-delay", mem["audioDelay"].toDouble());
     // 外部字幕（external 轨随文件切换被 mpv 清除，须重新 sub-add）
     const QStringList subs = mem["subs"].toStringList();
     const QString sel = mem["sel"].toString();
@@ -2723,6 +2846,10 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
         else if (mpv_)
             mpv_->setPropertyFlagAsync("save-position-on-quit", true);   // 普通文件恢复位置记忆
         restoreTrackMemory(lastPath_); // 按文件恢复轨道/字幕记忆（再次打开对应文件才恢复）
+        // 上一条目的延迟写入若还在 debounce 里，丢弃（否则会把旧文件的偏移写进新文件）
+        delaySendTimer_.stop();
+        delaySubDirty_ = false;
+        delayAudioDirty_ = false;
         syncVfOptions();               // 链重建后重放运行时 vf 状态（fps/vsr 防 UI 修改丢失）
         refreshHwDecodeAvailability(); // 换片后重算"该文件能否硬解"（软解回退不改偏好）
         applyDeinterlace();            // 覆盖 watch_later 里按文件记的 deinterlace

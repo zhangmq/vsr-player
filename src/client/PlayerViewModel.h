@@ -139,6 +139,10 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(bool canDeleteCurrentFile READ canDeleteCurrentFile NOTIFY canDeleteCurrentFileChanged)
     /// 是否已载入媒体（右键菜单"移除/删除当前条目"只在有当前条目时显示）。
     Q_PROPERTY(bool hasMedia READ hasMedia NOTIFY hasMediaChanged)
+    /// 当前播放的是网络源（http/https/rtmp…，即路径里带 "://"）。
+    /// 右键菜单"网络流"只对网络源显示——本地 MKV 的 edition 是"章节版本"，
+    /// 不该挂"网络流"这个名字。
+    Q_PROPERTY(bool networkSource READ networkSource NOTIFY networkSourceChanged)
     Q_PROPERTY(QString videoInfo READ videoInfo NOTIFY videoInfoChanged)
     // OSD 数据源（观察器填充，主线程持有）
     Q_PROPERTY(int videoWidth READ videoWidth NOTIFY osdDataChanged)
@@ -168,6 +172,12 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(QVariantList trackList READ trackList NOTIFY trackListChanged)
     Q_PROPERTY(bool subVisible READ subVisible NOTIFY subVisibleChanged)
     Q_PROPERTY(double subDelay READ subDelay NOTIFY subDelayChanged)
+    /// 音频偏移（秒，mpv audio-delay）；与 subDelay 同一套控件/快捷键
+    Q_PROPERTY(double audioDelay READ audioDelay NOTIFY audioDelayChanged)
+    /// 网络流的可选流列表（mpv edition-list；ytdl_hook 把每个格式做成一个 edition）
+    Q_PROPERTY(QVariantList editions READ editions NOTIFY editionsChanged)
+    /// 当前生效的 edition（mpv current-edition；无可选流时为 -1）
+    Q_PROPERTY(int currentEdition READ currentEdition NOTIFY currentEditionChanged)
     // 视频同目录未加载的外部字幕（{name, path}，优先级排序；已加载排除）
     Q_PROPERTY(QVariantList subtitleFiles READ subtitleFiles NOTIFY subtitleFilesChanged)
     // Playlist（mpv `playlist` 属性 → PlaylistModel 增量镜像）。
@@ -340,6 +350,7 @@ public:
     bool aiAvailable() const { return aiAvailable_.load(); }
     bool canDeleteCurrentFile() const { return canDeleteCurrentFile_; }
     bool hasMedia() const { return fileLoaded_; }
+    bool networkSource() const { return networkSource_; }
     QString videoInfo() const   { return videoInfo_; }
     int videoWidth() const { return videoWidth_.load(); }
     int videoHeight() const { return videoHeight_.load(); }
@@ -377,6 +388,9 @@ public:
     QVariantList trackList() const { return trackList_; }
     bool subVisible() const { return subVisible_; }
     double subDelay() const { return subDelay_; }
+    double audioDelay() const { return audioDelay_; }
+    QVariantList editions() const { return editions_; }
+    int currentEdition() const { return currentEdition_; }
     QVariantList subtitleFiles() const { return subtitleFiles_; }
     int loopMode() const        { return loopMode_; }
     PlaylistModel *playlistModel() { return &playlistModel_; }
@@ -509,6 +523,15 @@ public slots:
     void adjustSubDelay(double delta);  // 字幕延迟 ±0.1s 步进
     /// 重置字幕偏移为 0（"重置偏移"按钮；即时落盘按文件）
     Q_INVOKABLE void resetSubDelay();
+    /// 音频偏移 ±delta 秒（步进由 UI 决定，当前 0.05）
+    Q_INVOKABLE void adjustAudioDelay(double delta);
+    Q_INVOKABLE void resetAudioDelay();
+    /// 切换网络流（edition id，来自 editions 列表）
+    Q_INVOKABLE void setEdition(int id);
+    /// 移除某条轨道（字幕轨用 sub-remove；音视频轨不支持移除）
+    Q_INVOKABLE void removeTrack(const QString &type, qlonglong id);
+    /// 轨道回到自动（vid/aid = auto）
+    Q_INVOKABLE void selectTrackAuto(const QString &type);
     /// 加载外部字幕文件（sub-add select；复用 openFiles mode=2 分类）
     void loadExternalSubtitle(const QString &path) { openFiles({path}, 2); }
     /// 清除当前文件（lastPath_）的字幕记忆（sid/subs/sel/subDelay）——
@@ -578,6 +601,7 @@ signals:
     void aiAvailableChanged();
     void canDeleteCurrentFileChanged();
     void hasMediaChanged();
+    void networkSourceChanged();
     void videoInfoChanged();
     void osdDataChanged();
     void videoHdrChanged();
@@ -590,6 +614,9 @@ signals:
     void trackListChanged();
     void subVisibleChanged();
     void subDelayChanged();
+    void audioDelayChanged();
+    void editionsChanged();
+    void currentEditionChanged();
     void subtitleFilesChanged();
 
 private:
@@ -702,6 +729,7 @@ private:
     QString aspectApplied_ = QStringLiteral("no");  // 上次下发给 mpv 的值
     QString aspect_ = QStringLiteral("no");    // no=容器比例（mpv 0.41 -1 已弃用，no 等价无警告）
     std::atomic<bool> hwDecoding_{false};      // 实际（hwdec-current != no）
+    bool networkSource_ = false;   // 当前路径带 "://"（右键菜单"网络流"的显示条件之一）
     bool hwdecKnown_ = false;                  // hwdec-current 读到过真实值（false = 解码器未建立/属性不可用）
     std::atomic<bool> hwDecodeEnabled_{true};  // 用户偏好（我们下发的 hwdec 开关）
     std::atomic<bool> hwDecodeAvailable_{true};// 当前文件能否硬解（UI 禁用依据）
@@ -846,6 +874,16 @@ private:
     QStringList pendingSubs_;     // 刚 sub-add 未回写 trackList_ 的路径（保存合并用）
     bool subVisible_ = false;
     double subDelay_ = 0.0;
+    double audioDelay_ = 0.0;
+    // 延迟写入合并：连点 ± 时只在最后一次操作后 500ms 发一条 set_property
+    //（音频每条都会让 mpv 重新对齐音画，逐条发会反复重同步）。
+    // 乐观值（subDelay_/audioDelay_）立即更新，UI 无延迟；脏标记决定要不要发。
+    QTimer delaySendTimer_;
+    bool delaySubDirty_ = false;
+    bool delayAudioDirty_ = false;
+    void flushDelayWrites();
+    QVariantList editions_;      // edition-list（{id,title}）
+    int currentEdition_ = -1;    // current-edition
     QVariantList subtitleFiles_;  // 目录未加载外部字幕（{name,path}，优先级排序）
     double persistScale_ = 0.0;   // 持久化 VSR 参数（initVsr 用，CLI 未显式时生效）
     int persistQuality_ = 3;
