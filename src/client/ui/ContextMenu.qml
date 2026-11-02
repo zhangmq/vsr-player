@@ -6,7 +6,7 @@ import "components"
 ///（anchorTarget 语义不适用），宿主席位 showAt() 后 open()。
 /// 条目可带 `submenu: [{label, value}]`（反交错 / 旋转 / 3D / 轨道 / 网络流）
 /// → 悬停/点击在右侧展开二级面板，选中后关闭整个菜单。多个二级菜单共用同
-/// 一个面板：subIndex 记录当前展开的是哪一条（悬停切换）。
+/// 一个面板：展开哪一条由**当前行**决定（currentIndex，鼠标/键盘同源）。
 ///
 /// `submenu` 可以是数组，也可以是**函数**（返回数组）——轨道/网络流是动态的，
 /// 用函数可以让面板每次展开时取最新值，而不必重建整个 items。
@@ -19,7 +19,7 @@ PopupBase {
     id: root
 
     padding: 0
-    width: menuWidth + (subOpen ? subMenuGap + subMenuWidth : 0)
+    width: menuWidth + (subVisible ? subMenuGap + subMenuWidth : 0)
     // 主菜单自身高度（popup 高度 = 它；二级面板必须在这个范围内排布，
     // 否则会被 popup 裁掉 —— popup 是固定大小的自绘 Item，不随子项长高）。
     readonly property real mainPanelH: mainColumn
@@ -34,9 +34,20 @@ PopupBase {
     readonly property int rowH: 30
     readonly property int padY: 8
 
-    property bool subOpen: false
-    /// 当前展开二级菜单的条目下标（-1 = 收起）。两个二级菜单共用面板。
-    property int subIndex: -1
+    // ── 当前行状态（鼠标/键盘共用；鼠标只是改变当前行的手段之一）──────
+    /// 主菜单当前行（-1 = 无：指针在标题/分隔线上，或刚打开菜单）
+    property int currentIndex: -1
+    /// 二级面板当前行（面板可见时才有意义）
+    property int subCurrentIndex: -1
+    /// 二级面板是否展开：当前行有二级菜单就展开，移到没有的行/标题/分隔线就收起
+    property bool subVisible: false
+    /// Esc 由 handleKey 两段式处理（先收面板、再关菜单），不让 Popup 直接关
+    closePolicy: Popup.CloseOnPressOutside
+    /// 键盘焦点是否在二级面板内（决定 ↑↓←→/Enter 作用在哪个面板）
+    property bool focusSub: false
+    /// 指针上次的窗口坐标：只有**指针真的移动**才改当前行——固定高度列表
+    /// 滚动时指针底下的行会变，但指针没动，不该把当前行夺走（滚轮不参与）。
+    property point lastPointerPos: Qt.point(-1, -1)
 
     signal openFilesRequested()
     signal openFolderRequested()
@@ -457,6 +468,189 @@ PopupBase {
         return item.header !== undefined ? root.rowH - 4 : root.rowH
     }
 
+    // ── 当前行：查询 / 移动 / 激活 ────────────────────────────────
+    /// 这一行是否可作为当前行（跳过隐藏行、标题、分隔线）
+    function rowFocusable(i) {
+        var it = root.items[i]
+        if (!it) return false
+        if (it.sep === true || it.header !== undefined) return false
+        return root.itemShown(it)
+    }
+    function hasSubRow(i) {
+        var it = root.items[i]
+        return !!it && it.submenu !== undefined
+    }
+    function isDelayItem(i) {
+        var it = root.items[i]
+        return !!it && it.control === "delay"
+    }
+
+    /// 指针真的移动了吗？内容滚动引起的 hover 变化不算。
+    function pointerMoved(pos) {
+        if (root.lastPointerPos.x === pos.x && root.lastPointerPos.y === pos.y)
+            return false
+        root.lastPointerPos = Qt.point(pos.x, pos.y)
+        return true
+    }
+
+    /// 设置主菜单当前行（并据它决定面板开合 / 面板当前行）
+    function setCurrentRow(i) {
+        if (i === root.currentIndex) return
+        root.currentIndex = i
+        root.focusSub = false
+        if (root.hasSubRow(i)) {
+            root.subVisible = true
+            root.subCurrentIndex = root.initialSubRow()
+        } else {
+            root.subVisible = false
+            root.subCurrentIndex = -1
+        }
+    }
+
+    /// 主菜单键盘移动（跳过不可聚焦行；循环）
+    function moveCurrent(delta) {
+        var n = root.items.length
+        if (n === 0) return
+        var i = root.currentIndex
+        for (var k = 0; k < n; k++) {
+            i = (i + delta + n) % n
+            if (root.rowFocusable(i)) { root.setCurrentRow(i); return }
+        }
+    }
+
+    function firstFocusableRow(fromEnd) {
+        for (var k = 0; k < root.items.length; k++) {
+            var i = fromEnd ? root.items.length - 1 - k : k
+            if (root.rowFocusable(i)) return i
+        }
+        return -1
+    }
+
+    /// 二级面板：行是否可聚焦 / 初始行（落在已勾选项上，否则第一个可聚焦行）
+    function subRowFocusable(j) {
+        var it = root.subItems[j]
+        if (!it) return false
+        return it.sep !== true && it.header === undefined
+    }
+    function initialSubRow() {
+        var m = root.subItems
+        for (var j = 0; j < m.length; j++)
+            if (root.isCurrentSubRow(m[j]) && root.subRowFocusable(j)) return j
+        for (var k = 0; k < m.length; k++)
+            if (root.subRowFocusable(k)) return k
+        return -1
+    }
+    function moveSub(delta) {
+        var m = root.subItems
+        if (m.length === 0) return
+        var j = root.subCurrentIndex
+        for (var k = 0; k < m.length; k++) {
+            j = (j + delta + m.length) % m.length
+            if (root.subRowFocusable(j)) { root.subCurrentIndex = j; return }
+        }
+    }
+
+    /// Enter：面板内执行当前行；主菜单有二级则进面板，否则执行动作项
+    ///（「字幕延迟」「音频延迟」没有下级，Enter 不做事——方向键直接调值）
+    function activateCurrent() {
+        if (root.focusSub) {
+            var row = root.subItems[root.subCurrentIndex]
+            if (row) root.activateSubRow(row)
+            return
+        }
+        var i = root.currentIndex
+        if (i < 0) return
+        if (root.hasSubRow(i)) {
+            root.subVisible = true
+            root.focusSub = true
+            root.subCurrentIndex = root.initialSubRow()
+            return
+        }
+        var it = root.items[i]
+        if (it.sig) { root.close(); root[it.sig]() }
+    }
+
+    /// ←/→：仅当当前行是「字幕延迟」「音频延迟」时调值（±50ms），
+    /// 其余情况 ← 从面板退回主菜单、→ 进入面板。
+    function arrowHorizontal(dir) {
+        var i = root.currentIndex
+        if (!root.focusSub && root.isDelayItem(i)) {
+            root.delayNudge(root.items[i].kind, dir * 0.05)
+            return
+        }
+        if (root.focusSub) {
+            if (dir < 0) root.focusSub = false
+            return
+        }
+        if (dir > 0 && root.hasSubRow(i)) {
+            root.subVisible = true
+            root.focusSub = true
+            root.subCurrentIndex = root.initialSubRow()
+        }
+    }
+
+    /// 鼠标移动到主菜单某一行（仅指针真的移动时生效）
+    function hoverMain(i, pos) {
+        if (!root.pointerMoved(pos)) return
+        root.focusSub = false
+        root.setCurrentRow(root.rowFocusable(i) ? i : -1)
+    }
+    /// 鼠标移动到二级面板某一行
+    function hoverSub(j, pos) {
+        if (!root.pointerMoved(pos)) return
+        if (!root.subRowFocusable(j)) return
+        root.subCurrentIndex = j
+        root.focusSub = true
+    }
+
+    /// 键盘事件入口（也供 RPC 测试钩子调用：menu-key）
+    function handleKey(key) {
+        switch (key) {
+        case "up":
+            if (root.focusSub) root.moveSub(-1); else root.moveCurrent(-1)
+            break
+        case "down":
+            if (root.focusSub) root.moveSub(1); else root.moveCurrent(1)
+            break
+        case "left":  root.arrowHorizontal(-1); break
+        case "right": root.arrowHorizontal(1); break
+        case "home":
+            if (root.focusSub) { root.subCurrentIndex = root.initialSubRow() }
+            else root.setCurrentRow(root.firstFocusableRow(false))
+            break
+        case "end":
+            if (root.focusSub) {
+                var m = root.subItems
+                for (var j = m.length - 1; j >= 0; j--)
+                    if (root.subRowFocusable(j)) { root.subCurrentIndex = j; break }
+            } else root.setCurrentRow(root.firstFocusableRow(true))
+            break
+        case "enter": root.activateCurrent(); break
+        case "esc":
+            if (root.subVisible) {
+                root.subVisible = false
+                root.focusSub = false
+                root.subCurrentIndex = -1
+            } else {
+                root.close()
+            }
+            break
+        }
+    }
+
+    /// 状态快照（RPC get-menu-state / menu-key 回显，验证导航不用截图）
+    readonly property string navState: {
+        var cur = root.currentIndex >= 0 && root.items[root.currentIndex]
+                  ? String(root.items[root.currentIndex].text || "-") : "-"
+        var sub = "-"
+        if (root.subVisible && root.subCurrentIndex >= 0) {
+            var it = root.subItems[root.subCurrentIndex]
+            if (it) sub = String(it.label || it.header || "-")
+        }
+        return "cur=" + root.currentIndex + "(" + cur + ") sub=" + (root.subVisible ? 1 : 0)
+               + "[" + root.subCurrentIndex + ":" + sub + "] focusSub=" + (root.focusSub ? 1 : 0)
+    }
+
     /// 二级面板的 y：与所属条目行对齐。
     /// **取委托的实际布局位置**，不再用 items 数组重推行高：隐藏行（visibleWhen，
     /// 例如 URL/直播没有"删除文件"）由 Column 布局决定高度 0，而 items 侧的
@@ -468,12 +662,12 @@ PopupBase {
         if (!mainColumn)
             return root.padY
         var mh = mainColumn.height
-        if (!root.subOpen)
+        if (!root.subVisible)
             return mainColumn.y + mh
         var y = mainColumn.y + mh
         for (var i = 0; i < mainColumn.children.length; i++) {
             var c = mainColumn.children[i]
-            if (c.itemIndex === root.subIndex) {
+            if (c.itemIndex === root.currentIndex) {
                 y = mainColumn.y + c.y
                 break
             }
@@ -544,7 +738,7 @@ PopupBase {
     /// 否则退回父条目的 `current(group)` 老机制（反交错/旋转/3D 那三条）。
     function isCurrentSubRow(row) {
         if (row.current !== undefined) return row.current === true
-        var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
+        var it = root.currentIndex >= 0 ? root.items[root.currentIndex] : null
         if (!it || !it.current) return false
         if (row.header !== undefined || row.sep === true || row.sig !== undefined) return false
         return row.value === it.current(row.group || 0)
@@ -553,7 +747,7 @@ PopupBase {
     /// 点击二级面板里的某一行：动作行发自己的 sig；行自带 subSig 用它；
     /// 否则交给所属条目的 subSig（老机制）。
     function activateSubRow(row) {
-        var it = root.subIndex >= 0 ? root.items[root.subIndex] : null
+        var it = root.currentIndex >= 0 ? root.items[root.currentIndex] : null
         if (row.sig !== undefined) {
             if (row.arg !== undefined) root[row.sig](row.arg)
             else root[row.sig]()
@@ -562,15 +756,16 @@ PopupBase {
         } else if (it && it.subSig) {
             root[it.subSig](row.value, row.group || 0)
         }
-        root.subOpen = false
-        root.subIndex = -1
+        root.subVisible = false
+        root.focusSub = false
+        root.subCurrentIndex = -1
         root.close()
     }
 
-    /// 当前展开的二级菜单子项模型（subIndex 指向的条目；submenu 可为函数）
+    /// 二级面板的子项模型（currentIndex 指向的条目；submenu 可为函数）
     readonly property var subItems: {
-        if (root.subIndex < 0 || root.subIndex >= items.length) return []
-        var sub = items[root.subIndex].submenu
+        if (root.currentIndex < 0 || root.currentIndex >= items.length) return []
+        var sub = items[root.currentIndex].submenu
         return typeof sub === "function" ? sub() : (sub || [])
     }
 
@@ -589,10 +784,19 @@ PopupBase {
     }
 
     /// 每次打开都从收起状态开始（不记忆上次展开的子菜单）。
-    onAboutToShow: { subOpen = false; subIndex = -1 }
+    onAboutToShow: {
+        currentIndex = -1
+        subCurrentIndex = -1
+        subVisible = false
+        focusSub = false
+        lastPointerPos = Qt.point(-1, -1)
+    }
+
+    /// 打开后让内容项拿到键盘焦点（否则 ↑↓/Enter 收不到）
+    onOpened: if (contentRoot) contentRoot.forceActiveFocus()
     /// 展开二级面板时 panel 可能比主菜单高：把整个菜单往上推，避免面板出屏。
-    onSubOpenChanged: {
-        if (subOpen && parent)
+    onSubVisibleChanged: {
+        if (subVisible && parent)
             root.y = Math.max(4, Math.min(root.y, parent.height - root.height - 4))
     }
 
@@ -618,7 +822,7 @@ PopupBase {
         }
         // 二级面板底（比条目行上下各多 6px；高度 = 可视高度，内部可滚动）
         Rectangle {
-            visible: root.subOpen
+            visible: root.subVisible
             x: root.menuWidth + root.subMenuGap
             y: root.subY - 6
             width: root.subMenuWidth
@@ -674,10 +878,24 @@ PopupBase {
     }
 
     contentItem: Item {
+        id: contentRoot
+        focus: true
+        Keys.onPressed: function(ev) {
+            var k = ""
+            if (ev.key === Qt.Key_Up) k = "up"
+            else if (ev.key === Qt.Key_Down) k = "down"
+            else if (ev.key === Qt.Key_Left) k = "left"
+            else if (ev.key === Qt.Key_Right) k = "right"
+            else if (ev.key === Qt.Key_Home) k = "home"
+            else if (ev.key === Qt.Key_End) k = "end"
+            else if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter) k = "enter"
+            else if (ev.key === Qt.Key_Escape) k = "esc"
+            if (k !== "") { root.handleKey(k); ev.accepted = true }
+        }
         implicitWidth: root.menuWidth
         // 二级面板比主菜单高时，popup 也要跟着长高，否则面板被裁
         implicitHeight: Math.max(mainColumn.implicitHeight + 2 * root.padY,
-                                 root.subOpen ? root.subY + root.subViewH + root.padY : 0)
+                                 root.subVisible ? root.subY + root.subViewH + root.padY : 0)
 
         Column {
             id: mainColumn
@@ -703,7 +921,8 @@ PopupBase {
 
                     Rectangle {
                         anchors.fill: parent
-                        color: !isSep && !isHeader && !isControl && miHover.containsMouse
+                        color: !isSep && !isHeader
+                               && index === root.currentIndex && root.currentIndex >= 0
                                ? "#33ffffff" : "transparent"
                         visible: !isSep
                     }
@@ -822,21 +1041,31 @@ PopupBase {
                             renderType: Text.NativeRendering
                             anchors.verticalCenter: parent.verticalCenter }
                     }
+                    HoverHandler {
+                        // 被动观察：只改当前行，不参与点击；指针真的移动才生效
+                        onPointChanged: root.hoverMain(index, point.scenePosition)
+                    }
                     MouseArea {
                         id: miHover
                         anchors.fill: parent
-                        hoverEnabled: !isHeader && !isControl
+                        hoverEnabled: false
                         enabled: !isHeader && !isControl
                         visible: !isSep
                         cursorShape: Qt.PointingHandCursor
-                        // 悬停即展开本条目的二级菜单；移到无子菜单的条目上收起
-                        onEntered: {
-                            if (hasSub) { root.subIndex = index; root.subOpen = true }
-                            else { root.subIndex = -1; root.subOpen = false }
-                        }
+                        // 悬停/点击都只是"把当前行设成我"——面板开合由当前行派生
+                        //（所以移到「字幕延迟」「音频延迟」上时面板会自然收起）
                         onClicked: {
-                            if (hasSub) { root.subIndex = index; root.subOpen = true }
-                            else { root.close(); root[modelData.sig]() }
+                            if (isControl) return
+                            root.setCurrentRow(index)
+                            if (hasSub) {
+                                root.subVisible = true
+                                root.focusSub = true
+                                root.subCurrentIndex = root.initialSubRow()
+                            } else {
+                                var it = root.items[index]
+                                root.close()
+                                if (it && it.sig) root[it.sig]()
+                            }
                         }
                     }
                 }
@@ -849,7 +1078,7 @@ PopupBase {
         // 区内的滚轮由 Flickable 自己处理；面板本身不再整体滚动。
         Item {
             id: subPanel
-            visible: root.subOpen
+            visible: root.subVisible
             x: root.menuWidth + root.subMenuGap
             y: root.subY
             width: root.subMenuWidth

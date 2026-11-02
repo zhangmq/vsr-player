@@ -652,6 +652,22 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             }, Qt::QueuedConnection);
             response = formatResponse("success");
         }
+    } else if (cmd == "menu-key") {
+        // 测试用：模拟一次菜单键盘操作（up/down/left/right/home/end/enter/esc），
+        // 用于不开图形界面核对"当前行"导航状态机。
+        auto *qv = qobject_cast<QQuickView *>(win_);
+        if (!qv || !qv->rootObject()) {
+            response = formatResponse("no window");
+        } else if (args.empty()) {
+            response = formatResponse("usage: menu-key <up|down|left|right|home|end|enter|esc>");
+        } else {
+            QQuickItem *rootItem = qv->rootObject();
+            const QString k = QString::fromStdString(args[0]);
+            QMetaObject::invokeMethod(rootItem, [rootItem, k]() {
+                rootItem->setProperty("pendingMenuKey", k);
+            }, Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
     } else if (cmd == "stereo-picker") {
         // 测试用：打开 3D 选择器（正常入口 = 右键菜单 → 3D → 3D片源/2D转3D）
         auto *qv = qobject_cast<QQuickView *>(win_);

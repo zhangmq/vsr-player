@@ -652,6 +652,13 @@ Item {
     /// RPC `open-menu` 用：写这个属性即打开菜单（属性写入不依赖 QML 方法
     /// 签名匹配，比 invokeMethod 调 QML 函数可靠——后者会静默失败）。
     property var pendingMenuOpen: null
+    /// RPC menu-key 用：写这个属性即模拟一次键盘操作（测试导航状态机）
+    property string pendingMenuKey: ""
+    onPendingMenuKeyChanged: {
+        if (pendingMenuKey === "") return
+        if (contextMenu) contextMenu.handleKey(pendingMenuKey)
+        pendingMenuKey = ""
+    }
     onPendingMenuOpenChanged: {
         if (!pendingMenuOpen) return
         openMenuAt(pendingMenuOpen[0], pendingMenuOpen[1], pendingMenuOpen[2])
@@ -662,8 +669,10 @@ Item {
     property string menuDebugInfo: {
         var c = contextMenu
         if (!c) return ""
-        var parts = ["subOpen=" + (c.subOpen ? 1 : 0), "subIdx=" + c.subIndex,
-                     "contentH=" + Math.round(c.subContentH)]
+        var parts = ["subOpen=" + (c.subVisible ? 1 : 0),
+                     "subIdx=" + c.currentIndex,
+                     "contentH=" + Math.round(c.subContentH),
+                     c.navState]
         // 逐行几何（排查"分隔线粗细不一"这类排版问题：直接看 y/height）
         var rg = c.rowGeom
         for (var k = 0; k < rg.length; k++)
