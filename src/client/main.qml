@@ -717,6 +717,9 @@ Item {
                        + ",v=" + (rg[k].vis ? 1 : 0) + "}")
         var gs = c.subGroups
         parts.push("groups=" + gs.length)
+        if (c.subScrolls)
+            for (var q = 0; q < c.subScrolls.length; q++)
+                parts.push("scroll" + q + "=" + Math.round(c.subScrolls[q]))
         for (var i = 0; i < gs.length; i++)
             parts.push("g" + i + "{sec=" + (gs[i].section === "" ? "-" : gs[i].section)
                        + ",n=" + gs[i].items.length

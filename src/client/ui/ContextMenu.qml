@@ -740,7 +740,7 @@ PopupBase {
             if (cur && cur.section === sec && (sec !== "" || cur.items.length === 0)) {
                 cur.items.push(it); cur.maxRows = rows
             } else {
-                cur = { section: sec, items: [it], maxRows: rows }
+                cur = { section: sec, items: [it], maxRows: rows, start: i }
                 groups.push(cur)
             }
         }
@@ -805,6 +805,19 @@ PopupBase {
         if (root.currentIndex < 0 || root.currentIndex >= items.length) return []
         var sub = items[root.currentIndex].submenu
         return typeof sub === "function" ? sub() : (sub || [])
+    }
+
+    /// 各滚动区当前 contentY（RPC 验证"当前行已滚进可视区"）
+    readonly property var subScrolls: {
+        var out = []
+        if (!subColumn) return out
+        for (var i = 0; i < subColumn.children.length; i++) {
+            var g = subColumn.children[i]
+            if (g.gstart === undefined) continue
+            // 组委托里的 Flickable 没有 id 暴露——用属性登记（见下）
+            out.push(g.scrollPos !== undefined ? g.scrollPos : -1)
+        }
+        return out
     }
 
     /// 逐行几何快照（RPC get-menu-state 用）：mainColumn 是内部 id，外部
@@ -874,6 +887,9 @@ PopupBase {
     component SubRow: Item {
         id: subRow
         property var row
+        /// 该行在 subItems 里的**全局**下标（分组渲染时 Repeater 的 index 是组内序号，
+        /// 不能直接用来比当前行——否则滚动区里的高亮会错位/不显示）
+        property int rowIndex: -1
         signal activated()
         readonly property bool isSep: row.sep === true
         readonly property bool isHeader: row.header !== undefined
@@ -882,7 +898,8 @@ PopupBase {
         height: isSep ? 1 : (isHeader ? root.rowH - 4 : root.rowH)
         Rectangle {
             anchors.fill: parent
-            color: !isHeader && !isSep && rowHover.containsMouse ? "#33ffffff" : "transparent"
+            color: !isHeader && !isSep && root.subVisible && subRow.rowIndex === root.subCurrentIndex
+                   ? "#33ffffff" : "transparent"
         }
         Rectangle {
             visible: isSep
@@ -1153,6 +1170,26 @@ PopupBase {
                         readonly property var gitems: modelData.items
                         readonly property bool scrolls: root.groupScrolls(modelData)
                         readonly property int maxRows: modelData.maxRows
+                        readonly property int gstart: modelData.start !== undefined ? modelData.start : 0
+
+                        /// 当前行落到本组时把它滚进可视区（键盘 ↓ 到第 9 行以后
+                        /// 只改下标不动滚动，看起来"没反应"）
+                        function ensureRowVisible(j) {
+                            if (!scrolls || j < gstart || j >= gstart + gitems.length)
+                                return
+                            var rowTop = (j - gstart) * root.rowH
+                            if (rowTop < gFlick.contentY)
+                                gFlick.contentY = rowTop
+                            else if (rowTop + root.rowH > gFlick.contentY + gFlick.height)
+                                gFlick.contentY = rowTop + root.rowH - gFlick.height
+                        }
+                        readonly property real scrollPos: gFlick ? gFlick.contentY : -1
+                        Connections {
+                            target: root
+                            function onSubCurrentIndexChanged() {
+                                groupItem.ensureRowVisible(root.subCurrentIndex)
+                            }
+                        }
 
                         // ── 非滚动组：逐行（分隔线/标题/普通项）──────────────
                         Column {
@@ -1162,6 +1199,7 @@ PopupBase {
                                 model: groupItem.gitems
                                 delegate: SubRow {
                                     row: modelData
+                                    rowIndex: groupItem.gstart + index
                                     onActivated: root.activateSubRow(row)
                                 }
                             }
@@ -1205,6 +1243,7 @@ PopupBase {
                                         model: groupItem.gitems
                                         delegate: SubRow {
                                             row: modelData
+                                            rowIndex: groupItem.gstart + index
                                             onActivated: root.activateSubRow(row)
                                         }
                                     }
