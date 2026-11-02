@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QQuickWindow>
 #include <QKeyCombination>
 #include <QKeyEvent>
 #include <QWindow>
@@ -12,8 +13,9 @@
 #include "StereoController.h"
 
 KeyRouter::KeyRouter(PlayerViewModel *vm, StereoController *stereo,
-                     PopupRegistry *popups, QObject *parent)
-    : QObject(parent), vm_(vm), stereo_(stereo), popups_(popups)
+                     PopupRegistry *popups, std::function<void()> quitFn, QObject *parent)
+    : QObject(parent), quitFn_(std::move(quitFn)), vm_(vm), stereo_(stereo),
+      popups_(popups)
 {
     // 启动自检：重复按键 / 空 id / 无法解析的序列在**启动时**就报出来，
     // 而不是等用户按到那个键才发现（改版前这些只能靠人肉对比三个文件）。
@@ -120,7 +122,7 @@ bool KeyRouter::exec(const QString &id)
     if (id == "toggle-fullscreen") { vm_->toggleFullscreen(); return true; }
     if (id == "remove-from-playlist") { vm_->removeCurrentFromPlaylist(); return true; }
     if (id == "delete-file") { vm_->deleteCurrentFile(); return true; }
-    if (id == "quit") { QCoreApplication::quit(); return true; }
+    if (id == "quit") { quitApplication(); return true; }
 
     // ── 字幕/音频延迟（弹窗内也可用，见 popupOk）───────────────────
     if (id == "sub-delay-down") { vm_->adjustSubDelay(-0.05); return true; }
@@ -191,6 +193,15 @@ void KeyRouter::syncStereoSource()
     vm_->setEyeState(vm_->eyeMode(), stereo_->layout(), stereo_->half() ? 1 : 0);
 }
 
+void KeyRouter::quitApplication()
+{
+    MLOG_INFO("quit: requested (3d=%d)", int(stereo_ && stereo_->active()));
+    if (quitFn_)
+        quitFn_();
+    else
+        QCoreApplication::quit();
+}
+
 void KeyRouter::noteNav(const QString &id)
 {
     logDispatch(id, 0, 0, true, keymap::Scope::Menu);
@@ -246,9 +257,15 @@ bool KeyRouter::injectKey(const QString &sequence)
         MLOG_ERR("key: cannot parse sequence '%s'", qUtf8Printable(sequence));
         return false;
     }
-    // 目标窗口 = 焦点窗口（3D 下是 control 窗口，2D 下是主窗口）；
-    // 测试进程可能没被合成器聚焦，退回第一个可见窗口。
-    QWindow *win = QGuiApplication::focusWindow();
+    // 目标窗口：3D 会话里固定是**桌面 UI 窗口**（presentation 带
+    // WindowDoesNotAcceptFocus，真实按键也只会到 control 窗口）；2D 用主窗口。
+    // 直接取 focusWindow() 不稳——弹窗开关会让焦点在窗口间跳，测试会偶发
+    // "按键没派发"（2026-11-03 实测：3D 下 Enter 偶尔不进菜单）。
+    QWindow *win = nullptr;
+    if (stereo_ && stereo_->active())
+        win = stereo_->controlWindow();
+    if (!win)
+        win = QGuiApplication::focusWindow();
     if (!win) {
         for (QWindow *w : QGuiApplication::topLevelWindows()) {
             if (w->isVisible()) {

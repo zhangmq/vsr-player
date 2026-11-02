@@ -1,4 +1,5 @@
 /// vsr-player — Qt Quick client: mpv + VSR video playback
+#include <atomic>
 #include <clocale>
 #include <cstdio>
 #include <chrono>
@@ -98,6 +99,22 @@ static bool expandInputs(const Options &opts, std::vector<std::string> *out) {
 }
 
 
+// ── 应用退出 ─────────────────────────────────────────────────────────
+// 3D 会话里退出必须**先退出 3D**再 quit()：Qt 的 quit 会给窗口投 CloseEvent，
+// 而 presentation 窗口的 closeEvent 会"3D 活跃 → 忽略关闭 + stop()"，
+// 于是 quit 被这次拦截吃掉——现象是"按 Ctrl+Q / 菜单 Quit 只关掉眼镜窗口，
+// 应用还在"（2026-11-03 实测）。
+static std::atomic<bool> g_quitting{false};
+
+static void quitApp(StereoController *stereo)
+{
+    if (g_quitting.exchange(true))
+        return;                       // 已经在退出（closeEvent/菜单/快捷键并发）
+    if (stereo && stereo->active())
+        stereo->stop();               // 先把窗口恢复到桌面，别让 closeEvent 拦
+    QCoreApplication::quit();
+}
+
 // 3D 热键：H/J/K/L 在按键层做大小写无关拦截。
 // QKeySequence("J") 等价于 Shift+J（大写绑定在无 Shift 时无效）；
 // 事件过滤器在 QML 之前收到 KeyPress，用 event->key() 判断，不受大小写/CapsLock 影响。
@@ -112,6 +129,10 @@ protected:
     // `escape-swallow`（KeyRouter，应用级过滤器）负责，而过滤器在弹窗打开时
     // 会让位——窗口层再吞一次会让"3D 下右键菜单的 Esc 关不掉"（实测）。
     void closeEvent(QCloseEvent *e) override {
+        if (g_quitting.load()) {          // 应用正在退出：别再拦
+            QQuickView::closeEvent(e);
+            return;
+        }
         if (stereo && stereo->active()) {
             e->ignore();
             stereo->stop();
@@ -131,7 +152,7 @@ protected:
     // Esc 同 StereoView：交给键位表（3D 下吞、弹窗打开时让位）。
     void closeEvent(QCloseEvent *e) override {
         QQuickView::closeEvent(e);
-        QCoreApplication::quit();
+        quitApp(stereo);
     }
 };
 
@@ -457,7 +478,8 @@ int main(int argc, char *argv[]) {
         // 弹窗计数 + 按键派发。同样声明在 view 之前 → 析构晚于 QML，
         // QML 里的 `popups` / `keys` 引用不会变成悬空指针。
         PopupRegistry popups;
-        KeyRouter keyRouter(&viewModel, &stereo, &popups, &app);
+        KeyRouter keyRouter(&viewModel, &stereo, &popups, [&stereo]() { quitApp(&stereo); },
+                            &app);
         // 应用级（不是窗口级）：3D 时焦点可能在 presentation / control 任一窗口，
         // 只有应用级过滤器能稳定收到所有按键。
         qApp->installEventFilter(&keyRouter);

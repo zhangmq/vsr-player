@@ -149,8 +149,10 @@ class Player:
     def log_text(self) -> str:
         return self.logpath.read_text(encoding="utf-8", errors="replace")
 
-    def menu(self) -> dict:
-        return self.rpc.menu_state()
+    def menu(self, player: bool = False) -> dict:
+        """菜单/面板快照。player=True 读 presentation 那份（3D 下用来断言
+        "眼镜窗口那边什么都没发生"）。"""
+        return self.rpc.menu_state(player=player)
 
     def last_dispatch(self) -> str:
         log = self.rpc.key_log()

@@ -129,9 +129,13 @@ class Rpc:
         out["msSub"], out["msAudio"] = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
         return out
 
-    def menu_state(self) -> dict:
-        """get-menu-state 的字符串快照 → 常用字段字典。"""
-        text = self.data("get-menu-state")
+    def menu_state(self, player: bool = False) -> dict:
+        """get-menu-state 的字符串快照 → 常用字段字典。
+
+        player=True 时读主窗口（presentation）那份，否则读"当前该干活的 UI
+        窗口"：2D 是主窗口，3D 是桌面 control 窗口。
+        """
+        text = self.data("get-menu-state", *(["player"] if player else []))
         out = self._parse_ui(text)
         out["raw"] = text
         return out

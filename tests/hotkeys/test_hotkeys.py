@@ -14,6 +14,7 @@
   T3-d 单眼态（set-eye）走 3D 键位分支且只派发一次
   T2   菜单状态机：Home/End/↑↓ 跳隐藏行、→/← 开合面板、Enter 进控件态、
        控件态 ←/→ ±50ms、Esc 两级退出
+  T4   Ctrl+Q 退出（进程真的结束；曾经在 3D 下只关掉眼镜窗口）
 
 真 3D 会话（副屏当眼镜屏）另见 test_stereo_keys.py。
 
@@ -333,6 +334,14 @@ def t_sanity(p: Player) -> None:
     check("keymap:" in log, "键位表已加载")
 
 
+def t4_quit(p: Player) -> None:
+    section("T4 退出（Ctrl+Q → 进程结束）")
+    p.rpc.key("Ctrl+Q")
+    wait_until(lambda: p.proc.poll() is not None, "应用退出", timeout=10)
+    check(p.proc.poll() is not None, "Ctrl+Q 退出进程", f"rc={p.proc.returncode}")
+    check("app.exec() returned" in p.log_text(), "走正常退出路径")
+
+
 def main() -> int:
     harness.configure(sys.argv)
     if not harness.BIN.exists():
@@ -347,6 +356,7 @@ def main() -> int:
         if not no_eye:
             phases.append(("T3-d 单眼态分支", t3_stereo_branch))
         phases.append(("T2 菜单状态机", t2_menu_state_machine))
+        phases.append(("T4 退出", t4_quit))
         for name, fn in phases:
             if not p.alive():
                 check(False, f"播放器在「{name}」前已退出（rc={p.proc.returncode}）")

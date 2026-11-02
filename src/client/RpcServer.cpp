@@ -126,6 +126,22 @@ void RpcServer::handleClient(int fd) {
 //  Command dispatch — direct libmpv calls (client API is thread-safe)
 // ═════════════════════════════════════════════════════════════════════
 
+QQuickWindow *RpcServer::uiWindow()
+{
+    if (!win_)
+        return nullptr;
+    if (!stereo_)
+        return win_;
+    bool active = false;
+    QQuickWindow *cw = nullptr;
+    StereoController *sc = stereo_;
+    QMetaObject::invokeMethod(sc, [sc, &active, &cw]() {
+        active = sc->active();
+        cw = active ? sc->controlWindow() : nullptr;
+    }, Qt::BlockingQueuedConnection);
+    return (active && cw) ? cw : win_;
+}
+
 void RpcServer::handleLine(int fd, const std::string &line) {
     std::string cmd, error;
     std::vector<std::string> args;
@@ -540,7 +556,11 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             //（2026-11-03 实测，core 栈：QQmlBinding::evaluate →
             //  resolveQmlContextPropertyLookupGetter → ExecutionEngine::qmlContext）。
             // 高频轮询这个命令的测试脚本几分钟内必踩。
-            if (auto *qv = qobject_cast<QQuickView *>(win_)) {
+            // 可选参数 player：读主窗口（presentation）而不是 UI 窗口，
+            // 用来断言"3D 下 presentation 那边什么都没发生"
+            const bool wantPlayer = !args.empty() && args[0] == "player";
+            QQuickWindow *uiWin = wantPlayer ? win_ : uiWindow();
+            if (auto *qv = qobject_cast<QQuickView *>(uiWin)) {
                 if (QQuickItem *rootItem = qv->rootObject()) {
                     QString md;
                     QMetaObject::invokeMethod(
@@ -654,7 +674,7 @@ void RpcServer::handleLine(int fd, const std::string &line) {
     } else if (cmd == "open-menu") {
         // 测试用：在窗口内 (x,y) 打开右键菜单（正常入口 = 右键）。
         // 用于截图核对菜单排版/分组（尤其二级面板的分组标题与勾选态）。
-        auto *qv = qobject_cast<QQuickView *>(win_);
+        auto *qv = qobject_cast<QQuickView *>(uiWindow());
         if (!qv || !qv->rootObject()) {
             response = formatResponse("no window");
         } else if (args.size() < 2) {
@@ -675,7 +695,7 @@ void RpcServer::handleLine(int fd, const std::string &line) {
     } else if (cmd == "menu-key") {
         // 测试用：模拟一次菜单键盘操作（up/down/left/right/home/end/enter/esc），
         // 用于不开图形界面核对"当前行"导航状态机。
-        auto *qv = qobject_cast<QQuickView *>(win_);
+        auto *qv = qobject_cast<QQuickView *>(uiWindow());
         if (!qv || !qv->rootObject()) {
             response = formatResponse("no window");
         } else if (args.empty()) {
@@ -777,7 +797,7 @@ void RpcServer::handleLine(int fd, const std::string &line) {
         response = formatResponse("", QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString());
     } else if (cmd == "stereo-picker") {
         // 测试用：打开 3D 选择器（正常入口 = 右键菜单 → 3D → 3D片源/2D转3D）
-        auto *qv = qobject_cast<QQuickView *>(win_);
+        auto *qv = qobject_cast<QQuickView *>(uiWindow());
         if (!qv || !qv->rootObject()) {
             response = formatResponse("no window");
         } else if (args.empty()) {
@@ -832,20 +852,35 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             response = formatResponse("success", "\"" + jsonEscape(out) + "\"");
         }
     } else if (cmd == "grab-window") {
-        // 测试用：抓主窗口（锁屏/无眼镜时检查 UI）
+        // 测试用：抓窗口（锁屏/无眼镜时检查 UI）。可选第二参数指定抓哪个：
+        //   player  = 主窗口（2D 时含 UI，3D 时是眼镜屏上的画面）
+        //   control = 3D 会话里的桌面 UI 窗口
         if (!win_) {
             response = formatResponse("no window");
         } else if (args.empty()) {
-            response = formatResponse("missing path");
+            response = formatResponse("usage: grab-window <path> [player|control]");
         } else {
-            QQuickWindow *win = win_;
-            QString path = QString::fromStdString(args[0]);
-            QMetaObject::invokeMethod(win, [win, path]() {
-                QImage img = win->grabWindow();
-                if (!img.isNull())
-                    img.save(path);
-            }, Qt::QueuedConnection);
-            response = formatResponse("success");
+            const QString path = QString::fromStdString(args[0]);
+            const QString which = args.size() > 1 ? QString::fromStdString(args[1])
+                                                  : QStringLiteral("player");
+            QQuickWindow *target = win_;
+            if (which == QStringLiteral("control")) {
+                target = nullptr;
+                if (stereo_)
+                    QMetaObject::invokeMethod(
+                        stereo_, [this, &target]() { target = stereo_->controlWindow(); },
+                        Qt::BlockingQueuedConnection);
+            }
+            if (!target) {
+                response = formatResponse("no such window");
+            } else {
+                QMetaObject::invokeMethod(target, [target, path]() {
+                    QImage img = target->grabWindow();
+                    if (!img.isNull())
+                        img.save(path);
+                }, Qt::QueuedConnection);
+                response = formatResponse("success");
+            }
         }
     } else if (cmd == "nudge-volume") {
         // 模拟快捷键调音量（触发音量提示 OSD；与 set_property volume 区分）

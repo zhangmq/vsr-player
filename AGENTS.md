@@ -466,6 +466,14 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   主窗口一起移到眼镜屏。Qt 文档/源码（`qquickpopup.cpp` 的
   `adjustPopupItemParentAndWindow`、`qquickpopupwindow.cpp`）与社区报告
   （QTBUG-67684、QTBUG-35261）都是这个语义，不是 QScreen/合成器放错屏。
+- **3D 选择器支持键盘**（2026-11-03 用户要求）：`↑/↓` 选屏（循环）、`Enter` 开始、
+  `Esc` 取消。实现 = `contentItem` 里一个 `focus: true` 的 Item + `Keys.onPressed`
+  （弹窗打开时键位表整体让位，所以弹窗自己接键——与右键菜单同一套）。
+- **瞬态 OSD 必须按眼各一份、各自画在自己那一半**（2026-11-03 用户报"比例 OSD
+  没有左右眼分别显示"）：`StereoVolume.qml` / `StereoProgress.qml` 的写法是
+  delegate 宽 = 窗口一半、面板在本半居中、`±12px` 交叉视差。`StereoMessage.qml`
+  原先写成"两份都在窗口中心、只偏 ±12px"——面板横跨中缝，每只眼只看到半个面板。
+  新增这类 OSD 直接抄 `StereoVolume` 的 Repeater 结构。
 - **Context menu 仅 UI 窗口可用**（2026-10-25 用户要求）：`MouseArea` 与
   `ContextMenu.enabled = controlMode || !stereo.active` —— 2D 用 main 窗口，
   3D 用 control 窗口（桌面主 UI）；presentation 窗口禁用右键/菜单。
@@ -953,6 +961,19 @@ popupOk, allowRepeat, helpKey}`：
   还有一层"3D 时在 window event 里吞 Esc"的兜底——它会**抢在弹窗之前**把 Esc 吃掉，
   于是 3D 会话里右键菜单的 Esc 关不掉（实测：`ctxVisible` 一直是 1）。已删除，
   现在 3D 无弹窗 → `escape-swallow` 吞掉；有弹窗 → 过滤器让位、菜单自己关。
+- **退出只有一条路径**（2026-11-03 用户报"3D 下 Ctrl+Q / 菜单 Quit 只关掉眼镜
+  窗口、应用还在"）：`quitApp()`（`main.cpp`）= 置 `g_quitting` → 若 3D 活跃先
+  `stereo.stop()` → `QCoreApplication::quit()`。键盘 `quit` 动作与右键菜单 Quit
+  都走它（QML 里用 `keys.quitApplication()`，**不要** `Qt.quit()`——QQuickView 的
+  QQmlEngine 没把 quit 信号接到 QCoreApplication，那是 QQmlApplicationEngine 的
+  行为，`Qt.quit()` 在 `QQuickView` 里什么都不做）。
+  ⚠ 为什么必须先 stop 3D：Qt 的 quit 会给窗口投 CloseEvent，而 presentation 的
+  `closeEvent` 会"3D 活跃 → `e->ignore()` + `stereo->stop()`"——那次拦截会把 quit
+  吃掉。`closeEvent` 里另有 `g_quitting` 短路（退出中直接接受关闭）。
+- **键位测试注入（`KeyRouter::injectKey`）在 3D 下定向到桌面 UI 窗口**，不用
+  `QGuiApplication::focusWindow()`：弹窗开关会让焦点在窗口间跳，测试会偶发
+  "按键没派发"（实测 3D 下 Enter 偶尔不进菜单）。真实按键同理只会到 control 窗口
+  （presentation 带 `WindowDoesNotAcceptFocus`）。
 - **两窗口只执行一份 QML 动作**：3D 下 QML 动作（`P`/`Menu`/对话框）只在桌面
   control 窗口执行（`handlesActions`），presentation 窗口不重复执行——
   RPC `get-control-state` 才能看到它（`get-menu-state` 读的是主窗口）。
@@ -1005,9 +1026,19 @@ popupOk, allowRepeat, helpKey}`：
   帮助/布局/眼序/全半/暂停/seek/音量/切集）、**S2b 眼睛映射视觉验证**（用"左红右蓝"
   的 SBS 片源抓 presentation 窗口，ffmpeg 逐半取平均色：左眼红/右眼蓝，`K` 后互换）、
   S3 两窗口派发（`P` 只开桌面窗口的列表、菜单开在桌面窗口、3D 下 Esc 吞掉但弹窗优先）、
-  S4 退出恢复（回原屏 1280x720、键位回 `scope=2d`）。共 79 项，跑两遍全绿。
+  S4 退出恢复（回原屏 1280x720、键位回 `scope=2d`）、
+  S5 3D 下菜单 Quit 必须真的退出进程。共 91 项，跑两遍全绿。
   `harness.py` = 两个脚本共用的断言/进程/轮询件（`nudge` 处理连续 seek 门控、
   `settle` 处理异步投递的陈旧读）。
+  **菜单类 RPC 必须定向到"当前 UI 窗口"**（`RpcServer::uiWindow()`：3D → control
+  窗口，2D → 主窗口）：`open-menu` / `menu-key` / `get-menu-state` / `stereo-picker`
+  都用它。曾经直接用 `win_`（主窗口）——3D 下菜单会开到眼镜屏上（用户 2026-11-03
+  报"右键菜单跑到眼镜窗口"，实际是我用 RPC 在 presentation 窗口开的）。
+  `get-menu-state` 可选参数 `player` 读主窗口那份（断言"眼镜窗口那边什么都没发生"）；
+  `get-screens` 的每项带 `primary` 标记。
+  ⚠ **3D 测试的目标屏别选主屏**（用户 2026-11-03 提醒）：control 窗口的落点逻辑
+  本来就假设"眼镜屏是另一块"，选主屏会让 control 无处可去，测出来的现象不代表
+  真实使用。脚本默认挑**非主屏**，`--screen` 可覆盖（覆盖成主屏会打印警告）。
   ⚠ 菜单/弹窗**悬停即改当前行**：脚本会先用 `warp-pointer <x> <y>`（窗口相对，
   内部 `QCursor::setPos`）把鼠标挪到窗口右下角，否则用户鼠标恰好压在菜单上时
   "刚打开时没有当前行"这类断言会随机失败（2026-11-03 实测 cur=13）。

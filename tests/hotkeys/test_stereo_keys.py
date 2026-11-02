@@ -5,11 +5,13 @@
 UI 窗口——这是个"会动你屏幕"的测试，不该混进日常跑的那一份。
 
 覆盖（都是真 3D 会话里、真按键投递）：
+  S0 选择器键盘：↑/↓ 选屏、Enter 启动、Esc 取消（用户 2026-11-03 要求）
   S1 进入 3D：presentation 落到目标屏、满屏；合成映射变为 active
   S2 3D 键位：H/J/K/L/Tab/A/Space/←→/↑↓/Ctrl+←→ 全部按 scope=3d 派发，
      且逐项验证效果（帮助开关、布局/眼序/全半、播放暂停、seek、音量、切集）
   S2b 眼睛映射（视觉证据）：用"左红右蓝"的 SBS 片源抓取 presentation 窗口，
      确认左眼拿到左半、右眼拿到右半，K 换眼后两半互换（纯状态断言测不到这个）
+  S2c 比例 OSD：每一眼各一份、各自在本半居中（用户报"没有左右眼分别显示"）
   S3 两窗口派发：P 只开桌面 UI 窗口的播放列表（presentation 不受影响）；
      菜单开在桌面窗口；Esc 在 3D 下被吞掉、但弹窗打开时让位（关弹窗）
   S4 退出：窗口回到原屏原尺寸，键位回到 scope=2d
@@ -28,6 +30,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness
+from PIL import Image
+
 from harness import (Player, check, ensure_fixture, expect_eq, section, wait_until)
 
 SOCK = Path("/tmp/vsr-stereo-keys.sock")
@@ -120,15 +124,19 @@ def ensure_toggle(p: Player, field: str, want: int) -> None:
 
 
 def pick_target(p: Player, screens: list[dict]) -> dict | None:
-    """挑目标屏：--screen 指定 index/name，否则选"主窗口不在的那块"。"""
+    """挑目标屏（"眼镜屏"）。
+
+    规则：`--screen` 指定优先；否则选**非主屏**（用户 2026-11-03 提醒：把主屏
+    当眼镜屏测会误判——主窗口/桌面 UI 的落点逻辑本来就假设"眼镜屏是另一块"，
+    选主屏会让 control 窗口无处可去，测出来的现象不能代表真实使用）。
+    """
     if SCREEN_ARG is not None:
         for s in screens:
             if str(s["index"]) == SCREEN_ARG or s["name"] == SCREEN_ARG:
                 return s
         return None
-    cur = p.rpc.stereo()["win"].split("@")[-1]
     for s in screens:
-        if s["name"] != cur:
+        if not s.get("primary", False):
             return s
     return None
 
@@ -144,6 +152,28 @@ def press_expect(p: Player, seq: str, action_id: str, scope: str = "3d",
     check(f"scope={scope}" in line, f"{seq} 走 {scope} 键位表", line)
     check(f"mode={mode}" in line, f"{seq} 处于 {mode} 态", line)
     return line
+
+
+def s0_picker_keyboard(p: Player) -> None:
+    section("S0 选择器键盘（↑↓ / Enter / Esc）")
+    rpc = p.rpc
+    rpc.call("stereo-picker", "1")
+    wait_until(lambda: rpc.menu_state()["popups"] == 1, "选择器打开", timeout=8)
+    rpc.key("Down")          # 选中下一块屏（键盘可操作即证明按键进了弹窗）
+    time.sleep(0.25)
+    rpc.key("Escape")
+    wait_until(lambda: rpc.menu_state()["popups"] == 0, "Esc 关闭选择器", timeout=8)
+    check(True, "Esc 关闭选择器（键盘进得去）")
+
+    rpc.call("stereo-picker", "1")
+    wait_until(lambda: rpc.menu_state()["popups"] == 1, "选择器再次打开", timeout=8)
+    rpc.key("Enter")
+    st = wait_until(lambda: (lambda s: s if s["active"] == 1 else None)(rpc.stereo()),
+                    "Enter 启动 3D", timeout=25)
+    check(st["active"] == 1, "Enter 启动 3D", st["screen"])
+    rpc.call("stereo-stop")
+    wait_until(lambda: rpc.stereo()["active"] == 0, "退出 3D", timeout=25)
+    check(True, "选择器键盘全流程")
 
 
 def s1_enter_3d(p: Player, screens: list[dict], target: dict) -> None:
@@ -304,6 +334,59 @@ def s2b_eye_mapping(p: Player) -> None:
     time.sleep(0.8)
 
 
+def s2c_aspect_osd(p: Player) -> None:
+    section("S2c 比例 OSD：双眼各一份、各自在本半居中")
+    rpc = p.rpc
+    rpc.call("command", "loadfile", str(SBS_FIXTURE), "replace")
+    wait_until(lambda: "vsr-sbs-lr.mp4" in rpc.data("get_property", "path"),
+               "SBS 片源载入", timeout=15)
+    time.sleep(0.8)
+    rpc.call("stereo-help", "0")
+    ensure_toggle(p, "layout", 0)
+    ensure_toggle(p, "half", 0)
+    time.sleep(0.4)
+
+    png = Path("/tmp/vsr-aspect-3d.png")
+    spans = None
+    for _ in range(4):
+        rpc.key("A")                      # 触发瞬态提示（1.5s）
+        time.sleep(0.15)
+        grab_window(p, png)
+        w, h = image_size(png)
+        band_top = h - 300
+        im = Image.open(png).convert("RGB")
+        eye = w // 2
+        halves = []
+        for x0, x1 in ((0, eye), (eye, w)):
+            crop = im.crop((x0, band_top, x1, h))
+            px = crop.load()
+            # 只认"白灰文字"（min 通道也亮）：SBS 片源是饱和红/蓝，min≈0，
+            # 不会把画面本身算成面板
+            xs = [x for x in range(crop.width)
+                  if any(min(px[x, y]) > 150 for y in range(crop.height))]
+            halves.append((x0 + min(xs), x0 + max(xs)) if xs else None)
+        if all(halves):
+            spans = halves
+            break
+        time.sleep(0.3)
+    check(spans is not None, "两半都出现比例提示面板", spans)
+    if spans:
+        (l0, l1), (r0, r1) = spans
+        eye = image_size(png)[0] // 2
+        # 每半的面板都要"在本半内、不贴中缝、不贴外边"（跨中缝 = 两只眼各看半个）
+        check(l0 > 60 and l1 < eye - 60, "左眼面板完整落在左半", (l0, l1))
+        check(r0 > eye + 60 and r1 < 2 * eye - 60, "右眼面板完整落在右半", (r0, r1))
+        # 两半的面板宽度接近（同一份文案）
+        check(abs((l1 - l0) - (r1 - r0)) < 120, "两半面板尺寸一致",
+              ((l1 - l0), (r1 - r0)))
+        print(f"    面板 span：左 {l0}..{l1} / 右 {r0}..{r1}（中缝 {eye}）")
+
+    rpc.call("command", "loadfile", str(FIXTURE), "replace")
+    wait_until(lambda: "vsr-hotkey-fixture" in rpc.data("get_property", "path"),
+               "主测试片载入", timeout=15)
+    time.sleep(0.6)
+
+
 def s3_two_windows(p: Player) -> None:
     section("S3 两窗口派发（桌面 UI vs presentation）")
     rpc = p.rpc
@@ -311,30 +394,38 @@ def s3_two_windows(p: Player) -> None:
 
     # P 只在桌面 UI 窗口打开播放列表
     rpc.key("P")
-    wait_until(lambda: rpc.control_state()["playlist"] == 1, "P 打开桌面播放列表")
-    expect_eq(p.menu()["playlist"], 0, "presentation 不开播放列表")
+    wait_until(lambda: p.menu()["playlist"] == 1, "P 打开桌面播放列表")
+    expect_eq(p.menu(player=True)["playlist"], 0, "presentation 不开播放列表")
     rpc.key("P")
-    wait_until(lambda: rpc.control_state()["playlist"] == 0, "P 关掉桌面播放列表")
+    wait_until(lambda: p.menu()["playlist"] == 0, "P 关掉桌面播放列表")
     check(True, "P 只作用于桌面 UI 窗口")
 
-    # 菜单开在桌面 UI 窗口
+    # Menu 键：菜单开在桌面 UI 窗口，且能被键盘导航
     rpc.key("Menu")
-    wait_until(lambda: rpc.control_state()["ctxVisible"] == 1, "Menu 打开桌面菜单")
-    expect_eq(p.menu()["ctxVisible"], 0, "presentation 不开菜单")
-    cur0 = rpc.control_state()["cur"]
+    wait_until(lambda: p.menu()["ctxVisible"] == 1, "Menu 打开桌面菜单")
+    check("ctlWin=1" in p.menu()["raw"], "菜单状态来自桌面 UI 窗口")
+    expect_eq(p.menu(player=True)["ctxVisible"], 0, "presentation 不开菜单")
+    cur0 = p.menu()["cur"]
     rpc.key("Down")
-    wait_until(lambda: rpc.control_state()["cur"] != cur0, "菜单内 ↓ 生效")
+    wait_until(lambda: p.menu()["cur"] != cur0, "菜单内 ↓ 生效")
+    rpc.key("Down")
     check(True, "3D 下菜单导航在桌面窗口")
-
-    # 弹窗打开时 Esc 让位（关弹窗，不退出 3D）
     rpc.key("Escape")
-    wait_until(lambda: rpc.control_state()["ctxVisible"] == 0, "Esc 关菜单")
+    wait_until(lambda: p.menu()["ctxVisible"] == 0, "Esc 关菜单")
     expect_eq(rpc.stereo()["active"], 1, "关菜单不退出 3D")
     check(True, "3D 下弹窗优先吃 Esc")
 
+    # RPC 的 open-menu 也必须定向到 UI 窗口（曾经开到眼镜屏上）
+    rpc.call("open-menu", "500", "300")
+    wait_until(lambda: p.menu()["ctxVisible"] == 1, "RPC open-menu 打开菜单")
+    check("ctlWin=1" in p.menu()["raw"], "RPC 菜单也开在桌面 UI 窗口")
+    expect_eq(p.menu(player=True)["ctxVisible"], 0, "RPC 菜单不在 presentation")
+    rpc.key("Escape")
+    wait_until(lambda: p.menu()["ctxVisible"] == 0, "Esc 关菜单（RPC 打开的那个）")
+
     # 没有弹窗时 Esc 被吞掉（不退全屏、不退出 3D、窗口尺寸不变）
     win_before = p.win_size()
-    line = press_expect(p, "Escape", "escape-swallow")
+    press_expect(p, "Escape", "escape-swallow")
     time.sleep(0.4)
     expect_eq(rpc.stereo()["active"], 1, "Esc 不退出 3D")
     expect_eq(p.win_size(), win_before, "Esc 不改窗口尺寸")
@@ -353,6 +444,33 @@ def s4_exit(p: Player) -> None:
 
     # 键位回到 2D 上下文
     press_expect(p, "Right", "seek-fwd", scope="2d", mode="2d")
+
+
+def s5_quit_in_3d(p: Player) -> None:
+    """用户报的 bug：3D 会话里 Ctrl+Q / 菜单 Quit 只把眼镜窗口关掉，应用还在。
+    这里走菜单 Quit（Qt.quit 那条曾被 QQmlEngine 吞掉），要求进程真的退出。"""
+    section("S5 3D 下退出应用（菜单 Quit）")
+    rpc = p.rpc
+    screens = rpc.screens()
+    target = pick_target(p, screens)
+    if target is None:
+        check(False, "找不到可用于 3D 的目标屏")
+        return
+    rpc.call("stereo-start", "1", str(target["index"]))
+    wait_until(lambda: rpc.stereo()["active"] == 1, "重新进入 3D", timeout=25)
+    time.sleep(1.0)
+    rpc.call("open-menu", "500", "300")
+    wait_until(lambda: rpc.menu_state()["ctxVisible"] == 1, "菜单打开", timeout=8)
+    rpc.key("End")
+    wait_until(lambda: "Quit" in rpc.menu_state()["currentRow"], "选中 Quit", timeout=6)
+    rpc.key("Enter")
+
+    def gone() -> bool:
+        return p.proc.poll() is not None
+
+    wait_until(gone, "应用退出", timeout=10)
+    check(gone(), "3D 下菜单 Quit 真的退出进程", f"rc={p.proc.returncode}")
+    check("app.exec() returned" in p.log_text(), "走的是正常退出路径")
 
 
 def main() -> int:
@@ -378,13 +496,18 @@ def main() -> int:
         if target is None:
             print(f"跳过：--screen {SCREEN_ARG} 没匹配到（或找不到副屏）")
             return 2
+        if target.get("primary", False):
+            print("⚠ 目标屏是主屏：control 窗口的落点逻辑不适用，结果可能不代表真实使用")
         print(f"目标屏（眼镜屏）：[{target['index']}] {target['name']}")
 
-        phases = [("S1 进入 3D", lambda: s1_enter_3d(p, screens, target)),
+        phases = [("S0 选择器键盘", lambda: s0_picker_keyboard(p)),
+                  ("S1 进入 3D", lambda: s1_enter_3d(p, screens, target)),
                   ("S2 3D 键位", lambda: s2_3d_keys(p)),
                   ("S2b 眼睛映射", lambda: s2b_eye_mapping(p)),
+                  ("S2c 比例 OSD", lambda: s2c_aspect_osd(p)),
                   ("S3 两窗口", lambda: s3_two_windows(p)),
-                  ("S4 退出", lambda: s4_exit(p))]
+                  ("S4 退出", lambda: s4_exit(p)),
+                  ("S5 3D 下退出应用", lambda: s5_quit_in_3d(p))]
         for name, fn in phases:
             if not p.alive():
                 check(False, f"播放器在「{name}」前已退出（rc={p.proc.returncode}）")
