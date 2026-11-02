@@ -108,14 +108,9 @@ class StereoView : public QQuickView
 public:
     StereoController *stereo = nullptr;
 protected:
-    bool event(QEvent *e) override {
-        if (stereo && stereo->active() && e->type() == QEvent::KeyPress) {
-            auto *ke = static_cast<QKeyEvent *>(e);
-            if (ke->key() == Qt::Key_Escape)
-                return true;   // 3D 下 Esc 不参与全屏/窗口切换
-        }
-        return QQuickView::event(e);
-    }
+    // ⚠ 这里**不再**在窗口层吞 Esc（2026-11-03）：3D 下 Esc 由键位表的
+    // `escape-swallow`（KeyRouter，应用级过滤器）负责，而过滤器在弹窗打开时
+    // 会让位——窗口层再吞一次会让"3D 下右键菜单的 Esc 关不掉"（实测）。
     void closeEvent(QCloseEvent *e) override {
         if (stereo && stereo->active()) {
             e->ignore();
@@ -133,14 +128,7 @@ class ControlView : public QQuickView
 public:
     StereoController *stereo = nullptr;
 protected:
-    bool event(QEvent *e) override {
-        if (stereo && stereo->active() && e->type() == QEvent::KeyPress) {
-            auto *ke = static_cast<QKeyEvent *>(e);
-            if (ke->key() == Qt::Key_Escape)
-                return true;
-        }
-        return QQuickView::event(e);
-    }
+    // Esc 同 StereoView：交给键位表（3D 下吞、弹窗打开时让位）。
     void closeEvent(QCloseEvent *e) override {
         QQuickView::closeEvent(e);
         QCoreApplication::quit();

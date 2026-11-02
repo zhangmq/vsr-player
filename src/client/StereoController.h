@@ -52,6 +52,9 @@ public:
     /// presentation = 主窗口（Video/VO），control = 桌面 UI 窗口。
     void setPlayerWindow(QQuickWindow *w) { playerWin_ = w; }
     void setControlWindow(QQuickWindow *w) { controlWin_ = w; }
+    /// 桌面 UI 窗口（presentation 只出画面）。RPC 侧读它的 UI 状态用。
+    QQuickWindow *controlWindow() const { return controlWin_; }
+    QQuickWindow *playerWindow() const { return playerWin_; }
 
     Q_INVOKABLE void refreshScreens();
     /// 上次选择的屏幕在 screens() 里的 index；只用于选择器默认选中。

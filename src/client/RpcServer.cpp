@@ -11,6 +11,7 @@
 #include <mpv/client.h>
 #include <QMetaObject>
 #include <QQuickWindow>
+#include <QCursor>
 #include <QGuiApplication>
 #include <QWindow>
 #include <QVariant>
@@ -735,6 +736,33 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             arr.append(QJsonObject::fromVariantMap(v.toMap()));
         response = formatResponse("",
             QJsonDocument(arr).toJson(QJsonDocument::Compact).toStdString());
+    } else if (cmd == "get-control-state") {
+        // 3D 会话里"桌面 UI 窗口"的菜单/面板状态（presentation 窗口的
+        // get-menu-state 读不到它，而 QML 动作只在 control 窗口执行）。
+        if (!stereo_) {
+            response = formatResponse("no stereo controller");
+        } else {
+            QQuickWindow *cw = nullptr;
+            QMetaObject::invokeMethod(stereo_, [this, &cw]() { cw = stereo_->controlWindow(); },
+                                      Qt::BlockingQueuedConnection);
+            QQuickItem *rootItem = cw ? cw->contentItem() : nullptr;
+            // control 窗口的根对象：QQuickView::rootObject 拿不到（不是那个 view），
+            // 这里用 contentItem 的 child 里第一个 QQuickItem 根（main.qml 的 root）。
+            if (cw) {
+                if (auto *qv = qobject_cast<QQuickView *>(cw))
+                    rootItem = qv->rootObject();
+            }
+            QString md;
+            if (rootItem) {
+                QMetaObject::invokeMethod(rootItem,
+                    [rootItem, &md]() { md = rootItem->property("menuDebugInfo").toString(); },
+                    Qt::BlockingQueuedConnection);
+            }
+            std::string out = "control=" + std::string(cw && cw->isVisible() ? "1" : "0");
+            if (!md.isEmpty())
+                out += std::string(" | ") + md.toStdString();
+            response = formatResponse("success", "\"" + jsonEscape(out) + "\"");
+        }
     } else if (cmd == "get-focus") {
         // 当前焦点对象（排查"按键到底进了哪个窗口/哪一项"）
         QWindow *w = QGuiApplication::focusWindow();
@@ -836,14 +864,80 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                 response = formatResponse("success");
             }
         }
-    } else if (cmd == "get-stereo") {
-        // 合成映射数据（不截图判断满不满屏；与日志 `stereo map:` 同源）
+    } else if (cmd == "warp-pointer") {
+        // 测试用：把鼠标挪到窗口内 (x,y)（窗口相对，内部换算成全局坐标）。
+        // 为什么需要：右键菜单/弹窗是"鼠标悬停即改当前行"的，测试进程无法
+        // 预知用户的鼠标在哪——不挪开的话"刚打开菜单时没有当前行"这类断言
+        // 会随机失败（2026-11-03 实测：鼠标恰好压在菜单上 → cur=13）。
+        if (!win_) {
+            response = formatResponse("no window");
+        } else if (args.size() < 2) {
+            response = formatResponse("usage: warp-pointer <x> <y>");
+        } else {
+            const int x = atoi(args[0].c_str());
+            const int y = atoi(args[1].c_str());
+            QQuickWindow *w = win_;
+            QMetaObject::invokeMethod(w, [w, x, y]() {
+                QCursor::setPos(w->mapToGlobal(QPoint(x, y)));
+            }, Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "get-screens") {
+        // 显示器列表（含物理分辨率：kscreen-doctor 能读到 mode size 时优先用它，
+        // 否则退回 QScreen 逻辑尺寸——Wayland 分数缩放下二者不同）。
+        // 3D 测试脚本用它挑"副屏当眼镜屏"。
         if (!stereo_) {
             response = formatResponse("no stereo controller");
         } else {
-            const std::string m = stereo_->mapJson().toStdString();
-            response = m.empty() ? formatResponse("no map yet")
-                                 : formatResponse("success", "\"" + jsonEscape(m) + "\"");
+            QVariantList list;
+            // screens_ 在 GUI 线程维护；投递过去读（跨线程读 QML/Qt 对象状态不安全）
+            QMetaObject::invokeMethod(stereo_, [this, &list]() { list = stereo_->screens(); },
+                                      Qt::BlockingQueuedConnection);
+            response = formatResponse("",
+                QJsonDocument(QJsonArray::fromVariantList(list))
+                    .toJson(QJsonDocument::Compact).toStdString());
+        }
+    } else if (cmd == "get-stereo") {
+        // 合成映射数据（不截图判断满不满屏；与日志 `stereo map:` 同源）
+        // 追加控制器状态 + presentation 窗口落点：3D 验收不用截图。
+        if (!stereo_) {
+            response = formatResponse("no stereo controller");
+        } else {
+            struct State {
+                bool active = false, swap = false, half = false, help = false;
+                int mode = 0, layout = -1, winW = 0, winH = 0;
+                QString screen, winScreen;
+            } st;
+            StereoController *sc = stereo_;
+            QQuickWindow *player = win_;
+            QMetaObject::invokeMethod(stereo_, [sc, player, &st]() {
+                st.active = sc->active();
+                st.mode = sc->mode();
+                st.layout = sc->layout();
+                st.swap = sc->swap();
+                st.half = sc->half();
+                st.help = sc->helpVisible();
+                st.screen = sc->screenName();
+                if (player) {
+                    st.winW = player->width();
+                    st.winH = player->height();
+                    if (QScreen *ps = player->screen())
+                        st.winScreen = ps->name();
+                }
+            }, Qt::BlockingQueuedConnection);
+            std::string m = stereo_->mapJson().toStdString();
+            if (m.empty())
+                m = "no map yet";
+            char extra[256];
+            snprintf(extra, sizeof extra,
+                     " | active=%d mode=%d layout=%d swap=%d half=%d help=%d "
+                     "screen=%s win=%dx%d@%s",
+                     st.active ? 1 : 0, st.mode, st.layout, st.swap ? 1 : 0,
+                     st.half ? 1 : 0, st.help ? 1 : 0,
+                     st.screen.toUtf8().constData(), st.winW, st.winH,
+                     st.winScreen.toUtf8().constData());
+            m += extra;
+            response = formatResponse("success", "\"" + jsonEscape(m) + "\"");
         }
     } else if (cmd == "stereo-cycle") {
         if (!stereo_) {
