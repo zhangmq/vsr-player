@@ -69,6 +69,8 @@ PopupBase {
     /// 3D 三态（0=不使用 / 1=3D片源 / 2=2D转3D；运行期状态，不持久化）。
     /// group: 0 = 显示方式（mode），1 = 输出设备（outputType）——二级面板分两组
     signal stereoSelected(int value, int group)
+    /// 右键菜单「界面」二级项：翻转某个界面元素（0 = 缩略图）。
+    signal uiElementToggled(int id)
     signal quitRequested()
 
     // ── 轨道 / 流（原本在底栏的轨道弹窗里，2026-11-02 移到右键菜单）──
@@ -180,6 +182,10 @@ PopupBase {
              {label: qsTr("Left eye"),  value: 0, group: 2},
              {label: qsTr("Right eye"), value: 1, group: 2}
          ]},
+        // ── 界面（可 toggle 的界面元素；当前只有缩略图）────────────────
+        {sep: true},
+        {icon: "󰨇", text: qsTr("Interface"),
+         submenu: function() { return root.interfaceMenu() }},
         {sep: true},
         {icon: "󰐥", text: qsTr("Quit"),               hint: "Ctrl+Q", sig: "quitRequested"}
     ]
@@ -232,6 +238,17 @@ PopupBase {
         for (var i = 0; i < ts.length; i++)
             if (ts[i].id === id) return root.trackLabel(ts[i])
         return qsTr("Auto")
+    }
+
+    /// 「界面」二级面板：可 toggle 的界面元素（当前只有缩略图）。
+    /// toggle 型行 = 点一下翻转、菜单保持打开；勾选态由 row.toggle 决定
+    ///（`isCurrentSubRow` 已支持）。subSig 收到 value 作为元素 id。
+    function interfaceMenu() {
+        return [
+            {label: qsTr("Thumbnails"),
+             toggle: viewModel.previewThumbnails,
+             subSig: "uiElementToggled", value: 0}
+        ]
     }
 
     /// 「视频」二级面板：网络流 + 视频轨道两段（各自固定高度滚动区）。
@@ -801,6 +818,7 @@ PopupBase {
     /// 行自带 `current` 时优先用它（同一个入口里混了两种语义的分段：网络流/视频轨），
     /// 否则退回父条目的 `current(group)` 老机制（反交错/旋转/3D 那三条）。
     function isCurrentSubRow(row) {
+        if (row.toggle !== undefined) return row.toggle === true
         if (row.current !== undefined) return row.current === true
         var it = root.currentIndex >= 0 ? root.items[root.currentIndex] : null
         if (!it || !it.current) return false
@@ -812,6 +830,12 @@ PopupBase {
     /// 否则交给所属条目的 subSig（老机制）。
     function activateSubRow(row) {
         var it = root.currentIndex >= 0 ? root.items[root.currentIndex] : null
+        if (row.toggle !== undefined) {
+            // toggle 型：翻转后**保持打开**（还要能连点其它界面元素）；
+            // 勾选态由 row.toggle 的绑定（viewModel 属性）刷新。
+            if (row.subSig) root[row.subSig](row.value, row.group || 0)
+            return
+        }
         if (row.sig !== undefined) {
             if (row.arg !== undefined) root[row.sig](row.arg)
             else root[row.sig]()
