@@ -283,6 +283,9 @@ Item {
             onAppendFolderRequested: function() { folderDialog.mode = 1; folderDialog.open() }
             onRemoveFromPlaylistRequested: viewModel.removeCurrentFromPlaylist()
             onDeleteFileRequested: viewModel.deleteCurrentFile()
+            // 「界面」二级项：可 toggle 的界面元素（0 = 缩略图；关闭后悬停
+            // 只显示时间小气泡）。菜单保持打开，可连续切换。
+            onUiElementToggled: function(id) { viewModel.toggleUiElement(id) }
             onDeinterlaceSelected: function(mode) { viewModel.setDeintMode(mode) }
             onRotateSelected: function(mode) { viewModel.setRotMode(mode) }
             // ── 轨道 / 流（底栏轨道弹窗已移除，2026-11-02）──────────────

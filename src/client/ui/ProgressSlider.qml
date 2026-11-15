@@ -10,6 +10,20 @@ Item {
     /// 时 UI 不隐藏（拖动中鼠标在滑块上，不触发任何热区）。
     property alias hovered: psHover.hovered
     property alias pressed: progressSlider.pressed
+    /// 指针在进度条上的位置（像素，进度条坐标）与换算出的比例/时间。
+    /// SeekPreview 用它定位面板；hoverMs 同时驱动缩略图请求。
+    property alias hoverX: progressSlider.hoverX
+    property real hoverRatio: 0
+    property int hoverMs: 0
+    /// 测试钩子：RPC 注入的假悬停（Wayland 不能程序化移动指针）。<0 = 关。
+    property int debugHoverMs: -1
+    onDebugHoverMsChanged: {
+        if (debugHoverMs < 0) return
+        var r = root.duration > 0 ? debugHoverMs / root.duration : 0
+        root.hoverRatio = r
+        root.hoverMs = debugHoverMs
+        progressSlider.hoverX = Math.round(r * progressSlider.availableWidth)
+    }
     signal seeked(real ms)
 
     implicitHeight: 14
@@ -45,14 +59,32 @@ Item {
         }
 
         HoverHandler { id: psHover }
+
         property real hoverX: 0
         HoverHandler {
-            onPointChanged: { if (hovered) progressSlider.hoverX = Math.min(Math.max(point.position.x, 0), progressSlider.availableWidth) }
+            onPointChanged: {
+                if (!hovered) return
+                var w = progressSlider.availableWidth
+                if (w <= 0 || root.duration <= 0) return
+                var x = Math.min(Math.max(point.position.x, 0), w)
+                progressSlider.hoverX = x
+                root.hoverRatio = x / w
+                root.hoverMs = Math.round(root.hoverRatio * root.duration)
+                // 节流/合并由 PreviewThumbnailer 负责：这里只报"最新目标"。
+                viewModel.requestPreview(root.hoverMs)
+            }
         }
 
         onPressedChanged: {
             if (!pressed)
                 root.seeked(value)
+        }
+    }
+
+    onHoveredChanged: {
+        if (!hovered) {
+            root.hoverRatio = 0
+            viewModel.cancelPreview()
         }
     }
 

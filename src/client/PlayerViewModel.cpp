@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QProcess>
 #include "MpvController.h"
+#include "PreviewThumbnailer.h"
 #include "FrucBackend.h"
 #include "HdrOutput.h"        // hdr::setUpconvertOptIn / setUpconvertLuminanceOverride
 #include "TrueHdrParams.h"    // TrueHDR 参数区间/默认值（客户端单一来源）
@@ -20,6 +21,7 @@
 #include <QTextStream>
 #include <QLocale>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -94,6 +96,14 @@ PlayerViewModel::PlayerViewModel(QObject *parent) : QObject(parent) {
     // TrueHDR 总开关的**默认值** = env `VSR_UPHDR`（无持久化设置时生效）；
     // loadSettings() 读到设置后以设置为准（benchmark 不读设置 → 保持 env 语义）。
     persistUpHdrEnabled_ = hdr::upconvertOptedIn();
+
+    // 进度条缩略图：实例懒创建（第一次有视频文件时才建第二个 libmpv），
+    // 但对象随 viewModel 一起存活，信号直连 QML。
+    preview_ = new PreviewThumbnailer(this);
+    connect(preview_, &PreviewThumbnailer::imageChanged, this,
+            &PlayerViewModel::previewImageChanged);
+    connect(preview_, &PreviewThumbnailer::stateChanged, this,
+            &PlayerViewModel::previewStateChanged);
 }
 
 // ── attach: register mpv property observers ────────────────────────────
@@ -225,7 +235,40 @@ void PlayerViewModel::attach(MpvController *mpv) {
             if (idle) {
                 updatePlaying(false);
                 resetSegmentCounters(drops);   // 停止/播完 → 段重置
+                updatePreviewSource();
             }
+        });
+    });
+
+    // 章节（mpv chapter-list 镜象）：预览面板显示"时间 · 章节名"用；
+    // 同时给 M 键（下一章）之外的功能留数据源。节点在事件线程读。
+    mpv_->observeProperty("chapter-list", MPV_FORMAT_NODE, [this, post] {
+        QVariantList list;
+        mpv_node node;
+        if (mpv_get_property(mpv_->handle(), "chapter-list", MPV_FORMAT_NODE,
+                             &node) >= 0) {
+            if (node.format == MPV_FORMAT_NODE_ARRAY) {
+                for (int i = 0; i < node.u.list->num; i++) {
+                    mpv_node *entry = &node.u.list->values[i];
+                    if (entry->format != MPV_FORMAT_NODE_MAP)
+                        continue;
+                    QVariantMap m;
+                    for (int j = 0; j < entry->u.list->num; j++) {
+                        const char *k = entry->u.list->keys[j];
+                        mpv_node *v = &entry->u.list->values[j];
+                        if (!strcmp(k, "title") && v->format == MPV_FORMAT_STRING)
+                            m.insert(QStringLiteral("title"), QString::fromUtf8(v->u.string));
+                        else if (!strcmp(k, "time") && v->format == MPV_FORMAT_DOUBLE)
+                            m.insert(QStringLiteral("time"), v->u.double_);
+                    }
+                    list.append(m);
+                }
+            }
+            mpv_free_node_contents(&node);
+        }
+        post([this, list] {
+            chapters_ = list;
+            emit chaptersChanged();
         });
     });
 
@@ -405,6 +448,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
                     videoWidth_.store(w); videoHeight_.store(h);
                     emit osdDataChanged();
                     guessSourceFormat(w, h);
+                    updatePreviewSource();   // 知道有视频轨才允许预览
                 }
                 if (decoderPixelFormat_ != QString::fromStdString(pix)) {
                     decoderPixelFormat_ = QString::fromStdString(pix);
@@ -422,6 +466,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
                     videoHdr_ = hdr;
                     MLOG_INFO("video-params: hdr=%d（gamma=%s）", int(hdr), gamma.c_str());
                     emit videoHdrChanged();
+                    updatePreviewSource();   // HDR → 预览要插 tonemap 链
                 }
                 if (hdrMeta_.valid != meta.valid ||
                     hdrMeta_.minMastering != meta.minMastering ||
@@ -869,6 +914,11 @@ void PlayerViewModel::loadSettings() {
         rot = 0;
     persistRotMode_ = rot;
     rotMode_.store(rot);
+
+    // ── 进度条缩略图宽度（可配置；本期不开放 UI —— 用户 2026-11-15）──────
+    // 手改越界 → 夹回 160..640（默认 320：足够辨认场景，又不会盖住画面）。
+    previewThumbWidth_ = clampInt(settings_.value("previewThumbWidth", 320).toInt(), 160, 640);
+    previewThumbnails_ = settings_.value("previewThumbnails", true).toBool();
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -1205,6 +1255,7 @@ void PlayerViewModel::stop() {
     // 乐观复位 idle 状态——path 观察（事件线程→主线程队列）落地前
     // 快速点击播放不会误走"取消暂停"分支（mpv 已 idle，无效）。
     setFileLoaded(false);
+    updatePreviewSource();   // 停止 → 卸载预览媒体
     // keep-playlist：mpv stop 默认清空播放列表（command.c cmd_stop
     // flags&1 → playlist_clear 跳过），单曲循环下停止后列表消失。
     // async：GUI 线程不阻塞 core-lock（同 seek；同步命令会与软解 DR 帧
@@ -1519,6 +1570,7 @@ void PlayerViewModel::setRotMode(int deg) {
         mpv_->commandAsync({"vf-command", "rot", "angle",
                             std::to_string(deg).c_str(), nullptr});
     saveSettings("rotMode", deg);
+    updatePreviewSource();   // 缩略图也要按菜单角度转（与画面一致）
 }
 
 // ── AI 可用性（Vulkan 设备 × CUDA 设备同一性）──────────────────────────
@@ -2629,6 +2681,9 @@ void PlayerViewModel::setStereoMap(bool active, int layout, int half) {
     const int old = stereoLayout_.exchange(nl);
     const int oldHalf = stereoHalf_.exchange(nh);
     if (old == nl && oldHalf == nh) return;
+    // 预览的单眼裁剪只依赖 layout/half（与 AI 可用性无关）——放在下面
+    // 两个早退（无 mpv / 无 AI）之前。
+    updatePreviewSource();
     if (!mpv_) return;
     if (!aiAvailable_.load()) return;   // 链上没插 vsr，vf-command 无处可发
     // 3D：auto 倍率按"单眼视口 vs 单眼源像素"算（见 vf_vsr compute_adaptive_scale）
@@ -2650,6 +2705,7 @@ void PlayerViewModel::setEyeState(int mode, int layout, int half) {
         return;
     if (nm != oldMode)
         emit eyeModeChanged();
+    updatePreviewSource();   // 单眼看片时缩略图也只取那只眼
     if (!mpv_)
         return;
     // 链上没插 eye 时（AI 不可用 → 只有 hwup+rot）vf-command 无处可发；
@@ -2859,6 +2915,7 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
         delaySendTimer_.stop();
         delaySubDirty_ = false;
         delayAudioDirty_ = false;
+        updatePreviewSource();         // 换文件 → 预览实例 loadfile（懒创建）
         syncVfOptions();               // 链重建后重放运行时 vf 状态（fps/vsr 防 UI 修改丢失）
         refreshHwDecodeAvailability(); // 换片后重算"该文件能否硬解"（软解回退不改偏好）
         applyDeinterlace();            // 覆盖 watch_later 里按文件记的 deinterlace
@@ -3086,4 +3143,139 @@ void PlayerViewModel::osdPoll() {
 QString PlayerViewModel::osdText() const {
     std::lock_guard<std::mutex> lk(osdTextMu_);
     return osdText_;
+}
+
+// ── 进度条缩略图（PreviewThumbnailer 的接口层）─────────────────────────
+//
+// 单一事实源：
+//  - "能不能预览"只在这里判定（有视频轨、非直播、非网络源、非 benchmark）；
+//  - 3D/单眼的裁剪也只在这里算（stereoLayout_ 优先，其次 eyeMode_），
+//    预览实例只接收 eye/layout/half 的结果，不自己猜布局。
+
+quint64 PlayerViewModel::previewSerial() const {
+    return preview_ ? preview_->serial() : 0;
+}
+
+QSize PlayerViewModel::previewImageSize() const {
+    return preview_ ? preview_->imageSize() : QSize();
+}
+
+QImage PlayerViewModel::previewImage() const {
+    return preview_ ? preview_->image() : QImage();
+}
+
+bool PlayerViewModel::previewReady() const {
+    return preview_ && previewActive_ && preview_->hasSource();
+}
+
+void PlayerViewModel::updatePreviewSource() {
+    if (!preview_) return;
+    const bool haveVideo = videoWidth_.load() > 0 && videoHeight_.load() > 0;
+    const QString path = lastPath_;
+    // 网络源不取帧（等于二次下载 + 额外解码）；bd:// 是本地 ISO，允许。
+    const bool netStream = networkSource_ && !path.startsWith(QStringLiteral("bd:"));
+    const bool usable = previewEnabled_ && previewThumbnails_ && fileLoaded_ &&
+                        !path.isEmpty() && haveVideo && !isLiveSource() && !netStream;
+
+    PreviewThumbnailer::Params p;
+    p.width = previewThumbWidth_;
+    p.path = usable ? path : QString();
+    p.rotate = rotMode_.load();
+    p.hdr = videoHdr_;
+
+    const int layout = stereoLayout_.load();   // -1 = 3D 未激活
+    if (layout >= 0) {
+        // 3D 输出：缩略图取单眼（默认左/上眼；预览面板在桌面窗口，是 2D UI，
+        // 不需要逐眼复制）。half = 源里每眼已被压扁，实例内会还原宽高比。
+        p.eye = 0;
+        p.layout = layout;
+        p.half = stereoHalf_.load() != 0;
+    } else if (aiAvailable_.load() && (eyeMode_.load() == 1 || eyeMode_.load() == 2)) {
+        // 单眼看片（vf_eye 已把画面裁成一只眼）：缩略图跟随同一只眼。
+        p.eye = eyeMode_.load() - 1;
+        p.layout = eyeLayout_.load();
+        p.half = eyeHalf_.load() != 0;
+    } else {
+        p.eye = -1;
+    }
+
+    if (previewActive_ != usable) {
+        previewActive_ = usable;
+        emit previewStateChanged();
+    }
+    preview_->setParams(p);
+}
+
+void PlayerViewModel::requestPreview(qint64 ms) {
+    if (!preview_ || !previewActive_) return;
+    preview_->request(ms);
+}
+
+void PlayerViewModel::cancelPreview() {
+    if (preview_) preview_->cancel();
+}
+
+void PlayerViewModel::setPreviewThumbWidth(int px) {
+    px = std::clamp(px, 160, 640);
+    if (previewThumbWidth_ == px) return;
+    previewThumbWidth_ = px;
+    emit previewThumbWidthChanged();
+    saveSettings("previewThumbWidth", px);
+    updatePreviewSource();   // 宽度变化 → 清缓存，下次请求按新宽度渲
+}
+
+void PlayerViewModel::setPreviewEnabled(bool on) {
+    if (previewEnabled_ == on) return;
+    previewEnabled_ = on;
+    if (preview_) preview_->setEnabled(on);
+    updatePreviewSource();
+}
+
+QString PlayerViewModel::formatTime(qint64 ms) const {
+    if (ms <= 0) return QStringLiteral("0:00");
+    const qint64 s = ms / 1000;
+    const qint64 m = s / 60;
+    return QStringLiteral("%1:%2").arg(m).arg(s % 60, 2, 10, QLatin1Char('0'));
+}
+
+QString PlayerViewModel::chapterTitleAt(qint64 ms) const {
+    const double t = double(ms) / 1000.0;
+    QString title;
+    for (const QVariant &v : chapters_) {
+        const QVariantMap m = v.toMap();
+        if (t + 1e-3 < m.value(QStringLiteral("time")).toDouble())
+            break;   // chapter-list 按时间有序
+        title = m.value(QStringLiteral("title")).toString();
+    }
+    return title;
+}
+
+void PlayerViewModel::setPreviewDebugHoverMs(int ms) {
+    if (previewDebugHoverMs_ == ms) return;
+    previewDebugHoverMs_ = ms;
+    emit previewDebugHoverMsChanged();
+    if (ms < 0) {
+        cancelPreview();
+    } else {
+        setOverlaysVisible(true);   // 测试钩子同时把 UI 显示出来（否则抓不到面板）
+        requestPreview(ms);
+    }
+}
+
+void PlayerViewModel::setPreviewThumbnails(bool on) {
+    if (previewThumbnails_ == on) return;
+    previewThumbnails_ = on;
+    emit previewThumbnailsChanged();
+    saveSettings("previewThumbnails", on);
+    if (!on) cancelPreview();
+    // 关掉 → 预览实例卸载（不再解码）；打开 → 重新 loadfile，下次悬停即出图。
+    updatePreviewSource();
+    MLOG_INFO("preview: thumbnails %s", on ? "on" : "off (time bubble only)");
+}
+
+void PlayerViewModel::toggleUiElement(int id) {
+    switch (id) {
+    case 0: setPreviewThumbnails(!previewThumbnails_); break;
+    default: break;
+    }
 }

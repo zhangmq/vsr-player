@@ -2,7 +2,9 @@
 
 #include <QElapsedTimer>
 #include <QObject>
+#include <QImage>
 #include <QSettings>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -18,6 +20,7 @@
 #include "FrucBackend.h"   // 档位默认值/合法性（单一来源，见 fruc::kMaxFpsDefault）
 
 class MpvController;
+class PreviewThumbnailer;
 
 /// Single source of truth for all UI state.
 ///
@@ -184,6 +187,27 @@ class PlayerViewModel : public QObject {
     // currentIndex 由 PlaylistModel 自带 currentIndexChanged，切歌不再
     // 触发列表 reset（旧实现 QStringList 属性 + 共用 NOTIFY 全量重建）。
     Q_PROPERTY(PlaylistModel* playlistModel READ playlistModel CONSTANT)
+    // ── 进度条缩略图（PreviewThumbnailer：进程内第二个 libmpv + 软件渲染）──
+    /// 每产出一张新图 +1：QML 用它当 image://vthumb/<serial> 的缓存破坏键。
+    Q_PROPERTY(quint64 previewSerial READ previewSerial NOTIFY previewImageChanged)
+    /// 当前缩略图尺寸（QML 按它算面板宽高比；无图时为空）。
+    Q_PROPERTY(QSize previewImageSize READ previewImageSize NOTIFY previewImageChanged)
+    /// 预览实例是否可用（有可解码的视频文件）——网络流/纯音频/直播为 false。
+    Q_PROPERTY(bool previewReady READ previewReady NOTIFY previewStateChanged)
+    /// 进度条缩略图开关（右键菜单「界面 → 缩略图」）。关闭后悬停只显示时间
+    /// 气泡；预览实例随之卸载（不白耗解码）。
+    Q_PROPERTY(bool previewThumbnails READ previewThumbnails WRITE setPreviewThumbnails
+               NOTIFY previewThumbnailsChanged)
+    /// 缩略图目标宽度（像素）。可配置，但**本期不开放 UI**（用户 2026-11-15）。
+    Q_PROPERTY(int previewThumbWidth READ previewThumbWidth WRITE setPreviewThumbWidth
+               NOTIFY previewThumbWidthChanged)
+    /// 当前文件的章节（[{time: 秒, title: 文本}]，mpv chapter-list 镜像）
+    Q_PROPERTY(QVariantList chapters READ chapters NOTIFY chaptersChanged)
+    /// 测试钩子：伪造"指针悬停在进度条某时间"。Wayland 下无法程序化移动
+    /// 指针（QCursor::setPos 无效），RPC 用它驱动预览面板做视觉验收。
+    /// -1 = 关。
+    Q_PROPERTY(int previewDebugHoverMs READ previewDebugHoverMs
+               WRITE setPreviewDebugHoverMs NOTIFY previewDebugHoverMsChanged)
 
     // ── TrueHDR 参数（getter；setter 见 public slots）──────────────────
     bool upHdrEnabled() const { return upHdrEnabled_; }
@@ -399,6 +423,32 @@ public:
     int loopMode() const        { return loopMode_; }
     PlaylistModel *playlistModel() { return &playlistModel_; }
 
+    // ── 进度条缩略图（QML 侧接口）────────────────────────────────────
+    quint64 previewSerial() const;
+    QSize previewImageSize() const;
+    /// 最新一帧缩略图（QQuickImageProvider 用；跨线程安全）。
+    QImage previewImage() const;
+    bool previewReady() const;
+    bool previewThumbnails() const { return previewThumbnails_; }
+    void setPreviewThumbnails(bool on);
+    /// 右键菜单「界面」二级项：按 id 翻转界面元素（0 = 缩略图）。
+    Q_INVOKABLE void toggleUiElement(int id);
+    int previewThumbWidth() const { return previewThumbWidth_; }
+    QVariantList chapters() const { return chapters_; }
+    int previewDebugHoverMs() const { return previewDebugHoverMs_; }
+    void setPreviewDebugHoverMs(int ms);
+    /// 毫秒 → m:ss（BottomBar 与预览面板共用，单一事实源）。
+    Q_INVOKABLE QString formatTime(qint64 ms) const;
+    /// 悬停时间所在章节标题（无章节 → 空串）。
+    Q_INVOKABLE QString chapterTitleAt(qint64 ms) const;
+    /// 请求某毫秒位置的缩略图（悬停/拖动时由 QML 调用）。
+    Q_INVOKABLE void requestPreview(qint64 ms);
+    Q_INVOKABLE void cancelPreview();
+    void setPreviewThumbWidth(int px);
+    /// benchmark / 关闭开关：整个取帧功能停用（实例销毁）。
+    void setPreviewEnabled(bool on);
+    PreviewThumbnailer *thumbnailer() const { return preview_; }
+
     MpvController *mpv() const { return mpv_; }
 
     /// mpv `vf` 选项串（viewModel 单一来源，替代 Options::vfOption）。
@@ -556,6 +606,12 @@ public slots:
     Q_INVOKABLE void deleteCurrentFile();
 
 signals:
+    void previewImageChanged();
+    void previewStateChanged();
+    void previewThumbWidthChanged();
+    void previewThumbnailsChanged();
+    void chaptersChanged();
+    void previewDebugHoverMsChanged();
     void playingChanged();
     void currentTimeChanged();
     void durationChanged();
@@ -711,7 +767,17 @@ private:
     /// settingsEnabled_ 恒 false，测量口径无副作用）。
     void saveSettings(const char *key, const QVariant &value);
 
+    /// 把当前文件/3D 布局/旋转/HDR 推给缩略图实例（参数不变时是空操作）。
+    void updatePreviewSource();
+
     MpvController *mpv_ = nullptr;
+    PreviewThumbnailer *preview_ = nullptr;   ///< 懒创建；benchmark 下不创建
+    bool previewThumbnails_ = true;
+    int previewThumbWidth_ = 320;
+    bool previewEnabled_ = true;              ///< benchmark/关闭开关
+    int previewDebugHoverMs_ = -1;
+    bool previewActive_ = false;              ///< 当前文件允许预览（有视频/非直播/非网络）
+    QVariantList chapters_;
     std::string hwdecInit_;      // 启动时 hwdec 值（切换硬解时恢复）
     bool playing_ = false;
     std::atomic<int64_t> currentTime_{0};

@@ -663,6 +663,56 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 - 待做：i18n、2D→3D、多轨/其他 3D 格式、control UI 视频区域（当前黑底，视频只在
   presentation）。
 
+### 进度条缩略图（PreviewThumbnailer，2026-11-15）
+
+**形态**（用户 2026-11-15 拍板）：鼠标悬停进度条 → 上方浮出**单帧**缩略图 +
+`时间 · 章节名`，跟指针水平移动、窗口边缘夹取；没有缩略图（网络流/纯音频/首帧未到）
+时退化成只显示时间的**小气泡**。**不做**拖动时整条缩略图带、不做后台 storyboard
+预生成；宽度可配置（`previewThumbWidth`，默认 320）但**本期不开放 UI**。
+
+**开关**：右键菜单新增 **「界面」** 组（`ContextMenu.qml` 的 `interfaceMenu()`），
+二级项是可 toggle 的界面元素，第一个是**缩略图**（勾选态 = 开）。toggle 型行的
+约定：行带 `toggle`（布尔）+ `subSig`/`value`（元素 id），点一下**翻转且菜单保持
+打开**（`activateSubRow` 对 `toggle` 行提前 return），勾选态由
+`isCurrentSubRow()` 的 `row.toggle` 分支给出。关闭时 `PlayerViewModel` 直接
+**卸载预览实例**（不白耗解码），悬停只剩时间气泡；开关持久化到
+`previewThumbnails`（默认 on）。RPC/测试：`set-preview-thumbnails <0|1>`、
+`get-preview-state` 里的 `thumbs` 字段。
+
+**引擎 = 进程内第二个 libmpv 实例 + `MPV_RENDER_API_TYPE_SW`**（即"内置解码器实时解"；
+不是子进程、不走 ffmpeg、不建 GPU 上下文）。代码：`src/client/PreviewThumbnailer.*`。
+取帧尺寸由 `SW_SIZE` 决定（mpv 用 sws 缩放），宽高比取 `video-out-params` 的 `dw/dh`。
+
+**请求策略**：时间落 2 s 桶 → 先 `absolute+keyframes`（10–60 ms 出图，偏差 ≤1 个 GOP，
+关键帧间隔中位 1.5 s）→ 静止 80 ms 后 `absolute+exact` 精修替换（1080p 25–85 ms，
+4K HEVC 0.3–0.9 s）。同桶命中缓存直接出图（`latency=0`，不重传纹理）。缓存 64 项 LRU。
+
+**三个踩过的坑（改这块前先读）**：
+
+1. **SW 渲染器不旋转 → 崩溃**。`vo_libmpv` 的 caps 带 `VO_CAP_ROTATE90`，mpv 因此
+   不插软件旋转滤镜，却按"VO 已旋转"算 rect；SW 后端拿到未旋转的帧 →
+   `mp_image_crop` 断言 `x1 <= img->w && y1 <= img->h` 失败（菜单旋转 90° 后取预览必崩）。
+   修法在 **`src/mpv/video/out/vo_libmpv.c`**：`renderer->fns == &render_backend_sw`
+   时把 `img_params.rotate` 清零，旋转由 `PreviewThumbnailer` 渲完后对 QImage 做
+   （`QTransform::rotate`，320×180 级别 <1 ms）。**主播放器（Vulkan）行为不变。**
+   改完记得 `cp src/mpv/video/out/vo_libmpv.c build/mpv/video/out/` 再
+   `ninja -C build/mpv/_build`（`scripts/build_mpv.sh` 全量重建时自动带上）。
+2. **同一时间点的 seek 不出帧**：mpv 认为"已经在目标上"就不重新解码。命中时
+   exact 阶段直接视为精确；keyframe 阶段（链/宽度变了要重渲）把目标 +250 ms
+   强制一次真 seek；另有 2 s 看门狗兜底（两次失败放弃）。
+3. **half（每眼被压扁）必须 `setsar=1`**：crop 会把像素宽高比设为 1:2 以保持显示比，
+   漏掉 `setsar=1` 时 mpv 的 `dw/dh` 再乘一次（640×360 → 640×720，缩略图变竖条）。
+
+**边界**：网络流/直播（`networkSource`/`isLiveSource`）、纯音频（无视频轨）不启用；
+`bd://`（本地 ISO）允许；3D 下缩略图按当前 `layout`/`half` **裁单眼**（默认左/上眼），
+预览面板只在**桌面 control 窗口**（presentation 里没有进度条）；内容 HDR 自动插
+`zscale/tonemap` 转 SDR。
+
+**测试**：`./tests/hotkeys/test_thumbnails.py`（26 项：取帧/桶缓存/宽度/章节/QML 面板/
+单眼裁剪/音频不启用/3D 会话）。Wayland 下 `QCursor::setPos` 无效，面板靠 RPC
+`debug-hover <秒|off>` 注入（同时强制显示 overlays，否则抓窗口只有视频）。
+RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-preview-width`。
+
 ### 反交错（mpv 原生 `--deinterlace`，2026-10-22）
 
 **mpv 怎么做的**（全部在它的输出链里，**不经过 `--vf`**）：
