@@ -63,20 +63,19 @@ QString toLocalPath(const QString &s) {
     return u.isLocalFile() ? u.toLocalFile() : s;   // 网络流原样传 mpv
 }
 
-// ── 进度条缩略图宽度（用户 2026-11-15）─────────────────────────────────
-// 按窗口**逻辑宽**的比例取，带上下限；不是固定像素（固定值在大窗口里太小、
-// 在小窗口里会盖住半边画面）。ratio 0.15 / 200–480：1280 窗口 → 200（夹下限）、
-// 1920 → 288、3840 → 480（夹上限）。
-constexpr double kThumbWidthRatio = 0.15;
-constexpr int    kThumbMinWidth   = 200;
-constexpr int    kThumbMaxWidth   = 480;
-
-int thumbWidthForWindow(int windowWidth) {
-    if (windowWidth <= 0)
-        return kThumbMinWidth;   // QML 还没上报宽度时的保守值
-    const int px = static_cast<int>(windowWidth * kThumbWidthRatio + 0.5);
-    return std::clamp(px, kThumbMinWidth, kThumbMaxWidth);
-}
+// ── 进度条缩略图尺寸（用户 2026-11-15）─────────────────────────────────
+// **组件（面板）固定 192 逻辑 px**，不跟窗口尺寸走。
+// 演进：① 最初固定 320；② 改成"窗口逻辑宽 × 0.15，夹 200–480"（用户要求
+// "按窗口比例、带最小/最大"）；③ 缩到 2/3（0.10 / 133–320）；④ 取消窗口比例，
+// **固定 192**（用户 2026-11-15："统一按目前最大尺寸…先试下 240" → 接着"改 192 看看"）。
+// 取消比例的
+// 理由：按比例就意味着窗口缩放时要重算宽度 → 预览实例清缓存重渲；固定值也让
+// 面板尺寸可预期、日志/测试口径唯一。
+//
+// ⚠ **逻辑尺寸 vs 物理像素（用户 2026-11-15 明确要求）**：面板/组件的几何一律按
+// Qt **逻辑像素**（`PlayerViewModel::kThumbLogicalWidth`，单一事实源在头文件），而
+// 交给预览实例的**渲染宽 = 逻辑宽 × DPR**（`noteDevicePixelRatio`）。否则 dpr=2 的屏
+// 上 192 逻辑宽的 Image 只有 192 px 的纹理 → 被放大 2 倍显示，缩略图发糊。
 
 const char *qualityName(int v) {
     switch (v) {
@@ -953,10 +952,9 @@ void PlayerViewModel::loadSettings() {
     persistRotMode_ = rot;
     rotMode_.store(rot);
 
-    // ── 进度条缩略图宽度 = 窗口比例（用户 2026-11-15 定）──────────────
-    // 不持久化像素值：宽度由 QML 上报的窗口宽算出（见 thumbWidthForWindow），
-    // 旧键 `previewThumbWidth` 已弃用（读到也不用）。
-    previewThumbWidth_ = thumbWidthForWindow(0);
+    // ── 进度条缩略图：逻辑宽固定，渲染宽 = 逻辑宽 × DPR（默认 1，QML 会上报）──
+    // 不读设置：旧键 `previewThumbWidth` 已弃用（读到也不用），也不跟窗口尺寸走。
+    previewThumbWidth_ = thumbRenderWidth();
     previewThumbnails_ = settings_.value("previewThumbnails", true).toBool();
     menuHideInvalid_ = settings_.value("menuHideInvalid", false).toBool();
 }
@@ -3395,8 +3393,17 @@ void PlayerViewModel::cancelPreview() {
     if (preview_) preview_->cancel();
 }
 
+int PlayerViewModel::thumbRenderWidth() const {
+    // 渲染（物理）宽：RPC 显式覆盖优先，否则"逻辑宽 × DPR"。
+    if (thumbWidthOverride_ > 0)
+        return thumbWidthOverride_;
+    const qreal dpr = dpr_ > 0.0 ? dpr_ : 1.0;
+    return std::max(1, int(std::lround(kThumbLogicalWidth * dpr)));
+}
+
 void PlayerViewModel::setPreviewThumbWidth(int px) {
-    // 显式覆盖（RPC `set-preview-width`，测试用）：优先于窗口比例，不落盘。
+    // 显式覆盖（RPC `set-preview-width`）：只给测试/脚本用，单位是**渲染像素**
+    // （跳过 DPR 换算），不落盘、不参与任何自动决策（窗口/屏幕缩放不会改它）。
     px = std::clamp(px, 160, 640);
     thumbWidthOverride_ = px;
     if (previewThumbWidth_ == px) return;
@@ -3405,16 +3412,19 @@ void PlayerViewModel::setPreviewThumbWidth(int px) {
     updatePreviewSource();   // 宽度变化 → 清缓存，下次请求按新宽度渲
 }
 
-void PlayerViewModel::noteWindowWidth(int w) {
-    windowWidth_ = std::max(0, w);
+void PlayerViewModel::noteDevicePixelRatio(qreal dpr) {
+    // QML 上报所在窗口的 DPR（换屏/系统缩放会变）：渲染宽跟着变，逻辑宽不变。
+    if (dpr <= 0.0 || qFuzzyCompare(dpr + 1.0, dpr_ + 1.0))
+        return;
+    dpr_ = dpr;
     if (thumbWidthOverride_ > 0)
-        return;   // 测试覆盖优先，窗口缩放不改宽度
-    const int px = thumbWidthForWindow(windowWidth_);
+        return;   // 测试覆盖优先，DPR 不影响渲染宽
+    const int px = thumbRenderWidth();
     if (previewThumbWidth_ == px)
         return;
     previewThumbWidth_ = px;
     emit previewThumbWidthChanged();
-    updatePreviewSource();   // 宽度变化 → 清缓存，下次请求按新宽度渲
+    updatePreviewSource();   // 渲染宽变化 → 清缓存，下次请求按新宽度渲
 }
 
 void PlayerViewModel::setPreviewEnabled(bool on) {

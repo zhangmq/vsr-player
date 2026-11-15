@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Dialogs
+import QtQuick.Window
 import VSR 1.0
 import "ui"
 
@@ -9,11 +10,28 @@ Item {
     id: root
     anchors.fill: parent
 
-    // ── 缩略图宽度 = 窗口逻辑宽 × 比例（上下限在 C++：kThumbWidthRatio）──
-    // 用户 2026-11-15：缩略图大小按窗口比例做，不再固定像素；窗口缩放时重算
-    //（宽度变化会让预览实例清缓存、按新尺寸重渲）。
-    onWidthChanged: viewModel.noteWindowWidth(Math.round(width))
-    Component.onCompleted: viewModel.noteWindowWidth(Math.round(width))
+    // ── 缩略图：组件按逻辑尺寸，图片按 DPR 渲染（用户 2026-11-15）───────
+    // 面板宽固定 `PlayerViewModel::kThumbLogicalWidth`(192) 逻辑 px，预览实例实际
+    // 渲染宽 = 192 × DPR —— dpr=2 的屏上必须给 384 px 的纹理，否则 Image 被放大
+    // 两倍显示、缩略图发糊。
+    // ⚠ 只在"显示底栏/预览面板"的窗口上报：2D 是播放窗口，3D 是桌面 control 窗口；
+    // presentation 窗口没有进度条，别让它把自己那块屏的 dpr 覆盖进来。
+    readonly property bool ownsUiChrome: controlMode || !stereo.active
+    Component.onCompleted: {
+        if (ownsUiChrome)
+            viewModel.noteDevicePixelRatio(Screen.devicePixelRatio);
+    }
+    Screen.onDevicePixelRatioChanged: {
+        if (ownsUiChrome)
+            viewModel.noteDevicePixelRatio(Screen.devicePixelRatio);
+    }
+    Connections {
+        target: stereo
+        function onActiveChanged() {
+            if (ownsUiChrome)
+                viewModel.noteDevicePixelRatio(Screen.devicePixelRatio);
+        }
+    }
 
     /// 最后一次鼠标位置（键盘打开右键菜单时用它定位；没记录过就开在窗口中间）
     property point lastMenuPos: Qt.point(-1, -1)

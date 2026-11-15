@@ -43,6 +43,9 @@ OUT = Path("/tmp/vsr-thumb-out")
 
 keep = "--keep" in sys.argv
 
+# 面板逻辑宽（= PlayerViewModel::kThumbLogicalWidth，改常量时同步这一处）
+WANT_LOGICAL_W = 192
+
 
 # ── 素材 ────────────────────────────────────────────────────────────
 
@@ -104,10 +107,22 @@ def t1_basic(p: Player) -> None:
     st = wait_until(lambda: (lambda d: d if d.get("loaded") else None)(
         rpc.call("get-preview-state").get("data")), "预览实例载入文件", timeout=20)
     check(st.get("ready") is True, "preview ready", st)
-    # 宽度按窗口比例（0.15×窗口逻辑宽，夹 200–480）——用户 2026-11-15 定的口径；
-    # 显式像素宽度仍可用 set-preview-width 覆盖（下面统一成 320 便于断言尺寸）。
-    w0 = st.get("width")
-    check(isinstance(w0, int) and 200 <= w0 <= 480, "宽度按比例落在 200–480", w0)
+    # 尺寸口径（用户 2026-11-15）：**面板按逻辑像素固定 192**，预览实例的渲染宽
+    # = 192 × DPR（dpr=2 的屏 → 384 px 纹理，否则放大两倍显示会糊）；不再跟窗口尺寸走。
+    expect_eq(st.get("logicalWidth"), WANT_LOGICAL_W, "面板逻辑宽固定")
+    dpr = st.get("dpr")
+    check(isinstance(dpr, (int, float)) and dpr > 0, "上报了 DPR", dpr)
+    want_px = max(1, round(WANT_LOGICAL_W * (dpr or 1)))
+    expect_eq(st.get("width"), want_px, "渲染宽 = 逻辑宽 × DPR")
+    # 窗口尺寸变化不应改变渲染宽（这条正是取消比例的验收点）
+    win_w, win_h = p.win_w(), p.win_h()
+    p.rpc.call("resize", str(max(640, win_w - 400)), str(max(400, win_h - 200)))
+    time.sleep(0.8)
+    st2 = p.rpc.call("get-preview-state").get("data") or {}
+    expect_eq(st2.get("width"), want_px, "改窗口尺寸后渲染宽不变")
+    expect_eq(st2.get("logicalWidth"), WANT_LOGICAL_W, "改窗口尺寸后逻辑宽不变")
+    p.rpc.call("resize", str(win_w), str(win_h))     # 还原，别影响后续抓图
+    wait_until(lambda: p.win_w() == win_w, "窗口尺寸还原", timeout=10)
     rpc.call("set-preview-width", "320")
     wait_until(lambda: rpc.call("get-preview-width").get("data") == 320,
                "切到 320 覆盖宽度", timeout=10)
@@ -186,7 +201,8 @@ def t5_ui(p: Player) -> None:
     time.sleep(0.8)
 
     check(plain.read_bytes() != hover.read_bytes(), "悬停后画面出现面板（截图不同）")
-    # 面板底色 #d9111111 叠在视频上 → 亮度下降；用灰度均值做个粗断言
+    # 面板形态：缩略图铺满（无外框/无内边距）+ 底部黑底文字条 → 与基准截图像素不同；
+    # 这里只做"出现了东西"的粗断言，版式靠人眼看 grab-window 截图为证。
     rpc.call("debug-hover", "off")
 
 

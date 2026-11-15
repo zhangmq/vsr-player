@@ -20,6 +20,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -141,6 +145,20 @@ QQuickWindow *RpcServer::uiWindow()
         cw = active ? sc->controlWindow() : nullptr;
     }, Qt::BlockingQueuedConnection);
     return (active && cw) ? cw : win_;
+}
+
+// 等"缩略图策略可用"（最多 5 s）：刚 loadfile 时视频参数/网络解析还没到位，
+// 立刻判死会让"打开网络流立刻取帧"变成假失败（2026-11-15 实测 T10 偶发超时）。
+// 只在 RPC 线程用，不碰 GUI/mpv 锁。
+static bool waitPreviewAvailable(PlayerViewModel *vm)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (vm->previewAvailable())
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return vm->previewAvailable();
 }
 
 void RpcServer::handleLine(int fd, const std::string &line) {
@@ -1014,10 +1032,13 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             const double sec = strtod(args[1].c_str(), &end);
             if (!th || end == args[1].c_str() || *end != '\0' || !std::isfinite(sec)) {
                 response = formatResponse("invalid arguments");
-            } else if (!vm->previewAvailable()) {
+            } else if (!waitPreviewAvailable(vm)) {
                 // 无视频轨 / 直播 / 停止态：不发起请求（否则要等超时）。
                 // ⚠ 判据用 available（策略）而不是 ready（实例已载入）：
                 // 网络源是懒加载的，第一次请求前实例本来就没载入。
+                // 但它也是**时序相关**的（刚 loadfile 时视频参数还没到）——
+                // 这里最多等 5 s 再判死，否则"打开网络流立刻取帧"会因为
+                // 抢在前面而被判成不可用（2026-11-15 实测：T10 偶发超时）。
                 response = formatResponse("preview not available (no video, or live stream)");
             } else {
                 const qint64 ms = qint64(sec * 1000.0);
@@ -1076,7 +1097,10 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             o.insert("latencyMs", double(th->lastLatencyMs()));
             o.insert("frames", double(th->framesProduced()));
             o.insert("cacheHits", double(th->cacheHits()));
+            // width = 渲染宽（物理像素）= 逻辑宽 × dpr；logicalWidth = 面板逻辑宽
             o.insert("width", vm->previewThumbWidth());
+            o.insert("logicalWidth", vm->previewThumbLogicalWidth());
+            o.insert("dpr", vm->previewDevicePixelRatio());
             const QSize sz = vm->previewImageSize();
             o.insert("imgW", sz.width());
             o.insert("imgH", sz.height());

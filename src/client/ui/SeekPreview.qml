@@ -1,6 +1,14 @@
 import QtQuick
 
-/// 进度条悬停预览：缩略图 + "时间 · 章节名"。
+/// 进度条悬停预览：缩略图 + 时间（底部）+ 章节名（顶部）。
+///
+/// 形态（用户 2026-11-15）：缩略图**无边框、无圆角、铺满整个组件**
+/// （不再有外圈深色面板与内边距）；文字一律 overlay 在图片上、不额外占高度：
+///   - **时间**：纯黑底（`#000000`）文字块，**横向居中、贴图片底边**；
+///   - **章节名**：**半透明黑底**（`#cc000000`）、**占满图片宽度**、**贴图片顶部、
+///     左对齐**（用户 2026-11-15 第三次调整：章节名不再和时间挤在同一行）；
+///     没有章节时整条不显示。
+/// 两处文本超出可用宽度都右侧省略（`elide: ElideRight`）。
 ///
 /// 位置：悬浮在进度条上方、跟随指针水平移动、窗口左右边缘夹取。
 /// 没有缩略图时（网络流/纯音频/首帧未到）退化成只显示时间的小气泡——
@@ -16,7 +24,9 @@ Item {
     property int hoverMs: 0
 
     readonly property bool hasImage: viewModel.previewReady && viewModel.previewSerial > 0
-    readonly property int panelWidth: viewModel.previewThumbWidth
+    /// 面板/组件几何一律按 **Qt 逻辑像素**（用户 2026-11-15）；实际渲染宽由
+    /// PlayerViewModel 按 "逻辑宽 × DPR" 算好，QML 这边的 Image 用逻辑宽显示。
+    readonly property int panelWidth: viewModel.previewThumbLogicalWidth
     readonly property real imgAspect: {
         var s = viewModel.previewImageSize
         if (!s || s.width <= 0 || s.height <= 0)
@@ -34,46 +44,91 @@ Item {
     /// 气泡，最多写"无法获取缩略图"；面板不隐藏、尺寸随文字走）。
     readonly property string bubbleText: viewModel.previewUnavailable
         ? timeText + " · " + unavailableText : timeText
-    readonly property string labelText: chapter.length > 0
-        ? timeText + " · " + chapter : timeText
-
-    readonly property int pad: 3
+    /// 底部黑底文字块的内边距（横向居中、贴图片底边）
+    readonly property int capPadX: 6
+    readonly property int capPadY: 2
 
     implicitWidth: hasImage
-        ? imgW + 2 * pad
+        ? imgW
         : Math.max(40, bubbleLabel.implicitWidth + 16)
-    implicitHeight: hasImage
-        ? (pad + imgH + 4 + label.implicitHeight + pad)
-        : 22
+    implicitHeight: hasImage ? imgH : 22
     x: Math.min(Math.max(cursorX - width / 2, 0),
                 parent ? parent.width - width : 0)
 
-    // ── 缩略图面板 ──────────────────────────────────────────────
-    Rectangle {
+    // ── 缩略图：无边框、无圆角、铺满 ──────────────────────────────
+    // crop 而非 fit：输出图宽高比就是按 imgW/imgH 算出来的（同一套取整），
+    // 两者一致，crop 只吃掉可能的 1px 取整差 → 永远不会出现 letterbox 缝。
+    Image {
+        id: thumb
         visible: root.hasImage
         anchors.fill: parent
-        color: "#d9111111"; radius: 6
-        border { width: 1; color: "#22ffffff" }
+        source: root.hasImage ? "image://vthumb/" + viewModel.previewSerial : ""
+        cache: false
+        asynchronous: false
+        smooth: true
+        fillMode: Image.PreserveAspectCrop
+        clip: true
+    }
 
-        Image {
-            id: thumb
-            x: root.pad; y: root.pad
-            width: root.imgW; height: root.imgH
-            source: root.hasImage ? "image://vthumb/" + viewModel.previewSerial : ""
-            cache: false
-            asynchronous: false
-            smooth: true
-            fillMode: Image.PreserveAspectFit
+    // ── 章节名：半透明黑底、占满图片宽度、贴图片顶部、左对齐 ──────
+    // 用户 2026-11-15：章节名**不再**和时间挤在同一行（时间留在底部）。
+    // 没有章节时整条不显示（不占高度，也不留空条）。
+    Rectangle {
+        id: chapterBar
+        visible: root.hasImage && root.chapter.length > 0
+        anchors {
+            left: parent.left
+            right: parent.right
+            top: parent.top
         }
+        height: chapterLabel.implicitHeight + 2 * root.capPadY
+        color: "#cc000000"     // 半透明黑（80% 不透明），压在画面上仍能看到内容
 
         Text {
-            id: label
-            x: root.pad
-            y: thumb.y + thumb.height + 4
-            width: root.imgW
-            text: root.labelText
+            id: chapterLabel
+            anchors.fill: parent
+            anchors {
+                leftMargin: root.capPadX
+                rightMargin: root.capPadX
+                topMargin: root.capPadY
+                bottomMargin: root.capPadY
+            }
+            text: root.chapter
             color: "#e0e0e0"
             font.pixelSize: 13
+            horizontalAlignment: Text.AlignLeft
+            verticalAlignment: Text.AlignVCenter
+            wrapMode: Text.NoWrap
+            elide: Text.ElideRight
+        }
+    }
+
+    // ── 时间：纯黑底、横向居中、overlay 在图片底部 ────────────────
+    Rectangle {
+        id: captionBar
+        visible: root.hasImage
+        color: "#000000"
+        // 宽度按文字自然宽度取，但不超过图片宽（超过就交给 elide）
+        width: Math.min(root.width, caption.implicitWidth + 2 * root.capPadX)
+        height: caption.implicitHeight + 2 * root.capPadY
+        x: Math.round((root.width - width) / 2)
+        y: root.height - height
+
+        Text {
+            id: caption
+            anchors.fill: parent
+            anchors {
+                leftMargin: root.capPadX
+                rightMargin: root.capPadX
+                topMargin: root.capPadY
+                bottomMargin: root.capPadY
+            }
+            text: root.timeText
+            color: "#e0e0e0"
+            font.pixelSize: 13
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            wrapMode: Text.NoWrap
             elide: Text.ElideRight
         }
     }

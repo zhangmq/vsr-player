@@ -263,7 +263,7 @@ PopupBase {
             {label: qsTr("Thumbnails"),
              toggle: viewModel.previewThumbnails,
              subSig: "uiElementToggled", value: 0},
-            {label: qsTr("Hide invalid menu items"),
+            {label: qsTr("Hide unavailable menu items"),
              toggle: viewModel.menuHideInvalid,
              subSig: "uiElementToggled", value: 1}
         ]

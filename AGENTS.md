@@ -704,10 +704,44 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 
 ### 进度条缩略图（PreviewThumbnailer，2026-11-15）
 
-**形态**（用户 2026-11-15 拍板）：鼠标悬停进度条 → 上方浮出**单帧**缩略图 +
+**形态**（用户 2026-11-15 拍板，当天第二版调整）：鼠标悬停进度条 → 上方浮出**单帧**缩略图 +
 `时间 · 章节名`，跟指针水平移动、窗口边缘夹取；没有缩略图（网络流/纯音频/首帧未到）
 时退化成只显示时间的**小气泡**。**不做**拖动时整条缩略图带、不做后台 storyboard
-预生成；宽度可配置（`previewThumbWidth`，默认 320）但**本期不开放 UI**。
+预生成。
+
+**面板版式**（用户 2026-11-15 两次要求）：缩略图**无边框、无圆角、铺满整个组件**
+（`Image.fillMode: PreserveAspectCrop` + `clip`，不留内边距、不露 letterbox）；
+文字**全部 overlay 在图片上**、不额外占高度，且**两行分居上下**：
+- **时间**（始终有）：纯黑底（`#000000`）文字块，**横向居中、贴图片底边**，宽度按文字
+  自然宽度取（上限 = 图片宽），超宽 `elide: ElideRight`；
+- **章节名**（有章节才显示，否则整条不出现、不留空条）：**半透明黑底**
+  （`#cc000000`，能看到下面的画面）、**占满图片宽度**、**贴图片顶部、左对齐**
+  （`text-align: left` + 左右各 6 px 内边距），超宽同样右侧省略。
+  ⚠ 用户明确要求章节名**不要**和时间挤在同一行（2026-11-15）。
+只有"取不到图"的退化气泡还保留原来的小圆角深色底（那是另一个形态，不是缩略图面板）。
+
+**尺寸口径（用户 2026-11-15 明确）**：**组件几何按 Qt 逻辑像素，图片按逻辑宽 × DPR 渲染**。
+- 面板/组件逻辑宽 = **固定 192**（`PlayerViewModel::kThumbLogicalWidth`，头文件里是
+  唯一事实源；QML 读 `previewThumbLogicalWidth`）。
+- 预览实例的**渲染宽** = `192 × DPR`（`noteDevicePixelRatio`，QML 在
+  `Component.onCompleted` / `Screen.onDevicePixelRatioChanged` 上报所在窗口的
+  `Screen.devicePixelRatio`）→ dpr=2 时出 384 px 纹理。⚠ 只给 192 px 纹理的话，
+  dpr=2 的屏上 Image 会被放大 2 倍显示，缩略图（尤其画面里的字幕/台标）发糊。
+- 只由**显示底栏的那个窗口**上报 DPR（`ownsUiChrome = controlMode || !stereo.active`）：
+  2D 是播放窗口、3D 是桌面 control 窗口；presentation 窗口没有进度条，别让它
+  把自己那块屏的 dpr 覆盖进来。
+
+演进（别再往回改）：① 固定 320；② "窗口逻辑宽 × 0.15，夹 200–480"（用户要求
+"按窗口比例、带最小/最大"）；③ 缩到 2/3（0.10 / 133–320）；④ **取消窗口比例**，
+固定 **192**（用户 2026-11-15 当天连调两次：先"取消按窗口尺寸的缩略图大小设置…
+先试下 240"，接着说"改 192 看看"）。
+取消的**理由**：按比例就意味着窗口缩放要重算宽度 → 预览实例清缓存重渲；固定值
+也让面板尺寸可预期、测试口径唯一。
+⚠ 因此**没有**"QML 上报窗口宽 → C++ 重算"这条链路（`noteWindowWidth` 已删），
+面板宽度不随窗口尺寸变化；DPR 变化（换屏/系统缩放）会重算渲染宽并清缓存重渲。
+RPC `set-preview-width` 是**渲染像素**的显式覆盖（测试/脚本用，不落盘、跳过 DPR
+换算、clamp 160–640）；`get-preview-state` 同时给 `width`(渲染)/`logicalWidth`/
+`dpr`；旧设置键 `previewThumbWidth` 已弃用。
 
 **开关**：右键菜单新增 **「界面」** 组（`ContextMenu.qml` 的 `interfaceMenu()`），
 二级项是可 toggle 的界面元素：**缩略图**（`previewThumbnails`）与**隐藏无效菜单项**
@@ -787,20 +821,6 @@ yt-dlp**（`ytdl=yes` + `ytdl-format=worst`，最小画质）。⚠ `ytdl` 不�
   `http-cookies` 读不到）。
 - 预览实例**懒加载**：`previewWanted_` 为假时不 load 网络源，**第一次悬停**才拉流
   （不悬停零流量）；换文件/关开关复位。实测播放 10 s 内 `thumb: load` 计数 0。
-- ⚠ `stream-open-filename` 很长：日志与 RPC 的 `path` 字段都**截断到 96 字符**
-  （否则刷屏、JSON 也难看）。调这类问题时看长度就好，要看内容直接 grep 主实例日志。
-- ⚠ 排查"网络视频播不了"时先分清 `thumb:` 前缀：**主实例的日志没有这个前缀**。
-  这个前缀下出现的 `Failed to recognize file format` 是缩略图引擎的问题，
-  与播放无关（2026-11-15 就因为这个误判过一轮）。
-
-⚠ 仍未做：预览实例没继承 CLI 透传的 ytdl 选项（`edl://` 路线下用不到；只有在
-`stream-open-filename` 拿不到、退回自解析时才需要）、`worst` 格式回退链、YouTube 实测。
-
-**测试**：`./tests/hotkeys/test_thumbnails.py`（26 项：取帧/桶缓存/宽度/章节/QML 面板/
-单眼裁剪/音频不启用/3D 会话）。Wayland 下 `QCursor::setPos` 无效，面板靠 RPC
-`debug-hover <秒|off>` 注入（同时强制显示 overlays，否则抓窗口只有视频）。
-RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-preview-width`、
-`set-preview-thumbnails`、`set-menu-hide-invalid`。
 
 ### 反交错（mpv 原生 `--deinterlace`，2026-10-22）
 

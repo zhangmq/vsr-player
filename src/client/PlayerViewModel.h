@@ -224,9 +224,13 @@ class PlayerViewModel : public QObject {
     /// （UI 术语里多指窗口/焦点）。
     Q_PROPERTY(bool menuHideInvalid READ menuHideInvalid WRITE setMenuHideInvalid
                NOTIFY menuHideInvalidChanged)
-    /// 缩略图目标宽度（像素）。可配置，但**本期不开放 UI**（用户 2026-11-15）。
+    /// 缩略图**渲染**宽（物理像素）= 逻辑宽 × DPR；WRITE 只给 RPC/测试的显式
+    /// 覆盖用（跳过后面的换算），**不开放 UI、不落盘**（用户 2026-11-15）。
     Q_PROPERTY(int previewThumbWidth READ previewThumbWidth WRITE setPreviewThumbWidth
                NOTIFY previewThumbWidthChanged)
+    /// 缩略图**面板**宽（Qt 逻辑像素，固定 192）。QML 用它定组件几何，
+    /// 图片本身按 `previewThumbWidth`（= 本值 × DPR）渲染，HiDPI 下才不糊。
+    Q_PROPERTY(int previewThumbLogicalWidth READ previewThumbLogicalWidth CONSTANT)
     /// 当前文件的章节（[{time: 秒, title: 文本}]，mpv chapter-list 镜像）
     Q_PROPERTY(QVariantList chapters READ chapters NOTIFY chaptersChanged)
     /// 测试钩子：伪造"指针悬停在进度条某时间"。Wayland 下无法程序化移动
@@ -472,12 +476,15 @@ public:
     void setMenuHideInvalid(bool on);
     /// 右键菜单「界面」二级项：按 id 翻转界面元素（0 = 缩略图）。
     Q_INVOKABLE void toggleUiElement(int id);
-    /// 缩略图的**生效宽度**（像素）：按窗口逻辑宽的比例算，带上下限
-    /// （用户 2026-11-15：不要固定像素，"缩略图大小按窗口比例做，
-    /// 可以有一个最小的大小和最大大小"）。见 kThumbRatio/kThumbMin/Max。
+    /// 缩略图的**渲染**宽（物理像素）：逻辑宽 × DPR，不随窗口尺寸变化
+    /// （用户 2026-11-15 取消了"按窗口比例 + 上下限"）。
     int previewThumbWidth() const { return previewThumbWidth_; }
-    /// QML 在窗口宽度变化时上报（root.width），据此重算生效宽度。
-    Q_INVOKABLE void noteWindowWidth(int w);
+    /// 缩略图**面板**宽（逻辑像素）：固定 192（kThumbLogicalWidth）。
+    int previewThumbLogicalWidth() const { return kThumbLogicalWidth; }
+    /// QML 上报所在窗口的 devicePixelRatio（换屏/缩放到别的 DPI 时重算渲染宽）。
+    Q_INVOKABLE void noteDevicePixelRatio(qreal dpr);
+    /// 当前生效的 DPR（RPC/日志用；渲染宽 = 逻辑宽 × 它）
+    qreal previewDevicePixelRatio() const { return dpr_; }
     QVariantList chapters() const { return chapters_; }
     int previewDebugHoverMs() const { return previewDebugHoverMs_; }
     void setPreviewDebugHoverMs(int ms);
@@ -830,9 +837,17 @@ private:
     QString previewUserAgent_;
     QString previewHeaders_;
     /// 生效的缩略图宽度（由窗口宽 × 比例 + 上下限算出，或由 RPC 显式覆盖）
-    int previewThumbWidth_ = 200;
-    int thumbWidthOverride_ = -1;   ///< >0 = RPC 显式指定（测试用，优先于比例）
-    int windowWidth_ = 0;           ///< QML 上报的窗口逻辑宽（0 = 还没上报）
+    /// 渲染宽（物理像素）= 逻辑宽 × dpr_，或 thumbWidthOverride_
+    int previewThumbWidth_ = 320;
+    int thumbWidthOverride_ = 0;   ///< >0 = RPC 显式指定（渲染像素，测试用）
+    qreal dpr_ = 1.0;              ///< QML 上报的窗口 DPR（默认 1）
+    /// 渲染宽：覆盖优先，否则 kThumbLogicalWidth × DPR
+    int thumbRenderWidth() const;
+public:
+    /// 面板逻辑宽（Qt 逻辑像素，单一事实源）：组件尺寸按它定，图片按它×DPR 渲
+    /// 用户 2026-11-15：取消窗口比例后先试 240，再调 **192**。
+    static constexpr int kThumbLogicalWidth = 192;
+private:
     bool previewEnabled_ = true;              ///< benchmark/关闭开关
     int previewDebugHoverMs_ = -1;
     bool previewActive_ = false;              ///< 当前文件允许预览（有视频/非直播）

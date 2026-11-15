@@ -14,7 +14,7 @@
 | 拖动时整条缩略图带（filmstrip） | **不做** |
 | 后台 storyboard 预生成（磁盘缓存） | **不做** |
 | 引擎 | **内置解码器实时解**（= 进程内第二个 libmpv 实例）；子进程方案只作降级备选 |
-| 缩略图尺寸 | **可配置**，默认宽 320；**暂不开放 UI 修改**（走配置键） |
+| 缩略图尺寸 | **面板固定 192 逻辑 px**（图片按 192×DPR 渲染），与窗口尺寸无关；**不开放 UI 修改**（RPC/测试可临时覆盖） |
 | HDR 内容 | **强制 tonemap 到 SDR** 再显示 |
 | 3D 内容 | 按当前 `layout`/`half` **裁单眼**；预览只在桌面 control 窗口显示 |
 
@@ -129,6 +129,8 @@ ProgressSlider hover ──(sec)──► SeekPreview (QML，uiLayer 顶层 Item
 - 样式沿用现有语言：底 `#d9111111`、radius 8、边框 `#22ffffff`（同 `PopupBase`），
   缩略图宽 = `previewWidth`（默认 320），高 = 宽 / 单眼 aspect；
   下方一行 13 px `#e0e0e0` 文本：`mm:ss · 章节名`（无章节则只有时间）。
+  ⚠ **实现已改（2026-11-15 第二版）**：无边框、无圆角、图片铺满，文字黑底压在图片
+  底部——见 11.2 第 7 条。
 - 显示条件：指针在进度条上、有视频、非直播流、无弹窗打开；拖动中保持显示。
 
 ### 5.3 章节
@@ -139,8 +141,11 @@ QML 按悬停时间取“最近一个 time ≤ t 的章节标题”。
 
 ## 6. 配置
 
-`QSettings` 键 **`previewThumbWidth`**（默认 320，clamp 到 160–640），
-只读配置 + RPC 可改，**本期不加 UI**（用户 2026-11-15）。
+`QSettings` 键 **`previewThumbWidth`**（历史设计：默认 320，clamp 到 160–640）
+**已弃用**。尺寸最终定为**面板逻辑宽固定 192**（`kThumbLogicalWidth`）、**渲染宽
+= 192 × DPR**：中间曾按"窗口逻辑宽 × 0.15 夹 200–480"、再缩到 2/3（0.10 / 133–320），
+最后**取消窗口比例**（见 `AGENTS.md` §进度条缩略图）。`set-preview-width` 只作**测试用
+显式覆盖**（单位是渲染像素、跳过 DPR、clamp 160–640、不落盘）。**本期不加 UI**。
 
 ## 7. 风险 / 需要在实现阶段实测的点
 
@@ -210,7 +215,20 @@ QML 按悬停时间取“最近一个 time ≤ t 的章节标题”。
 6. **Wayland 无法程序化移动指针**（`QCursor::setPos` 无效）→ 加 `debug-hover <秒>`
    RPC + `PlayerViewModel::previewDebugHoverMs`，测试靠它驱动面板（同时把
    overlays 显示出来，否则抓窗口只有视频）。
-
+7. **面板版式改了三轮（用户 2026-11-15）**：先按 5.2 做成"深色圆角面板 + 图下独立
+   文字行"；第二版改成 **无边框、无圆角、缩略图铺满整个组件**（`PreserveAspectCrop`
+   + `clip`，无内边距），`mm:ss · 章节名` 变成 **纯黑底文字块**、横向居中、**overlay
+   在图片底边**、超宽 `elide` 右侧省略（同时整体缩到 2/3）；第三版按用户要求把
+   **章节名从时间行拆出来**：章节名单独一条 **`#cc000000` 半透明黑底、占满图片宽度、
+   贴图片顶部、左对齐**（无章节时整条不显示），底部只留**时间**（纯黑底、居中）。
+   只有"取不到图"的退化气泡保留旧的小圆角深色底。
+8. **尺寸最终定为"面板 192 逻辑 px + 图片 ×DPR"（用户 2026-11-15 第三、四版）**：
+   先按 11.2-7 的比例方案做完，用户随即要求"取消按窗口尺寸的缩略图大小设置" → 删掉
+   比例/上下限与"QML 上报窗口宽"整条链路（`noteWindowWidth`、`windowWidth_` 已移除）；
+   固定值先试 **240**、随即改 **192**（"改 192 看看"）。紧接着用户点出**逻辑尺寸 vs 物理像素**：
+   组件按 Qt 逻辑像素定尺寸，**图片按 `逻辑宽 × DPR` 渲染** → 新增 `noteDevicePixelRatio`
+   （QML 上报 `Screen.devicePixelRatio`），`kThumbLogicalWidth = 192` 定面板，渲染宽 =
+   192×dpr（本机 dpr=2 → 384×216 纹理，1:1 上屏不糊）。窗口缩放不再触发重算；换屏/缩放会。
 ### 11.3 mpv 补丁：SW 渲染器的旋转崩溃（必须保留）
 
 `vo_libmpv` 的 driver caps 带 `VO_CAP_ROTATE90`，所以 mpv 不会插软件旋转滤镜，
@@ -235,7 +253,7 @@ vsr-player: ../video/mp_image.c:607: mp_image_crop: 断言 "x1 <= img->w && y1 <
 | `preview <out.png> <秒>` | 请求并等待一帧，落盘 PNG，返回 `{w,h,latencyMs,serial}`；超时 5 s；无本地视频时明确报 `preview not available` |
 | `get-preview-state` | `{ready,serial,loaded,path,latencyMs,frames,cacheHits,width,imgW,imgH[,error]}` |
 | `get-chapters` | `[{time,title}]`（mpv `chapter-list` 镜像） |
-| `set-preview-width <160..640>` / `get-preview-width` | 缩略图宽度（持久化 `previewThumbWidth`，本期无 UI） |
+| `set-preview-width <160..640>` / `get-preview-width` | 缩略图**渲染宽**显式覆盖（测试用，单位=物理像素、跳过 DPR、clamp 160–640、不落盘；默认 192×DPR） |
 | `debug-hover <秒|off>` | 伪造进度条悬停（Wayland 测试用；会顺带显示 overlays） |
 
 ### 11.5 实测（本机，发布同源构建）
