@@ -286,6 +286,11 @@ void PreviewThumbnailer::setParams(const Params &p) {
         wantBucket_ = -1;
         lastSeekMs_ = -1;
         ++seekGen_;          // 旧文件在途 seek 的帧不能落到新文件上
+        failedAtMs_ = -1;    // 换文件 = 重新开始，冷却窗口作废
+        {
+            QMutexLocker l(&errMutex_);
+            lastError_.clear();
+        }
         busy_ = false;
         awaitingFrame_ = false;
         seekWatchdog_->stop();
@@ -381,6 +386,30 @@ void PreviewThumbnailer::request(qint64 ms) {
     if (!ensureCreated())
         return;
     ms = std::max<qint64>(0, ms);
+    // 一次性装载失败过 → 允许重试，但**失败后 kReloadCooldownMs 内的请求一律忽略**
+    //（用户 2026-11-15 定：不做后台定时重试；每次悬停变更是一次新机会，失败就失败）。
+    if (!haveSource_.load() && failedAtMs_ >= 0) {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (now - failedAtMs_ < kReloadCooldownMs) {
+            MLOG_VERBOSE("thumb: reload suppressed (%.1fs of %ds cooldown)",
+                         double(now - failedAtMs_) / 1000.0, kReloadCooldownMs / 1000);
+            return;
+        }
+        QString path;
+        {
+            QMutexLocker l(&paramsMutex_);
+            path = params_.path;
+        }
+        failedAtMs_ = -1;
+        {
+            QMutexLocker l(&errMutex_);
+            lastError_.clear();
+        }
+        MLOG_INFO("thumb: reload after load failure (hover-driven retry)");
+        // 重新 loadfile：本次请求留在 wantMs_ 里，FILE_LOADED 后 pump() 会服务它
+        //（与"第一次悬停触发懒加载"同一条路径，不额外排队）。
+        loadSource(path);
+    }
     MLOG_VERBOSE("thumb: request %.1fs", double(ms) / 1000.0);
     wantMs_ = ms;
     wantBucket_ = ms / kBucketMs;
@@ -668,8 +697,14 @@ void PreviewThumbnailer::eventLoop() {
             const bool failed = ef && ef->reason == MPV_END_FILE_REASON_ERROR;
             haveSource_.store(false);
             postToGui([this, failed] {
-                if (failed && lastError_.isEmpty())
-                    lastError_ = QStringLiteral("load failed");
+                if (failed) {
+                    {
+                        QMutexLocker l(&errMutex_);
+                        if (lastError_.isEmpty())
+                            lastError_ = QStringLiteral("load failed");
+                    }
+                    failedAtMs_ = QDateTime::currentMSecsSinceEpoch();
+                }
                 emit stateChanged();
             });
             break;
@@ -717,6 +752,13 @@ void PreviewThumbnailer::onFileLoaded() {
     haveSource_.store(true);
     MLOG_INFO("thumb: file loaded %dx%d rotate=%d", w, h, rot);
     postToGui([this] {
+        // 载入成功 → 清"失败"状态（否则气泡里的"无法获取"会一直留着，
+        // 也会让下一次失败的计时从旧值起算）。
+        failedAtMs_ = -1;
+        {
+            QMutexLocker l(&errMutex_);
+            lastError_.clear();
+        }
         applyChain();   // 链要在文件载入后设置（之前没有 vo_chain）
         pump();
         emit stateChanged();

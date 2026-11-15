@@ -822,6 +822,53 @@ yt-dlp**（`ytdl=yes` + `ytdl-format=worst`，最小画质）。⚠ `ytdl` 不�
 - 预览实例**懒加载**：`previewWanted_` 为假时不 load 网络源，**第一次悬停**才拉流
   （不悬停零流量）；换文件/关开关复位。实测播放 10 s 内 `thumb: load` 计数 0。
 
+⚠ **"打开网络流有概率没有缩略图、且播放中不恢复"的两个真实断点（2026-11-15 定位并修）**：
+
+1. **悬停落在实例就绪之前**（`previewActive_ == false`：yt-dlp 还没解析出 `edl://`、
+   或首个 `FILE_LOADED` 还没到）。旧代码在 `requestPreview()` 里直接
+   `if (!previewActive_) return;` —— 这次悬停**连"想看"都没记**，等于没发生；
+   更糟的是 `FILE_LOADED` 的处理器会无条件 `previewWanted_ = false`，把懒加载意图
+   一起抹掉 → **整个文件期间都不装载**，只有再动一次鼠标才出图（实测可 100% 复现：
+   进入播放瞬间悬停 → 静止 4 s 仍是 `serial=0`）。
+   修法：
+   - `requestPreview()` 先置 `previewWanted_`（并 `updatePreviewSource()`）**再**判就绪；
+     不就绪时把目标存进 `pendingPreviewMs_`；
+   - `maybeReplayDeferredPreview()` 在两个时机补发：预览实例 `FILE_LOADED`
+     （`stateChanged`）与"预览刚变可用"（`updatePreviewSource` 末尾）；
+   - `FILE_LOADED` 里**只在 `pendingPreviewMs_ < 0` 时**才重置 `previewWanted_`，
+     且**不再**清 `pendingPreviewMs_`（真正让它作废的是 `cancelPreview()`＝指针离开进度条）。
+   日志：`preview: replay deferred hover request (12.0s)`。
+2. **一次性装载失败后永不重试**（`MPV_END_FILE_REASON_ERROR`：CDN 403、timeline 段超时等）。
+   旧行为只写 `lastError_="load failed"`，而 `setParams()` 只在 path/头/旋转/宽度变化时
+   重新 `loadfile`、`request()` 又要求 `haveSource_` → 该文件内**永久失效**。
+   修法（用户 2026-11-15 定的策略：**不做后台定时重试**）：
+   - 失败时刻记进 `failedAtMs_`；失败后 **3 s（`kReloadCooldownMs`）内的悬停请求一律忽略**
+     （日志 `thumb: reload suppressed (0.6s of 3s cooldown)`，**一个网络请求都不发**）；
+   - 过冷却后**由下一次悬停**触发一次重新 `loadfile`
+     （日志 `thumb: reload after load failure (hover-driven retry)`），
+     这次请求留在 `wantMs_` 里，`FILE_LOADED` 后照常服务（与懒加载同一条路径）；
+   - 载入成功 / 换文件 / 关开关都会清 `failedAtMs_` 与 `lastError_`。
+     "每个悬停变更就是一次新机会"——失败就失败，靠用户继续移动指针。
+3. RPC `preview` 是同步测试钩子：`previewAvailable()` 在刚 loadfile 时会短暂为假，
+   钩子里**最多等 5 s**（`waitPreviewAvailable()`）再判"不可用"，否则"打开网络流立刻取帧"
+   会被判成假失败（T10 偶发超时的根因）。
+   回归测试：`tests/hotkeys/test_thumbnails.py` 的 **T12**（补发：单次悬停、不再动指针，
+   40 s 内必须出图）+ **T13**（冷却期内服务器零新请求、过冷却后悬停重试成功）。
+- ⚠ `stream-open-filename` 很长：日志与 RPC 的 `path` 字段都**截断到 96 字符**
+  （否则刷屏、JSON 也难看）。调这类问题时看长度就好，要看内容直接 grep 主实例日志。
+- ⚠ 排查"网络视频播不了"时先分清 `thumb:` 前缀：**主实例的日志没有这个前缀**。
+  这个前缀下出现的 `Failed to recognize file format` 是缩略图引擎的问题，
+  与播放无关（2026-11-15 就因为这个误判过一轮）。
+
+⚠ 仍未做：预览实例没继承 CLI 透传的 ytdl 选项（`edl://` 路线下用不到；只有在
+`stream-open-filename` 拿不到、退回自解析时才需要）、`worst` 格式回退链、YouTube 实测。
+
+**测试**：`./tests/hotkeys/test_thumbnails.py`（26 项：取帧/桶缓存/宽度/章节/QML 面板/
+单眼裁剪/音频不启用/3D 会话）。Wayland 下 `QCursor::setPos` 无效，面板靠 RPC
+`debug-hover <秒|off>` 注入（同时强制显示 overlays，否则抓窗口只有视频）。
+RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-preview-width`、
+`set-preview-thumbnails`、`set-menu-hide-invalid`。
+
 ### 反交错（mpv 原生 `--deinterlace`，2026-10-22）
 
 **mpv 怎么做的**（全部在它的输出链里，**不经过 `--vf`**）：

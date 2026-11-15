@@ -118,6 +118,11 @@ PlayerViewModel::PlayerViewModel(QObject *parent) : QObject(parent) {
             &PlayerViewModel::previewImageChanged);
     connect(preview_, &PreviewThumbnailer::stateChanged, this,
             &PlayerViewModel::previewStateChanged);
+    // 悬停发生在"预览实例还没就绪"时（网络流刚打开、yt-dlp 还在解析）→ 那条
+    // 请求被搁置；就绪后补发一次。（失败请求不会进这里：失败重试由悬停驱动，
+    // 见 PreviewThumbnailer::kReloadCooldownMs。）
+    connect(preview_, &PreviewThumbnailer::stateChanged, this,
+            &PlayerViewModel::maybeReplayDeferredPreview);
 }
 
 // ── attach: register mpv property observers ────────────────────────────
@@ -3008,8 +3013,16 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
         delaySubDirty_ = false;
         delayAudioDirty_ = false;
         // 换文件 → 网络源重新进入"懒加载"状态（不悬停就不拉流）；
-        // "时长在增长"的直播判定也复位。
-        previewWanted_ = false;
+        // 但**有滞留的悬停请求时不能重置**：用户打开网络流后立刻把指针放在进度条上，
+        // 那次悬停发生在实例就绪之前（pendingPreviewMs_ 有值），这里一清就等于
+        // 把"想看"抹掉 → 整个文件期间都不装载（2026-11-15 实测：只有再动一次
+        // 鼠标才出图）。"时长在增长"的直播判定也复位。
+        if (pendingPreviewMs_ < 0)
+            previewWanted_ = false;
+        // ⚠ 这里**不能**清 pendingPreviewMs_：它记录的正是"这个文件刚载入前用户
+        // 就已经悬停过"，清掉就永远补发不了（2026-11-15 实测：装载成功后
+        // ready 但 serial 永远 0，必须再动一次鼠标）。真正让它作废的是
+        // cancelPreview()（指针离开进度条）。
         updatePreviewSource();         // 换文件 → 预览实例 loadfile（懒创建）
         syncVfOptions();               // 链重建后重放运行时 vf 状态（fps/vsr 防 UI 修改丢失）
         refreshHwDecodeAvailability(); // 换片后重算"该文件能否硬解"（软解回退不改偏好）
@@ -3356,6 +3369,13 @@ void PlayerViewModel::updatePreviewSource() {
     p.rotate = rotMode_.load();
     p.hdr = videoHdr_;
 
+    // 诊断（低频，仅 -v）：预览为什么这次不装载/装载什么
+    MLOG_VERBOSE("preview: update net=%d wanted=%d defer=%d resolved=%d active=%d "
+                 "edl=%d path=%s",
+                 networkSource_ ? 1 : 0, previewWanted_ ? 1 : 0, deferNetwork ? 1 : 0,
+                 resolved ? 1 : 0, usable ? 1 : 0, int(openFilename_.size()),
+                 (p.path.isEmpty() ? "(none)" : "set"));
+
     const int layout = stereoLayout_.load();   // -1 = 3D 未激活
     if (layout >= 0) {
         // 3D 输出：缩略图取单眼（默认左/上眼；预览面板在桌面窗口，是 2D UI，
@@ -3377,19 +3397,51 @@ void PlayerViewModel::updatePreviewSource() {
         emit previewStateChanged();
     }
     preview_->setParams(p);
+    // "刚变可用"这一刻也要补发：文件载入是异步的，两条路径先后不定
+    //（实例先载入完、预览后变可用 → 只靠 stateChanged 补发会漏掉）。
+    maybeReplayDeferredPreview();
+}
+
+void PlayerViewModel::maybeReplayDeferredPreview() {
+    if (pendingPreviewMs_ < 0 || !preview_ || !previewActive_)
+        return;
+    if (!preview_->hasSource()) {
+        // 还没装载：这次滞留的悬停就是"用户想看"的证据 → 允许立刻开始懒加载
+        //（装载完成会再走 stateChanged 回到这里补发）。
+        if (networkSource_ && !previewWanted_) {
+            previewWanted_ = true;
+            updatePreviewSource();
+        }
+        return;
+    }
+    const qint64 ms = pendingPreviewMs_;
+    pendingPreviewMs_ = -1;
+    MLOG_INFO("preview: replay deferred hover request (%.1fs)", double(ms) / 1000.0);
+    preview_->request(ms);
 }
 
 void PlayerViewModel::requestPreview(qint64 ms) {
-    if (!preview_ || !previewActive_) return;
+    if (!preview_) return;
+    MLOG_VERBOSE("preview: hover %.1fs (net=%d wanted=%d active=%d)", double(ms) / 1000.0,
+                 networkSource_ ? 1 : 0, previewWanted_ ? 1 : 0, previewActive_ ? 1 : 0);
     // 网络源懒加载：第一次悬停才让预览实例去 load（之后本文件内保持）。
+    // ⚠ 这一步必须在"是否就绪"判断**之前**：实测（2026-11-15，b 站）进入播放
+    // 瞬间就悬停时，edl 还没解析出来，旧代码在这里直接 return，连"想看"都没记，
+    // 结果整段只有时间气泡，必须再动一次鼠标才出图。
     if (networkSource_ && !previewWanted_) {
         previewWanted_ = true;
         updatePreviewSource();
     }
+    if (!previewActive_) {
+        pendingPreviewMs_ = ms;   // 实例就绪后补发（不是失败重试）
+        return;
+    }
+    pendingPreviewMs_ = -1;
     preview_->request(ms);
 }
 
 void PlayerViewModel::cancelPreview() {
+    pendingPreviewMs_ = -1;
     if (preview_) preview_->cancel();
 }
 

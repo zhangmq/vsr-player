@@ -68,6 +68,10 @@ public:
     static constexpr qint64 kBucketMs = 2000;   ///< 缓存/请求的时间桶
     static constexpr int kExactDelayMs = 80;    ///< 静止多久后补精确 seek
     static constexpr int kCacheEntries = 64;
+    /// 一次性装载失败后的冷却：这段时间内的悬停请求一律忽略（用户 2026-11-15：
+    /// "失败一次忽略 3 秒内的所有重试请求"）。过冷却后**由下一次悬停**触发重试，
+    /// 不做后台定时重试——每次悬停变更就是一次新机会。
+    static constexpr int kReloadCooldownMs = 3000;
 
     explicit PreviewThumbnailer(QObject *parent = nullptr);
     ~PreviewThumbnailer() override;
@@ -189,4 +193,7 @@ private:
     std::atomic<bool> createdFailed_{false};
     mutable QMutex errMutex_;
     QString lastError_;
+    /// 最近一次"一次性装载"失败的时刻（ms 单调时钟；<0 = 没有失败）。
+    /// 冷却窗口内 request() 直接返回；过冷却后由 request() 触发一次重新 loadfile。
+    qint64 failedAtMs_ = -1;
 };

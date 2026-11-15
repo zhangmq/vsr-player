@@ -24,16 +24,18 @@ from __future__ import annotations
 
 import functools
 import http.server
+import os
 import re
 import subprocess
 import sys
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from harness import (Player, check, expect_eq, section, settle, summary,
-                     wait_until)
+from harness import (BIN, Player, Rpc, check, expect_eq, section, settle,
+                     summary, wait_until)
 
 SOCK = Path("/tmp/vsr-thumbnails.sock")
 LOG = Path("/tmp/vsr-thumbnails.log")
@@ -284,15 +286,52 @@ def t9_toggle(p: Player) -> None:
     check(r3["ok"], "重新开启后有缩略图", r3["err"])
 
 
-def _start_range_server(directory: Path) -> tuple[http.server.ThreadingHTTPServer, int]:
+class _Chaos:
+    """测试用的"网络抖动"开关：首响应延迟 + 可切换的 403 封锁。"""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.delay_s = 0.0      # 第一次响应前 sleep（模拟慢解析/慢首包）
+        self.block = False      # True = 所有媒体请求返回 403
+        self.hits = 0           # 媒体请求计数（不含 /control）
+        self.delayed = False
+
+
+def _start_range_server(directory: Path,
+                        chaos: "_Chaos | None" = None
+                        ) -> tuple[http.server.ThreadingHTTPServer, int]:
     """本地 HTTP 点播服务（**支持 Range**）。
 
     python -m http.server 不返回 206/Accept-Ranges，mpv 会把它当"不可 seek 的
     线性流"→ 预览按直播被禁用；这里用一个小 handler 提供 Range，模拟真实点播。
+    `chaos` 非空时可注入延迟/403（T12/T13 用；T10 不传，行为不变）。
     """
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def send_head(self):
+            if chaos is not None:
+                if self.path.startswith("/control"):
+                    with chaos.lock:
+                        chaos.block = "block=1" in self.path
+                    self.send_response(200)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return None
+                with chaos.lock:
+                    chaos.hits += 1
+                    blocked = chaos.block
+                    slow = chaos.delay_s > 0 and not chaos.delayed
+                    if slow:
+                        chaos.delayed = True
+                if slow:
+                    time.sleep(chaos.delay_s)
+                if blocked:
+                    body = b"blocked"
+                    self.send_response(403)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return None
             path = self.translate_path(self.path)
             if not Path(path).is_file():
                 self.send_error(404)
@@ -331,6 +370,88 @@ def _start_range_server(directory: Path) -> tuple[http.server.ThreadingHTTPServe
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, srv.server_address[1]
+
+
+def t12_deferred_hover() -> None:
+    section("T12 悬停落在实例就绪前 → 就绪后补发（不需要再动指针）")
+    chaos = _Chaos()
+    chaos.delay_s = 2.5            # 主实例首包慢 → 悬停时预览必然还没就绪
+    srv, port = _start_range_server(FIXTURE.parent, chaos)
+    sock = SOCK.with_name("vsr-thumb-defer.sock")
+    log = LOG.with_name("vsr-thumb-defer.log")
+    sock.unlink(missing_ok=True)
+    log.unlink(missing_ok=True)
+    logf = log.open("wb")
+    proc = subprocess.Popen(
+        [str(BIN), f"http://127.0.0.1:{port}/{FIXTURE.name}",
+         "--rpc-socket", str(sock), "--", "--msg-level=all=v"],
+        stdout=logf, stderr=subprocess.STDOUT,
+        env=dict(os.environ, VSR_LOG_VERBOSE="1"))
+    try:
+        wait_until(lambda: sock.exists(), "RPC 套接字", timeout=20)
+        rpc = Rpc(sock)
+        rpc.call("set-preview-thumbnails", "1")
+        # 只发这一次悬停，之后不再碰指针（模拟"打开就悬停、然后不动了"）
+        rpc.call("debug-hover", "60")
+        st = rpc.call("get-preview-state").get("data") or {}
+        check(st.get("serial", 0) == 0, "悬停瞬间还没有图", st)
+        st = wait_until(lambda: (lambda d: d if d.get("serial", 0) > 0 else None)(
+            rpc.call("get-preview-state").get("data")), "不移动指针也能出图（补发）",
+            timeout=40)
+        check(st.get("ready") is True, "补发后 ready", st)
+        check("replay deferred hover request" in log.read_text(errors="ignore"),
+              "日志确认走了补发路径")
+    finally:
+        try:
+            proc.terminate()
+            proc.wait(timeout=6)
+        except Exception:
+            proc.kill()
+        logf.close()
+        srv.shutdown()
+
+
+def t13_failed_load_retry() -> None:
+    section("T13 装载失败：3 s 冷却内不重试，过冷却后由悬停触发重试")
+    chaos = _Chaos()
+    srv, port = _start_range_server(FIXTURE.parent, chaos)
+    def ctl(q: str) -> None:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/control?{q}").read()
+    try:
+        url = f"http://127.0.0.1:{port}/{FIXTURE.name}"
+        with Player(SOCK.with_name("vsr-thumb-retry.sock"),
+                    LOG.with_name("vsr-thumb-retry.log"), [url]) as p:
+            rpc = p.rpc
+            rpc.call("set_property", "pause", "yes")
+            rpc.call("set-preview-thumbnails", "1")
+            time.sleep(0.5)
+            ctl("block=1")          # 预览的装载会 403（主实例已缓冲，不受影响）
+            t_fail = time.time()
+            rpc.call("debug-hover", "300")
+            wait_until(lambda: (rpc.call("get-preview-state").get("data") or {}).get("error"),
+                       "预览装载失败", timeout=25)
+            check(True, "装载失败反映到 error")
+
+            hits = chaos.hits
+            time.sleep(0.5)
+            rpc.call("debug-hover", "301")     # 冷却期内：应被忽略
+            time.sleep(1.2)
+            expect_eq(chaos.hits, hits, "冷却期内不发重试请求")
+            check((rpc.call("get-preview-state").get("data") or {}).get("ready") is False,
+                  "冷却期内仍未就绪")
+
+            ctl("block=0")
+            left = 3.3 - (time.time() - t_fail)
+            if left > 0:
+                time.sleep(left)
+            rpc.call("debug-hover", "305")     # 过冷却 → 悬停触发重试
+            st = wait_until(lambda: (lambda d: d if d.get("ready") and d.get("serial", 0) > 0
+                                    else None)(rpc.call("get-preview-state").get("data")),
+                            "重试后出图", timeout=30)
+            check(st.get("ready") is True, "重试成功", st)
+            expect_eq(st.get("error"), None, "成功后错误状态清空")
+    finally:
+        srv.shutdown()
 
 
 def t10_network() -> None:
@@ -460,6 +581,8 @@ def main() -> int:
                 LOG.with_name("vsr-thumb-dim.log"), [str(FIXTURE)]) as p:
         t11_hide_disabled_toggle(p)
     t10_network()
+    t12_deferred_hover()
+    t13_failed_load_retry()
     return summary()
 
 

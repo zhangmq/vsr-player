@@ -229,6 +229,14 @@ QML 按悬停时间取“最近一个 time ≤ t 的章节标题”。
    组件按 Qt 逻辑像素定尺寸，**图片按 `逻辑宽 × DPR` 渲染** → 新增 `noteDevicePixelRatio`
    （QML 上报 `Screen.devicePixelRatio`），`kThumbLogicalWidth = 192` 定面板，渲染宽 =
    192×dpr（本机 dpr=2 → 384×216 纹理，1:1 上屏不糊）。窗口缩放不再触发重算；换屏/缩放会。
+9. **首悬停补发 + 失败重试策略（2026-11-15 实测定型）**：悬停在实例就绪前（网络流刚打开）
+   会被搁置（`pendingPreviewMs_`），实例 `FILE_LOADED` / 刚变可用时补发一次
+   （日志 `preview: replay deferred hover request`）；`FILE_LOADED` 只在没有滞留请求时
+   才重置 `previewWanted_`。一次性装载失败后**不做后台定时重试**：失败后 3 s 内的悬停
+   一律忽略（`kReloadCooldownMs`，日志 `thumb: reload suppressed`），过冷却后由**下一次
+   悬停**触发重新 loadfile（`thumb: reload after load failure`），成功即清 `lastError_`。
+   回归：`test_thumbnails.py` T12/T13。
+
 ### 11.3 mpv 补丁：SW 渲染器的旋转崩溃（必须保留）
 
 `vo_libmpv` 的 driver caps 带 `VO_CAP_ROTATE90`，所以 mpv 不会插软件旋转滤镜，

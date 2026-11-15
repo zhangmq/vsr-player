@@ -471,69 +471,69 @@
 <context>
     <name>PlayerViewModel</name>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3064"/>
-        <location filename="../PlayerViewModel.cpp" line="3072"/>
+        <location filename="../PlayerViewModel.cpp" line="3077"/>
+        <location filename="../PlayerViewModel.cpp" line="3085"/>
         <source>Source</source>
         <translation>源</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3098"/>
+        <location filename="../PlayerViewModel.cpp" line="3111"/>
         <source>Output</source>
         <translation>输出</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3105"/>
+        <location filename="../PlayerViewModel.cpp" line="3118"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3133"/>
+        <location filename="../PlayerViewModel.cpp" line="3146"/>
         <source>VSR</source>
         <translation>超分</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3158"/>
+        <location filename="../PlayerViewModel.cpp" line="3171"/>
         <source>FRUC</source>
         <translation>插帧</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3177"/>
-        <location filename="../PlayerViewModel.cpp" line="3182"/>
+        <location filename="../PlayerViewModel.cpp" line="3190"/>
+        <location filename="../PlayerViewModel.cpp" line="3195"/>
         <source>Decoder</source>
         <translation>解码器</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3187"/>
+        <location filename="../PlayerViewModel.cpp" line="3200"/>
         <source>Speed</source>
         <translation>速度</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3189"/>
+        <location filename="../PlayerViewModel.cpp" line="3202"/>
         <source>Time</source>
         <translation>时间</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3193"/>
+        <location filename="../PlayerViewModel.cpp" line="3206"/>
         <source>Frames</source>
         <translation>帧数</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3197"/>
+        <location filename="../PlayerViewModel.cpp" line="3210"/>
         <source>GPU</source>
         <translation>显卡</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3200"/>
+        <location filename="../PlayerViewModel.cpp" line="3213"/>
         <source>Audio</source>
         <translation>音频</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3299"/>
+        <location filename="../PlayerViewModel.cpp" line="3312"/>
         <source>Could not open the stream</source>
         <translation>无法打开该网络流</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3299"/>
+        <location filename="../PlayerViewModel.cpp" line="3312"/>
         <source>Could not open the file</source>
         <translation>无法打开该文件</translation>
     </message>

@@ -24,8 +24,6 @@
 #include <cmath>
 #include <cstdio>
 #include <thread>
-#include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <sys/socket.h>

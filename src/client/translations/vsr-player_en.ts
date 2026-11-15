@@ -529,69 +529,69 @@
         <translation>120 fps</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3064"/>
-        <location filename="../PlayerViewModel.cpp" line="3072"/>
+        <location filename="../PlayerViewModel.cpp" line="3077"/>
+        <location filename="../PlayerViewModel.cpp" line="3085"/>
         <source>Source</source>
         <translation>Source</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3098"/>
+        <location filename="../PlayerViewModel.cpp" line="3111"/>
         <source>Output</source>
         <translation>Output</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3105"/>
+        <location filename="../PlayerViewModel.cpp" line="3118"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3133"/>
+        <location filename="../PlayerViewModel.cpp" line="3146"/>
         <source>VSR</source>
         <translation>VSR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3158"/>
+        <location filename="../PlayerViewModel.cpp" line="3171"/>
         <source>FRUC</source>
         <translation>FRUC</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3177"/>
-        <location filename="../PlayerViewModel.cpp" line="3182"/>
+        <location filename="../PlayerViewModel.cpp" line="3190"/>
+        <location filename="../PlayerViewModel.cpp" line="3195"/>
         <source>Decoder</source>
         <translation>Decoder</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3187"/>
+        <location filename="../PlayerViewModel.cpp" line="3200"/>
         <source>Speed</source>
         <translation>Speed</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3189"/>
+        <location filename="../PlayerViewModel.cpp" line="3202"/>
         <source>Time</source>
         <translation>Time</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3193"/>
+        <location filename="../PlayerViewModel.cpp" line="3206"/>
         <source>Frames</source>
         <translation>Frames</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3197"/>
+        <location filename="../PlayerViewModel.cpp" line="3210"/>
         <source>GPU</source>
         <translation>GPU</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3200"/>
+        <location filename="../PlayerViewModel.cpp" line="3213"/>
         <source>Audio</source>
         <translation>Audio</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3299"/>
+        <location filename="../PlayerViewModel.cpp" line="3312"/>
         <source>Could not open the stream</source>
         <translation>Could not open the stream</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3299"/>
+        <location filename="../PlayerViewModel.cpp" line="3312"/>
         <source>Could not open the file</source>
         <translation>Could not open the file</translation>
     </message>

@@ -495,6 +495,9 @@ public:
     /// 请求某毫秒位置的缩略图（悬停/拖动时由 QML 调用）。
     Q_INVOKABLE void requestPreview(qint64 ms);
     Q_INVOKABLE void cancelPreview();
+    /// 预览实例就绪后补发被搁置的悬停目标（pendingPreviewMs_）。
+    /// 三个时机都要调：实例载入完成（stateChanged）、预览刚变可用、换文件后。
+    void maybeReplayDeferredPreview();
     void setPreviewThumbWidth(int px);
     /// 启动时带 `-- --pause=yes`：openFiles 不要再强制恢复播放。
     /// （用户 2026-11-15：菜单/播放列表/拖放打开任何源都应**立即播放**，
@@ -855,6 +858,10 @@ private:
     /// （用户 2026-11-15 定：网络短视频/直播之外的点播源，第一次悬停才拉流，
     /// 避免主实例之外立刻多一路数据）。换文件/关闭开关时复位。
     bool previewWanted_ = false;
+    /// 实例还没就绪时收到的悬停目标：就绪后补发一次（**不是失败重试**，只是把
+    /// "这次请求还没被尝试过"补上，否则第一个悬停会石沉大海、必须再动一次鼠标）。
+    /// -1 = 无待补发请求。
+    qint64 pendingPreviewMs_ = -1;
     bool startPaused_ = false;   ///< `--pause=yes` 启动：打开源后保持暂停
     void setMediaPhase(int phase, const QString &detail = QString());
     int mediaPhase_ = 0;             ///< 见 mediaPhase Q_PROPERTY
