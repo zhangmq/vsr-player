@@ -203,6 +203,11 @@
         <translation>Audio delay</translation>
     </message>
     <message>
+        <location filename="../ui/ContextMenu.qml" line="266"/>
+        <source>Hide invalid menu items</source>
+        <translation>Hide invalid menu items</translation>
+    </message>
+    <message>
         <location filename="../ui/ContextMenu.qml" line="278"/>
         <source>Network stream</source>
         <translation>Network stream</translation>
@@ -337,11 +342,6 @@
         <location filename="../ui/ContextMenu.qml" line="263"/>
         <source>Thumbnails</source>
         <translation>Thumbnails</translation>
-    </message>
-    <message>
-        <location filename="../ui/ContextMenu.qml" line="266"/>
-        <source>Hide unavailable items</source>
-        <translation>Hide unavailable items</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="290"/>
@@ -519,59 +519,59 @@
         <translation>120 fps</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2965"/>
-        <location filename="../PlayerViewModel.cpp" line="2973"/>
+        <location filename="../PlayerViewModel.cpp" line="2976"/>
+        <location filename="../PlayerViewModel.cpp" line="2984"/>
         <source>Source</source>
         <translation>Source</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2999"/>
+        <location filename="../PlayerViewModel.cpp" line="3010"/>
         <source>Output</source>
         <translation>Output</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3006"/>
+        <location filename="../PlayerViewModel.cpp" line="3017"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3034"/>
+        <location filename="../PlayerViewModel.cpp" line="3045"/>
         <source>VSR</source>
         <translation>VSR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3059"/>
+        <location filename="../PlayerViewModel.cpp" line="3070"/>
         <source>FRUC</source>
         <translation>FRUC</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3078"/>
-        <location filename="../PlayerViewModel.cpp" line="3083"/>
+        <location filename="../PlayerViewModel.cpp" line="3089"/>
+        <location filename="../PlayerViewModel.cpp" line="3094"/>
         <source>Decoder</source>
         <translation>Decoder</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3088"/>
+        <location filename="../PlayerViewModel.cpp" line="3099"/>
         <source>Speed</source>
         <translation>Speed</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3090"/>
+        <location filename="../PlayerViewModel.cpp" line="3101"/>
         <source>Time</source>
         <translation>Time</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3094"/>
+        <location filename="../PlayerViewModel.cpp" line="3105"/>
         <source>Frames</source>
         <translation>Frames</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3098"/>
+        <location filename="../PlayerViewModel.cpp" line="3109"/>
         <source>GPU</source>
         <translation>GPU</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3101"/>
+        <location filename="../PlayerViewModel.cpp" line="3112"/>
         <source>Audio</source>
         <translation>Audio</translation>
     </message>

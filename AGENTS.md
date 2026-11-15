@@ -671,8 +671,8 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 预生成；宽度可配置（`previewThumbWidth`，默认 320）但**本期不开放 UI**。
 
 **开关**：右键菜单新增 **「界面」** 组（`ContextMenu.qml` 的 `interfaceMenu()`），
-二级项是可 toggle 的界面元素：**缩略图**（`previewThumbnails`）与**隐藏不可用项**
-（`menuHideUnavailable`，见"右键菜单分组"一节），勾选态 = 开。toggle 型行的
+二级项是可 toggle 的界面元素：**缩略图**（`previewThumbnails`）与**隐藏无效菜单项**
+（`menuHideInvalid`，见"右键菜单分组"一节），勾选态 = 开。toggle 型行的
 约定：行带 `toggle`（布尔）+ `subSig`/`value`（元素 id），点一下**翻转且菜单保持
 打开**（`activateSubRow` 对 `toggle` 行提前 return），勾选态由
 `isCurrentSubRow()` 的 `row.toggle` 分支给出。关闭时 `PlayerViewModel` 直接
@@ -707,6 +707,12 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 **边界**：直播/线性流（`isLiveSource`，含"不可 seek/仅部分可 seek"）和纯音频（无视频轨）
 不启用；**网络点播（HTTP/HLS VOD，可 seek）允许**（用户 2026-11-15 报"网络流无法生成
 缩略图"是这里的过度拦截）——预览实例会自己再拉一次流，代价是带宽/首帧时延；
+**yt-dlp 源（YouTube 等，"网络流"菜单那类）**：主实例的 `stream-open-filename` 是
+`edl://`（内含签名直链），复制给预览实例未必能开，所以让**预览实例自己跑一次
+yt-dlp**（`ytdl=yes` + `ytdl-format=worst`，最小画质）。⚠ `ytdl` 不是运行期选项，
+只能在创建前设 → 在"直链/yt-dlp 源"之间切换时销毁重建实例（`instanceYtdl_`）。
+实测 YouTube：预览实例解析 + 首帧约 10–25 s（第二次 yt-dlp，后台进行，不影响播放），
+之后每次 seek 2–500 ms（网络相关）；本地/HTTP 直链不受影响（仍 10–85 ms）；
 `bd://`（本地 ISO）允许；3D 下缩略图按当前 `layout`/`half` **裁单眼**（默认左/上眼），
 预览面板只在**桌面 control 窗口**（presentation 里没有进度条）；内容 HDR 自动插
 `zscale/tonemap` 转 SDR。
@@ -715,7 +721,7 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 单眼裁剪/音频不启用/3D 会话）。Wayland 下 `QCursor::setPos` 无效，面板靠 RPC
 `debug-hover <秒|off>` 注入（同时强制显示 overlays，否则抓窗口只有视频）。
 RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-preview-width`、
-`set-preview-thumbnails`、`set-menu-hide-unavailable`。
+`set-preview-thumbnails`、`set-menu-hide-invalid`。
 
 ### 反交错（mpv 原生 `--deinterlace`，2026-10-22）
 
@@ -987,11 +993,10 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
 二级项支持右侧快捷键提示（行上写 `hint`，`SubRow` 渲染成灰字；主菜单同款）。
 
 ⚠ **无目标时默认「禁用」而不是「隐藏」**（用户 2026-11-15；「界面」菜单的第二个
-toggle = **「隐藏不可用项」/ Hide unavailable items**，`menuHideUnavailable`
-默认 **false**，打开才退回隐藏——用"**不可用**（当前上下文里用不了）"而不是
-"禁用"（这些项不是功能被关掉，而是此刻没有作用对象），也不是"未激活"
-（UI 术语里多指窗口/焦点）；词长要短（用户 2026-11-15 明确否掉
-"当前上下文中未激活的菜单选项"这类长句）：条目写 `enabledWhen`（而不是
+toggle = **「隐藏无效菜单项」/ Hide invalid menu items**，`menuHideInvalid`
+默认 **false**，打开才退回隐藏——用户 2026-11-15 定的口径：**"无效"**（此刻
+不成立/用不了）+ 宁可长一点也要准确；不要换成"禁用"（暗示功能被关掉）、
+"不可用/未激活"（前者不精确、后者在 UI 术语里多指窗口/焦点）：条目写 `enabledWhen`（而不是
 `visibleWhen`）→ 行**仍然占位**、文字/图标变灰
 （`#5a5a5a`）、不参与悬停/键盘/点击（委托 `enabled: usable` 会传播到
 HoverHandler/MouseArea/延迟控件），分组标题保持可见。`visibleWhen` 只留给

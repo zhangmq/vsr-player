@@ -123,7 +123,7 @@ PopupBase {
         // ── 轨道 / 流（按文件；无媒体时整块隐藏）──────────────────────
         {sep: true},
         {header: qsTr("Tracks"),
-         visibleWhen: function() { return !root.hideUnavailable || root.hasTracks() }},
+         visibleWhen: function() { return !root.hideInvalid || root.hasTracks() }},
         // 轨道/流入口**不显示当前值**：轨道名/流标题都很长（实测 39 条轨道、
         // "1080P 高清 · AV1 · 1.9M" 这类），在 230px 宽的菜单里会盖住条目名。
         // 当前值在二级面板里用勾选表达。
@@ -263,8 +263,8 @@ PopupBase {
             {label: qsTr("Thumbnails"),
              toggle: viewModel.previewThumbnails,
              subSig: "uiElementToggled", value: 0},
-            {label: qsTr("Hide unavailable items"),
-             toggle: viewModel.menuHideUnavailable,
+            {label: qsTr("Hide invalid menu items"),
+             toggle: viewModel.menuHideInvalid,
              subSig: "uiElementToggled", value: 1}
         ]
     }
@@ -494,23 +494,22 @@ PopupBase {
     function itemShown(it) {
         if (it.visibleWhen !== undefined && !it.visibleWhen()) return false
         // 「隐藏不可用项」打开时退回旧行为：不可用 = 直接不显示（不占高度）
-        if (root.hideUnavailable && it.enabledWhen !== undefined && !it.enabledWhen())
+        if (root.hideInvalid && it.enabledWhen !== undefined && !it.enabledWhen())
             return false
         return true
     }
 
-    /// 「隐藏不可用项」开关（用户 2026-11-15：界面菜单第二个 toggle）。
+    /// 「隐藏无效菜单项」开关（用户 2026-11-15：界面菜单第二个 toggle）。
     /// 默认 false = 当前上下文用不了的项**灰显占位**；true = 直接隐藏。
-    /// 用词"不可用"（unavailable）而非"禁用"：这些项不是功能被关掉，而是
-    /// 此刻没有作用对象；也比"未激活"短（后者在 UI 里多指窗口/焦点）。
-    readonly property bool hideUnavailable: viewModel.menuHideUnavailable
+    /// 用词"无效"（此刻不成立）——用户定的口径，宁可长一点也要准确。
+    readonly property bool hideInvalid: viewModel.menuHideInvalid
 
     /// 条目是否可用（`enabledWhen`）。不可用 = **仍然显示**但置灰、不参与
     /// 悬停/键盘/点击——用户 2026-11-15 要求"没有目标时禁用而不是隐藏"
     /// （隐藏会让菜单结构随内容跳动；禁用还顺带告诉用户这里有什么能力）。
     function itemEnabled(it) {
         if (it.enabledWhen === undefined) return true
-        return root.hideUnavailable ? true : it.enabledWhen()
+        return root.hideInvalid ? true : it.enabledWhen()
     }
 
     /// 分隔线是否画：向上找第一个可见条目，如果它也是分隔线就不画。

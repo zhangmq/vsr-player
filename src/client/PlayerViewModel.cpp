@@ -272,6 +272,17 @@ void PlayerViewModel::attach(MpvController *mpv) {
         });
     });
 
+    // stream-open-filename：yt-dlp 解析后 mpv 真正打开的流（YouTube 是 edl://，
+    // 直链则与 path 相同）。预览实例据此决定"自己跑一次 yt-dlp"还是直接开直链。
+    mpv_->observeProperty("stream-open-filename", MPV_FORMAT_STRING, [this, post] {
+        QString f = QString::fromStdString(mpv_->propertyString("stream-open-filename"));
+        post([this, f] {
+            if (openFilename_ == f) return;
+            openFilename_ = f;
+            updatePreviewSource();
+        });
+    });
+
     mpv_->observeProperty("filename", MPV_FORMAT_STRING, [this, post] {
         QString f = QString::fromStdString(mpv_->propertyString("filename"));
         post([this, f] { updateVideoInfo(f); });
@@ -919,7 +930,7 @@ void PlayerViewModel::loadSettings() {
     // 手改越界 → 夹回 160..640（默认 320：足够辨认场景，又不会盖住画面）。
     previewThumbWidth_ = clampInt(settings_.value("previewThumbWidth", 320).toInt(), 160, 640);
     previewThumbnails_ = settings_.value("previewThumbnails", true).toBool();
-    menuHideUnavailable_ = settings_.value("menuHideUnavailable", false).toBool();
+    menuHideInvalid_ = settings_.value("menuHideInvalid", false).toBool();
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -3182,6 +3193,9 @@ void PlayerViewModel::updatePreviewSource() {
     PreviewThumbnailer::Params p;
     p.width = previewThumbWidth_;
     p.path = usable ? path : QString();
+    // yt-dlp 源：mpv 的 stream-open-filename 与 path 不同（YouTube 是 edl://）。
+    // 这时预览实例必须自己解析（ytdl=yes），拿不到直链就永远出不了图。
+    p.ytdl = networkSource_ && !openFilename_.isEmpty() && openFilename_ != path;
     p.rotate = rotMode_.load();
     p.hdr = videoHdr_;
 
@@ -3278,15 +3292,15 @@ void PlayerViewModel::setPreviewThumbnails(bool on) {
 void PlayerViewModel::toggleUiElement(int id) {
     switch (id) {
     case 0: setPreviewThumbnails(!previewThumbnails_); break;
-    case 1: setMenuHideUnavailable(!menuHideUnavailable_); break;
+    case 1: setMenuHideInvalid(!menuHideInvalid_); break;
     default: break;
     }
 }
 
-void PlayerViewModel::setMenuHideUnavailable(bool on) {
-    if (menuHideUnavailable_ == on) return;
-    menuHideUnavailable_ = on;
-    emit menuHideUnavailableChanged();
-    saveSettings("menuHideUnavailable", on);
+void PlayerViewModel::setMenuHideInvalid(bool on) {
+    if (menuHideInvalid_ == on) return;
+    menuHideInvalid_ = on;
+    emit menuHideInvalidChanged();
+    saveSettings("menuHideInvalid", on);
 }
 

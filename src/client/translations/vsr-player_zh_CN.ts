@@ -203,6 +203,11 @@
         <translation>音频延迟</translation>
     </message>
     <message>
+        <location filename="../ui/ContextMenu.qml" line="266"/>
+        <source>Hide invalid menu items</source>
+        <translation>隐藏无效菜单项</translation>
+    </message>
+    <message>
         <location filename="../ui/ContextMenu.qml" line="278"/>
         <source>Network stream</source>
         <translation>网络流</translation>
@@ -339,11 +344,6 @@
         <translation>缩略图</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="266"/>
-        <source>Hide unavailable items</source>
-        <translation>隐藏不可用项</translation>
-    </message>
-    <message>
         <location filename="../ui/ContextMenu.qml" line="290"/>
         <source>Video tracks</source>
         <translation>视频轨道</translation>
@@ -461,59 +461,59 @@
 <context>
     <name>PlayerViewModel</name>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2965"/>
-        <location filename="../PlayerViewModel.cpp" line="2973"/>
+        <location filename="../PlayerViewModel.cpp" line="2976"/>
+        <location filename="../PlayerViewModel.cpp" line="2984"/>
         <source>Source</source>
         <translation>源</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2999"/>
+        <location filename="../PlayerViewModel.cpp" line="3010"/>
         <source>Output</source>
         <translation>输出</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3006"/>
+        <location filename="../PlayerViewModel.cpp" line="3017"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3034"/>
+        <location filename="../PlayerViewModel.cpp" line="3045"/>
         <source>VSR</source>
         <translation>超分</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3059"/>
+        <location filename="../PlayerViewModel.cpp" line="3070"/>
         <source>FRUC</source>
         <translation>插帧</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3078"/>
-        <location filename="../PlayerViewModel.cpp" line="3083"/>
+        <location filename="../PlayerViewModel.cpp" line="3089"/>
+        <location filename="../PlayerViewModel.cpp" line="3094"/>
         <source>Decoder</source>
         <translation>解码器</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3088"/>
+        <location filename="../PlayerViewModel.cpp" line="3099"/>
         <source>Speed</source>
         <translation>速度</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3090"/>
+        <location filename="../PlayerViewModel.cpp" line="3101"/>
         <source>Time</source>
         <translation>时间</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3094"/>
+        <location filename="../PlayerViewModel.cpp" line="3105"/>
         <source>Frames</source>
         <translation>帧数</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3098"/>
+        <location filename="../PlayerViewModel.cpp" line="3109"/>
         <source>GPU</source>
         <translation>显卡</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3101"/>
+        <location filename="../PlayerViewModel.cpp" line="3112"/>
         <source>Audio</source>
         <translation>音频</translation>
     </message>
