@@ -919,7 +919,7 @@ void PlayerViewModel::loadSettings() {
     // 手改越界 → 夹回 160..640（默认 320：足够辨认场景，又不会盖住画面）。
     previewThumbWidth_ = clampInt(settings_.value("previewThumbWidth", 320).toInt(), 160, 640);
     previewThumbnails_ = settings_.value("previewThumbnails", true).toBool();
-    menuHideDisabled_ = settings_.value("menuHideDisabled", false).toBool();
+    menuHideUnavailable_ = settings_.value("menuHideUnavailable", false).toBool();
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -3278,15 +3278,15 @@ void PlayerViewModel::setPreviewThumbnails(bool on) {
 void PlayerViewModel::toggleUiElement(int id) {
     switch (id) {
     case 0: setPreviewThumbnails(!previewThumbnails_); break;
-    case 1: setMenuHideDisabled(!menuHideDisabled_); break;
+    case 1: setMenuHideUnavailable(!menuHideUnavailable_); break;
     default: break;
     }
 }
 
-void PlayerViewModel::setMenuHideDisabled(bool on) {
-    if (menuHideDisabled_ == on) return;
-    menuHideDisabled_ = on;
-    emit menuHideDisabledChanged();
-    saveSettings("menuHideDisabled", on);
+void PlayerViewModel::setMenuHideUnavailable(bool on) {
+    if (menuHideUnavailable_ == on) return;
+    menuHideUnavailable_ = on;
+    emit menuHideUnavailableChanged();
+    saveSettings("menuHideUnavailable", on);
 }
 

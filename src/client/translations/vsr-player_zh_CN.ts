@@ -203,11 +203,6 @@
         <translation>音频延迟</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="266"/>
-        <source>Hide disabled menu items</source>
-        <translation>隐藏禁用的菜单项</translation>
-    </message>
-    <message>
         <location filename="../ui/ContextMenu.qml" line="278"/>
         <source>Network stream</source>
         <translation>网络流</translation>
@@ -342,6 +337,11 @@
         <location filename="../ui/ContextMenu.qml" line="263"/>
         <source>Thumbnails</source>
         <translation>缩略图</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="266"/>
+        <source>Hide unavailable items</source>
+        <translation>隐藏不可用项</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="290"/>

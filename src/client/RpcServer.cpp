@@ -1067,17 +1067,17 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                 response = formatResponse("success");
             }
         }
-    } else if (cmd == "set-menu-hide-disabled") {
-        // 测试/脚本用：是否隐藏禁用的菜单项（1 = 隐藏，0 = 灰显占位）——
-        // 正常入口 = 右键菜单「界面 → 隐藏禁用的菜单项」。
+    } else if (cmd == "set-menu-hide-unavailable") {
+        // 测试/脚本用：是否隐藏不可用的菜单项（1 = 隐藏，0 = 灰显占位）——
+        // 正常入口 = 右键菜单「界面 → 隐藏不可用项」。
         if (!vm) {
             response = formatResponse("no view model");
         } else if (args.empty()) {
-            response = formatResponse("usage: set-menu-hide-disabled <0|1>");
+            response = formatResponse("usage: set-menu-hide-unavailable <0|1>");
         } else {
             const bool on = args[0] != "0";
             PlayerViewModel *v = vm;
-            QMetaObject::invokeMethod(v, [v, on] { v->setMenuHideDisabled(on); },
+            QMetaObject::invokeMethod(v, [v, on] { v->setMenuHideUnavailable(on); },
                                       Qt::QueuedConnection);
             response = formatResponse("success");
         }

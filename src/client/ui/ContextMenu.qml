@@ -123,7 +123,7 @@ PopupBase {
         // ── 轨道 / 流（按文件；无媒体时整块隐藏）──────────────────────
         {sep: true},
         {header: qsTr("Tracks"),
-         visibleWhen: function() { return !root.hideDisabled || root.hasTracks() }},
+         visibleWhen: function() { return !root.hideUnavailable || root.hasTracks() }},
         // 轨道/流入口**不显示当前值**：轨道名/流标题都很长（实测 39 条轨道、
         // "1080P 高清 · AV1 · 1.9M" 这类），在 230px 宽的菜单里会盖住条目名。
         // 当前值在二级面板里用勾选表达。
@@ -263,8 +263,8 @@ PopupBase {
             {label: qsTr("Thumbnails"),
              toggle: viewModel.previewThumbnails,
              subSig: "uiElementToggled", value: 0},
-            {label: qsTr("Hide disabled menu items"),
-             toggle: viewModel.menuHideDisabled,
+            {label: qsTr("Hide unavailable items"),
+             toggle: viewModel.menuHideUnavailable,
              subSig: "uiElementToggled", value: 1}
         ]
     }
@@ -493,23 +493,24 @@ PopupBase {
     /// 条目是否显示（`visibleWhen` 缺省 = 恒显示；不满足条件的条目不占高度）。
     function itemShown(it) {
         if (it.visibleWhen !== undefined && !it.visibleWhen()) return false
-        // 「隐藏禁用的菜单项」打开时退回旧行为：禁用 = 直接不显示（不占高度）
-        if (root.hideDisabled && it.enabledWhen !== undefined && !it.enabledWhen())
+        // 「隐藏不可用项」打开时退回旧行为：不可用 = 直接不显示（不占高度）
+        if (root.hideUnavailable && it.enabledWhen !== undefined && !it.enabledWhen())
             return false
         return true
     }
 
-    /// 「隐藏禁用的菜单项」开关（用户 2026-11-15：界面菜单第二个 toggle）。
-    /// 默认 false = 禁用项灰显占位；true = 直接隐藏。命名对齐 LibreOffice
-    /// 的 HideDisabledMenuItems（避免 DontHide… 那种双重否定）。
-    readonly property bool hideDisabled: viewModel.menuHideDisabled
+    /// 「隐藏不可用项」开关（用户 2026-11-15：界面菜单第二个 toggle）。
+    /// 默认 false = 当前上下文用不了的项**灰显占位**；true = 直接隐藏。
+    /// 用词"不可用"（unavailable）而非"禁用"：这些项不是功能被关掉，而是
+    /// 此刻没有作用对象；也比"未激活"短（后者在 UI 里多指窗口/焦点）。
+    readonly property bool hideUnavailable: viewModel.menuHideUnavailable
 
     /// 条目是否可用（`enabledWhen`）。不可用 = **仍然显示**但置灰、不参与
     /// 悬停/键盘/点击——用户 2026-11-15 要求"没有目标时禁用而不是隐藏"
     /// （隐藏会让菜单结构随内容跳动；禁用还顺带告诉用户这里有什么能力）。
     function itemEnabled(it) {
         if (it.enabledWhen === undefined) return true
-        return root.hideDisabled ? true : it.enabledWhen()
+        return root.hideUnavailable ? true : it.enabledWhen()
     }
 
     /// 分隔线是否画：向上找第一个可见条目，如果它也是分隔线就不画。
