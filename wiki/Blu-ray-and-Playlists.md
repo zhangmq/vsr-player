@@ -17,8 +17,7 @@ the title you want.
 **3D Blu-ray (MVC) is not supported** — it would need software decoding of two dependent
 views and changes the whole GPU pipeline. Convert the disc to full-width SBS offline first,
 then play that with "3D glasses · side by side · full". The conversion scripts are public:
-<https://gist.github.com/zhangmq/cb457cb5263f2101b7adf36d81b46e31> (also described in
-[docs/handover-3d-conversion.md](https://github.com/zhangmq/vsr-player/blob/master/docs/handover-3d-conversion.md)).
+<https://gist.github.com/zhangmq/cb457cb5263f2101b7adf36d81b46e31>.
 
 ## Playlist persistence
 
