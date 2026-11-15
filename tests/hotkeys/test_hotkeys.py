@@ -163,6 +163,18 @@ def t3_popup_gating(p: Player) -> None:
     expect_eq(p.menu()["popups"], 0, "关菜单后弹窗计数归零")
 
 
+def first_focusable_row(st: dict) -> int:
+    """菜单里第一行"可聚焦"的实际索引（跳过表头 h=26 与分隔线 h=1）。
+
+    菜单现在有分组标题（文件/播放列表/首选项/轨道…），0 号条目是 header、
+    不可聚焦——断言不能再假设 Home 落在索引 0。
+    """
+    for r in st.get("rows", []):
+        if r["vis"] and r["h"] >= 30:
+            return r["idx"]
+    return -1
+
+
 def t2_menu_state_machine(p: Player) -> None:
     section("T2 菜单状态机")
     rpc = p.rpc
@@ -172,7 +184,7 @@ def t2_menu_state_machine(p: Player) -> None:
 
     rpc.key("Home")
     st = settle(p)
-    check(st["cur"] == 0, "Home 到第一行", st["cur"])
+    check(st["cur"] == first_focusable_row(st), "Home 到第一行", st["cur"])
     rpc.key("Down")
     st = settle(p)
     check(st["cur"] > 0, "↓ 下移", st["cur"])
@@ -289,7 +301,7 @@ def t2_menu_state_machine(p: Player) -> None:
     check(st["cur"] >= 0, "menu-key 入口生效", st["cur"])
     rpc.key("Home")
     st = settle(p)
-    expect_eq(st["cur"], 0, "真实按键入口生效")
+    expect_eq(st["cur"], first_focusable_row(st), "真实按键入口生效")
     check(True, "menu-key 与真实按键等价")
     p.close_menu()
 

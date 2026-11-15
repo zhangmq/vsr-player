@@ -92,7 +92,7 @@ Item {
         }
         Component.onCompleted: {
             _popups = [volumePopup, qualityPopup, trueHdrAdvancedPopup, speedPopup,
-                       aspectPopup, contextMenu, openMenu, urlPopup]
+                       aspectPopup, contextMenu, urlPopup]
             // 启动即按当前状态应用 auto-hide（onShowUiChanged 只在翻转时触发）
             viewModel.overlaysVisible = showUi
         }
@@ -123,7 +123,6 @@ Item {
             anchors { left: parent.left; right: parent.right; top: parent.top }
             videoInfo: viewModel.videoInfo
             overlaysVisible: viewModel.overlaysVisible
-            onOpenMenuRequested: openMenu.open()
         }
 
         // ── Center Play Button ─────────────────────────────────────
@@ -131,7 +130,26 @@ Item {
             anchors.fill: parent
             playing: viewModel.playing
             overlaysVisible: viewModel.overlaysVisible
+            // 无媒体时由 IdleScreen 接管中央区域（它的「继续上次播放」就是
+            // 同一个动作），否则两个东西会叠在一起。
+            visible: viewModel.hasMedia
             onClicked: viewModel.togglePlayPause()
+        }
+
+        // ── 无媒体：dropzone + 初始操作提示（用户 2026-11-15）────────
+        // 真正的拖放落点仍是窗口级 DropArea（这里只做视觉引导 + 快捷入口）。
+        IdleScreen {
+            id: idleScreen
+            anchors.fill: parent
+            // 任何 popup（含右键菜单）打开时让位：它是"空状态引导"，
+            // 菜单盖上来时还透出面板文字会显脏（菜单是半透明的）。
+            visible: !viewModel.hasMedia && !benchmarkMode && !uiLayer.anyPopupOpen
+            dragActive: dropArea.containsDrag
+            canContinue: viewModel.playlistModel.count > 0
+            onOpenFilesRequested: { fileDialog.mode = 0; fileDialog.open() }
+            onOpenFolderRequested: { folderDialog.mode = 0; folderDialog.open() }
+            onOpenUrlRequested: urlPopup.open()
+            onContinueRequested: viewModel.togglePlayPause()
         }
 
         // ── Bottom Bar（热区 + 进度条 + bottombar 一体）────────────
@@ -167,16 +185,6 @@ Item {
             onFullscreenClicked: viewModel.toggleFullscreen()
             onPlaylistClicked: root.togglePlaylist()
             onLoopClicked: viewModel.toggleLoop()
-        }
-
-        // ── 右上角打开菜单（文件/文件夹/URL 三入口）──────────────────
-        OpenMenu {
-            id: openMenu
-            anchorTarget: topBar.openBtn
-            onFileRequested: function() { fileDialog.mode = 0; fileDialog.open() }
-            onFolderRequested: function() { folderDialog.mode = 0; folderDialog.open() }
-            onUrlRequested: urlPopup.open()
-            onOpened: uiLayer.closeOtherPopups(openMenu)
         }
 
         // ── URL 输入弹窗（Ctrl+L 触发）──────────────────────────────

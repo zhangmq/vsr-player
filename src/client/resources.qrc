@@ -10,12 +10,12 @@
         <file>ui/CenterPlayBtn.qml</file>
         <file>ui/ProgressSlider.qml</file>
         <file>ui/SeekPreview.qml</file>
+        <file>ui/IdleScreen.qml</file>
         <file>ui/VolumePopup.qml</file>
         <file>ui/QualityPopup.qml</file>
         <file>ui/AspectPopup.qml</file>
         <file>ui/SpeedPopup.qml</file>
         <file>ui/ContextMenu.qml</file>
-        <file>ui/OpenMenu.qml</file>
         <file>ui/UrlPopup.qml</file>
         <file>ui/PlaylistPanel.qml</file>
         <file>ui/TrueHdrAdvancedPopup.qml</file>

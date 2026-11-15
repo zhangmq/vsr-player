@@ -975,6 +975,37 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
 - **依赖漂移检测**：`scripts/check-deps.sh [--record]` 记录构建时**系统库**快照（路径+mtime+size，排除仓库内自建产物——否则每次重建都误报），系统升级替换后提示重建；staging 目标用 `LD_LIBRARY_PATH` 模拟安装态解析。**soname 变更导致启动失败 → 跑 `build-from-source.sh` 重建**；用户侧排查见 README「故障排查」。
 - `scripts/install.sh`（用户端）：~/.local；VFX 从 **NVIDIA 官方索引 `pypi.nvidia.com`** 取 nvidia-vfx wheel（pypi.org 仅占位 sdist，2026-09 实测），curl 提取不调 pip 不改系统；VFX ~0.6GB 不随 tarball 分发（SLA）。⚠️ `set -euo pipefail` 下所有探测命令（nvidia-smi / pkg-config / curl 管道）必须 `|| true` 兜底，否则"未检测到"会变成"安装静默中止"（本项目实测踩过两次）。
 
+### 右键菜单分组 / 空状态 / 打开入口（2026-11-15）
+
+**菜单结构**（`ContextMenu.qml` 的 `items`，用户 2026-11-15 定）：
+`文件`（打开… ▸ 文件/文件夹/URL；删除文件）→ `播放列表`（添加… ▸ 文件夹/文件；
+从播放列表移除）→ `首选项`（界面 ▸ …）→ `轨道` → `画面处理` → `3D` → `退出`。
+二级项支持右侧快捷键提示（行上写 `hint`，`SubRow` 渲染成灰字；主菜单同款）。
+
+⚠ **无目标时用「禁用」而不是「隐藏」**（用户 2026-11-15）：条目写
+`enabledWhen`（而不是 `visibleWhen`）→ 行**仍然占位**、文字/图标变灰
+（`#5a5a5a`）、不参与悬停/键盘/点击（委托 `enabled: usable` 会传播到
+HoverHandler/MouseArea/延迟控件），分组标题保持可见。`visibleWhen` 只留给
+「这一行根本不该出现」的场合（当前没有）；`rowFocusable()` 同时看
+`itemShown` 与 `itemEnabled`，键盘不会停在灰行上。
+
+**空状态**（`ui/IdleScreen.qml`）：没有活动文件时在中央显示 dropzone 面板——
+"把文件拖到这里 / 或使用下面的方式打开" + 三行快捷入口（文件/文件夹/URL，
+带快捷键）+ 有可续播列表时多一行「继续上次播放」。真正的拖放落点仍是
+**窗口级 DropArea**（`main.qml`），IdleScreen 只做引导；`dragActive` 由
+`dropArea.containsDrag` 传入，拖入时边框变 `#ffcc00`。任何 popup 打开时
+空状态让位（`!uiLayer.anyPopupOpen`）——菜单是半透明的，后面透出面板文字会显脏。
+无媒体时 `CenterPlayBtn` 隐藏（同一区域让给空状态；续播入口在面板里）。
+
+**右上角「打开」按钮已移除**（用户 2026-11-15：与右键菜单/快捷键冗余）：
+`TopBar.qml` 不再有按钮/`openMenuRequested`，`ui/OpenMenu.qml` 与
+`main.qml` 的实例一并删除；打开入口 = 右键菜单「文件 → 打开…」+ 快捷键
+（Ctrl+O / Ctrl+Shift+O / Ctrl+L）+ 拖放 + 空状态面板。
+
+**测试**：`test_hotkeys.py` 的「Home 到第一行」不再假设索引 0——用
+`rpc.menu_state()["rows"]`（逐行 y/h/vis）取**第一个可聚焦行**（h≥30 且可见；
+表头 h=26、分隔线 h=1）。
+
 ### 按键 / 快捷键（键位表，2026-11-03 重构）
 
 **唯一来源 = `src/client/Keymap.cpp` 的表**（58 行 / 48 个动作）；执行 =
