@@ -10,6 +10,7 @@
   T6 3D 单眼裁剪（set-stereo-map sbs full/half → 缩略图高度翻倍/还原）
   T7 纯音频 / 无视频轨 → 不启用（preview 明确报不可用，不空等）
   T8 3D 会话里面板落在桌面 control 窗口（有副屏时）
+  T9 右键菜单「界面 → 缩略图」开关（关闭后只显示时间气泡）
 
 Wayland 下无法程序化移动指针（QCursor::setPos 无效），悬浮用 RPC
 `debug-hover <秒>` 注入（见 PlayerViewModel::setPreviewDebugHoverMs）。
@@ -25,7 +26,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from harness import (Player, check, expect_eq, section, summary, wait_until)
+from harness import (Player, check, expect_eq, section, settle, summary,
+                     wait_until)
 
 SOCK = Path("/tmp/vsr-thumbnails.sock")
 LOG = Path("/tmp/vsr-thumbnails.log")
@@ -208,6 +210,52 @@ def t6_3d_crop(p: Player) -> None:
     crop_size("t6d", (320, 180), "复位 → 320x180")
 
 
+def t9_toggle(p: Player) -> None:
+    section("T9 「界面」菜单开关缩略图")
+    rpc = p.rpc
+
+    rpc.call("set-preview-thumbnails", "1")
+    wait_until(lambda: rpc.call("get-preview-state").get("data", {}).get("ready") is True,
+               "缩略图就绪", timeout=20)
+    r = preview(rpc, "t9a", 20)
+    check(r["ok"], "开启时有缩略图", r["err"])
+
+    # 菜单路径：界面 → 缩略图（toggle 后菜单保持打开）
+    p.open_menu()
+    st = {}
+    for _ in range(40):
+        st = settle(p)
+        row = st.get("currentRow", "")
+        if "Interface" in row or "界面" in row:
+            break
+        rpc.key("Down")
+        time.sleep(0.05)
+    row = st.get("currentRow", "")
+    check("Interface" in row or "界面" in row, "导航到「界面」行", row)
+    rpc.key("Right")
+    st = settle(p)
+    expect_eq(st.get("subOpen"), 1, "二级面板展开")
+
+    rpc.key("Enter")
+    st = settle(p)
+    expect_eq(st.get("ctxVisible"), 1, "toggle 后菜单保持打开")
+    off = wait_until(lambda: (lambda d: d if d and d.get("thumbs") is False else None)(
+        rpc.call("get-preview-state").get("data")), "缩略图关闭", timeout=10)
+    check(off.get("ready") is False, "关闭后预览实例卸载", off)
+    r2 = rpc.call("preview", str(OUT / "t9_off.png"), "21", timeout=10)
+    check("not available" in (r2.get("error") or ""), "关闭后明确报不可用", r2)
+
+    rpc.key("Enter")
+    wait_until(lambda: rpc.call("get-preview-state").get("data", {}).get("ready") is True,
+               "重新开启并载入", timeout=20)
+    rpc.key("Escape")
+    time.sleep(0.2)
+    rpc.key("Escape")
+    time.sleep(0.3)
+    r3 = preview(rpc, "t9b", 22)
+    check(r3["ok"], "重新开启后有缩略图", r3["err"])
+
+
 def t7_audio() -> None:
     section("T7 纯音频不启用")
     with Player(SOCK.with_name("vsr-thumb-audio.sock"),
@@ -261,12 +309,18 @@ def main() -> int:
     section("启动（带章节的 30s 测试片）")
     with Player(SOCK, LOG, [str(FIXTURE)]) as p:
         p.rpc.call("set_property", "pause", "yes")
+        # 开关是持久化的（右键菜单「界面 → 缩略图」）：上一轮跑成关闭状态时
+        # 这一轮要先明确打开，否则 T1 永远等不到实例载入。
+        p.rpc.call("set-preview-thumbnails", "1")
+        wait_until(lambda: p.rpc.call("get-preview-state").get("data", {}).get("thumbs") is True,
+                   "缩略图开关打开", timeout=10)
         t1_basic(p)
         t2_bucket_cache(p)
         t3_width(p)
         t4_chapters(p)
         t5_ui(p)
         t6_3d_crop(p)
+        t9_toggle(p)
         t8_3d_window(p)
     t7_audio()
     return summary()

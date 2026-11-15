@@ -1021,6 +1021,7 @@ void RpcServer::handleLine(int fd, const std::string &line) {
         } else if (PreviewThumbnailer *th = vm->thumbnailer()) {
             QJsonObject o;
             o.insert("ready", vm->previewReady());
+            o.insert("thumbs", vm->previewThumbnails());
             o.insert("serial", double(th->serial()));
             o.insert("loaded", th->hasSource());
             o.insert("path", QString::fromStdString(th->sourcePath().toStdString()));
@@ -1065,6 +1066,19 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                                           Qt::QueuedConnection);
                 response = formatResponse("success");
             }
+        }
+    } else if (cmd == "set-preview-thumbnails") {
+        // 测试/脚本用：开关进度条缩略图（正常入口 = 右键菜单「界面 → 缩略图」）。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: set-preview-thumbnails <0|1>");
+        } else {
+            const bool on = args[0] != "0";
+            PlayerViewModel *v = vm;
+            QMetaObject::invokeMethod(v, [v, on] { v->setPreviewThumbnails(on); },
+                                      Qt::QueuedConnection);
+            response = formatResponse("success");
         }
     } else if (cmd == "debug-hover") {
         // 测试钩子：伪造"指针悬停在进度条某时间"（Wayland 下无法程序化移动

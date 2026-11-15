@@ -135,251 +135,261 @@
 <context>
     <name>ContextMenu</name>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="141"/>
-        <location filename="../ui/ContextMenu.qml" line="234"/>
-        <location filename="../ui/ContextMenu.qml" line="256"/>
+        <location filename="../ui/ContextMenu.qml" line="143"/>
+        <location filename="../ui/ContextMenu.qml" line="240"/>
         <location filename="../ui/ContextMenu.qml" line="273"/>
-        <location filename="../ui/ContextMenu.qml" line="417"/>
+        <location filename="../ui/ContextMenu.qml" line="290"/>
+        <location filename="../ui/ContextMenu.qml" line="434"/>
         <source>Auto</source>
         <translation>自动</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="142"/>
-        <location filename="../ui/ContextMenu.qml" line="418"/>
+        <location filename="../ui/ContextMenu.qml" line="144"/>
+        <location filename="../ui/ContextMenu.qml" line="435"/>
         <source>Force</source>
         <translation>强制</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="140"/>
-        <location filename="../ui/ContextMenu.qml" line="149"/>
-        <location filename="../ui/ContextMenu.qml" line="161"/>
-        <location filename="../ui/ContextMenu.qml" line="289"/>
-        <location filename="../ui/ContextMenu.qml" line="291"/>
-        <location filename="../ui/ContextMenu.qml" line="320"/>
-        <location filename="../ui/ContextMenu.qml" line="419"/>
-        <location filename="../ui/ContextMenu.qml" line="434"/>
-        <location filename="../ui/ContextMenu.qml" line="454"/>
+        <location filename="../ui/ContextMenu.qml" line="142"/>
+        <location filename="../ui/ContextMenu.qml" line="151"/>
+        <location filename="../ui/ContextMenu.qml" line="163"/>
+        <location filename="../ui/ContextMenu.qml" line="306"/>
+        <location filename="../ui/ContextMenu.qml" line="308"/>
+        <location filename="../ui/ContextMenu.qml" line="337"/>
+        <location filename="../ui/ContextMenu.qml" line="436"/>
+        <location filename="../ui/ContextMenu.qml" line="451"/>
+        <location filename="../ui/ContextMenu.qml" line="471"/>
         <source>Off</source>
         <translation>关闭</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="92"/>
+        <location filename="../ui/ContextMenu.qml" line="94"/>
         <source>Open file</source>
         <translation>打开文件</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="93"/>
+        <location filename="../ui/ContextMenu.qml" line="95"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="94"/>
+        <location filename="../ui/ContextMenu.qml" line="96"/>
         <source>Open URL</source>
         <translation>打开 URL</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="95"/>
+        <location filename="../ui/ContextMenu.qml" line="97"/>
         <source>Add files to playlist</source>
         <translation>追加文件到播放列表</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="96"/>
+        <location filename="../ui/ContextMenu.qml" line="98"/>
         <source>Add folder to playlist</source>
         <translation>追加文件夹到播放列表</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="98"/>
+        <location filename="../ui/ContextMenu.qml" line="100"/>
         <source>Remove from playlist</source>
         <translation>从播放列表移除</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="100"/>
+        <location filename="../ui/ContextMenu.qml" line="102"/>
         <source>Delete file</source>
         <translation>删除文件</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="105"/>
+        <location filename="../ui/ContextMenu.qml" line="107"/>
         <source>Tracks</source>
         <translation>轨道</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="112"/>
+        <location filename="../ui/ContextMenu.qml" line="114"/>
         <source>Video</source>
         <translation>视频</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="115"/>
+        <location filename="../ui/ContextMenu.qml" line="117"/>
         <source>Audio</source>
         <translation>音频</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="122"/>
+        <location filename="../ui/ContextMenu.qml" line="124"/>
         <source>Subtitles</source>
         <translation>字幕</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="127"/>
+        <location filename="../ui/ContextMenu.qml" line="129"/>
         <source>Subtitle delay</source>
         <translation>字幕延迟</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="129"/>
+        <location filename="../ui/ContextMenu.qml" line="131"/>
         <source>Audio delay</source>
         <translation>音频延迟</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="243"/>
+        <location filename="../ui/ContextMenu.qml" line="260"/>
         <source>Network stream</source>
         <translation>网络流</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="134"/>
+        <location filename="../ui/ContextMenu.qml" line="136"/>
         <source>Picture processing</source>
         <translation>画面处理</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="135"/>
+        <location filename="../ui/ContextMenu.qml" line="137"/>
         <source>Deinterlace</source>
         <translation>反交错</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="144"/>
+        <location filename="../ui/ContextMenu.qml" line="146"/>
         <source>Rotate</source>
         <translation>旋转</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="150"/>
-        <location filename="../ui/ContextMenu.qml" line="452"/>
+        <location filename="../ui/ContextMenu.qml" line="152"/>
+        <location filename="../ui/ContextMenu.qml" line="469"/>
         <source>90°</source>
         <translation>90°</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="151"/>
-        <location filename="../ui/ContextMenu.qml" line="453"/>
+        <location filename="../ui/ContextMenu.qml" line="153"/>
+        <location filename="../ui/ContextMenu.qml" line="470"/>
         <source>270°</source>
         <translation>270°</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="155"/>
+        <location filename="../ui/ContextMenu.qml" line="157"/>
         <source>3D</source>
         <translation>3D</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="156"/>
+        <location filename="../ui/ContextMenu.qml" line="158"/>
         <source>Output mode</source>
         <translation>输出方式</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="162"/>
-        <location filename="../ui/ContextMenu.qml" line="432"/>
+        <location filename="../ui/ContextMenu.qml" line="164"/>
+        <location filename="../ui/ContextMenu.qml" line="449"/>
         <source>3D glasses</source>
         <translation>眼镜 3D</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="165"/>
+        <location filename="../ui/ContextMenu.qml" line="167"/>
         <source>Source layout</source>
         <translation>片源格式</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="170"/>
+        <location filename="../ui/ContextMenu.qml" line="172"/>
         <source>Side by side · full</source>
         <translation>左右 · 全幅</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="171"/>
+        <location filename="../ui/ContextMenu.qml" line="173"/>
         <source>Side by side · half</source>
         <translation>左右 · 半幅</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="172"/>
+        <location filename="../ui/ContextMenu.qml" line="174"/>
         <source>Top and bottom · full</source>
         <translation>上下 · 全幅</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="173"/>
+        <location filename="../ui/ContextMenu.qml" line="175"/>
         <source>Top and bottom · half</source>
         <translation>上下 · 半幅</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="175"/>
+        <location filename="../ui/ContextMenu.qml" line="177"/>
         <source>Output option</source>
         <translation>输出选项</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="192"/>
+        <location filename="../ui/ContextMenu.qml" line="187"/>
+        <source>Interface</source>
+        <translation>界面</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="198"/>
         <source>Track %1</source>
         <translation>轨 %1</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="199"/>
+        <location filename="../ui/ContextMenu.qml" line="205"/>
         <source>External</source>
         <translation>外部</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="255"/>
+        <location filename="../ui/ContextMenu.qml" line="248"/>
+        <source>Thumbnails</source>
+        <translation>缩略图</translation>
+    </message>
+    <message>
+        <location filename="../ui/ContextMenu.qml" line="272"/>
         <source>Video tracks</source>
         <translation>视频轨道</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="321"/>
+        <location filename="../ui/ContextMenu.qml" line="338"/>
         <source>Load subtitle file…</source>
         <translation>加载字幕文件…</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="324"/>
+        <location filename="../ui/ContextMenu.qml" line="341"/>
         <source>Remove external subtitle</source>
         <translation>移除外部字幕</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="330"/>
+        <location filename="../ui/ContextMenu.qml" line="347"/>
         <source>Nearby subtitles</source>
         <translation>附近字幕</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="352"/>
+        <location filename="../ui/ContextMenu.qml" line="369"/>
         <source>Subtitle tracks</source>
         <translation>字幕轨道</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="442"/>
+        <location filename="../ui/ContextMenu.qml" line="459"/>
         <source>Top and bottom</source>
         <translation>上下并列</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="442"/>
+        <location filename="../ui/ContextMenu.qml" line="459"/>
         <source>Side by side</source>
         <translation>左右并排</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="443"/>
+        <location filename="../ui/ContextMenu.qml" line="460"/>
         <source>half</source>
         <translation>半</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="443"/>
+        <location filename="../ui/ContextMenu.qml" line="460"/>
         <source>full</source>
         <translation>全</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="181"/>
-        <location filename="../ui/ContextMenu.qml" line="447"/>
+        <location filename="../ui/ContextMenu.qml" line="183"/>
+        <location filename="../ui/ContextMenu.qml" line="464"/>
         <source>Right eye</source>
         <translation>右眼</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="180"/>
-        <location filename="../ui/ContextMenu.qml" line="447"/>
+        <location filename="../ui/ContextMenu.qml" line="182"/>
+        <location filename="../ui/ContextMenu.qml" line="464"/>
         <source>Left eye</source>
         <translation>左眼</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="163"/>
-        <location filename="../ui/ContextMenu.qml" line="433"/>
+        <location filename="../ui/ContextMenu.qml" line="165"/>
+        <location filename="../ui/ContextMenu.qml" line="450"/>
         <source>2D output</source>
         <translation>2D 输出</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="184"/>
+        <location filename="../ui/ContextMenu.qml" line="190"/>
         <source>Quit</source>
         <translation>退出</translation>
     </message>
@@ -413,59 +423,59 @@
 <context>
     <name>PlayerViewModel</name>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2963"/>
-        <location filename="../PlayerViewModel.cpp" line="2971"/>
+        <location filename="../PlayerViewModel.cpp" line="2964"/>
+        <location filename="../PlayerViewModel.cpp" line="2972"/>
         <source>Source</source>
         <translation>源</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2997"/>
+        <location filename="../PlayerViewModel.cpp" line="2998"/>
         <source>Output</source>
         <translation>输出</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3004"/>
+        <location filename="../PlayerViewModel.cpp" line="3005"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3032"/>
+        <location filename="../PlayerViewModel.cpp" line="3033"/>
         <source>VSR</source>
         <translation>超分</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3057"/>
+        <location filename="../PlayerViewModel.cpp" line="3058"/>
         <source>FRUC</source>
         <translation>插帧</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3076"/>
-        <location filename="../PlayerViewModel.cpp" line="3081"/>
+        <location filename="../PlayerViewModel.cpp" line="3077"/>
+        <location filename="../PlayerViewModel.cpp" line="3082"/>
         <source>Decoder</source>
         <translation>解码器</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3086"/>
+        <location filename="../PlayerViewModel.cpp" line="3087"/>
         <source>Speed</source>
         <translation>速度</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3088"/>
+        <location filename="../PlayerViewModel.cpp" line="3089"/>
         <source>Time</source>
         <translation>时间</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3092"/>
+        <location filename="../PlayerViewModel.cpp" line="3093"/>
         <source>Frames</source>
         <translation>帧数</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3096"/>
+        <location filename="../PlayerViewModel.cpp" line="3097"/>
         <source>GPU</source>
         <translation>显卡</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3099"/>
+        <location filename="../PlayerViewModel.cpp" line="3100"/>
         <source>Audio</source>
         <translation>音频</translation>
     </message>
@@ -919,54 +929,54 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="484"/>
+        <location filename="../main.qml" line="487"/>
         <source>Open media</source>
         <translation>打开媒体</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="496"/>
+        <location filename="../main.qml" line="499"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>音频文件 (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="488"/>
-        <location filename="../main.qml" line="497"/>
+        <location filename="../main.qml" line="491"/>
+        <location filename="../main.qml" line="500"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>字幕文件 (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="475"/>
+        <location filename="../main.qml" line="478"/>
         <source>Add folder to playlist</source>
         <translation>追加文件夹到播放列表</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="476"/>
+        <location filename="../main.qml" line="479"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="489"/>
-        <location filename="../main.qml" line="498"/>
+        <location filename="../main.qml" line="492"/>
+        <location filename="../main.qml" line="501"/>
         <source>All files (*)</source>
         <translation>所有文件 (*)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="491"/>
+        <location filename="../main.qml" line="494"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>媒体文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="492"/>
+        <location filename="../main.qml" line="495"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</source>
         <translation>视频文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="495"/>
+        <location filename="../main.qml" line="498"/>
         <source>Blu-ray images (*.iso)</source>
         <translation>蓝光镜像 (*.iso)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="677"/>
+        <location filename="../main.qml" line="680"/>
         <source>请戴上眼镜观看</source>
         <translation>请戴上眼镜观看</translation>
     </message>

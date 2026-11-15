@@ -194,6 +194,10 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(QSize previewImageSize READ previewImageSize NOTIFY previewImageChanged)
     /// 预览实例是否可用（有可解码的视频文件）——网络流/纯音频/直播为 false。
     Q_PROPERTY(bool previewReady READ previewReady NOTIFY previewStateChanged)
+    /// 进度条缩略图开关（右键菜单「界面 → 缩略图」）。关闭后悬停只显示时间
+    /// 气泡；预览实例随之卸载（不白耗解码）。
+    Q_PROPERTY(bool previewThumbnails READ previewThumbnails WRITE setPreviewThumbnails
+               NOTIFY previewThumbnailsChanged)
     /// 缩略图目标宽度（像素）。可配置，但**本期不开放 UI**（用户 2026-11-15）。
     Q_PROPERTY(int previewThumbWidth READ previewThumbWidth WRITE setPreviewThumbWidth
                NOTIFY previewThumbWidthChanged)
@@ -425,6 +429,10 @@ public:
     /// 最新一帧缩略图（QQuickImageProvider 用；跨线程安全）。
     QImage previewImage() const;
     bool previewReady() const;
+    bool previewThumbnails() const { return previewThumbnails_; }
+    void setPreviewThumbnails(bool on);
+    /// 右键菜单「界面」二级项：按 id 翻转界面元素（0 = 缩略图）。
+    Q_INVOKABLE void toggleUiElement(int id);
     int previewThumbWidth() const { return previewThumbWidth_; }
     QVariantList chapters() const { return chapters_; }
     int previewDebugHoverMs() const { return previewDebugHoverMs_; }
@@ -601,6 +609,7 @@ signals:
     void previewImageChanged();
     void previewStateChanged();
     void previewThumbWidthChanged();
+    void previewThumbnailsChanged();
     void chaptersChanged();
     void previewDebugHoverMsChanged();
     void playingChanged();
@@ -763,6 +772,7 @@ private:
 
     MpvController *mpv_ = nullptr;
     PreviewThumbnailer *preview_ = nullptr;   ///< 懒创建；benchmark 下不创建
+    bool previewThumbnails_ = true;
     int previewThumbWidth_ = 320;
     bool previewEnabled_ = true;              ///< benchmark/关闭开关
     int previewDebugHoverMs_ = -1;

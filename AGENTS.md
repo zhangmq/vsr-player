@@ -670,6 +670,15 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 时退化成只显示时间的**小气泡**。**不做**拖动时整条缩略图带、不做后台 storyboard
 预生成；宽度可配置（`previewThumbWidth`，默认 320）但**本期不开放 UI**。
 
+**开关**：右键菜单新增 **「界面」** 组（`ContextMenu.qml` 的 `interfaceMenu()`），
+二级项是可 toggle 的界面元素，第一个是**缩略图**（勾选态 = 开）。toggle 型行的
+约定：行带 `toggle`（布尔）+ `subSig`/`value`（元素 id），点一下**翻转且菜单保持
+打开**（`activateSubRow` 对 `toggle` 行提前 return），勾选态由
+`isCurrentSubRow()` 的 `row.toggle` 分支给出。关闭时 `PlayerViewModel` 直接
+**卸载预览实例**（不白耗解码），悬停只剩时间气泡；开关持久化到
+`previewThumbnails`（默认 on）。RPC/测试：`set-preview-thumbnails <0|1>`、
+`get-preview-state` 里的 `thumbs` 字段。
+
 **引擎 = 进程内第二个 libmpv 实例 + `MPV_RENDER_API_TYPE_SW`**（即"内置解码器实时解"；
 不是子进程、不走 ffmpeg、不建 GPU 上下文）。代码：`src/client/PreviewThumbnailer.*`。
 取帧尺寸由 `SW_SIZE` 决定（mpv 用 sws 缩放），宽高比取 `video-out-params` 的 `dw/dh`。

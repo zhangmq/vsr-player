@@ -251,3 +251,5 @@ vsr-player: ../video/mp_image.c:607: mp_image_crop: 断言 "x1 <= img->w && y1 <
 - 网络流/直播/纯音频不启用（`networkSource` / `isLiveSource` / 无视频轨）。
 - `bd://` 蓝光标题允许预览（本地 ISO），但每次取帧要走 libbluray 定位。
 - 预览实例软解：4K exact 精修偶发 >1 s。
+
+（补充）RPC `set-preview-thumbnails <0|1>`：等价右键菜单「界面 → 缩略图」。

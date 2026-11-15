@@ -918,6 +918,7 @@ void PlayerViewModel::loadSettings() {
     // ── 进度条缩略图宽度（可配置；本期不开放 UI —— 用户 2026-11-15）──────
     // 手改越界 → 夹回 160..640（默认 320：足够辨认场景，又不会盖住画面）。
     previewThumbWidth_ = clampInt(settings_.value("previewThumbWidth", 320).toInt(), 160, 640);
+    previewThumbnails_ = settings_.value("previewThumbnails", true).toBool();
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -3173,8 +3174,8 @@ void PlayerViewModel::updatePreviewSource() {
     const QString path = lastPath_;
     // 网络源不取帧（等于二次下载 + 额外解码）；bd:// 是本地 ISO，允许。
     const bool netStream = networkSource_ && !path.startsWith(QStringLiteral("bd:"));
-    const bool usable = previewEnabled_ && fileLoaded_ && !path.isEmpty() && haveVideo &&
-                        !isLiveSource() && !netStream;
+    const bool usable = previewEnabled_ && previewThumbnails_ && fileLoaded_ &&
+                        !path.isEmpty() && haveVideo && !isLiveSource() && !netStream;
 
     PreviewThumbnailer::Params p;
     p.width = previewThumbWidth_;
@@ -3258,5 +3259,23 @@ void PlayerViewModel::setPreviewDebugHoverMs(int ms) {
     } else {
         setOverlaysVisible(true);   // 测试钩子同时把 UI 显示出来（否则抓不到面板）
         requestPreview(ms);
+    }
+}
+
+void PlayerViewModel::setPreviewThumbnails(bool on) {
+    if (previewThumbnails_ == on) return;
+    previewThumbnails_ = on;
+    emit previewThumbnailsChanged();
+    saveSettings("previewThumbnails", on);
+    if (!on) cancelPreview();
+    // 关掉 → 预览实例卸载（不再解码）；打开 → 重新 loadfile，下次悬停即出图。
+    updatePreviewSource();
+    MLOG_INFO("preview: thumbnails %s", on ? "on" : "off (time bubble only)");
+}
+
+void PlayerViewModel::toggleUiElement(int id) {
+    switch (id) {
+    case 0: setPreviewThumbnails(!previewThumbnails_); break;
+    default: break;
     }
 }
