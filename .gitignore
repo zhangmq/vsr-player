@@ -27,4 +27,6 @@ logs/
 references/
 docs/notes/
 docs/superpowers/
+# 会话接手文档（上下文压缩用，只在本地，不进 git）
+docs/handover/
 

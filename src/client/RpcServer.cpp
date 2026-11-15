@@ -1,6 +1,7 @@
 #include "RpcServer.h"
 #include "MpvController.h"
 #include "PlayerViewModel.h"
+#include "PreviewThumbnailer.h"
 #include "StereoController.h"
 #include "Keymap.h"
 #include "KeyRouter.h"
@@ -19,8 +20,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <thread>
 #include <cstdlib>
 #include <cstring>
 #include <sys/socket.h>
@@ -140,6 +143,20 @@ QQuickWindow *RpcServer::uiWindow()
         cw = active ? sc->controlWindow() : nullptr;
     }, Qt::BlockingQueuedConnection);
     return (active && cw) ? cw : win_;
+}
+
+// 等"缩略图策略可用"（最多 5 s）：刚 loadfile 时视频参数/网络解析还没到位，
+// 立刻判死会让"打开网络流立刻取帧"变成假失败（2026-11-15 实测 T10 偶发超时）。
+// 只在 RPC 线程用，不碰 GUI/mpv 锁。
+static bool waitPreviewAvailable(PlayerViewModel *vm)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (vm->previewAvailable())
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return vm->previewAvailable();
 }
 
 void RpcServer::handleLine(int fd, const std::string &line) {
@@ -273,6 +290,31 @@ void RpcServer::handleLine(int fd, const std::string &line) {
         else {
             QMetaObject::invokeMethod(vm, "playlistClear", Qt::QueuedConnection);
             response = formatResponse("success");
+        }
+    } else if (cmd == "get-media-phase") {
+        // 空状态区状态机（测试用）：0=idle 1=opening 2=playing 3=failed
+        if (!vm) response = formatResponse("no view model");
+        else {
+            QJsonObject o;
+            o.insert("phase", vm->mediaPhase());
+            o.insert("detail", vm->mediaPhaseDetail());
+            o.insert("canRetry", vm->canRetryOpen());
+            response = formatResponse(
+                "", QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString());
+        }
+    } else if (cmd == "playlist-play") {
+        // 按索引点播放列表条目（等价面板点击）：测试"用户主动切换即恢复播放"。
+        if (!vm) response = formatResponse("no view model");
+        else if (args.empty()) response = formatResponse("usage: playlist-play <index>");
+        else {
+            bool ok = false;
+            const int idx = QString::fromStdString(args[0]).toInt(&ok);
+            if (!ok) response = formatResponse("invalid index");
+            else {
+                QMetaObject::invokeMethod(vm, "playlistPlayIndex", Qt::QueuedConnection,
+                                          Q_ARG(int, idx));
+                response = formatResponse("success");
+            }
         }
     } else if (cmd == "remove-current") {
         // 从播放列表移除当前条目（不碰磁盘）。
@@ -974,6 +1016,182 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             m += extra;
             response = formatResponse("success", "\"" + jsonEscape(m) + "\"");
         }
+    } else if (cmd == "preview") {
+        // 进度条缩略图：请求某位置的缩略图并落盘为 PNG。
+        //   preview <out.png> <seconds>
+        // 同步等待（RPC 线程阻塞；GUI 线程只被投递 requestPreview）。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.size() < 2) {
+            response = formatResponse("usage: preview <out.png> <seconds>");
+        } else {
+            PreviewThumbnailer *th = vm->thumbnailer();
+            char *end = nullptr;
+            const double sec = strtod(args[1].c_str(), &end);
+            if (!th || end == args[1].c_str() || *end != '\0' || !std::isfinite(sec)) {
+                response = formatResponse("invalid arguments");
+            } else if (!waitPreviewAvailable(vm)) {
+                // 无视频轨 / 直播 / 停止态：不发起请求（否则要等超时）。
+                // ⚠ 判据用 available（策略）而不是 ready（实例已载入）：
+                // 网络源是懒加载的，第一次请求前实例本来就没载入。
+                // 但它也是**时序相关**的（刚 loadfile 时视频参数还没到）——
+                // 这里最多等 5 s 再判死，否则"打开网络流立刻取帧"会因为
+                // 抢在前面而被判成不可用（2026-11-15 实测：T10 偶发超时）。
+                response = formatResponse("preview not available (no video, or live stream)");
+            } else {
+                const qint64 ms = qint64(sec * 1000.0);
+                const quint64 before = th->servedEpoch();
+                PlayerViewModel *v = vm;
+                QMetaObject::invokeMethod(v, [v, ms] { v->requestPreview(ms); },
+                                          Qt::QueuedConnection);
+                QImage img;
+                if (!th->waitForServe(before, 5000, &img)) {
+                    response = formatResponse("timeout (no frame)");
+                } else if (!img.save(QString::fromStdString(args[0]))) {
+                    response = formatResponse("save failed");
+                } else {
+                    QJsonObject o;
+                    o.insert("w", img.width());
+                    o.insert("h", img.height());
+                    o.insert("latencyMs", double(th->lastLatencyMs()));
+                    o.insert("serial", double(th->serial()));
+                    response = formatResponse(
+                        "", QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString());
+                }
+            }
+        }
+    } else if (cmd == "open") {
+        // 打开一个源（等价菜单"打开文件"，mode 0）：测试"打开即播"策略。
+        // 用法：{"command":["open","<path>"]}
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: open <path>");
+        } else {
+            // 必须排队到 GUI 线程：openFiles 会改 viewModel 状态并发信号，
+            // RPC 线程直接调会让 QML 绑定拿不到/乱序（实测 opening 卡片不出现）。
+            QMetaObject::invokeMethod(vm, [vm, path = args[0]] {
+                vm->openFiles(QStringList{QString::fromStdString(path)}, 0);
+            }, Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "get-preview-state") {
+        // 缩略图引擎状态（测试/诊断；不触发取帧）。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (PreviewThumbnailer *th = vm->thumbnailer()) {
+            QJsonObject o;
+            o.insert("ready", vm->previewReady());
+            o.insert("available", vm->previewAvailable());
+            o.insert("unavailable", vm->previewUnavailable());
+            o.insert("thumbs", vm->previewThumbnails());
+            o.insert("serial", double(th->serial()));
+            o.insert("loaded", th->hasSource());
+            {
+                // edl:// 可能几十 KB（bilibili/YouTube），RPC 输出只留前 96 字符
+                const QString src = th->sourcePath();
+                o.insert("path", src.size() > 96 ? src.left(96) + QStringLiteral("…") : src);
+            }
+            o.insert("latencyMs", double(th->lastLatencyMs()));
+            o.insert("frames", double(th->framesProduced()));
+            o.insert("cacheHits", double(th->cacheHits()));
+            // width = 渲染宽（物理像素）= 逻辑宽 × dpr；logicalWidth = 面板逻辑宽
+            o.insert("width", vm->previewThumbWidth());
+            o.insert("logicalWidth", vm->previewThumbLogicalWidth());
+            o.insert("dpr", vm->previewDevicePixelRatio());
+            const QSize sz = vm->previewImageSize();
+            o.insert("imgW", sz.width());
+            o.insert("imgH", sz.height());
+            const QString err = QString::fromStdString(th->lastError().toStdString());
+            if (!err.isEmpty())
+                o.insert("error", err);
+            response = formatResponse(
+                "", QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString());
+        } else {
+            response = formatResponse("no thumbnailer");
+        }
+    } else if (cmd == "get-chapters") {
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            QJsonArray arr;
+            for (const QVariant &v : vm->chapters())
+                arr.append(QJsonValue::fromVariant(v));
+            response = formatResponse(
+                "", QJsonDocument(arr).toJson(QJsonDocument::Compact).toStdString());
+        }
+    } else if (cmd == "set-preview-width") {
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: set-preview-width <160..640>");
+        } else {
+            char *end = nullptr;
+            const long px = strtol(args[0].c_str(), &end, 10);
+            if (end == args[0].c_str() || *end != '\0') {
+                response = formatResponse("invalid width");
+            } else {
+                PlayerViewModel *v = vm;
+                QMetaObject::invokeMethod(v, [v, px] { v->setPreviewThumbWidth(int(px)); },
+                                          Qt::QueuedConnection);
+                response = formatResponse("success");
+            }
+        }
+    } else if (cmd == "set-menu-hide-invalid") {
+        // 测试/脚本用：是否隐藏无效的菜单项（1 = 隐藏，0 = 灰显占位）——
+        // 正常入口 = 右键菜单「界面 → 隐藏无效菜单项」。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: set-menu-hide-invalid <0|1>");
+        } else {
+            const bool on = args[0] != "0";
+            PlayerViewModel *v = vm;
+            QMetaObject::invokeMethod(v, [v, on] { v->setMenuHideInvalid(on); },
+                                      Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "set-preview-thumbnails") {
+        // 测试/脚本用：开关进度条缩略图（正常入口 = 右键菜单「界面 → 缩略图」）。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: set-preview-thumbnails <0|1>");
+        } else {
+            const bool on = args[0] != "0";
+            PlayerViewModel *v = vm;
+            QMetaObject::invokeMethod(v, [v, on] { v->setPreviewThumbnails(on); },
+                                      Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "debug-hover") {
+        // 测试钩子：伪造"指针悬停在进度条某时间"（Wayland 下无法程序化移动
+        // 指针，QCursor::setPos 无效）。args[0] = 秒 或 "off"。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: debug-hover <seconds|off>");
+        } else if (args[0] == "off") {
+            PlayerViewModel *v = vm;
+            QMetaObject::invokeMethod(v, [v] { v->setPreviewDebugHoverMs(-1); },
+                                      Qt::QueuedConnection);
+            response = formatResponse("success");
+        } else {
+            char *end = nullptr;
+            const double sec = strtod(args[0].c_str(), &end);
+            if (end == args[0].c_str() || *end != '\0' || !std::isfinite(sec) || sec < 0) {
+                response = formatResponse("invalid seconds");
+            } else {
+                const int ms = int(sec * 1000.0);
+                PlayerViewModel *v = vm;
+                QMetaObject::invokeMethod(v, [v, ms] { v->setPreviewDebugHoverMs(ms); },
+                                          Qt::QueuedConnection);
+                response = formatResponse("success");
+            }
+        }
+    } else if (cmd == "get-preview-width") {
+        response = vm ? formatResponse("success", std::to_string(vm->previewThumbWidth()))
+                      : formatResponse("no view model");
     } else if (cmd == "stereo-cycle") {
         if (!stereo_) {
             response = formatResponse("no stereo controller");

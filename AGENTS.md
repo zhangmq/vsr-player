@@ -2,8 +2,10 @@
 
 > 本文件由 DeepSeek Harness 转写：来源 = 开发机上的 Claude Code 会话记忆（已筛选：保留知识/经验类 6 个主题，移除过程性/过期记录；清洗隐私/密钥后拉入仓库 `docs/memory/`）+ 原 `CLAUDE.md`（已于 2026-08 删除，信息脱节），并已对照 master 代码（`7bae9ce`）修正其中的失效/冲突信息。
 >
-> **⚠ 当前在办任务（接手先读）**：`docs/handover-3d-conversion.md`
+> **⚠ 当前在办任务（接手先读）**：`docs/handover/3d-conversion.md`
 > —— 把 `test.iso` 的 6 个 title 离线转出来（2D 直接压 / 3D 转全宽 SBS），含阻塞点、工具位置、编码参数与已知坑。
+> （`docs/handover/` 是**不纳入 git 的本地会话笔记**：接手文档会携带大量后续会过期的信息，
+> 只在开发机保留，不随仓库分发、也不出现在 PR 里；清理/换机时不要指望它还在。）
 >
 > **本文件是项目的唯一权威指令**。原 CLAUDE.md 含未同步的过时内容与幻觉断言历史（modeset、Wayland embedding 两处已被证伪），删除后不再有冲突源；引用任何技术事实前，仍先对照代码验证（通用"证据优先/结论先验证"原则见 `~/.dsh/AGENTS.md`）。
 
@@ -103,6 +105,29 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
      留在代码注释 / AGENTS / `docs/` 里。
    - 写"包结构变化"时以**产物**为准（`build/release-staging/COMPONENTS.md`、`tar -tJf` 列目录），
      不要照抄上一版 README 的表格（0.5.0 就踩过：薄包改造后旧 README 还写着"自带 FFmpeg ×7"）。
+
+12. **文档按分类归档，接手文档（`docs/handover/`）只做会话交接**（2026-11-15 用户要求）：
+   - **`docs/handover/<YYYY-MM-DD>-<主题>.md` 的唯一定位** = 一段工作日结束时的
+     **临时交接**：当前状态、待办与负责人、验证命令、下一步。它**有保质期**
+     （文件名必须带日期；隔几天再开工先按代码核对，过期就重写或删掉）。
+     该目录**不纳入 git**（`.gitignore` 已列），不随仓库分发、不进 PR。
+   - **不要把长期资产写进接手文档**。它**不是**设计文档、不是实测数据仓库、
+     不是决策记录、也不是用户手册；这些一旦写进去就等于把长期知识扔进一次性文件。
+   - **归档去向（写完当场分流，接手文档里只留一行指针）**：
+
+     | 内容类型 | 归宿 |
+     |---|---|
+     | 用户决策、长期约束、易复发坑、口径/命名 | 本文件 `AGENTS.md` 对应小节 |
+     | 调查过程、实测数据、参数区间、复现步骤 | `docs/<主题>-investigation.md` / `-research.md` |
+     | 历史教训、被否决方案、当时的权衡 | `docs/memory/` |
+     | 面向用户的功能与用法 | `wiki/` |
+     | 一次性交接（状态/待办/验证） | `docs/handover/`（不追踪，见上） |
+
+   - **接手文档的最小结构**（照抄这个骨架，不要自创章节）：
+     `一句话状态` → `仓库/分支/PR 现场` → `待办（谁做）` → `怎么验证（可复制的命令）`
+     → `下一步` → `已知坑（只给 AGENTS/docs 的链接，不复述）`。
+   - 触发归档的判据：写下"以后还要用"的结论（根因、参数、决策、踩坑）时，
+     **先按上表归档，再在接手文档里链过去**；接手文档里出现第二个可复用结论就是没分流。
 
 ## 已修问题的两个易复发点（2026-10-26，用户报"像是修过的 bug 复现"）
 
@@ -297,6 +322,20 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **两个拖放区（2026-10-21 确认）**：A = 窗口级 `DropArea`（`main.qml`）→ mode 0，**完全重置**播放列表（首条 replace 播放、其余 append 排队）；B = `PlaylistPanel` 的 `DropArea` → mode 1，**追加**（不打断当前播放）。面板打开时 B 在 popup overlay（`QQuickOverlay` 是 contentItem 的子项、创建在 QML 根之后）里叠在 A 之上，Qt 的拖放投递按 `paintOrderChildItems()` **从上到下找第一个接受者**（`qquickdeliveryagent.cpp: deliverDragEvent`），所以两个区不会同时触发。**追加目录**同样走 mpv 原生语义：`loadfile <dir> append` 只留一个目录条目、点击才展开（实测：追加后列表 = `[/tmp/vsr-dir-test]`，点击 → 4 条目并播放首条）。
   菜单侧同语义（2026-10-21）：右键菜单 = "Add files to playlist"（FileDialog mode 1）+ "Add folder to playlist"（FolderDialog mode 1，同一 `folderDialog` 实例靠 `mode` 属性区分标题与 `onAccepted`）；"打开文件/文件夹"仍分开（平台对话框不能同时选文件与目录），但两者与追加共用 `openFiles` 单一入口，目录路径一律交给 mpv。
 
+### 无参数启动"概率性自动播放"（2026-11-15 报告 + 当天定位并修复）
+
+**现象**（用户报）：**不给任何命令行输入**启动播放器（应 idle：只恢复列表、不载入媒体），
+**有几率**自己开始播放。
+
+**根因**（2026-11-15 定位）：`main.cpp` 的启动分支按"有没有 watch_later 存档"二选一——
+`idleStart = !explicitPause && 有存档`。**缺存档**（新文件、播到接近结尾、存档被删）时会走
+`viewModel.restorePlaylist()`，而它用的是 **`loadlist`（不带 append）**：mpv 的
+`cmd_loadlist` 对 `LOAD_TYPE_REPLACE` 会 `mp_set_playlist_entry(第一条)` → **直接开播**。
+所以"自动播放"取决于存档在不在，表现为概率性；与缩略图/菜单改动无关。
+
+**修法**：`idleStart` 改为 `!benchmark && opts.inputs.empty()`——**无参数启动永远 idle**，
+只 `loadlist … append` 排队条目，绝不载入媒体（存档在不在都一样）。
+验证：无参数启动 → `idle-active=yes`、`playlist-count=2`、`time-pos=None`、`mediaPhase=0`。
 
 ### 当前条目的移除 / 删除（2026-10-23）
 
@@ -663,6 +702,173 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 - 待做：i18n、2D→3D、多轨/其他 3D 格式、control UI 视频区域（当前黑底，视频只在
   presentation）。
 
+### 进度条缩略图（PreviewThumbnailer，2026-11-15）
+
+**形态**（用户 2026-11-15 拍板，当天第二版调整）：鼠标悬停进度条 → 上方浮出**单帧**缩略图 +
+`时间 · 章节名`，跟指针水平移动、窗口边缘夹取；没有缩略图（网络流/纯音频/首帧未到）
+时退化成只显示时间的**小气泡**。**不做**拖动时整条缩略图带、不做后台 storyboard
+预生成。
+
+**面板版式**（用户 2026-11-15 两次要求）：缩略图**无边框、无圆角、铺满整个组件**
+（`Image.fillMode: PreserveAspectCrop` + `clip`，不留内边距、不露 letterbox）；
+文字**全部 overlay 在图片上**、不额外占高度，且**两行分居上下**：
+- **时间**（始终有）：纯黑底（`#000000`）文字块，**横向居中、贴图片底边**，宽度按文字
+  自然宽度取（上限 = 图片宽），超宽 `elide: ElideRight`；
+- **章节名**（有章节才显示，否则整条不出现、不留空条）：**半透明黑底**
+  （`#cc000000`，能看到下面的画面）、**占满图片宽度**、**贴图片顶部、左对齐**
+  （`text-align: left` + 左右各 6 px 内边距），超宽同样右侧省略。
+  ⚠ 用户明确要求章节名**不要**和时间挤在同一行（2026-11-15）。
+只有"取不到图"的退化气泡还保留原来的小圆角深色底（那是另一个形态，不是缩略图面板）。
+
+**尺寸口径（用户 2026-11-15 明确）**：**组件几何按 Qt 逻辑像素，图片按逻辑宽 × DPR 渲染**。
+- 面板/组件逻辑宽 = **固定 192**（`PlayerViewModel::kThumbLogicalWidth`，头文件里是
+  唯一事实源；QML 读 `previewThumbLogicalWidth`）。
+- 预览实例的**渲染宽** = `192 × DPR`（`noteDevicePixelRatio`，QML 在
+  `Component.onCompleted` / `Screen.onDevicePixelRatioChanged` 上报所在窗口的
+  `Screen.devicePixelRatio`）→ dpr=2 时出 384 px 纹理。⚠ 只给 192 px 纹理的话，
+  dpr=2 的屏上 Image 会被放大 2 倍显示，缩略图（尤其画面里的字幕/台标）发糊。
+- 只由**显示底栏的那个窗口**上报 DPR（`ownsUiChrome = controlMode || !stereo.active`）：
+  2D 是播放窗口、3D 是桌面 control 窗口；presentation 窗口没有进度条，别让它
+  把自己那块屏的 dpr 覆盖进来。
+
+演进（别再往回改）：① 固定 320；② "窗口逻辑宽 × 0.15，夹 200–480"（用户要求
+"按窗口比例、带最小/最大"）；③ 缩到 2/3（0.10 / 133–320）；④ **取消窗口比例**，
+固定 **192**（用户 2026-11-15 当天连调两次：先"取消按窗口尺寸的缩略图大小设置…
+先试下 240"，接着说"改 192 看看"）。
+取消的**理由**：按比例就意味着窗口缩放要重算宽度 → 预览实例清缓存重渲；固定值
+也让面板尺寸可预期、测试口径唯一。
+⚠ 因此**没有**"QML 上报窗口宽 → C++ 重算"这条链路（`noteWindowWidth` 已删），
+面板宽度不随窗口尺寸变化；DPR 变化（换屏/系统缩放）会重算渲染宽并清缓存重渲。
+RPC `set-preview-width` 是**渲染像素**的显式覆盖（测试/脚本用，不落盘、跳过 DPR
+换算、clamp 160–640）；`get-preview-state` 同时给 `width`(渲染)/`logicalWidth`/
+`dpr`；旧设置键 `previewThumbWidth` 已弃用。
+
+**开关**：右键菜单新增 **「界面」** 组（`ContextMenu.qml` 的 `interfaceMenu()`），
+二级项是可 toggle 的界面元素：**缩略图**（`previewThumbnails`）与**隐藏无效菜单项**
+（`menuHideInvalid`，见"右键菜单分组"一节），勾选态 = 开。toggle 型行的
+约定：行带 `toggle`（布尔）+ `subSig`/`value`（元素 id），点一下**翻转且菜单保持
+打开**（`activateSubRow` 对 `toggle` 行提前 return），勾选态由
+`isCurrentSubRow()` 的 `row.toggle` 分支给出。关闭时 `PlayerViewModel` 直接
+**卸载预览实例**（不白耗解码），悬停只剩时间气泡；开关持久化到
+`previewThumbnails`（默认 on）。RPC/测试：`set-preview-thumbnails <0|1>`、
+`get-preview-state` 里的 `thumbs` 字段。
+
+**引擎 = 进程内第二个 libmpv 实例 + `MPV_RENDER_API_TYPE_SW`**（即"内置解码器实时解"；
+不是子进程、不走 ffmpeg、不建 GPU 上下文）。代码：`src/client/PreviewThumbnailer.*`。
+取帧尺寸由 `SW_SIZE` 决定（mpv 用 sws 缩放），宽高比取 `video-out-params` 的 `dw/dh`。
+
+**请求策略**：时间落 2 s 桶 → 先 `absolute+keyframes`（10–60 ms 出图，偏差 ≤1 个 GOP，
+关键帧间隔中位 1.5 s）→ 静止 80 ms 后 `absolute+exact` 精修替换（1080p 25–85 ms，
+4K HEVC 0.3–0.9 s）。同桶命中缓存直接出图（`latency=0`，不重传纹理）。缓存 64 项 LRU。
+
+**三个踩过的坑（改这块前先读）**：
+
+1. **SW 渲染器不旋转 → 崩溃**。`vo_libmpv` 的 caps 带 `VO_CAP_ROTATE90`，mpv 因此
+   不插软件旋转滤镜，却按"VO 已旋转"算 rect；SW 后端拿到未旋转的帧 →
+   `mp_image_crop` 断言 `x1 <= img->w && y1 <= img->h` 失败（菜单旋转 90° 后取预览必崩）。
+   修法在 **`src/mpv/video/out/vo_libmpv.c`**：`renderer->fns == &render_backend_sw`
+   时把 `img_params.rotate` 清零，旋转由 `PreviewThumbnailer` 渲完后对 QImage 做
+   （`QTransform::rotate`，320×180 级别 <1 ms）。**主播放器（Vulkan）行为不变。**
+   改完记得 `cp src/mpv/video/out/vo_libmpv.c build/mpv/video/out/` 再
+   `ninja -C build/mpv/_build`（`scripts/build_mpv.sh` 全量重建时自动带上）。
+2. **同一时间点的 seek 不出帧**：mpv 认为"已经在目标上"就不重新解码。命中时
+   exact 阶段直接视为精确；keyframe 阶段（链/宽度变了要重渲）把目标 +250 ms
+   强制一次真 seek；另有 2 s 看门狗兜底（两次失败放弃）。
+3. **half（每眼被压扁）必须 `setsar=1`**：crop 会把像素宽高比设为 1:2 以保持显示比，
+   漏掉 `setsar=1` 时 mpv 的 `dw/dh` 再乘一次（640×360 → 640×720，缩略图变竖条）。
+
+**边界**：纯音频（无视频轨）不启用；直播只用 mpv 的通用信号 `isLiveSource()`
+（`seekable=no` 或 seek 失败后确认的线性源）排除。
+
+⚠ **直播流的缩略图"不可信"（2026-11-15 用户定：判不准就不做控制）**：试过两道额外判据都被否：
+- **`duration > 0` 才算点播**：会误伤 HLS **点播**（实测 mux 的 HLS VOD `duration` 也是 `None`）；
+- **"时长在增长"= 直播**：bilibili 直播确实是从 14.5→17.6→21.1s 增长（且 `seekable=yes`），
+  但这条属于**站点行为特征**，且会在点播解析阶段误触发（实测把 bilibili 点播误判成直播、
+  缩略图全没了）。
+
+结论：**不再按站点/时长特征猜直播**，只保留 `isLiveSource()`；因此当 mpv 把某个直播流报成
+`seekable=yes` 时（bilibili 直播就是），进度条悬停会出图，**这张图对直播没有意义**，
+文档层面标注即可。其余说明：；**网络点播（HTTP/HLS VOD，可 seek）允许**（用户 2026-11-15 报"网络流无法生成
+缩略图"是这里的过度拦截）——预览实例会自己再拉一次流，代价是带宽/首帧时延；
+**yt-dlp 源（YouTube 等，"网络流"菜单那类）**：主实例的 `stream-open-filename` 是
+`edl://`（内含签名直链），复制给预览实例未必能开，所以让**预览实例自己跑一次
+yt-dlp**（`ytdl=yes` + `ytdl-format=worst`，最小画质）。⚠ `ytdl` 不是运行期选项，
+只能在创建前设 → 在"直链/yt-dlp 源"之间切换时销毁重建实例（`instanceYtdl_`）。
+实测 YouTube：预览实例解析 + 首帧约 10–25 s（第二次 yt-dlp，后台进行，不影响播放），
+之后每次 seek 2–500 ms（网络相关）；本地/HTTP 直链不受影响（仍 10–85 ms）；
+`bd://`（本地 ISO）允许；3D 下缩略图按当前 `layout`/`half` **裁单眼**（默认左/上眼），
+预览面板只在**桌面 control 窗口**（presentation 里没有进度条）；内容 HDR 自动插
+`zscale/tonemap` 转 SDR。
+
+**网络源的正确接法（2026-11-15 修正，实测通过）**：
+
+- ❌ 旧做法（已废弃）：让预览实例自己跑一次 `yt-dlp`（`ytdl=yes` + `ytdl-format=worst`）。
+  实测 bilibili 直接报 `Requested format is not available` → `Failed to recognize file
+  format`，网络流缩略图**从来没出过图**；而且预览实例不读 mpv.conf、也拿不到 CLI 透传的
+  `ytdl-raw-options`（ff2mpv 的 cookie 就是这么传的），YouTube 那条同样没救。
+- ✅ 现做法：把主实例已经解析好的 **`stream-open-filename`** 原样交给预览实例
+  （`ytdl=no`）。mpv 的 ytdl_hook 把它做成**自包含 `edl://`**（内含各档直链 + 请求头；
+  bilibili 实测 13–68 KB，YouTube 同型），所以预览实例**不跑第二次 yt-dlp**、不需要
+  cookie、也不受 `ytdl-format` 影响。实测 bilibili：`ready=true`、首帧 119 ms、
+  之后 67 ms，且能带出章节名（面板显示 `5:00 · 理念取舍:开放世界`）。
+- ⚠ **必须继承主实例的 HTTP 头**（2026-11-15 实测）：`edl://` 里**不带**请求头，
+  ytdl_hook 是按站点把 `user-agent` / `http-header-fields`（bilibili = `Referer: …`）
+  设成**文件级选项**的。预览实例少了这两个 → bilibili CDN 直接
+  `curl: HTTP error 403` + `timeline: failed to load segment` → 缩略图恒失败
+  （现象：`available=true` 但 `ready=false`、`error="load failed"`）。
+  做法：`stream-open-filename` 观察器里顺带读 `user-agent` / `http-header-fields`，
+  作为 `PreviewThumbnailer::Params` 下发（头变化会重新 loadfile；这两个属性读得到值，
+  `http-cookies` 读不到）。
+- 预览实例**懒加载**：`previewWanted_` 为假时不 load 网络源，**第一次悬停**才拉流
+  （不悬停零流量）；换文件/关开关复位。实测播放 10 s 内 `thumb: load` 计数 0。
+
+⚠ **"打开网络流有概率没有缩略图、且播放中不恢复"的两个真实断点（2026-11-15 定位并修）**：
+
+1. **悬停落在实例就绪之前**（`previewActive_ == false`：yt-dlp 还没解析出 `edl://`、
+   或首个 `FILE_LOADED` 还没到）。旧代码在 `requestPreview()` 里直接
+   `if (!previewActive_) return;` —— 这次悬停**连"想看"都没记**，等于没发生；
+   更糟的是 `FILE_LOADED` 的处理器会无条件 `previewWanted_ = false`，把懒加载意图
+   一起抹掉 → **整个文件期间都不装载**，只有再动一次鼠标才出图（实测可 100% 复现：
+   进入播放瞬间悬停 → 静止 4 s 仍是 `serial=0`）。
+   修法：
+   - `requestPreview()` 先置 `previewWanted_`（并 `updatePreviewSource()`）**再**判就绪；
+     不就绪时把目标存进 `pendingPreviewMs_`；
+   - `maybeReplayDeferredPreview()` 在两个时机补发：预览实例 `FILE_LOADED`
+     （`stateChanged`）与"预览刚变可用"（`updatePreviewSource` 末尾）；
+   - `FILE_LOADED` 里**只在 `pendingPreviewMs_ < 0` 时**才重置 `previewWanted_`，
+     且**不再**清 `pendingPreviewMs_`（真正让它作废的是 `cancelPreview()`＝指针离开进度条）。
+   日志：`preview: replay deferred hover request (12.0s)`。
+2. **一次性装载失败后永不重试**（`MPV_END_FILE_REASON_ERROR`：CDN 403、timeline 段超时等）。
+   旧行为只写 `lastError_="load failed"`，而 `setParams()` 只在 path/头/旋转/宽度变化时
+   重新 `loadfile`、`request()` 又要求 `haveSource_` → 该文件内**永久失效**。
+   修法（用户 2026-11-15 定的策略：**不做后台定时重试**）：
+   - 失败时刻记进 `failedAtMs_`；失败后 **3 s（`kReloadCooldownMs`）内的悬停请求一律忽略**
+     （日志 `thumb: reload suppressed (0.6s of 3s cooldown)`，**一个网络请求都不发**）；
+   - 过冷却后**由下一次悬停**触发一次重新 `loadfile`
+     （日志 `thumb: reload after load failure (hover-driven retry)`），
+     这次请求留在 `wantMs_` 里，`FILE_LOADED` 后照常服务（与懒加载同一条路径）；
+   - 载入成功 / 换文件 / 关开关都会清 `failedAtMs_` 与 `lastError_`。
+     "每个悬停变更就是一次新机会"——失败就失败，靠用户继续移动指针。
+3. RPC `preview` 是同步测试钩子：`previewAvailable()` 在刚 loadfile 时会短暂为假，
+   钩子里**最多等 5 s**（`waitPreviewAvailable()`）再判"不可用"，否则"打开网络流立刻取帧"
+   会被判成假失败（T10 偶发超时的根因）。
+   回归测试：`tests/hotkeys/test_thumbnails.py` 的 **T12**（补发：单次悬停、不再动指针，
+   40 s 内必须出图）+ **T13**（冷却期内服务器零新请求、过冷却后悬停重试成功）。
+- ⚠ `stream-open-filename` 很长：日志与 RPC 的 `path` 字段都**截断到 96 字符**
+  （否则刷屏、JSON 也难看）。调这类问题时看长度就好，要看内容直接 grep 主实例日志。
+- ⚠ 排查"网络视频播不了"时先分清 `thumb:` 前缀：**主实例的日志没有这个前缀**。
+  这个前缀下出现的 `Failed to recognize file format` 是缩略图引擎的问题，
+  与播放无关（2026-11-15 就因为这个误判过一轮）。
+
+⚠ 仍未做：预览实例没继承 CLI 透传的 ytdl 选项（`edl://` 路线下用不到；只有在
+`stream-open-filename` 拿不到、退回自解析时才需要）、`worst` 格式回退链、YouTube 实测。
+
+**测试**：`./tests/hotkeys/test_thumbnails.py`（26 项：取帧/桶缓存/宽度/章节/QML 面板/
+单眼裁剪/音频不启用/3D 会话）。Wayland 下 `QCursor::setPos` 无效，面板靠 RPC
+`debug-hover <秒|off>` 注入（同时强制显示 overlays，否则抓窗口只有视频）。
+RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-preview-width`、
+`set-preview-thumbnails`、`set-menu-hide-invalid`。
+
 ### 反交错（mpv 原生 `--deinterlace`，2026-10-22）
 
 **mpv 怎么做的**（全部在它的输出链里，**不经过 `--vf`**）：
@@ -803,7 +1009,8 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 且 **hwaccel 下只解 base view**（必须软解）。真要支持 3D 需 backport 该系列 +
 自己做 SSIF 双 PID 关联，见后续评估。
 ⚠ **最终决定（用户 2026-11-03）：播放器内建 MVC 解码不做**——"没必要，离线更合适"。
-3D 蓝光一律**离线转** SBS/TAB 再看（`docs/handover-3d-conversion.md` 的工具链）；
+3D 蓝光一律**离线转** SBS/TAB 再看（工具链 = `tools/mvc2sbs` + `tools/ssif_to_mvc.py`，
+参数与坑见本地笔记 `docs/handover/3d-conversion.md`，不随仓库分发）；
 不要再提"在播放器里解 MVC"，也不用在这里做 SSIF 关联。
 
 ### 桌面集成（2026-10-17）
@@ -924,6 +1131,51 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 - 分发（2026-09 重构）：**源码构建为推荐路径**——`scripts/build-from-source.sh`（依赖自检→构建→安装→记录快照）；系统库升级后重跑同一条命令即可恢复。预编译 tarball 两个变体：`build_release.sh`（standard，需系统 Qt ≥6.12——Qt 二进制兼容是单向的，构建机 Qt 6.12.0 → 真实下限 6.12）与 `--variant=full`（捆绑最小 Qt：镜像发行版布局 `<prefix>/lib/qt6/{plugins,qml}` + Qt 库在 `<prefix>/lib/`，靠 Qt 自带相对 RUNPATH 解析，**免 patchelf**；`main.cpp` 在 QGuiApplication 前探测并设 `QT_PLUGIN_PATH`/`QML2_IMPORT_PATH`）。依赖收集 = 显式核心集 + 媒体栈动态发现（libcdio/libdvd/libbluray）+ **打包时闭包自检**（未捆绑且非白名单即失败）；`--engine=<已构建引擎>` 跳过 trtexec。
 - **依赖漂移检测**：`scripts/check-deps.sh [--record]` 记录构建时**系统库**快照（路径+mtime+size，排除仓库内自建产物——否则每次重建都误报），系统升级替换后提示重建；staging 目标用 `LD_LIBRARY_PATH` 模拟安装态解析。**soname 变更导致启动失败 → 跑 `build-from-source.sh` 重建**；用户侧排查见 README「故障排查」。
 - `scripts/install.sh`（用户端）：~/.local；VFX 从 **NVIDIA 官方索引 `pypi.nvidia.com`** 取 nvidia-vfx wheel（pypi.org 仅占位 sdist，2026-09 实测），curl 提取不调 pip 不改系统；VFX ~0.6GB 不随 tarball 分发（SLA）。⚠️ `set -euo pipefail` 下所有探测命令（nvidia-smi / pkg-config / curl 管道）必须 `|| true` 兜底，否则"未检测到"会变成"安装静默中止"（本项目实测踩过两次）。
+
+### 右键菜单分组 / 空状态 / 打开入口（2026-11-15）
+
+**菜单结构**（`ContextMenu.qml` 的 `items`，用户 2026-11-15 定）：
+`文件`（打开… ▸ 文件/文件夹/URL；删除文件）→ `播放列表`（添加… ▸ 文件夹/文件；
+从播放列表移除）→ `首选项`（界面 ▸ …）→ `轨道` → `画面处理` → `3D` → `退出`。
+二级项支持右侧快捷键提示（行上写 `hint`，`SubRow` 渲染成灰字；主菜单同款）。
+
+⚠ **无目标时默认「禁用」而不是「隐藏」**（用户 2026-11-15；「界面」菜单的第二个
+toggle = **「隐藏无效菜单项」/ Hide invalid menu items**，`menuHideInvalid`
+默认 **false**，打开才退回隐藏——用户 2026-11-15 定的口径：**"无效"**（此刻
+不成立/用不了）+ 宁可长一点也要准确；不要换成"禁用"（暗示功能被关掉）、
+"不可用/未激活"（前者不精确、后者在 UI 术语里多指窗口/焦点）：条目写 `enabledWhen`（而不是
+`visibleWhen`）→ 行**仍然占位**、文字/图标变灰
+（`#5a5a5a`）、不参与悬停/键盘/点击（委托 `enabled: usable` 会传播到
+HoverHandler/MouseArea/延迟控件），分组标题保持可见。`visibleWhen` 只留给
+「这一行根本不该出现」的场合（当前没有）；`rowFocusable()` 同时看
+`itemShown` 与 `itemEnabled`，键盘不会停在灰行上。
+
+**空状态的两态扩展（2026-11-15）**：`PlayerViewModel.mediaPhase`
+（`0 idle` / `2 playing` / `3 failed`，由 RPC `get-media-phase` 可读）驱动同一张卡片：
+- `idle`：dropzone + 打开文件/文件夹/URL + 「继续上次播放」；
+- `failed`：标题「无法播放」+ 原因（「无法打开该文件/该网络流」），行 = 三个打开入口 +
+  **网络源才有「重试」**；**不显示「继续上次播放」**（只会再失败一次）；失败时置黑画面。
+- ⚠ **曾经做过 `opening`（「正在打开…」）已删除**（用户 2026-11-15 要求）：载入耗时不可
+  准确观测——切换文件时 `fileLoaded_` 一直是 true（`setFileLoaded` 去重），目录展开也不
+  保证按预期发事件，卡片会卡住不消失。现在打开动作只做两件事：记住重试目标、把上一次的
+  failed 清掉（`fileLoaded_` 为真则保持 playing，避免闪卡片）。
+
+**空状态**（`ui/IdleScreen.qml`）：没有活动文件时在中央显示 dropzone 面板——
+"把文件拖到这里 / 或使用下面的方式打开" + 三行快捷入口（文件/文件夹/URL，
+带快捷键）+ 有可续播列表时多一行「继续上次播放」。真正的拖放落点仍是
+**窗口级 DropArea**（`main.qml`），IdleScreen 只做引导；`dragActive` 由
+`dropArea.containsDrag` 传入，拖入时边框变 `#ffcc00`。任何 popup 打开时
+空状态让位（`!uiLayer.anyPopupOpen`）——菜单是半透明的，后面透出面板文字会显脏。
+无媒体时 `CenterPlayBtn` 隐藏（同一区域让给空状态；续播入口在面板里）。
+
+**右上角「打开」按钮已移除**（用户 2026-11-15：与右键菜单/快捷键冗余）：
+`TopBar.qml` 不再有按钮/`openMenuRequested`，`ui/OpenMenu.qml` 与
+`main.qml` 的实例一并删除；打开入口 = 右键菜单「文件 → 打开…」+ 快捷键
+（Ctrl+O / Ctrl+Shift+O / Ctrl+L）+ 拖放 + 空状态面板。
+
+**测试**：`test_hotkeys.py` 的「Home 到第一行」不再假设索引 0——用
+`rpc.menu_state()["rows"]`（逐行 y/h/vis）取**第一个可聚焦行**（h≥30 且可见；
+表头 h=26、分隔线 h=1）。
 
 ### 按键 / 快捷键（键位表，2026-11-03 重构）
 

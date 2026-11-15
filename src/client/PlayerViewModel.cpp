@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QProcess>
 #include "MpvController.h"
+#include "PreviewThumbnailer.h"
 #include "FrucBackend.h"
 #include "HdrOutput.h"        // hdr::setUpconvertOptIn / setUpconvertLuminanceOverride
 #include "TrueHdrParams.h"    // TrueHDR 参数区间/默认值（客户端单一来源）
@@ -20,6 +21,7 @@
 #include <QTextStream>
 #include <QLocale>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -61,6 +63,20 @@ QString toLocalPath(const QString &s) {
     return u.isLocalFile() ? u.toLocalFile() : s;   // 网络流原样传 mpv
 }
 
+// ── 进度条缩略图尺寸（用户 2026-11-15）─────────────────────────────────
+// **组件（面板）固定 192 逻辑 px**，不跟窗口尺寸走。
+// 演进：① 最初固定 320；② 改成"窗口逻辑宽 × 0.15，夹 200–480"（用户要求
+// "按窗口比例、带最小/最大"）；③ 缩到 2/3（0.10 / 133–320）；④ 取消窗口比例，
+// **固定 192**（用户 2026-11-15："统一按目前最大尺寸…先试下 240" → 接着"改 192 看看"）。
+// 取消比例的
+// 理由：按比例就意味着窗口缩放时要重算宽度 → 预览实例清缓存重渲；固定值也让
+// 面板尺寸可预期、日志/测试口径唯一。
+//
+// ⚠ **逻辑尺寸 vs 物理像素（用户 2026-11-15 明确要求）**：面板/组件的几何一律按
+// Qt **逻辑像素**（`PlayerViewModel::kThumbLogicalWidth`，单一事实源在头文件），而
+// 交给预览实例的**渲染宽 = 逻辑宽 × DPR**（`noteDevicePixelRatio`）。否则 dpr=2 的屏
+// 上 192 逻辑宽的 Image 只有 192 px 的纹理 → 被放大 2 倍显示，缩略图发糊。
+
 const char *qualityName(int v) {
     switch (v) {
     case 1:  return QT_TR_NOOP("Low");
@@ -94,6 +110,19 @@ PlayerViewModel::PlayerViewModel(QObject *parent) : QObject(parent) {
     // TrueHDR 总开关的**默认值** = env `VSR_UPHDR`（无持久化设置时生效）；
     // loadSettings() 读到设置后以设置为准（benchmark 不读设置 → 保持 env 语义）。
     persistUpHdrEnabled_ = hdr::upconvertOptedIn();
+
+    // 进度条缩略图：实例懒创建（第一次有视频文件时才建第二个 libmpv），
+    // 但对象随 viewModel 一起存活，信号直连 QML。
+    preview_ = new PreviewThumbnailer(this);
+    connect(preview_, &PreviewThumbnailer::imageChanged, this,
+            &PlayerViewModel::previewImageChanged);
+    connect(preview_, &PreviewThumbnailer::stateChanged, this,
+            &PlayerViewModel::previewStateChanged);
+    // 悬停发生在"预览实例还没就绪"时（网络流刚打开、yt-dlp 还在解析）→ 那条
+    // 请求被搁置；就绪后补发一次。（失败请求不会进这里：失败重试由悬停驱动，
+    // 见 PreviewThumbnailer::kReloadCooldownMs。）
+    connect(preview_, &PreviewThumbnailer::stateChanged, this,
+            &PlayerViewModel::maybeReplayDeferredPreview);
 }
 
 // ── attach: register mpv property observers ────────────────────────────
@@ -223,9 +252,65 @@ void PlayerViewModel::attach(MpvController *mpv) {
         post([this, idle, drops] {
             setFileLoaded(!idle);
             if (idle) {
+                // 无活动文件：回到 idle 引导（failed 保留，等用户重试/打开别的）
+                if (mediaPhase_ == 2)
+                    setMediaPhase(0);
                 updatePlaying(false);
                 resetSegmentCounters(drops);   // 停止/播完 → 段重置
+                updatePreviewSource();
             }
+        });
+    });
+
+    // 章节（mpv chapter-list 镜象）：预览面板显示"时间 · 章节名"用；
+    // 同时给 M 键（下一章）之外的功能留数据源。节点在事件线程读。
+    mpv_->observeProperty("chapter-list", MPV_FORMAT_NODE, [this, post] {
+        QVariantList list;
+        mpv_node node;
+        if (mpv_get_property(mpv_->handle(), "chapter-list", MPV_FORMAT_NODE,
+                             &node) >= 0) {
+            if (node.format == MPV_FORMAT_NODE_ARRAY) {
+                for (int i = 0; i < node.u.list->num; i++) {
+                    mpv_node *entry = &node.u.list->values[i];
+                    if (entry->format != MPV_FORMAT_NODE_MAP)
+                        continue;
+                    QVariantMap m;
+                    for (int j = 0; j < entry->u.list->num; j++) {
+                        const char *k = entry->u.list->keys[j];
+                        mpv_node *v = &entry->u.list->values[j];
+                        if (!strcmp(k, "title") && v->format == MPV_FORMAT_STRING)
+                            m.insert(QStringLiteral("title"), QString::fromUtf8(v->u.string));
+                        else if (!strcmp(k, "time") && v->format == MPV_FORMAT_DOUBLE)
+                            m.insert(QStringLiteral("time"), v->u.double_);
+                    }
+                    list.append(m);
+                }
+            }
+            mpv_free_node_contents(&node);
+        }
+        post([this, list] {
+            chapters_ = list;
+            emit chaptersChanged();
+        });
+    });
+
+    // stream-open-filename：yt-dlp 解析后 mpv 真正打开的流（YouTube 是 edl://，
+    // 直链则与 path 相同）。预览实例据此决定"自己跑一次 yt-dlp"还是直接开直链。
+    mpv_->observeProperty("stream-open-filename", MPV_FORMAT_STRING, [this, post] {
+        QString f = QString::fromStdString(mpv_->propertyString("stream-open-filename"));
+        // ytdl_hook 会按站点设**文件级**的 user-agent / http-header-fields；
+        // 预览实例要用同一份头，否则 bilibili 这类 CDN 直接 403
+        //（2026-11-15 实测：`curl: HTTP error 403` + `timeline: failed to load
+        //  segment`，缩略图恒失败）。
+        QString ua = QString::fromStdString(mpv_->propertyString("user-agent"));
+        QString hdr = QString::fromStdString(mpv_->propertyString("http-header-fields"));
+        post([this, f, ua, hdr] {
+            const bool headersChanged = previewUserAgent_ != ua || previewHeaders_ != hdr;
+            previewUserAgent_ = ua;
+            previewHeaders_ = hdr;
+            if (openFilename_ == f && !headersChanged) return;
+            openFilename_ = f;
+            updatePreviewSource();
         });
     });
 
@@ -405,6 +490,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
                     videoWidth_.store(w); videoHeight_.store(h);
                     emit osdDataChanged();
                     guessSourceFormat(w, h);
+                    updatePreviewSource();   // 知道有视频轨才允许预览
                 }
                 if (decoderPixelFormat_ != QString::fromStdString(pix)) {
                     decoderPixelFormat_ = QString::fromStdString(pix);
@@ -422,6 +508,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
                     videoHdr_ = hdr;
                     MLOG_INFO("video-params: hdr=%d（gamma=%s）", int(hdr), gamma.c_str());
                     emit videoHdrChanged();
+                    updatePreviewSource();   // HDR → 预览要插 tonemap 链
                 }
                 if (hdrMeta_.valid != meta.valid ||
                     hdrMeta_.minMastering != meta.minMastering ||
@@ -869,6 +956,12 @@ void PlayerViewModel::loadSettings() {
         rot = 0;
     persistRotMode_ = rot;
     rotMode_.store(rot);
+
+    // ── 进度条缩略图：逻辑宽固定，渲染宽 = 逻辑宽 × DPR（默认 1，QML 会上报）──
+    // 不读设置：旧键 `previewThumbWidth` 已弃用（读到也不用），也不跟窗口尺寸走。
+    previewThumbWidth_ = thumbRenderWidth();
+    previewThumbnails_ = settings_.value("previewThumbnails", true).toBool();
+    menuHideInvalid_ = settings_.value("menuHideInvalid", false).toBool();
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -1131,6 +1224,9 @@ void PlayerViewModel::resumeLastPath() {
     else
         mpv_->commandV({"loadfile", lastPath_.toUtf8().constData(),
                         "append-play", nullptr});
+    pendingOpenPath_ = lastPath_;
+    pendingOpenIsNetwork_ = lastPath_.contains(QStringLiteral("://"));
+    setMediaPhase(fileLoaded_ ? 2 : 0);
 }
 
 void PlayerViewModel::pause() {
@@ -1196,6 +1292,9 @@ void PlayerViewModel::setFileLoaded(bool v) {
     if (fileLoaded_ == v) return;
     fileLoaded_ = v;
     emit hasMediaChanged();
+    // 载入成功 = 进入 playing（失败态由 END_FILE(ERROR) 写成 3，别在这里覆盖）
+    if (v && mediaPhase_ != 2)
+        setMediaPhase(2);
 }
 
 void PlayerViewModel::stop() {
@@ -1205,6 +1304,8 @@ void PlayerViewModel::stop() {
     // 乐观复位 idle 状态——path 观察（事件线程→主线程队列）落地前
     // 快速点击播放不会误走"取消暂停"分支（mpv 已 idle，无效）。
     setFileLoaded(false);
+    setMediaPhase(0);        // stop = 用户主动停止 → 回 idle 引导
+    updatePreviewSource();   // 停止 → 卸载预览媒体
     // keep-playlist：mpv stop 默认清空播放列表（command.c cmd_stop
     // flags&1 → playlist_clear 跳过），单曲循环下停止后列表消失。
     // async：GUI 线程不阻塞 core-lock（同 seek；同步命令会与软解 DR 帧
@@ -1519,6 +1620,7 @@ void PlayerViewModel::setRotMode(int deg) {
         mpv_->commandAsync({"vf-command", "rot", "angle",
                             std::to_string(deg).c_str(), nullptr});
     saveSettings("rotMode", deg);
+    updatePreviewSource();   // 缩略图也要按菜单角度转（与画面一致）
 }
 
 // ── AI 可用性（Vulkan 设备 × CUDA 设备同一性）──────────────────────────
@@ -1743,14 +1845,35 @@ void PlayerViewModel::toggleLoop() {
 // 时与 DR 帧分配互锁（解码线程等 GUI 服务 DR，GUI 等 core 执行命令；
 // 见 path 观察器处的完整说明）。启动/idle 阶段的 loadfile（restorePlaylist*
 // /resumeLastPath）保持同步——那时 core 空闲，没有解码线程在等 DR。
-void PlayerViewModel::playlistNext() { if (mpv_) mpv_->commandAsync({"playlist-next", nullptr}); }
-void PlayerViewModel::playlistPrev() { if (mpv_) mpv_->commandAsync({"playlist-prev", nullptr}); }
+// 用户主动切条目（面板点击 / 上一条 / 下一条）→ 一律恢复播放：
+// mpv 的 `pause` 是全局属性、跨曲目保持，不显式清掉就会"点开还是暂停"。
+void PlayerViewModel::resumeFromUserOpen() {
+    if (!mpv_ || startPaused_) return;
+    mpv_->setPropertyFlagAsync("pause", false);
+    if (!playing_) {
+        playing_ = true;
+        emit playingChanged();
+    }
+}
+
+void PlayerViewModel::playlistNext() {
+    if (!mpv_) return;
+    mpv_->commandAsync({"playlist-next", nullptr});
+    resumeFromUserOpen();
+}
+
+void PlayerViewModel::playlistPrev() {
+    if (!mpv_) return;
+    mpv_->commandAsync({"playlist-prev", nullptr});
+    resumeFromUserOpen();
+}
 
 void PlayerViewModel::playlistPlayIndex(int index) {
     if (!mpv_) return;
     char buf[32];
     snprintf(buf, sizeof(buf), "%d", index);
     mpv_->commandAsync({"playlist-play-index", buf, nullptr});
+    resumeFromUserOpen();
 }
 
 // ── File ─────────────────────────────────────────────────────────────
@@ -1825,10 +1948,30 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
             noteExternalSubAdded(it.path);
             continue;   // 字幕不算"首条"，不消耗播放位
         }
-        if (first && mode != 1)
+        if (first && mode != 1) {
+            // 记住目标（网络源失败后可"重试"）。**不做**"正在打开…"阶段：
+            // 载入耗时不可准确观测（目录展开/网络解析都可能不触发 FILE_LOADED），
+            // 显示出来会卡住（用户 2026-11-15 实测后要求取消）。
+            pendingOpenPath_ = it.path;
+            pendingOpenIsNetwork_ = it.path.contains(QStringLiteral("://"));
+            // 已有画面在播 → 保持 playing（别闪卡片）；处于失败态 → 回到 idle 引导
+            if (fileLoaded_)
+                setMediaPhase(2);
+            else if (mediaPhase_ == 3)
+                setMediaPhase(0);
             mpv_->commandAsync({"loadfile", p.constData(), nullptr});
-        else
+            // 打开即播（用户 2026-11-15）：菜单/拖放/URL 打开任何源都立刻播放，
+            // 不沿用上一个文件的暂停态。`--pause=yes` 启动除外（显式意图）。
+            if (!startPaused_) {
+                mpv_->setPropertyFlagAsync("pause", false);
+                if (!playing_) {
+                    playing_ = true;
+                    emit playingChanged();
+                }
+            }
+        } else {
             mpv_->commandAsync({"loadfile", p.constData(), "append", nullptr});
+        }
         first = false;
     }
 }
@@ -2629,6 +2772,9 @@ void PlayerViewModel::setStereoMap(bool active, int layout, int half) {
     const int old = stereoLayout_.exchange(nl);
     const int oldHalf = stereoHalf_.exchange(nh);
     if (old == nl && oldHalf == nh) return;
+    // 预览的单眼裁剪只依赖 layout/half（与 AI 可用性无关）——放在下面
+    // 两个早退（无 mpv / 无 AI）之前。
+    updatePreviewSource();
     if (!mpv_) return;
     if (!aiAvailable_.load()) return;   // 链上没插 vsr，vf-command 无处可发
     // 3D：auto 倍率按"单眼视口 vs 单眼源像素"算（见 vf_vsr compute_adaptive_scale）
@@ -2650,6 +2796,7 @@ void PlayerViewModel::setEyeState(int mode, int layout, int half) {
         return;
     if (nm != oldMode)
         emit eyeModeChanged();
+    updatePreviewSource();   // 单眼看片时缩略图也只取那只眼
     if (!mpv_)
         return;
     // 链上没插 eye 时（AI 不可用 → 只有 hwup+rot）vf-command 无处可发；
@@ -2739,7 +2886,13 @@ void PlayerViewModel::resetSegmentCounters(int64_t dropBase) {
 
 void PlayerViewModel::updateTime(int64_t t, int64_t d) {
     if (t != currentTime_.load()) { currentTime_.store(t); emit currentTimeChanged(); }
-    if (d != duration_.load()) { duration_.store(d); emit durationChanged(); }
+    if (d != duration_.load()) {
+        duration_.store(d);
+        emit durationChanged();
+        // 时长从"未知"变成已知（点播解析完成）→ 重新评估能否做预览
+        //（直播没有已知时长，正好被排除）。
+        updatePreviewSource();
+    }
 }
 
 void PlayerViewModel::updateVolume(double v) {
@@ -2859,9 +3012,26 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
         delaySendTimer_.stop();
         delaySubDirty_ = false;
         delayAudioDirty_ = false;
+        // 换文件 → 网络源重新进入"懒加载"状态（不悬停就不拉流）；
+        // 但**有滞留的悬停请求时不能重置**：用户打开网络流后立刻把指针放在进度条上，
+        // 那次悬停发生在实例就绪之前（pendingPreviewMs_ 有值），这里一清就等于
+        // 把"想看"抹掉 → 整个文件期间都不装载（2026-11-15 实测：只有再动一次
+        // 鼠标才出图）。"时长在增长"的直播判定也复位。
+        if (pendingPreviewMs_ < 0)
+            previewWanted_ = false;
+        // ⚠ 这里**不能**清 pendingPreviewMs_：它记录的正是"这个文件刚载入前用户
+        // 就已经悬停过"，清掉就永远补发不了（2026-11-15 实测：装载成功后
+        // ready 但 serial 永远 0，必须再动一次鼠标）。真正让它作废的是
+        // cancelPreview()（指针离开进度条）。
+        updatePreviewSource();         // 换文件 → 预览实例 loadfile（懒创建）
         syncVfOptions();               // 链重建后重放运行时 vf 状态（fps/vsr 防 UI 修改丢失）
         refreshHwDecodeAvailability(); // 换片后重算"该文件能否硬解"（软解回退不改偏好）
         applyDeinterlace();            // 覆盖 watch_later 里按文件记的 deinterlace
+        // 同理重放画面比例：mpv 的 watch_later 会按文件保存 `video-aspect-override`
+        //（用户实测：本地片看过之后打开网络流，画面被拉伸，菜单里点一下
+        //  「不覆盖」才恢复）。不重放的话，旧会话存下的比例（含 3D 每眼换算出的
+        //  4.7 之类）会盖住当前设置，表现为"偶尔拉伸"。
+        applyAspect();
                                        //（mpv 把它列在 watch_later_options → 换片时会
                                        //  用该文件上次的值复位，全局开关必须盖回去）
     }, Qt::QueuedConnection);
@@ -3087,3 +3257,292 @@ QString PlayerViewModel::osdText() const {
     std::lock_guard<std::mutex> lk(osdTextMu_);
     return osdText_;
 }
+
+// ── 进度条缩略图（PreviewThumbnailer 的接口层）─────────────────────────
+//
+// 单一事实源：
+//  - "能不能预览"只在这里判定（有视频轨、非直播、非网络源、非 benchmark）；
+//  - 3D/单眼的裁剪也只在这里算（stereoLayout_ 优先，其次 eyeMode_），
+//    预览实例只接收 eye/layout/half 的结果，不自己猜布局。
+
+quint64 PlayerViewModel::previewSerial() const {
+    return preview_ ? preview_->serial() : 0;
+}
+
+QSize PlayerViewModel::previewImageSize() const {
+    return preview_ ? preview_->imageSize() : QSize();
+}
+
+QImage PlayerViewModel::previewImage() const {
+    return preview_ ? preview_->image() : QImage();
+}
+
+// ── 播放阶段（用户 2026-11-15）────────────────────────────────────
+// 只服务 UI 的空状态区：opening = "正在打开…"、failed = "无法播放"。
+// 事件（FILE_LOADED / END_FILE）都在观察器/事件线程里，写入一律排队到 GUI 线程。
+void PlayerViewModel::setMediaPhase(int phase, const QString &detail) {
+    if (mediaPhase_ == phase && mediaPhaseDetail_ == detail)
+        return;
+    mediaPhase_ = phase;
+    mediaPhaseDetail_ = detail;
+    emit mediaPhaseChanged();
+}
+
+void PlayerViewModel::noteFileLoaded() {
+    // 每个文件载入完成都置 playing（`setFileLoaded` 有去重，切文件时不会触发）。
+    // 但**没有活动文件**时的事件要忽略：启动恢复列表（loadlist … append）
+    // 也会来 FILE_LOADED，那时应该保持 idle 引导（实测否则会显示成播放态）。
+    if (!fileLoaded_) return;
+    setMediaPhase(2);
+}
+
+bool PlayerViewModel::canRetryOpen() const {
+    return mediaPhase_ == 3 && pendingOpenIsNetwork_ && !pendingOpenPath_.isEmpty();
+}
+
+void PlayerViewModel::retryOpen() {
+    if (!canRetryOpen()) return;
+    openFiles(QStringList{pendingOpenPath_}, 0);
+}
+
+void PlayerViewModel::noteLoadFailed() {
+    // 已经在 failed 就不重复（mpv 可能连发多个错误）。
+    if (mediaPhase_ == 3) return;
+    const QString why = pendingOpenIsNetwork_
+        ? tr("Could not open the stream") : tr("Could not open the file");
+    setMediaPhase(3, why);
+    // 失败时把画面置黑：否则错误卡片后面还停在上一段的最后一帧，
+    // 看起来像"还在播"（与 clear/stop 同一条置黑路径）。
+    emit playlistEmptied();
+}
+
+bool PlayerViewModel::previewUnavailable() const {
+    // 实例报过错且当前没有可用源 → 气泡显示"无法获取"（面板形态/尺寸不变）
+    return preview_ && previewActive_ && !preview_->hasSource() &&
+           !preview_->lastError().isEmpty();
+}
+
+bool PlayerViewModel::previewReady() const {
+    return preview_ && previewActive_ && preview_->hasSource();
+}
+
+void PlayerViewModel::updatePreviewSource() {
+    if (!preview_) return;
+    const bool haveVideo = videoWidth_.load() > 0 && videoHeight_.load() > 0;
+    const QString path = lastPath_;
+    // 网络流**允许**（用户 2026-11-15）：只有直播/线性流（不可 seek）不启用——
+    // 缩略图要靠 seek，直播 seek 没有意义。HTTP/HLS 点播照常取帧（预览实例
+    // 会自己再拉一次，代价是带宽/时延，换来拖动时有画面参考）。
+    // 直播判定**只用 mpv 的通用信号** `isLiveSource()`（`seekable=no` / seek 失败
+    // 后确认的线性源）。⚠ 不按站点特征猜：实测 bilibili 直播 `seekable=yes` 且
+    // `duration` 会增长（14.5→17.6→21.1s），而成 HLS 点播的 `duration` 可能是
+    // 未知——两者都不可靠（用户 2026-11-15：判不准就不做控制，文档里说明
+    // "直播流的缩略图不可信"即可）。
+    const bool usable = previewEnabled_ && previewThumbnails_ && fileLoaded_ &&
+                        !path.isEmpty() && haveVideo && !isLiveSource();
+
+    PreviewThumbnailer::Params p;
+    p.width = previewThumbWidth_;
+    // 网络源**懒加载**（用户 2026-11-15 定）：没悬停过就不让预览实例去 load，
+    // 免得不悬停也把同一路流拉第二遍。悬停一次后 previewWanted_ 置真，
+    // 本次文件内保持载入（拖动/反复悬停都命中缓存）。
+    // ⚠ 不因为"失败"而隐藏面板：面板形态固定（无图时是时间气泡），
+    // 开不开缩略图由「界面 → 缩略图」开关决定，不随某个源的成功/失败变脸。
+    //
+    // 网络源的**实际播放地址**用主实例已解析出的 `stream-open-filename`
+    //（mpv 的 ytdl_hook 会把它做成自包含的 `edl://`：内含签名直链 + 请求头，
+    //  bilibili 与 YouTube 实测都是这种形态），预览实例直接开它即可 ——
+    // 于是**不再跑第二次 yt-dlp**（也就绕开了"预览实例没有 cookie"和
+    // `ytdl-format=worst` 在部分站点不存在这两个坑）。拿不到解析结果时才退回
+    // 自解析（最后手段）。
+    // 网络源：只用主实例解析出来的 `stream-open-filename`。解析还没到位
+    //（刚 loadfile、ytdl_hook 还在跑）时**什么都不做**——等它的观察器回调
+    // 再进来一次；绝不让预览实例自己跑 yt-dlp（它拿不到 cookie，`worst`
+    // 这种格式也未必存在，2026-11-15 就是这么一直出不了图的）。
+    const bool resolved = !networkSource_ || !openFilename_.isEmpty();
+    const QString src = networkSource_ ? openFilename_ : path;
+    const bool deferNetwork = networkSource_ && !previewWanted_;
+    p.path = (usable && !deferNetwork && resolved) ? src : QString();
+    p.ytdl = false;
+    p.userAgent = previewUserAgent_;
+    p.headers = previewHeaders_;
+    p.rotate = rotMode_.load();
+    p.hdr = videoHdr_;
+
+    // 诊断（低频，仅 -v）：预览为什么这次不装载/装载什么
+    MLOG_VERBOSE("preview: update net=%d wanted=%d defer=%d resolved=%d active=%d "
+                 "edl=%d path=%s",
+                 networkSource_ ? 1 : 0, previewWanted_ ? 1 : 0, deferNetwork ? 1 : 0,
+                 resolved ? 1 : 0, usable ? 1 : 0, int(openFilename_.size()),
+                 (p.path.isEmpty() ? "(none)" : "set"));
+
+    const int layout = stereoLayout_.load();   // -1 = 3D 未激活
+    if (layout >= 0) {
+        // 3D 输出：缩略图取单眼（默认左/上眼；预览面板在桌面窗口，是 2D UI，
+        // 不需要逐眼复制）。half = 源里每眼已被压扁，实例内会还原宽高比。
+        p.eye = 0;
+        p.layout = layout;
+        p.half = stereoHalf_.load() != 0;
+    } else if (aiAvailable_.load() && (eyeMode_.load() == 1 || eyeMode_.load() == 2)) {
+        // 单眼看片（vf_eye 已把画面裁成一只眼）：缩略图跟随同一只眼。
+        p.eye = eyeMode_.load() - 1;
+        p.layout = eyeLayout_.load();
+        p.half = eyeHalf_.load() != 0;
+    } else {
+        p.eye = -1;
+    }
+
+    if (previewActive_ != usable) {
+        previewActive_ = usable;
+        emit previewStateChanged();
+    }
+    preview_->setParams(p);
+    // "刚变可用"这一刻也要补发：文件载入是异步的，两条路径先后不定
+    //（实例先载入完、预览后变可用 → 只靠 stateChanged 补发会漏掉）。
+    maybeReplayDeferredPreview();
+}
+
+void PlayerViewModel::maybeReplayDeferredPreview() {
+    if (pendingPreviewMs_ < 0 || !preview_ || !previewActive_)
+        return;
+    if (!preview_->hasSource()) {
+        // 还没装载：这次滞留的悬停就是"用户想看"的证据 → 允许立刻开始懒加载
+        //（装载完成会再走 stateChanged 回到这里补发）。
+        if (networkSource_ && !previewWanted_) {
+            previewWanted_ = true;
+            updatePreviewSource();
+        }
+        return;
+    }
+    const qint64 ms = pendingPreviewMs_;
+    pendingPreviewMs_ = -1;
+    MLOG_INFO("preview: replay deferred hover request (%.1fs)", double(ms) / 1000.0);
+    preview_->request(ms);
+}
+
+void PlayerViewModel::requestPreview(qint64 ms) {
+    if (!preview_) return;
+    MLOG_VERBOSE("preview: hover %.1fs (net=%d wanted=%d active=%d)", double(ms) / 1000.0,
+                 networkSource_ ? 1 : 0, previewWanted_ ? 1 : 0, previewActive_ ? 1 : 0);
+    // 网络源懒加载：第一次悬停才让预览实例去 load（之后本文件内保持）。
+    // ⚠ 这一步必须在"是否就绪"判断**之前**：实测（2026-11-15，b 站）进入播放
+    // 瞬间就悬停时，edl 还没解析出来，旧代码在这里直接 return，连"想看"都没记，
+    // 结果整段只有时间气泡，必须再动一次鼠标才出图。
+    if (networkSource_ && !previewWanted_) {
+        previewWanted_ = true;
+        updatePreviewSource();
+    }
+    if (!previewActive_) {
+        pendingPreviewMs_ = ms;   // 实例就绪后补发（不是失败重试）
+        return;
+    }
+    pendingPreviewMs_ = -1;
+    preview_->request(ms);
+}
+
+void PlayerViewModel::cancelPreview() {
+    pendingPreviewMs_ = -1;
+    if (preview_) preview_->cancel();
+}
+
+int PlayerViewModel::thumbRenderWidth() const {
+    // 渲染（物理）宽：RPC 显式覆盖优先，否则"逻辑宽 × DPR"。
+    if (thumbWidthOverride_ > 0)
+        return thumbWidthOverride_;
+    const qreal dpr = dpr_ > 0.0 ? dpr_ : 1.0;
+    return std::max(1, int(std::lround(kThumbLogicalWidth * dpr)));
+}
+
+void PlayerViewModel::setPreviewThumbWidth(int px) {
+    // 显式覆盖（RPC `set-preview-width`）：只给测试/脚本用，单位是**渲染像素**
+    // （跳过 DPR 换算），不落盘、不参与任何自动决策（窗口/屏幕缩放不会改它）。
+    px = std::clamp(px, 160, 640);
+    thumbWidthOverride_ = px;
+    if (previewThumbWidth_ == px) return;
+    previewThumbWidth_ = px;
+    emit previewThumbWidthChanged();
+    updatePreviewSource();   // 宽度变化 → 清缓存，下次请求按新宽度渲
+}
+
+void PlayerViewModel::noteDevicePixelRatio(qreal dpr) {
+    // QML 上报所在窗口的 DPR（换屏/系统缩放会变）：渲染宽跟着变，逻辑宽不变。
+    if (dpr <= 0.0 || qFuzzyCompare(dpr + 1.0, dpr_ + 1.0))
+        return;
+    dpr_ = dpr;
+    if (thumbWidthOverride_ > 0)
+        return;   // 测试覆盖优先，DPR 不影响渲染宽
+    const int px = thumbRenderWidth();
+    if (previewThumbWidth_ == px)
+        return;
+    previewThumbWidth_ = px;
+    emit previewThumbWidthChanged();
+    updatePreviewSource();   // 渲染宽变化 → 清缓存，下次请求按新宽度渲
+}
+
+void PlayerViewModel::setPreviewEnabled(bool on) {
+    if (previewEnabled_ == on) return;
+    previewEnabled_ = on;
+    if (preview_) preview_->setEnabled(on);
+    updatePreviewSource();
+}
+
+QString PlayerViewModel::formatTime(qint64 ms) const {
+    if (ms <= 0) return QStringLiteral("0:00");
+    const qint64 s = ms / 1000;
+    const qint64 m = s / 60;
+    return QStringLiteral("%1:%2").arg(m).arg(s % 60, 2, 10, QLatin1Char('0'));
+}
+
+QString PlayerViewModel::chapterTitleAt(qint64 ms) const {
+    const double t = double(ms) / 1000.0;
+    QString title;
+    for (const QVariant &v : chapters_) {
+        const QVariantMap m = v.toMap();
+        if (t + 1e-3 < m.value(QStringLiteral("time")).toDouble())
+            break;   // chapter-list 按时间有序
+        title = m.value(QStringLiteral("title")).toString();
+    }
+    return title;
+}
+
+void PlayerViewModel::setPreviewDebugHoverMs(int ms) {
+    if (previewDebugHoverMs_ == ms) return;
+    previewDebugHoverMs_ = ms;
+    emit previewDebugHoverMsChanged();
+    if (ms < 0) {
+        cancelPreview();
+    } else {
+        setOverlaysVisible(true);   // 测试钩子同时把 UI 显示出来（否则抓不到面板）
+        requestPreview(ms);
+    }
+}
+
+void PlayerViewModel::setPreviewThumbnails(bool on) {
+    if (previewThumbnails_ == on) return;
+    previewThumbnails_ = on;
+    emit previewThumbnailsChanged();
+    saveSettings("previewThumbnails", on);
+    if (!on) {
+        cancelPreview();
+        previewWanted_ = false;   // 重新打开后网络源同样从"第一次悬停"开始
+    }
+    // 关掉 → 预览实例卸载（不再解码）；打开 → 重新 loadfile，下次悬停即出图。
+    updatePreviewSource();
+    MLOG_INFO("preview: thumbnails %s", on ? "on" : "off (time bubble only)");
+}
+
+void PlayerViewModel::toggleUiElement(int id) {
+    switch (id) {
+    case 0: setPreviewThumbnails(!previewThumbnails_); break;
+    case 1: setMenuHideInvalid(!menuHideInvalid_); break;
+    default: break;
+    }
+}
+
+void PlayerViewModel::setMenuHideInvalid(bool on) {
+    if (menuHideInvalid_ == on) return;
+    menuHideInvalid_ = on;
+    emit menuHideInvalidChanged();
+    saveSettings("menuHideInvalid", on);
+}
+

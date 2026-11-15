@@ -63,11 +63,23 @@ Item {
     // ── 进度条（贴 bottombar 上沿，拖动中 hovered/pressed 保持 UI）─
     ProgressSlider {
         id: progress
+        debugHoverMs: viewModel.previewDebugHoverMs
         anchors { left: parent.left; right: parent.right; bottom: bottombar.top }
         duration: root.duration
         currentTime: root.currentTime
         overlaysVisible: root.overlaysVisible
         onSeeked: function(ms) { root.seeked(ms) }
+    }
+
+    // ── 悬停预览（缩略图 + 时间/章节名）──────────────────────────
+    // 放在进度条上方、跟随指针；没有缩略图时只显示时间气泡。
+    SeekPreview {
+        id: seekPreview
+        visible: root.overlaysVisible &&
+                 (progress.hovered || progress.debugHoverMs >= 0) && root.duration > 0
+        cursorX: progress.x + progress.hoverX
+        hoverMs: progress.hoverMs
+        y: progress.y - height - 8
     }
 
     // ── bottombar ────────────────────────────────────────────────
@@ -98,12 +110,9 @@ Item {
             Rectangle { width: 1; height: 20; color: "#0fffffff"; anchors.verticalCenter: parent.verticalCenter }
 
             Text {
-                function fmt(ms) {
-                    if (ms <= 0) return "0:00"
-                    var s = Math.floor(ms/1000), m = Math.floor(s/60)
-                    return m + ":" + (s%60 < 10 ? "0" : "") + s%60
-                }
-                text: fmt(root.currentTime) + " / " + fmt(root.duration)
+                // 时间格式单一事实源 = PlayerViewModel::formatTime（预览面板同用）
+                text: viewModel.formatTime(root.currentTime) + " / "
+                      + viewModel.formatTime(root.duration)
                 color: "#e0e0e0"; font.pixelSize: 13
                 anchors.verticalCenter: parent.verticalCenter
             }

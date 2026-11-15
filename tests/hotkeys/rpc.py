@@ -127,6 +127,13 @@ class Rpc:
         out["audioDelay"] = grab(r"audioDelay=(-?\d+)ms", int, 0)
         m = re.search(r"ms=(-?\d+)/(-?\d+)", text)
         out["msSub"], out["msAudio"] = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+        # 逐行几何（r<idx>{y=..,h=..,v=..}）：分组标题 h=26、分隔线 h=1、
+        # 普通行 h=30 —— 测试用它算"第一行/最后一行"的**实际索引**，
+        # 不再假设首个条目是 0（菜单加分组标题后 0 号是 header，不可聚焦）。
+        out["rows"] = [
+            {"idx": int(i), "y": int(y), "h": int(h), "vis": int(v)}
+            for i, y, h, v in re.findall(r"r(\d+)\{y=(-?\d+),h=(\d+),v=(\d+)\}", text)
+        ]
         return out
 
     def menu_state(self, player: bool = False) -> dict:

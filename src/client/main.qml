@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Dialogs
+import QtQuick.Window
 import VSR 1.0
 import "ui"
 
@@ -8,6 +9,29 @@ import "ui"
 Item {
     id: root
     anchors.fill: parent
+
+    // ── 缩略图：组件按逻辑尺寸，图片按 DPR 渲染（用户 2026-11-15）───────
+    // 面板宽固定 `PlayerViewModel::kThumbLogicalWidth`(192) 逻辑 px，预览实例实际
+    // 渲染宽 = 192 × DPR —— dpr=2 的屏上必须给 384 px 的纹理，否则 Image 被放大
+    // 两倍显示、缩略图发糊。
+    // ⚠ 只在"显示底栏/预览面板"的窗口上报：2D 是播放窗口，3D 是桌面 control 窗口；
+    // presentation 窗口没有进度条，别让它把自己那块屏的 dpr 覆盖进来。
+    readonly property bool ownsUiChrome: controlMode || !stereo.active
+    Component.onCompleted: {
+        if (ownsUiChrome)
+            viewModel.noteDevicePixelRatio(Screen.devicePixelRatio);
+    }
+    Screen.onDevicePixelRatioChanged: {
+        if (ownsUiChrome)
+            viewModel.noteDevicePixelRatio(Screen.devicePixelRatio);
+    }
+    Connections {
+        target: stereo
+        function onActiveChanged() {
+            if (ownsUiChrome)
+                viewModel.noteDevicePixelRatio(Screen.devicePixelRatio);
+        }
+    }
 
     /// 最后一次鼠标位置（键盘打开右键菜单时用它定位；没记录过就开在窗口中间）
     property point lastMenuPos: Qt.point(-1, -1)
@@ -92,7 +116,7 @@ Item {
         }
         Component.onCompleted: {
             _popups = [volumePopup, qualityPopup, trueHdrAdvancedPopup, speedPopup,
-                       aspectPopup, contextMenu, openMenu, urlPopup]
+                       aspectPopup, contextMenu, urlPopup]
             // 启动即按当前状态应用 auto-hide（onShowUiChanged 只在翻转时触发）
             viewModel.overlaysVisible = showUi
         }
@@ -123,7 +147,6 @@ Item {
             anchors { left: parent.left; right: parent.right; top: parent.top }
             videoInfo: viewModel.videoInfo
             overlaysVisible: viewModel.overlaysVisible
-            onOpenMenuRequested: openMenu.open()
         }
 
         // ── Center Play Button ─────────────────────────────────────
@@ -131,7 +154,31 @@ Item {
             anchors.fill: parent
             playing: viewModel.playing
             overlaysVisible: viewModel.overlaysVisible
+            // 无媒体时由 IdleScreen 接管中央区域（它的「继续上次播放」就是
+            // 同一个动作），否则两个东西会叠在一起。
+            visible: viewModel.hasMedia
             onClicked: viewModel.togglePlayPause()
+        }
+
+        // ── 无媒体：dropzone + 初始操作提示（用户 2026-11-15）────────
+        // 真正的拖放落点仍是窗口级 DropArea（这里只做视觉引导 + 快捷入口）。
+        IdleScreen {
+            id: idleScreen
+            anchors.fill: parent
+            // 任何 popup（含右键菜单）打开时让位：它是"空状态引导"，
+            // 菜单盖上来时还透出面板文字会显脏（菜单是半透明的）。
+            // 播放态（mediaPhase 2）整体让位；1=正在打开、3=无法播放 也走这张卡
+            visible: viewModel.mediaPhase !== 2 && !benchmarkMode && !uiLayer.anyPopupOpen
+            dragActive: dropArea.containsDrag
+            phase: viewModel.mediaPhase
+            detail: viewModel.mediaPhaseDetail
+            canRetry: viewModel.canRetryOpen
+            canContinue: viewModel.playlistModel.count > 0
+            onOpenFilesRequested: { fileDialog.mode = 0; fileDialog.open() }
+            onOpenFolderRequested: { folderDialog.mode = 0; folderDialog.open() }
+            onOpenUrlRequested: urlPopup.open()
+            onContinueRequested: viewModel.togglePlayPause()
+            onRetryRequested: viewModel.retryOpen()
         }
 
         // ── Bottom Bar（热区 + 进度条 + bottombar 一体）────────────
@@ -167,16 +214,6 @@ Item {
             onFullscreenClicked: viewModel.toggleFullscreen()
             onPlaylistClicked: root.togglePlaylist()
             onLoopClicked: viewModel.toggleLoop()
-        }
-
-        // ── 右上角打开菜单（文件/文件夹/URL 三入口）──────────────────
-        OpenMenu {
-            id: openMenu
-            anchorTarget: topBar.openBtn
-            onFileRequested: function() { fileDialog.mode = 0; fileDialog.open() }
-            onFolderRequested: function() { folderDialog.mode = 0; folderDialog.open() }
-            onUrlRequested: urlPopup.open()
-            onOpened: uiLayer.closeOtherPopups(openMenu)
         }
 
         // ── URL 输入弹窗（Ctrl+L 触发）──────────────────────────────
@@ -283,6 +320,9 @@ Item {
             onAppendFolderRequested: function() { folderDialog.mode = 1; folderDialog.open() }
             onRemoveFromPlaylistRequested: viewModel.removeCurrentFromPlaylist()
             onDeleteFileRequested: viewModel.deleteCurrentFile()
+            // 「界面」二级项：可 toggle 的界面元素（0 = 缩略图；关闭后悬停
+            // 只显示时间小气泡）。菜单保持打开，可连续切换。
+            onUiElementToggled: function(id) { viewModel.toggleUiElement(id) }
             onDeinterlaceSelected: function(mode) { viewModel.setDeintMode(mode) }
             onRotateSelected: function(mode) { viewModel.setRotMode(mode) }
             // ── 轨道 / 流（底栏轨道弹窗已移除，2026-11-02）──────────────

@@ -2,7 +2,9 @@
 
 #include <QElapsedTimer>
 #include <QObject>
+#include <QImage>
 #include <QSettings>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -18,6 +20,7 @@
 #include "FrucBackend.h"   // 档位默认值/合法性（单一来源，见 fruc::kMaxFpsDefault）
 
 class MpvController;
+class PreviewThumbnailer;
 
 /// Single source of truth for all UI state.
 ///
@@ -184,6 +187,57 @@ class PlayerViewModel : public QObject {
     // currentIndex 由 PlaylistModel 自带 currentIndexChanged，切歌不再
     // 触发列表 reset（旧实现 QStringList 属性 + 共用 NOTIFY 全量重建）。
     Q_PROPERTY(PlaylistModel* playlistModel READ playlistModel CONSTANT)
+    // ── 进度条缩略图（PreviewThumbnailer：进程内第二个 libmpv + 软件渲染）──
+    /// 每产出一张新图 +1：QML 用它当 image://vthumb/<serial> 的缓存破坏键。
+    Q_PROPERTY(quint64 previewSerial READ previewSerial NOTIFY previewImageChanged)
+    /// 当前缩略图尺寸（QML 按它算面板宽高比；无图时为空）。
+    Q_PROPERTY(QSize previewImageSize READ previewImageSize NOTIFY previewImageChanged)
+    /// 预览实例是否可用（有可解码的视频文件）——网络流/纯音频/直播为 false。
+    Q_PROPERTY(bool previewReady READ previewReady NOTIFY previewStateChanged)
+    // ── 播放阶段（空状态区显示什么；用户 2026-11-15 定）────────────────
+    // 0 = idle     无媒体（显示 dropzone 引导）
+    // （1 已废弃：载入耗时无法准确观测，用户 2026-11-15 要求取消"正在打开"）
+    // 2 = playing  有活动媒体（空状态整体让位）
+    // 3 = failed   载入失败（"无法播放" + 原因；**不显示**"继续上次播放"，
+    //              网络源给"重试"，本地源不给）
+    Q_PROPERTY(int mediaPhase READ mediaPhase NOTIFY mediaPhaseChanged)
+    Q_PROPERTY(QString mediaPhaseDetail READ mediaPhaseDetail NOTIFY mediaPhaseChanged)
+    Q_PROPERTY(bool canRetryOpen READ canRetryOpen NOTIFY mediaPhaseChanged)
+    /// 当前文件**允许**做预览（有视频轨、非直播/线性流、开关打开）。
+    /// 与 previewReady 的区别：ready = 实例已载入源（懒加载下网络源要等到
+    /// 第一次请求）；available = 策略上可以做（RPC/UI 的入口判据）。
+    Q_PROPERTY(bool previewAvailable READ previewAvailable NOTIFY previewStateChanged)
+    /// 预览**取不到图**（实例报错且无可用源）。仅供悬停气泡显示"无法获取"：
+    /// 面板不因此隐藏、也不改变尺寸（用户 2026-11-15：失败也要给气泡，
+    /// 最多在气泡里写"无法获取"）。
+    Q_PROPERTY(bool previewUnavailable READ previewUnavailable NOTIFY previewStateChanged)
+    /// 进度条缩略图开关（右键菜单「界面 → 缩略图」）。关闭后悬停只显示时间
+    /// 气泡；预览实例随之卸载（不白耗解码）。
+    Q_PROPERTY(bool previewThumbnails READ previewThumbnails WRITE setPreviewThumbnails
+               NOTIFY previewThumbnailsChanged)
+    /// 是否**隐藏**当前上下文里无效（用不了）的菜单项
+    /// （右键菜单「界面 → 隐藏无效菜单项」）：
+    /// false（默认）= 置灰禁用、保留占位（结构不跳动，用户 2026-11-15 定）；
+    /// true = 直接隐藏（旧行为）。
+    /// 用词：**无效**（此刻不成立/用不了）——用户 2026-11-15 定的中文口径，
+    /// 宁可长一点也要准确；不要换成"禁用"（暗示功能被关掉）或"未激活"
+    /// （UI 术语里多指窗口/焦点）。
+    Q_PROPERTY(bool menuHideInvalid READ menuHideInvalid WRITE setMenuHideInvalid
+               NOTIFY menuHideInvalidChanged)
+    /// 缩略图**渲染**宽（物理像素）= 逻辑宽 × DPR；WRITE 只给 RPC/测试的显式
+    /// 覆盖用（跳过后面的换算），**不开放 UI、不落盘**（用户 2026-11-15）。
+    Q_PROPERTY(int previewThumbWidth READ previewThumbWidth WRITE setPreviewThumbWidth
+               NOTIFY previewThumbWidthChanged)
+    /// 缩略图**面板**宽（Qt 逻辑像素，固定 192）。QML 用它定组件几何，
+    /// 图片本身按 `previewThumbWidth`（= 本值 × DPR）渲染，HiDPI 下才不糊。
+    Q_PROPERTY(int previewThumbLogicalWidth READ previewThumbLogicalWidth CONSTANT)
+    /// 当前文件的章节（[{time: 秒, title: 文本}]，mpv chapter-list 镜像）
+    Q_PROPERTY(QVariantList chapters READ chapters NOTIFY chaptersChanged)
+    /// 测试钩子：伪造"指针悬停在进度条某时间"。Wayland 下无法程序化移动
+    /// 指针（QCursor::setPos 无效），RPC 用它驱动预览面板做视觉验收。
+    /// -1 = 关。
+    Q_PROPERTY(int previewDebugHoverMs READ previewDebugHoverMs
+               WRITE setPreviewDebugHoverMs NOTIFY previewDebugHoverMsChanged)
 
     // ── TrueHDR 参数（getter；setter 见 public slots）──────────────────
     bool upHdrEnabled() const { return upHdrEnabled_; }
@@ -399,6 +453,60 @@ public:
     int loopMode() const        { return loopMode_; }
     PlaylistModel *playlistModel() { return &playlistModel_; }
 
+    // ── 进度条缩略图（QML 侧接口）────────────────────────────────────
+    quint64 previewSerial() const;
+    QSize previewImageSize() const;
+    /// 最新一帧缩略图（QQuickImageProvider 用；跨线程安全）。
+    QImage previewImage() const;
+    bool previewReady() const;
+    bool previewUnavailable() const;
+    bool previewAvailable() const { return previewActive_; }
+    int mediaPhase() const { return mediaPhase_; }
+    QString mediaPhaseDetail() const { return mediaPhaseDetail_; }
+    bool canRetryOpen() const;
+    /// 重新打开上一次失败的目标（仅网络源；本地不提供重试）。
+    Q_INVOKABLE void retryOpen();
+    /// END_FILE(reason=ERROR)：进入 failed 阶段（事件线程排队调用）。
+    Q_INVOKABLE void noteLoadFailed();
+    /// 每个 FILE_LOADED 事件 → playing（不依赖 fileLoaded_ 去重）
+    Q_INVOKABLE void noteFileLoaded();
+    bool previewThumbnails() const { return previewThumbnails_; }
+    void setPreviewThumbnails(bool on);
+    bool menuHideInvalid() const { return menuHideInvalid_; }
+    void setMenuHideInvalid(bool on);
+    /// 右键菜单「界面」二级项：按 id 翻转界面元素（0 = 缩略图）。
+    Q_INVOKABLE void toggleUiElement(int id);
+    /// 缩略图的**渲染**宽（物理像素）：逻辑宽 × DPR，不随窗口尺寸变化
+    /// （用户 2026-11-15 取消了"按窗口比例 + 上下限"）。
+    int previewThumbWidth() const { return previewThumbWidth_; }
+    /// 缩略图**面板**宽（逻辑像素）：固定 192（kThumbLogicalWidth）。
+    int previewThumbLogicalWidth() const { return kThumbLogicalWidth; }
+    /// QML 上报所在窗口的 devicePixelRatio（换屏/缩放到别的 DPI 时重算渲染宽）。
+    Q_INVOKABLE void noteDevicePixelRatio(qreal dpr);
+    /// 当前生效的 DPR（RPC/日志用；渲染宽 = 逻辑宽 × 它）
+    qreal previewDevicePixelRatio() const { return dpr_; }
+    QVariantList chapters() const { return chapters_; }
+    int previewDebugHoverMs() const { return previewDebugHoverMs_; }
+    void setPreviewDebugHoverMs(int ms);
+    /// 毫秒 → m:ss（BottomBar 与预览面板共用，单一事实源）。
+    Q_INVOKABLE QString formatTime(qint64 ms) const;
+    /// 悬停时间所在章节标题（无章节 → 空串）。
+    Q_INVOKABLE QString chapterTitleAt(qint64 ms) const;
+    /// 请求某毫秒位置的缩略图（悬停/拖动时由 QML 调用）。
+    Q_INVOKABLE void requestPreview(qint64 ms);
+    Q_INVOKABLE void cancelPreview();
+    /// 预览实例就绪后补发被搁置的悬停目标（pendingPreviewMs_）。
+    /// 三个时机都要调：实例载入完成（stateChanged）、预览刚变可用、换文件后。
+    void maybeReplayDeferredPreview();
+    void setPreviewThumbWidth(int px);
+    /// 启动时带 `-- --pause=yes`：openFiles 不要再强制恢复播放。
+    /// （用户 2026-11-15：菜单/播放列表/拖放打开任何源都应**立即播放**，
+    ///  不管当前是不是暂停；只有显式 `--pause=yes` 例外。）
+    void setStartPaused(bool on) { startPaused_ = on; }
+    /// benchmark / 关闭开关：整个取帧功能停用（实例销毁）。
+    void setPreviewEnabled(bool on);
+    PreviewThumbnailer *thumbnailer() const { return preview_; }
+
     MpvController *mpv() const { return mpv_; }
 
     /// mpv `vf` 选项串（viewModel 单一来源，替代 Options::vfOption）。
@@ -547,6 +655,7 @@ public slots:
     Q_INVOKABLE void clearSubtitleMemory();
     void playlistRemove(int index);
     void playlistClear();
+    void resumeFromUserOpen();   ///< 用户主动打开/切条目后恢复播放
     void playlistNext();
     void playlistPrev();
     void playlistPlayIndex(int index);
@@ -556,6 +665,14 @@ public slots:
     Q_INVOKABLE void deleteCurrentFile();
 
 signals:
+    void previewImageChanged();
+    void previewStateChanged();
+    void mediaPhaseChanged();
+    void previewThumbWidthChanged();
+    void previewThumbnailsChanged();
+    void menuHideInvalidChanged();
+    void chaptersChanged();
+    void previewDebugHoverMsChanged();
     void playingChanged();
     void currentTimeChanged();
     void durationChanged();
@@ -711,7 +828,47 @@ private:
     /// settingsEnabled_ 恒 false，测量口径无副作用）。
     void saveSettings(const char *key, const QVariant &value);
 
+    /// 把当前文件/3D 布局/旋转/HDR 推给缩略图实例（参数不变时是空操作）。
+    void updatePreviewSource();
+
     MpvController *mpv_ = nullptr;
+    PreviewThumbnailer *preview_ = nullptr;   ///< 懒创建；benchmark 下不创建
+    bool previewThumbnails_ = true;
+    bool menuHideInvalid_ = false;
+    QString openFilename_;   ///< mpv stream-open-filename（yt-dlp 解析后的真实流）
+    /// 主实例当前的 HTTP 头（ytdl_hook 设的文件级选项）→ 传给预览实例
+    QString previewUserAgent_;
+    QString previewHeaders_;
+    /// 生效的缩略图宽度（由窗口宽 × 比例 + 上下限算出，或由 RPC 显式覆盖）
+    /// 渲染宽（物理像素）= 逻辑宽 × dpr_，或 thumbWidthOverride_
+    int previewThumbWidth_ = 320;
+    int thumbWidthOverride_ = 0;   ///< >0 = RPC 显式指定（渲染像素，测试用）
+    qreal dpr_ = 1.0;              ///< QML 上报的窗口 DPR（默认 1）
+    /// 渲染宽：覆盖优先，否则 kThumbLogicalWidth × DPR
+    int thumbRenderWidth() const;
+public:
+    /// 面板逻辑宽（Qt 逻辑像素，单一事实源）：组件尺寸按它定，图片按它×DPR 渲
+    /// 用户 2026-11-15：取消窗口比例后先试 240，再调 **192**。
+    static constexpr int kThumbLogicalWidth = 192;
+private:
+    bool previewEnabled_ = true;              ///< benchmark/关闭开关
+    int previewDebugHoverMs_ = -1;
+    bool previewActive_ = false;              ///< 当前文件允许预览（有视频/非直播）
+    /// 网络源懒加载：false = 还没悬停过，预览实例**不**载入网络地址
+    /// （用户 2026-11-15 定：网络短视频/直播之外的点播源，第一次悬停才拉流，
+    /// 避免主实例之外立刻多一路数据）。换文件/关闭开关时复位。
+    bool previewWanted_ = false;
+    /// 实例还没就绪时收到的悬停目标：就绪后补发一次（**不是失败重试**，只是把
+    /// "这次请求还没被尝试过"补上，否则第一个悬停会石沉大海、必须再动一次鼠标）。
+    /// -1 = 无待补发请求。
+    qint64 pendingPreviewMs_ = -1;
+    bool startPaused_ = false;   ///< `--pause=yes` 启动：打开源后保持暂停
+    void setMediaPhase(int phase, const QString &detail = QString());
+    int mediaPhase_ = 0;             ///< 见 mediaPhase Q_PROPERTY
+    QString mediaPhaseDetail_;       ///< opening = 源名；failed = 失败原因
+    QString pendingOpenPath_;        ///< 最近一次"打开"的目标（重试用）
+    bool pendingOpenIsNetwork_ = false;
+    QVariantList chapters_;
     std::string hwdecInit_;      // 启动时 hwdec 值（切换硬解时恢复）
     bool playing_ = false;
     std::atomic<int64_t> currentTime_{0};
