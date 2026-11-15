@@ -12,7 +12,7 @@
   T8 3D 会话里面板落在桌面 control 窗口（有副屏时）
   T9 右键菜单「界面 → 缩略图」开关（关闭后只显示时间气泡）
   T10 网络流（HTTP 点播，支持 Range）也能出缩略图
-  T11 右键菜单「界面 → 不可用项灰显」开关（灰显 vs 隐藏）
+  T11 右键菜单「界面 → 隐藏禁用的菜单项」开关（灰显占位 vs 隐藏）
 
 Wayland 下无法程序化移动指针（QCursor::setPos 无效），悬浮用 RPC
 `debug-hover <秒>` 注入（见 PlayerViewModel::setPreviewDebugHoverMs）。
@@ -332,30 +332,32 @@ def t10_network() -> None:
         srv.shutdown()
 
 
-def t11_dim_toggle(p: Player) -> None:
-    section("T11 「界面 → 不可用项灰显」开关")
+def t11_hide_disabled_toggle(p: Player) -> None:
+    section("T11 「界面 → 隐藏禁用的菜单项」开关")
     rpc = p.rpc
 
     def visible_rows() -> list[int]:
         st = settle(p)
         return [r["idx"] for r in st.get("rows", []) if r["vis"] and r["h"] >= 30]
 
-    rpc.call("set-menu-dim", "1")
+    # 默认（hide=0）：禁用项灰显占位
+    rpc.call("set-menu-hide-disabled", "0")
     time.sleep(0.3)
     p.open_menu()
-    dim_rows = visible_rows()
+    shown_rows = visible_rows()
     p.close_menu()
 
-    rpc.call("set-menu-dim", "0")
+    # 打开隐藏（hide=1）：禁用项不显示
+    rpc.call("set-menu-hide-disabled", "1")
     time.sleep(0.3)
     p.open_menu()
-    hide_rows = visible_rows()
+    hidden_rows = visible_rows()
     p.close_menu()
-    rpc.call("set-menu-dim", "1")
+    rpc.call("set-menu-hide-disabled", "0")
 
-    check(len(dim_rows) > len(hide_rows), "灰显模式可见行更多（含不可用项）",
-          f"dim={len(dim_rows)} hide={len(hide_rows)}")
-    check(not set(hide_rows) - set(dim_rows), "隐藏模式是灰显模式的子集")
+    check(len(shown_rows) > len(hidden_rows), "默认模式可见行更多（含禁用项）",
+          f"shown={len(shown_rows)} hidden={len(hidden_rows)}")
+    check(not set(hidden_rows) - set(shown_rows), "隐藏模式是默认模式的子集")
 
 
 def t7_audio() -> None:
@@ -427,7 +429,7 @@ def main() -> int:
     t7_audio()
     with Player(SOCK.with_name("vsr-thumb-dim.sock"),
                 LOG.with_name("vsr-thumb-dim.log"), [str(FIXTURE)]) as p:
-        t11_dim_toggle(p)
+        t11_hide_disabled_toggle(p)
     t10_network()
     return summary()
 

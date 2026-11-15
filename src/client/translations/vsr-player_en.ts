@@ -203,6 +203,11 @@
         <translation>Audio delay</translation>
     </message>
     <message>
+        <location filename="../ui/ContextMenu.qml" line="266"/>
+        <source>Hide disabled menu items</source>
+        <translation>Hide disabled menu items</translation>
+    </message>
+    <message>
         <location filename="../ui/ContextMenu.qml" line="278"/>
         <source>Network stream</source>
         <translation>Network stream</translation>
@@ -337,11 +342,6 @@
         <location filename="../ui/ContextMenu.qml" line="263"/>
         <source>Thumbnails</source>
         <translation>Thumbnails</translation>
-    </message>
-    <message>
-        <location filename="../ui/ContextMenu.qml" line="266"/>
-        <source>Dim unavailable items</source>
-        <translation>Dim unavailable items</translation>
     </message>
     <message>
         <location filename="../ui/ContextMenu.qml" line="290"/>

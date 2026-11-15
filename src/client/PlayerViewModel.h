@@ -198,10 +198,12 @@ class PlayerViewModel : public QObject {
     /// 气泡；预览实例随之卸载（不白耗解码）。
     Q_PROPERTY(bool previewThumbnails READ previewThumbnails WRITE setPreviewThumbnails
                NOTIFY previewThumbnailsChanged)
-    /// 不可用菜单项的呈现方式（右键菜单「界面 → 不可用项灰显」）：
-    /// true = 置灰禁用（默认，结构不跳动）；false = 隐藏（旧行为）。
-    Q_PROPERTY(bool menuDimUnavailable READ menuDimUnavailable WRITE setMenuDimUnavailable
-               NOTIFY menuDimUnavailableChanged)
+    /// 是否**隐藏**不可用的菜单项（右键菜单「界面 → 隐藏禁用的菜单项」）：
+    /// false（默认）= 置灰禁用、保留占位（结构不跳动，用户 2026-11-15 定）；
+    /// true = 直接隐藏（旧行为）。命名对齐 LibreOffice 的
+    /// `HideDisabledMenuItems`，避免双重否定。
+    Q_PROPERTY(bool menuHideDisabled READ menuHideDisabled WRITE setMenuHideDisabled
+               NOTIFY menuHideDisabledChanged)
     /// 缩略图目标宽度（像素）。可配置，但**本期不开放 UI**（用户 2026-11-15）。
     Q_PROPERTY(int previewThumbWidth READ previewThumbWidth WRITE setPreviewThumbWidth
                NOTIFY previewThumbWidthChanged)
@@ -435,8 +437,8 @@ public:
     bool previewReady() const;
     bool previewThumbnails() const { return previewThumbnails_; }
     void setPreviewThumbnails(bool on);
-    bool menuDimUnavailable() const { return menuDimUnavailable_; }
-    void setMenuDimUnavailable(bool on);
+    bool menuHideDisabled() const { return menuHideDisabled_; }
+    void setMenuHideDisabled(bool on);
     /// 右键菜单「界面」二级项：按 id 翻转界面元素（0 = 缩略图）。
     Q_INVOKABLE void toggleUiElement(int id);
     int previewThumbWidth() const { return previewThumbWidth_; }
@@ -616,7 +618,7 @@ signals:
     void previewStateChanged();
     void previewThumbWidthChanged();
     void previewThumbnailsChanged();
-    void menuDimUnavailableChanged();
+    void menuHideDisabledChanged();
     void chaptersChanged();
     void previewDebugHoverMsChanged();
     void playingChanged();
@@ -780,7 +782,7 @@ private:
     MpvController *mpv_ = nullptr;
     PreviewThumbnailer *preview_ = nullptr;   ///< 懒创建；benchmark 下不创建
     bool previewThumbnails_ = true;
-    bool menuDimUnavailable_ = true;
+    bool menuHideDisabled_ = false;
     int previewThumbWidth_ = 320;
     bool previewEnabled_ = true;              ///< benchmark/关闭开关
     int previewDebugHoverMs_ = -1;
