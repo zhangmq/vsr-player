@@ -122,7 +122,8 @@ PopupBase {
 
         // ── 轨道 / 流（按文件；无媒体时整块隐藏）──────────────────────
         {sep: true},
-        {header: qsTr("Tracks")},
+        {header: qsTr("Tracks"),
+         visibleWhen: function() { return root.dimUnavailable || root.hasTracks() }},
         // 轨道/流入口**不显示当前值**：轨道名/流标题都很长（实测 39 条轨道、
         // "1080P 高清 · AV1 · 1.9M" 这类），在 230px 宽的菜单里会盖住条目名。
         // 当前值在二级面板里用勾选表达。
@@ -261,7 +262,10 @@ PopupBase {
         return [
             {label: qsTr("Thumbnails"),
              toggle: viewModel.previewThumbnails,
-             subSig: "uiElementToggled", value: 0}
+             subSig: "uiElementToggled", value: 0},
+            {label: qsTr("Dim unavailable items"),
+             toggle: viewModel.menuDimUnavailable,
+             subSig: "uiElementToggled", value: 1}
         ]
     }
 
@@ -488,14 +492,22 @@ PopupBase {
 
     /// 条目是否显示（`visibleWhen` 缺省 = 恒显示；不满足条件的条目不占高度）。
     function itemShown(it) {
-        return it.visibleWhen === undefined ? true : it.visibleWhen()
+        if (it.visibleWhen !== undefined && !it.visibleWhen()) return false
+        // 「不可用项灰显」关闭时退回旧行为：不可用 = 直接不显示（不占高度）
+        if (!root.dimUnavailable && it.enabledWhen !== undefined && !it.enabledWhen())
+            return false
+        return true
     }
+
+    /// 「不可用项灰显」开关（用户 2026-11-15：界面菜单第二个 toggle）
+    readonly property bool dimUnavailable: viewModel.menuDimUnavailable
 
     /// 条目是否可用（`enabledWhen`）。不可用 = **仍然显示**但置灰、不参与
     /// 悬停/键盘/点击——用户 2026-11-15 要求"没有目标时禁用而不是隐藏"
     /// （隐藏会让菜单结构随内容跳动；禁用还顺带告诉用户这里有什么能力）。
     function itemEnabled(it) {
-        return it.enabledWhen === undefined ? true : it.enabledWhen()
+        if (it.enabledWhen === undefined) return true
+        return root.dimUnavailable ? it.enabledWhen() : true
     }
 
     /// 分隔线是否画：向上找第一个可见条目，如果它也是分隔线就不画。

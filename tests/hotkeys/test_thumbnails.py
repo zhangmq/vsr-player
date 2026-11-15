@@ -11,6 +11,8 @@
   T7 纯音频 / 无视频轨 → 不启用（preview 明确报不可用，不空等）
   T8 3D 会话里面板落在桌面 control 窗口（有副屏时）
   T9 右键菜单「界面 → 缩略图」开关（关闭后只显示时间气泡）
+  T10 网络流（HTTP 点播，支持 Range）也能出缩略图
+  T11 右键菜单「界面 → 不可用项灰显」开关（灰显 vs 隐藏）
 
 Wayland 下无法程序化移动指针（QCursor::setPos 无效），悬浮用 RPC
 `debug-hover <秒>` 注入（见 PlayerViewModel::setPreviewDebugHoverMs）。
@@ -20,8 +22,12 @@ Wayland 下无法程序化移动指针（QCursor::setPos 无效），悬浮用 R
 """
 from __future__ import annotations
 
+import functools
+import http.server
+import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -256,6 +262,102 @@ def t9_toggle(p: Player) -> None:
     check(r3["ok"], "重新开启后有缩略图", r3["err"])
 
 
+def _start_range_server(directory: Path) -> tuple[http.server.ThreadingHTTPServer, int]:
+    """本地 HTTP 点播服务（**支持 Range**）。
+
+    python -m http.server 不返回 206/Accept-Ranges，mpv 会把它当"不可 seek 的
+    线性流"→ 预览按直播被禁用；这里用一个小 handler 提供 Range，模拟真实点播。
+    """
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def send_head(self):
+            path = self.translate_path(self.path)
+            if not Path(path).is_file():
+                self.send_error(404)
+                return None
+            size = Path(path).stat().st_size
+            rng = self.headers.get("Range")
+            start, end = 0, size - 1
+            code = 200
+            if rng:
+                m = re.match(r"bytes=(\d*)-(\d*)", rng)
+                if m and (m.group(1) or m.group(2)):
+                    if m.group(1):
+                        start = int(m.group(1))
+                    if m.group(2):
+                        end = min(int(m.group(2)), size - 1)
+                    elif m.group(1):
+                        end = size - 1
+                    if not m.group(1) and m.group(2):
+                        start = max(0, size - int(m.group(2)))
+                    code = 206
+            f = open(path, "rb")
+            f.seek(start)
+            self.send_response(code)
+            self.send_header("Content-Type", "video/x-matroska")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(end - start + 1))
+            if code == 206:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.end_headers()
+            return f
+
+        def log_message(self, *a):
+            pass
+
+    handler = functools.partial(Handler, directory=str(directory))
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, srv.server_address[1]
+
+
+def t10_network() -> None:
+    section("T10 网络流（非直播）缩略图")
+    srv, port = _start_range_server(FIXTURE.parent)
+    try:
+        url = f"http://127.0.0.1:{port}/{FIXTURE.name}"
+        with Player(SOCK.with_name("vsr-thumb-net.sock"),
+                    LOG.with_name("vsr-thumb-net.log"), [url]) as p:
+            st = wait_until(
+                lambda: (lambda d: d if d and d.get("ready") else None)(
+                    p.rpc.call("get-preview-state").get("data")),
+                "网络流预览就绪", timeout=30)
+            check(st.get("ready") is True, "网络流（非直播）启用预览", st)
+            r = preview(p.rpc, "t10", 6)
+            check(r["ok"], "网络流取帧成功", r["err"])
+            if r["ok"]:
+                s = image_stats(r["path"])
+                expect_eq((s["w"], s["h"]), (320, 180), "网络流缩略图 320x180")
+    finally:
+        srv.shutdown()
+
+
+def t11_dim_toggle(p: Player) -> None:
+    section("T11 「界面 → 不可用项灰显」开关")
+    rpc = p.rpc
+
+    def visible_rows() -> list[int]:
+        st = settle(p)
+        return [r["idx"] for r in st.get("rows", []) if r["vis"] and r["h"] >= 30]
+
+    rpc.call("set-menu-dim", "1")
+    time.sleep(0.3)
+    p.open_menu()
+    dim_rows = visible_rows()
+    p.close_menu()
+
+    rpc.call("set-menu-dim", "0")
+    time.sleep(0.3)
+    p.open_menu()
+    hide_rows = visible_rows()
+    p.close_menu()
+    rpc.call("set-menu-dim", "1")
+
+    check(len(dim_rows) > len(hide_rows), "灰显模式可见行更多（含不可用项）",
+          f"dim={len(dim_rows)} hide={len(hide_rows)}")
+    check(not set(hide_rows) - set(dim_rows), "隐藏模式是灰显模式的子集")
+
+
 def t7_audio() -> None:
     section("T7 纯音频不启用")
     with Player(SOCK.with_name("vsr-thumb-audio.sock"),
@@ -323,6 +425,10 @@ def main() -> int:
         t9_toggle(p)
         t8_3d_window(p)
     t7_audio()
+    with Player(SOCK.with_name("vsr-thumb-dim.sock"),
+                LOG.with_name("vsr-thumb-dim.log"), [str(FIXTURE)]) as p:
+        t11_dim_toggle(p)
+    t10_network()
     return summary()
 
 

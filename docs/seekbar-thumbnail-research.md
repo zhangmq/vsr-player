@@ -107,7 +107,8 @@ ProgressSlider hover ──(sec)──► SeekPreview (QML，uiLayer 顶层 Item
 | 场景 | 行为 |
 |---|---|
 | 本地文件 | 启用 |
-| URL / 网络流 / 直播（`viewModel.networkSource`、`isLiveSource()`） | **不启用**（不出图，只显示悬停时间） |
+| 直播 / 线性流（`isLiveSource()`，含不可 seek/仅部分可 seek） | **不启用**（不出图，只显示悬停时间） |
+| 网络点播（HTTP/HLS VOD，可 seek） | 启用（2026-11-15 用户反馈：之前被过度拦截） |
 | 纯音频（无视频轨） | 不启用 |
 | 3D（presentation） | 预览只出现在**桌面 control 窗口**；不需要逐眼复制，缩略图本身裁单眼 |
 | 主播放器 seek 门控 | 完全不受影响（预览用独立实例，从不在主实例上 seek） |
@@ -119,7 +120,7 @@ ProgressSlider hover ──(sec)──► SeekPreview (QML，uiLayer 顶层 Item
 
 `ProgressSlider.qml` 已有 `hoverX`（2 px 竖线）。新增：紧贴竖线的 `mm:ss` 文本，
 左右夹取（不越出窗口），时间格式复用 BottomBar 的 `fmt()`（抽成单一函数，避免两处实现）。
-即使没有缩略图（网络流/音频）也显示。
+即使没有缩略图（直播/音频）也显示。
 
 ### 5.2 预览面板
 
@@ -128,7 +129,7 @@ ProgressSlider hover ──(sec)──► SeekPreview (QML，uiLayer 顶层 Item
 - 样式沿用现有语言：底 `#d9111111`、radius 8、边框 `#22ffffff`（同 `PopupBase`），
   缩略图宽 = `previewWidth`（默认 320），高 = 宽 / 单眼 aspect；
   下方一行 13 px `#e0e0e0` 文本：`mm:ss · 章节名`（无章节则只有时间）。
-- 显示条件：指针在进度条上、有视频、非网络源、无弹窗打开；拖动中保持显示。
+- 显示条件：指针在进度条上、有视频、非直播流、无弹窗打开；拖动中保持显示。
 
 ### 5.3 章节
 
@@ -248,7 +249,7 @@ vsr-player: ../video/mp_image.c:607: mp_image_crop: 断言 "x1 <= img->w && y1 <
 
 - 3D 的 eye 裁剪按**源帧轴**做（SBS 切左右、TAB 切上下）。若文件同时带旋转
   元数据（极少见），裁剪轴与旋转后的视觉轴不一致。
-- 网络流/直播/纯音频不启用（`networkSource` / `isLiveSource` / 无视频轨）。
+- 直播/线性流与纯音频不启用（`isLiveSource` / 无视频轨）；网络点播允许（预览实例会自己再拉一次流）。
 - `bd://` 蓝光标题允许预览（本地 ISO），但每次取帧要走 libbluray 定位。
 - 预览实例软解：4K exact 精修偶发 >1 s。
 

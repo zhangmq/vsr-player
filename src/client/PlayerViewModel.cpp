@@ -919,6 +919,7 @@ void PlayerViewModel::loadSettings() {
     // 手改越界 → 夹回 160..640（默认 320：足够辨认场景，又不会盖住画面）。
     previewThumbWidth_ = clampInt(settings_.value("previewThumbWidth", 320).toInt(), 160, 640);
     previewThumbnails_ = settings_.value("previewThumbnails", true).toBool();
+    menuDimUnavailable_ = settings_.value("menuDimUnavailable", true).toBool();
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -3172,10 +3173,11 @@ void PlayerViewModel::updatePreviewSource() {
     if (!preview_) return;
     const bool haveVideo = videoWidth_.load() > 0 && videoHeight_.load() > 0;
     const QString path = lastPath_;
-    // 网络源不取帧（等于二次下载 + 额外解码）；bd:// 是本地 ISO，允许。
-    const bool netStream = networkSource_ && !path.startsWith(QStringLiteral("bd:"));
+    // 网络流**允许**（用户 2026-11-15）：只有直播/线性流（不可 seek）不启用——
+    // 缩略图要靠 seek，直播 seek 没有意义。HTTP/HLS 点播照常取帧（预览实例
+    // 会自己再拉一次，代价是带宽/时延，换来拖动时有画面参考）。
     const bool usable = previewEnabled_ && previewThumbnails_ && fileLoaded_ &&
-                        !path.isEmpty() && haveVideo && !isLiveSource() && !netStream;
+                        !path.isEmpty() && haveVideo && !isLiveSource();
 
     PreviewThumbnailer::Params p;
     p.width = previewThumbWidth_;
@@ -3276,6 +3278,15 @@ void PlayerViewModel::setPreviewThumbnails(bool on) {
 void PlayerViewModel::toggleUiElement(int id) {
     switch (id) {
     case 0: setPreviewThumbnails(!previewThumbnails_); break;
+    case 1: setMenuDimUnavailable(!menuDimUnavailable_); break;
     default: break;
     }
 }
+
+void PlayerViewModel::setMenuDimUnavailable(bool on) {
+    if (menuDimUnavailable_ == on) return;
+    menuDimUnavailable_ = on;
+    emit menuDimUnavailableChanged();
+    saveSettings("menuDimUnavailable", on);
+}
+
