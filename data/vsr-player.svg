@@ -1,40 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- vsr-player 图标（**占位**：用户 2026-10-17 决定后续做正式版）：
-     深色圆角底 + 播放三角 + 四角"放大/超分"括角。矢量是单一事实源——改这里后
-     跑 scripts/render-icon.sh 重新生成 data/vsr-player.png（hicolor 用）。 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"
-     viewBox="0 0 512 512" role="img" aria-label="VSR Player">
+<!-- vsr-player 图标（2026-11-16 重做；用户逐轮定稿）。矢量是单一事实源：
+     改这里后跑 scripts/render-icon.sh 重新生成 data/vsr-player.png
+     （hicolor 512 用；同一份 PNG 被 resources.qrc 内嵌给「关于」弹窗）。
+
+     构成（2026-11-16 用户定稿：只保留前景，无后层）：
+       1. 左半：像素瓦片 2 列 × 5 行，格间距 20px，逐格颜色略有差异（低分辨率源）；
+       2. 右半：锐利实心三角（AI 输出），与瓦片区之间同样留 20px 间距；
+       3. 第二列最上/最下两格只探出几个像素（碎角），直接不画（其余瓦片保持 2 列 × 5 行）；
+       3. 无底板容器、无后层三角：图形自己铺满画布（Papirus 风格；加底板会让图形显小）。
+     注意：瓦片与实心三角都裁在同一个三角形里，改动几何时三处数量要一起对。 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1b2130"/>
-      <stop offset="1" stop-color="#0d1119"/>
+    <linearGradient id="sharp" x1="264" y1="120" x2="452" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a9e32b"/>
+      <stop offset="0.5" stop-color="#8bcb18"/>
+      <stop offset="1" stop-color="#6fa80c"/>
     </linearGradient>
-    <linearGradient id="play" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#8ae9ff"/>
-      <stop offset="1" stop-color="#3aa5ff"/>
-    </linearGradient>
-    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
-      <stop offset="1" stop-color="#ffffff" stop-opacity="0.03"/>
-    </linearGradient>
+    <clipPath id="tri"><path d="M60 26 L60 486 L452 256 Z"/></clipPath>
+    <clipPath id="tileZone"><rect x="0" y="0" width="244" height="512"/></clipPath>
+    <clipPath id="sharpZone"><rect x="264" y="0" width="248" height="512"/></clipPath>
   </defs>
-
-  <rect x="24" y="24" width="464" height="464" rx="104" fill="url(#bg)"/>
-  <rect x="24.5" y="24.5" width="463" height="463" rx="103.5"
-        fill="none" stroke="url(#edge)" stroke-width="1"/>
-
-  <!-- 四角括角：暗示"放大 / 超分" -->
-  <g stroke="#5fd8ff" stroke-opacity="0.55" stroke-width="18"
-     stroke-linecap="round" fill="none">
-    <path d="M120 176 L120 132 Q120 120 132 120 L176 120"/>
-    <path d="M336 120 L380 120 Q392 120 392 132 L392 176"/>
-    <path d="M392 336 L392 380 Q392 392 380 392 L336 392"/>
-    <path d="M176 392 L132 392 Q120 392 120 380 L120 336"/>
+  <g clip-path="url(#tri)">
+    <g clip-path="url(#tileZone)">
+    <rect x="60" y="10" width="82" height="82" fill="#c4ef4c"/>
+    <rect x="60" y="112" width="82" height="82" fill="#9dda22"/>
+    <rect x="60" y="214" width="82" height="82" fill="#86c515"/>
+    <rect x="60" y="316" width="82" height="82" fill="#b0e43a"/>
+    <rect x="60" y="418" width="82" height="82" fill="#5f9a07"/>
+    <rect x="162" y="112" width="82" height="82" fill="#aae231"/>
+    <rect x="162" y="214" width="82" height="82" fill="#8acb19"/>
+    <rect x="162" y="316" width="82" height="82" fill="#c0ed47"/>
+    </g>
+    <g clip-path="url(#sharpZone)">
+      <path d="M60 26 L60 486 L452 256 Z" fill="url(#sharp)"/>
+    </g>
   </g>
-
-  <!-- 播放三角（round join 让三个角是圆的） -->
-  <path d="M212 168 L212 344 Q212 366 231 355 L356 272 Q374 260 356 248
-           L231 157 Q212 146 212 168 Z"
-        fill="url(#play)" stroke="url(#play)" stroke-width="10"
-        stroke-linejoin="round"/>
 </svg>

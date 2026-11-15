@@ -62,6 +62,13 @@ translations_dir = meson.project_build_root() / 'src/client'
 add_project_arguments('-DVSR_TRANSLATIONS_DIR="' + translations_dir + '"',
                       language: 'cpp')
 
+# ── 版本号（单一来源 = 根 meson.build 的 project(version:)）───────────────
+# 只有 About 弹窗要显示它（QML 里经 context property `appVersion`），
+# 不要在别处再写一份字符串：发版只改 meson.build 的 version。
+_version_conf = configuration_data()
+_version_conf.set_quoted('VSR_VERSION', meson.project_version())
+vsr_version_h = configure_file(output: 'vsr-version.h', configuration: _version_conf)
+
 # 图标字体随项目分发（third_party），不依赖系统安装
 # Material Design Icons (Pictogrammers) 7.4.47 — 补充平面 PUA-B 码点（U+F0000+）
 add_project_arguments('-DVSR_ICON_FONT="' +
@@ -220,7 +227,7 @@ executable('vsr-player',
     'StereoController.cpp', 'Keymap.cpp', 'KeyRouter.cpp', 'PopupRegistry.cpp',
     'SessionIdle.cpp', 'HdrOutput.cpp', 'CudaProbe.cpp', 'BlurayDisc.cpp',
     'PreviewThumbnailer.cpp',
-    c_vert_h, c_frag_h, translations_qm, processed,
+    c_vert_h, c_frag_h, translations_qm, processed, vsr_version_h,
     # libbluray：ISO/BDMV 的 title 枚举（只有元数据；解码仍交给 libmpv）。
     # standard 变体用系统的，full 变体已捆 libbluray.so.4。
     dependencies: [qt6_dep, vulkan_dep, libplacebo_dep, mpv_dep, bluray_dep],

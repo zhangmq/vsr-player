@@ -46,6 +46,9 @@
 #include "PopupRegistry.h"
 #include "SessionIdle.h"
 #include "HdrOutput.h"
+/// 版本号（meson 由根 meson.build 的 project(version:) 生成，单一来源；
+/// 只有 About 弹窗用它 → 经 context property `appVersion` 交给 QML）
+#include "vsr-version.h"
 
 #include <QColorSpace>
 #include <QSurfaceFormat>
@@ -329,6 +332,7 @@ int main(int argc, char *argv[]) {
     // StartupWMClass 匹配规则）→ 任务栏图标/分组、启动器关联才对得上。
     // 须在建窗口前设置。默认值取可执行文件名，钉死可避免改名/软链启动时失配。
     QGuiApplication::setDesktopFileName(QStringLiteral("vsr-player"));
+    QGuiApplication::setApplicationVersion(QString::fromLatin1(VSR_VERSION));
     setlocale(LC_NUMERIC, "C");
     QVulkanInstance qtVi; qtVi.setVkInstance(vk.instance()); qtVi.create();
     MLOG_INFO("QGuiApplication ready");
@@ -553,6 +557,9 @@ int main(int argc, char *argv[]) {
         view.rootContext()->setContextProperty("controlMode", false);
         view.rootContext()->setContextProperty("popups", &popups);
         view.rootContext()->setContextProperty("keys", &keyRouter);
+        // 版本号：QML 只读（About 弹窗）
+        view.rootContext()->setContextProperty("appVersion",
+                                               QString::fromLatin1(VSR_VERSION));
         // 两个窗口各自一个 engine → 各注册一份（provider 共享同一个 viewModel）。
         view.engine()->addImageProvider(QStringLiteral("vthumb"),
                                         new PreviewImageProvider(&viewModel));
@@ -574,6 +581,8 @@ int main(int argc, char *argv[]) {
         controlView.rootContext()->setContextProperty("controlMode", true);
         controlView.rootContext()->setContextProperty("popups", &popups);
         controlView.rootContext()->setContextProperty("keys", &keyRouter);
+        controlView.rootContext()->setContextProperty("appVersion",
+                                                      QString::fromLatin1(VSR_VERSION));
         controlView.engine()->addImageProvider(QStringLiteral("vthumb"),
                                               new PreviewImageProvider(&viewModel));
         controlView.setSource(QUrl("qrc:/main.qml"));
