@@ -71,6 +71,8 @@ PopupBase {
     signal stereoSelected(int value, int group)
     /// 右键菜单「界面」二级项：翻转某个界面元素（0 = 缩略图）。
     signal uiElementToggled(int id)
+    /// 「关于」弹窗（图标 / 名称 / 版本 / 许可 / 仓库）。
+    signal aboutRequested()
     signal quitRequested()
 
     // ── 轨道 / 流（原本在底栏的轨道弹窗里，2026-11-02 移到右键菜单）──
@@ -202,6 +204,7 @@ PopupBase {
              {label: qsTr("Right eye"), value: 1, group: 2}
          ]},
         {sep: true},
+        {icon: "󰋽", text: qsTr("About"),              sig: "aboutRequested"},
         {icon: "󰐥", text: qsTr("Quit"),               hint: "Ctrl+Q", sig: "quitRequested"}
     ]
 

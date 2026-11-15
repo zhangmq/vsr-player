@@ -14,6 +14,7 @@
         <file>ui/VolumePopup.qml</file>
         <file>ui/QualityPopup.qml</file>
         <file>ui/AspectPopup.qml</file>
+        <file>ui/AboutPopup.qml</file>
         <file>ui/SpeedPopup.qml</file>
         <file>ui/ContextMenu.qml</file>
         <file>ui/UrlPopup.qml</file>
@@ -25,5 +26,8 @@
         <file>ui/components/SegToggle.qml</file>
         <file>ui/components/ParamSliderRow.qml</file>
         <file>ui/components/HotkeyRow.qml</file>
+        <!-- 应用图标（About 弹窗显示）= data/vsr-player.svg 的 512 PNG 渲染，
+             与桌面图标同一份文件；换图标只需改 SVG 并跑 scripts/render-icon.sh -->
+        <file alias="vsr-player.png">../../data/vsr-player.png</file>
     </qresource>
 </RCC>

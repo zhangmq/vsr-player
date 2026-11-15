@@ -1017,7 +1017,17 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
 
 - `scripts/install.sh` 装应用菜单入口：入口内容 = **`data/vsr-player.desktop.in`**（单一事实源，中英 Name/Comment；`@EXEC@` 由脚本替换为安装后绝对路径，不依赖 PATH），图标 = `data/vsr-player.svg` + `.png` → hicolor `scalable`/`512x512`，之后 best-effort 刷新 `update-desktop-database`/`gtk-update-icon-cache`/`kbuildsycoca6`。打包脚本把 `data/` 放进 tarball 根（`build_release.sh` staging）。
 - `main.cpp` 里 `QGuiApplication::setDesktopFileName("vsr-player")`：Wayland app_id / X11 WM_CLASS 钉成与 `.desktop` 同名，否则任务栏图标与窗口分组会失配。
-- ⚠️ **图标是占位**（用户 2026-10-17："后续做个像样的"）：正式图标只需替换 `data/vsr-player.svg`（矢量单一事实源）并跑 `scripts/render-icon.sh` 重生成 PNG。
+- **图标（2026-11-16 重做，用户选"A 方案"）**：`data/vsr-player.svg` 是唯一事实源，
+  改完跑 `scripts/render-icon.sh` 重生成 `data/vsr-player.png`（512，带 alpha）。
+  设计口径：**透明背景、不要底板容器**（加底板会让图形显得小；本机图标主题 =
+  **Papirus-Dark**，它自家的 vlc/mpv/smplayer 也是纯图形铺满画布）；图形占画布 ≈90%。
+  造型 = 后面一层右移 56px 的浅绿三角（`#dbeea6`，多出来的一帧 → VFG 插帧暗示）
+  + 前景左半低分辨率像素瓦片（2×5，格间距 12px，逐格颜色略异）
+  + 前景右半 AI 输出的锐利面；**瓦片与锐利面之间也留 12px**（同一个格间距）。
+  层级全部不透明（半透明层按白底 blend 折成实色）→ 深浅底观感一致。
+  绿色系 = NVIDIA VFX 身份色。
+  同一份 PNG 还被 `resources.qrc` 以 `alias="vsr-player.png"` 内嵌，「关于」弹窗显示它
+  （换图标只需改 SVG + 重渲染，弹窗自动跟着变）。
 - `Exec=… %f`（单文件/目录）：2026-10-18 起 `Options::parse` 接受多个位置参数（= 播放列表条目，见上），所以 `%U` 已经可用；当前**没有**改 `data/vsr-player.desktop.in`（改它等于让"文件管理器多选"变成播放列表，需要时再定）。
 
 ### 构建
@@ -1136,7 +1146,7 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
 
 **菜单结构**（`ContextMenu.qml` 的 `items`，用户 2026-11-15 定）：
 `文件`（打开… ▸ 文件/文件夹/URL；删除文件）→ `播放列表`（添加… ▸ 文件夹/文件；
-从播放列表移除）→ `首选项`（界面 ▸ …）→ `轨道` → `画面处理` → `3D` → `退出`。
+从播放列表移除）→ `首选项`（界面 ▸ …）→ `轨道` → `画面处理` → `3D` → `关于` → `退出`。
 二级项支持右侧快捷键提示（行上写 `hint`，`SubRow` 渲染成灰字；主菜单同款）。
 
 ⚠ **无目标时默认「禁用」而不是「隐藏」**（用户 2026-11-15；「界面」菜单的第二个
@@ -1176,6 +1186,30 @@ HoverHandler/MouseArea/延迟控件），分组标题保持可见。`visibleWhen
 **测试**：`test_hotkeys.py` 的「Home 到第一行」不再假设索引 0——用
 `rpc.menu_state()["rows"]`（逐行 y/h/vis）取**第一个可聚焦行**（h≥30 且可见；
 表头 h=26、分隔线 h=1）。
+
+### 应用图标与「关于」弹窗（2026-11-16）
+
+- **菜单入口**：右键菜单最后一段 `关于` → `退出`（`ContextMenu.items` 里
+  `{icon: "󰋽" /* mdi-information-outline U+F02FD */, text: qsTr("About"), sig: "aboutRequested"}`；
+  新增条目要同步改三处：signal 声明 + items 数组 + `main.qml` 的 handler）。
+- **弹窗** `ui/AboutPopup.qml`（`PopupBase`，modal 居中、无遮罩）：96px 图标 + 软件名 +
+  `版本 %1`，分隔线下面两列信息表 `许可协议` / `仓库地址`（地址可点 → `Qt.openUrlExternally`，
+  悬停变强调色 `#ffcc00`）。
+- **版本号单一来源 = 根 `meson.build` 的 `project(version:)`**：
+  `src/client/meson.build` 用 `configure_file` 生成 `vsr-version.h`（`VSR_VERSION`），
+  `main.cpp` 再 `QGuiApplication::setApplicationVersion()` + 给两个窗口的 rootContext
+  设 `appVersion`。发版只改 meson 那一处；**不要在 QML 里另写一串版本号**。
+- **图标**：`resources.qrc` 用 `<file alias="vsr-player.png">../../data/vsr-player.png</file>`
+  把桌面图标那份 PNG 内嵌进来（rcc 允许 `../` 相对路径；已验证可编）。所以换图标
+  只需改 `data/vsr-player.svg` + 跑 `scripts/render-icon.sh`，弹窗自动跟着变。
+- **许可 / 仓库**：`GPL-2.0-or-later`（README 写 "GPLv2+"）与
+  `https://github.com/zhangmq/vsr-player` 写在 `AboutPopup.qml` 的只读属性里；
+  改许可/搬家要同步 README、LICENSE、`data/vsr-player.desktop.in`。
+- ⚠ **QML 布局坑（踩过）**：`Row`/`Grid` 的子项里用 `MouseArea { anchors.fill: parent }`
+  会与 Row 的隐式尺寸形成**循环依赖** → 该格算出 0 宽、**整行不渲染**（现象：信息表里
+  "仓库地址" 那行整格空白，日志无任何 warning）。点击区要包一层 Item：
+  `implicitWidth: row.implicitWidth; implicitHeight: row.implicitHeight; width: implicitWidth; height: implicitHeight`
+  再让 MouseArea 填这个 Item。同理，`Row` 子项**不要写** `anchors.verticalCenter`。
 
 ### 按键 / 快捷键（键位表，2026-11-03 重构）
 

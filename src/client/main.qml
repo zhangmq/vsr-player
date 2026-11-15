@@ -116,7 +116,7 @@ Item {
         }
         Component.onCompleted: {
             _popups = [volumePopup, qualityPopup, trueHdrAdvancedPopup, speedPopup,
-                       aspectPopup, contextMenu, urlPopup]
+                       aspectPopup, contextMenu, urlPopup, aboutPopup]
             // 启动即按当前状态应用 auto-hide（onShowUiChanged 只在翻转时触发）
             viewModel.overlaysVisible = showUi
         }
@@ -390,6 +390,17 @@ Item {
             // QCoreApplication（QGuiApplication/QQmlApplicationEngine 才接），
             // 3D 下更会变成"只关掉眼镜窗口"（2026-11-03 实测）。
             onQuitRequested: keys.quitApplication()
+            // 「关于」：图标/名称/版本/许可/仓库（AboutPopup.qml）。
+            onAboutRequested: {
+                uiLayer.closeOtherPopups(aboutPopup)
+                aboutPopup.open()
+            }
+        }
+
+        // 「关于」弹窗（modal 居中；内容全在 AboutPopup.qml）
+        AboutPopup {
+            id: aboutPopup
+            onOpened: uiLayer.closeOtherPopups(aboutPopup)
         }
 
         // 片源格式自动判定（宽/高 ≥2.6 → 左右·全；≤0.8 → 上下·全；其它不猜）。
