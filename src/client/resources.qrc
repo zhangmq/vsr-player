@@ -9,6 +9,7 @@
         <file>ui/BottomBar.qml</file>
         <file>ui/CenterPlayBtn.qml</file>
         <file>ui/ProgressSlider.qml</file>
+        <file>ui/SeekPreview.qml</file>
         <file>ui/VolumePopup.qml</file>
         <file>ui/QualityPopup.qml</file>
         <file>ui/AspectPopup.qml</file>

@@ -1,6 +1,7 @@
 #include "RpcServer.h"
 #include "MpvController.h"
 #include "PlayerViewModel.h"
+#include "PreviewThumbnailer.h"
 #include "StereoController.h"
 #include "Keymap.h"
 #include "KeyRouter.h"
@@ -974,6 +975,125 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             m += extra;
             response = formatResponse("success", "\"" + jsonEscape(m) + "\"");
         }
+    } else if (cmd == "preview") {
+        // 进度条缩略图：请求某位置的缩略图并落盘为 PNG。
+        //   preview <out.png> <seconds>
+        // 同步等待（RPC 线程阻塞；GUI 线程只被投递 requestPreview）。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.size() < 2) {
+            response = formatResponse("usage: preview <out.png> <seconds>");
+        } else {
+            PreviewThumbnailer *th = vm->thumbnailer();
+            char *end = nullptr;
+            const double sec = strtod(args[1].c_str(), &end);
+            if (!th || end == args[1].c_str() || *end != '\0' || !std::isfinite(sec)) {
+                response = formatResponse("invalid arguments");
+            } else if (!vm->previewReady()) {
+                // 无视频轨 / 网络流 / 直播 / 停止态：不发起请求（否则要等超时）
+                response = formatResponse("preview not available (no local video)");
+            } else {
+                const qint64 ms = qint64(sec * 1000.0);
+                const quint64 before = th->servedEpoch();
+                PlayerViewModel *v = vm;
+                QMetaObject::invokeMethod(v, [v, ms] { v->requestPreview(ms); },
+                                          Qt::QueuedConnection);
+                QImage img;
+                if (!th->waitForServe(before, 5000, &img)) {
+                    response = formatResponse("timeout (no frame)");
+                } else if (!img.save(QString::fromStdString(args[0]))) {
+                    response = formatResponse("save failed");
+                } else {
+                    QJsonObject o;
+                    o.insert("w", img.width());
+                    o.insert("h", img.height());
+                    o.insert("latencyMs", double(th->lastLatencyMs()));
+                    o.insert("serial", double(th->serial()));
+                    response = formatResponse(
+                        "", QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString());
+                }
+            }
+        }
+    } else if (cmd == "get-preview-state") {
+        // 缩略图引擎状态（测试/诊断；不触发取帧）。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (PreviewThumbnailer *th = vm->thumbnailer()) {
+            QJsonObject o;
+            o.insert("ready", vm->previewReady());
+            o.insert("serial", double(th->serial()));
+            o.insert("loaded", th->hasSource());
+            o.insert("path", QString::fromStdString(th->sourcePath().toStdString()));
+            o.insert("latencyMs", double(th->lastLatencyMs()));
+            o.insert("frames", double(th->framesProduced()));
+            o.insert("cacheHits", double(th->cacheHits()));
+            o.insert("width", vm->previewThumbWidth());
+            const QSize sz = vm->previewImageSize();
+            o.insert("imgW", sz.width());
+            o.insert("imgH", sz.height());
+            const QString err = QString::fromStdString(th->lastError().toStdString());
+            if (!err.isEmpty())
+                o.insert("error", err);
+            response = formatResponse(
+                "", QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString());
+        } else {
+            response = formatResponse("no thumbnailer");
+        }
+    } else if (cmd == "get-chapters") {
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            QJsonArray arr;
+            for (const QVariant &v : vm->chapters())
+                arr.append(QJsonValue::fromVariant(v));
+            response = formatResponse(
+                "", QJsonDocument(arr).toJson(QJsonDocument::Compact).toStdString());
+        }
+    } else if (cmd == "set-preview-width") {
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: set-preview-width <160..640>");
+        } else {
+            char *end = nullptr;
+            const long px = strtol(args[0].c_str(), &end, 10);
+            if (end == args[0].c_str() || *end != '\0') {
+                response = formatResponse("invalid width");
+            } else {
+                PlayerViewModel *v = vm;
+                QMetaObject::invokeMethod(v, [v, px] { v->setPreviewThumbWidth(int(px)); },
+                                          Qt::QueuedConnection);
+                response = formatResponse("success");
+            }
+        }
+    } else if (cmd == "debug-hover") {
+        // 测试钩子：伪造"指针悬停在进度条某时间"（Wayland 下无法程序化移动
+        // 指针，QCursor::setPos 无效）。args[0] = 秒 或 "off"。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: debug-hover <seconds|off>");
+        } else if (args[0] == "off") {
+            PlayerViewModel *v = vm;
+            QMetaObject::invokeMethod(v, [v] { v->setPreviewDebugHoverMs(-1); },
+                                      Qt::QueuedConnection);
+            response = formatResponse("success");
+        } else {
+            char *end = nullptr;
+            const double sec = strtod(args[0].c_str(), &end);
+            if (end == args[0].c_str() || *end != '\0' || !std::isfinite(sec) || sec < 0) {
+                response = formatResponse("invalid seconds");
+            } else {
+                const int ms = int(sec * 1000.0);
+                PlayerViewModel *v = vm;
+                QMetaObject::invokeMethod(v, [v, ms] { v->setPreviewDebugHoverMs(ms); },
+                                          Qt::QueuedConnection);
+                response = formatResponse("success");
+            }
+        }
+    } else if (cmd == "get-preview-width") {
+        response = vm ? formatResponse("success", std::to_string(vm->previewThumbWidth()))
+                      : formatResponse("no view model");
     } else if (cmd == "stereo-cycle") {
         if (!stereo_) {
             response = formatResponse("no stereo controller");

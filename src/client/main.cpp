@@ -12,6 +12,7 @@
 
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QQuickImageProvider>
 #include <QQuickView>
 #include <QCloseEvent>
 #include <QQuickWindow>
@@ -154,6 +155,23 @@ protected:
         QQuickView::closeEvent(e);
         quitApp(stereo);
     }
+};
+
+// 进度条缩略图：把 PreviewThumbnailer 的最新一帧交给 QML 的 Image。
+// 每次出新图 previewSerial +1 → QML 的 source 变成 image://vthumb/<serial>，
+// 天然绕开 QQmlEngine 的 URL 缓存（Image 侧 cache:false 双保险）。
+class PreviewImageProvider : public QQuickImageProvider
+{
+public:
+    explicit PreviewImageProvider(PlayerViewModel *vm)
+        : QQuickImageProvider(QQuickImageProvider::Image), vm_(vm) {}
+    QImage requestImage(const QString &, QSize *size, const QSize &) override {
+        const QImage img = vm_->previewImage();
+        if (size) *size = img.size();
+        return img;
+    }
+private:
+    PlayerViewModel *vm_;
 };
 
 // 按键派发：键位表在 Keymap.cpp，执行在 KeyRouter（应用级事件过滤器）。
@@ -530,6 +548,9 @@ int main(int argc, char *argv[]) {
         view.rootContext()->setContextProperty("controlMode", false);
         view.rootContext()->setContextProperty("popups", &popups);
         view.rootContext()->setContextProperty("keys", &keyRouter);
+        // 两个窗口各自一个 engine → 各注册一份（provider 共享同一个 viewModel）。
+        view.engine()->addImageProvider(QStringLiteral("vthumb"),
+                                        new PreviewImageProvider(&viewModel));
 
         // 桌面 control 窗口：同一份 main.qml，但 controlMode=true → 不创建
         // Video，只保留 UI。3D 时主窗口（Video/VO）去眼镜屏，control 窗口
@@ -548,6 +569,8 @@ int main(int argc, char *argv[]) {
         controlView.rootContext()->setContextProperty("controlMode", true);
         controlView.rootContext()->setContextProperty("popups", &popups);
         controlView.rootContext()->setContextProperty("keys", &keyRouter);
+        controlView.engine()->addImageProvider(QStringLiteral("vthumb"),
+                                              new PreviewImageProvider(&viewModel));
         controlView.setSource(QUrl("qrc:/main.qml"));
         if (controlView.status() != QQuickView::Ready) {
             for (const auto &e : controlView.errors())
