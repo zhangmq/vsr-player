@@ -91,20 +91,39 @@ PopupBase {
     /// signal 声明 + 此数组 + main.qml handler）。`hint` 可为字符串或函数
     /// （动态值）；`submenu` 存在即渲染为二级菜单入口（数组或函数）。
     readonly property var items: [
-        {icon: "󰉋", text: qsTr("Open file"),          hint: "Ctrl+O", sig: "openFilesRequested"},
-        {icon: "󰉖", text: qsTr("Open folder"), hint: "Ctrl+Shift+O", sig: "openFolderRequested"},
-        {icon: "󰌷", text: qsTr("Open URL"), hint: "Ctrl+L", sig: "openUrlRequested"},
-        {icon: "󰐒", text: qsTr("Add files to playlist"),    hint: "", sig: "appendFilesRequested"},
-        {icon: "󰉗", text: qsTr("Add folder to playlist"),   hint: "", sig: "appendFolderRequested"},
-        {sep: true},
-        {icon: "󰐓", text: qsTr("Remove from playlist"), hint: "Del", sig: "removeFromPlaylistRequested",
-         visibleWhen: function() { return viewModel.hasMedia }},
+        // ── 文件（打开 / 删除；用户 2026-11-15 定的分组）────────────────
+        {header: qsTr("File")},
+        {icon: "󰉋", text: qsTr("Open…"),
+         submenu: [
+             {label: qsTr("File"),   hint: "Ctrl+O",       sig: "openFilesRequested"},
+             {label: qsTr("Folder"), hint: "Ctrl+Shift+O", sig: "openFolderRequested"},
+             {label: qsTr("URL"),    hint: "Ctrl+L",       sig: "openUrlRequested"}
+         ]},
         {icon: "󰆴", text: qsTr("Delete file"), hint: "Shift+Del", sig: "deleteFileRequested",
-         visibleWhen: function() { return viewModel.hasMedia && viewModel.canDeleteCurrentFile }},
+         enabledWhen: function() { return viewModel.hasMedia && viewModel.canDeleteCurrentFile }},
+
+        // ── 播放列表（添加 / 移除）──────────────────────────────────────
         {sep: true},
+        {header: qsTr("Playlist")},
+        {icon: "󰐒", text: qsTr("Add…"),
+         submenu: [
+             {label: qsTr("Folder"), sig: "appendFolderRequested"},
+             {label: qsTr("File"),   sig: "appendFilesRequested"}
+         ]},
+        {icon: "󰐓", text: qsTr("Remove from playlist"), hint: "Del",
+         sig: "removeFromPlaylistRequested",
+         enabledWhen: function() { return viewModel.hasMedia }},
+
+        // ── 首选项（可 toggle 的界面元素；当前只有缩略图）────────────────
+        {sep: true},
+        {header: qsTr("Preferences")},
+        {icon: "󰨇", text: qsTr("Interface"),
+         submenu: function() { return root.interfaceMenu() }},
 
         // ── 轨道 / 流（按文件；无媒体时整块隐藏）──────────────────────
-        {header: qsTr("Tracks"), visibleWhen: function() { return root.hasTracks() }},
+        {sep: true},
+        {header: qsTr("Tracks"),
+         visibleWhen: function() { return !root.hideInvalid || root.hasTracks() }},
         // 轨道/流入口**不显示当前值**：轨道名/流标题都很长（实测 39 条轨道、
         // "1080P 高清 · AV1 · 1.9M" 这类），在 230px 宽的菜单里会盖住条目名。
         // 当前值在二级面板里用勾选表达。
@@ -113,23 +132,23 @@ PopupBase {
         // 网络视频每个 edition 恒 1 条视频轨，本地多视频轨 MKV 才有第二段。
         {icon: "󰕧", text: qsTr("Video"),
          submenu: function() { return root.videoMenu() },
-         visibleWhen: function() { return root.hasVideoMenu() }},
+         enabledWhen: function() { return root.hasVideoMenu() }},
         {icon: "󰝚", text: qsTr("Audio"),
          subSig: "audioTrackPicked",
          current: function() { return root.selectedTrackId("audio") },
          submenu: function() { return root.audioTracksMenu() },
-         visibleWhen: function() { return root.hasTracks() }},
+         enabledWhen: function() { return root.hasTracks() }},
         // 字幕**恒显示**（哪怕本片一条字幕轨都没有）：还要能"加载字幕文件…"
         // 和从"附近字幕"里加，所以不能按"有没有字幕轨"来决定是否显示。
         {icon: "󰨖", text: qsTr("Subtitles"),
          subSig: "subtitlePicked",
          current: function() { return root.selectedTrackId("sub") },
          submenu: function() { return root.subtitleMenu() },
-         visibleWhen: function() { return root.hasTracks() }},
+         enabledWhen: function() { return root.hasTracks() }},
         {control: "delay", kind: "sub", text: qsTr("Subtitle delay"),
-         visibleWhen: function() { return root.hasTracks() }},
+         enabledWhen: function() { return root.hasTracks() }},
         {control: "delay", kind: "audio", text: qsTr("Audio delay"),
-         visibleWhen: function() { return root.hasTracks() }},
+         enabledWhen: function() { return root.hasTracks() }},
 
         // ── 画面处理（反交错 / 旋转 等"处理画面"的选项归成一组）──────────
         {sep: true},
@@ -182,10 +201,6 @@ PopupBase {
              {label: qsTr("Left eye"),  value: 0, group: 2},
              {label: qsTr("Right eye"), value: 1, group: 2}
          ]},
-        // ── 界面（可 toggle 的界面元素；当前只有缩略图）────────────────
-        {sep: true},
-        {icon: "󰨇", text: qsTr("Interface"),
-         submenu: function() { return root.interfaceMenu() }},
         {sep: true},
         {icon: "󰐥", text: qsTr("Quit"),               hint: "Ctrl+Q", sig: "quitRequested"}
     ]
@@ -247,7 +262,10 @@ PopupBase {
         return [
             {label: qsTr("Thumbnails"),
              toggle: viewModel.previewThumbnails,
-             subSig: "uiElementToggled", value: 0}
+             subSig: "uiElementToggled", value: 0},
+            {label: qsTr("Hide invalid menu items"),
+             toggle: viewModel.menuHideInvalid,
+             subSig: "uiElementToggled", value: 1}
         ]
     }
 
@@ -474,7 +492,24 @@ PopupBase {
 
     /// 条目是否显示（`visibleWhen` 缺省 = 恒显示；不满足条件的条目不占高度）。
     function itemShown(it) {
-        return it.visibleWhen === undefined ? true : it.visibleWhen()
+        if (it.visibleWhen !== undefined && !it.visibleWhen()) return false
+        // 「隐藏不可用项」打开时退回旧行为：不可用 = 直接不显示（不占高度）
+        if (root.hideInvalid && it.enabledWhen !== undefined && !it.enabledWhen())
+            return false
+        return true
+    }
+
+    /// 「隐藏无效菜单项」开关（用户 2026-11-15：界面菜单第二个 toggle）。
+    /// 默认 false = 当前上下文用不了的项**灰显占位**；true = 直接隐藏。
+    /// 用词"无效"（此刻不成立）——用户定的口径，宁可长一点也要准确。
+    readonly property bool hideInvalid: viewModel.menuHideInvalid
+
+    /// 条目是否可用（`enabledWhen`）。不可用 = **仍然显示**但置灰、不参与
+    /// 悬停/键盘/点击——用户 2026-11-15 要求"没有目标时禁用而不是隐藏"
+    /// （隐藏会让菜单结构随内容跳动；禁用还顺带告诉用户这里有什么能力）。
+    function itemEnabled(it) {
+        if (it.enabledWhen === undefined) return true
+        return root.hideInvalid ? true : it.enabledWhen()
     }
 
     /// 分隔线是否画：向上找第一个可见条目，如果它也是分隔线就不画。
@@ -500,7 +535,7 @@ PopupBase {
         var it = root.items[i]
         if (!it) return false
         if (it.sep === true || it.header !== undefined) return false
-        return root.itemShown(it)
+        return root.itemShown(it) && root.itemEnabled(it)
     }
     /// 这一行是「字幕延迟」/「音频延迟」（行内有 −/+/↺ 控件）
     function isDelayRow(i) {
@@ -956,9 +991,19 @@ PopupBase {
             anchors { left: parent.left; leftMargin: 8; right: parent.right; rightMargin: 8 }
             height: 1; color: "#22ffffff"
         }
+        // 右侧快捷键提示（「打开…」展开后的 Ctrl+O 等；主菜单同款灰字）
         Text {
-            anchors { left: parent.left; leftMargin: 12; right: parent.right
-                      rightMargin: subRow.cur ? 28 : 12
+            id: subHint
+            anchors { right: parent.right; rightMargin: subRow.cur ? 28 : 12
+                      verticalCenter: parent.verticalCenter }
+            text: (row && row.hint) || ""
+            color: "#808080"; font.pixelSize: 13
+            visible: !isSep && !isHeader && text !== ""
+        }
+        Text {
+            anchors { left: parent.left; leftMargin: 12
+                      right: subHint.visible ? subHint.left : parent.right
+                      rightMargin: subHint.visible ? 10 : (subRow.cur ? 28 : 12)
                       verticalCenter: parent.verticalCenter }
             text: isSep ? "" : (isHeader ? row.header : (row.label || ""))
             color: isHeader ? "#808080" : (subRow.cur ? "#ffcc00" : "#e0e0e0")
@@ -1016,6 +1061,10 @@ PopupBase {
                     property var hintSrc: modelData.hint
                     property string hintText: typeof hintSrc === "function" ? hintSrc() : (hintSrc || "")
                     property bool shown: isSep ? root.sepShown(index) : root.itemShown(modelData)
+                    property bool usable: !isSep && !isHeader && root.itemEnabled(modelData)
+                    // 禁用行整体不接输入（enabled 会传播到 HoverHandler/MouseArea/
+                    // 延迟控件的 ±/↺），视觉上只置灰、不隐藏
+                    enabled: usable
                     // 供 subY 用实际委托位置对齐二级面板（见 subY 注释）
                     readonly property int itemIndex: index
                     width: parent.width
@@ -1024,7 +1073,7 @@ PopupBase {
 
                     Rectangle {
                         anchors.fill: parent
-                        color: !isSep && !isHeader
+                        color: !isSep && !isHeader && usable
                                && index === root.currentIndex && root.currentIndex >= 0
                                ? "#33ffffff" : "transparent"
                         visible: !isSep
@@ -1060,11 +1109,12 @@ PopupBase {
                             id: iconText
                             font.family: iconFont; font.pixelSize: 16
                             text: modelData.icon || ""
-                            color: "#e0e0e0"; visible: text !== ""
+                            color: usable ? "#e0e0e0" : "#5a5a5a"; visible: text !== ""
                             renderType: Text.NativeRendering
                         }
                         Text {
-                            text: modelData.text || ""; color: "#e0e0e0"; font.pixelSize: 13
+                            text: modelData.text || ""
+                            color: usable ? "#e0e0e0" : "#5a5a5a"; font.pixelSize: 13
                             width: Math.max(0, labelRow.width -
                                             (iconText.visible ? iconText.width + labelRow.spacing : 0))
                             elide: Text.ElideRight
@@ -1140,7 +1190,7 @@ PopupBase {
                         spacing: 4
                         visible: !isSep && !isHeader && !isControl
                         Text {
-                            text: hintText; color: "#808080"; font.pixelSize: 13
+                            text: hintText; color: usable ? "#808080" : "#464646"; font.pixelSize: 13
                             visible: hintText !== ""
                             anchors.verticalCenter: parent.verticalCenter
                             // 上限 = 菜单宽度一半，超出省略（防长值撑出菜单边界）
@@ -1149,7 +1199,7 @@ PopupBase {
                             horizontalAlignment: Text.AlignRight
                         }
                         Text { font.family: iconFont; font.pixelSize: 14; text: "󰅂"
-                            color: "#808080"; visible: hasSub
+                            color: usable ? "#808080" : "#464646"; visible: hasSub
                             renderType: Text.NativeRendering
                             anchors.verticalCenter: parent.verticalCenter }
                     }
@@ -1163,7 +1213,7 @@ PopupBase {
                         hoverEnabled: false
                         enabled: !isHeader && !isControl
                         visible: !isSep
-                        cursorShape: Qt.PointingHandCursor
+                        cursorShape: usable ? Qt.PointingHandCursor : Qt.ArrowCursor
                         // 悬停/点击都只是"把当前行设成我"——面板开合由当前行派生
                         //（所以移到「字幕延迟」「音频延迟」上时面板会自然收起）
                         onClicked: {

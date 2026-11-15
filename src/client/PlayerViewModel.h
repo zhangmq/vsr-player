@@ -198,6 +198,15 @@ class PlayerViewModel : public QObject {
     /// 气泡；预览实例随之卸载（不白耗解码）。
     Q_PROPERTY(bool previewThumbnails READ previewThumbnails WRITE setPreviewThumbnails
                NOTIFY previewThumbnailsChanged)
+    /// 是否**隐藏**当前上下文里无效（用不了）的菜单项
+    /// （右键菜单「界面 → 隐藏无效菜单项」）：
+    /// false（默认）= 置灰禁用、保留占位（结构不跳动，用户 2026-11-15 定）；
+    /// true = 直接隐藏（旧行为）。
+    /// 用词：**无效**（此刻不成立/用不了）——用户 2026-11-15 定的中文口径，
+    /// 宁可长一点也要准确；不要换成"禁用"（暗示功能被关掉）或"未激活"
+    /// （UI 术语里多指窗口/焦点）。
+    Q_PROPERTY(bool menuHideInvalid READ menuHideInvalid WRITE setMenuHideInvalid
+               NOTIFY menuHideInvalidChanged)
     /// 缩略图目标宽度（像素）。可配置，但**本期不开放 UI**（用户 2026-11-15）。
     Q_PROPERTY(int previewThumbWidth READ previewThumbWidth WRITE setPreviewThumbWidth
                NOTIFY previewThumbWidthChanged)
@@ -431,6 +440,8 @@ public:
     bool previewReady() const;
     bool previewThumbnails() const { return previewThumbnails_; }
     void setPreviewThumbnails(bool on);
+    bool menuHideInvalid() const { return menuHideInvalid_; }
+    void setMenuHideInvalid(bool on);
     /// 右键菜单「界面」二级项：按 id 翻转界面元素（0 = 缩略图）。
     Q_INVOKABLE void toggleUiElement(int id);
     int previewThumbWidth() const { return previewThumbWidth_; }
@@ -610,6 +621,7 @@ signals:
     void previewStateChanged();
     void previewThumbWidthChanged();
     void previewThumbnailsChanged();
+    void menuHideInvalidChanged();
     void chaptersChanged();
     void previewDebugHoverMsChanged();
     void playingChanged();
@@ -773,6 +785,8 @@ private:
     MpvController *mpv_ = nullptr;
     PreviewThumbnailer *preview_ = nullptr;   ///< 懒创建；benchmark 下不创建
     bool previewThumbnails_ = true;
+    bool menuHideInvalid_ = false;
+    QString openFilename_;   ///< mpv stream-open-filename（yt-dlp 解析后的真实流）
     int previewThumbWidth_ = 320;
     bool previewEnabled_ = true;              ///< benchmark/关闭开关
     int previewDebugHoverMs_ = -1;

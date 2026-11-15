@@ -991,7 +991,7 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                 response = formatResponse("invalid arguments");
             } else if (!vm->previewReady()) {
                 // 无视频轨 / 网络流 / 直播 / 停止态：不发起请求（否则要等超时）
-                response = formatResponse("preview not available (no local video)");
+                response = formatResponse("preview not available (no video, or live stream)");
             } else {
                 const qint64 ms = qint64(sec * 1000.0);
                 const quint64 before = th->servedEpoch();
@@ -1066,6 +1066,20 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                                           Qt::QueuedConnection);
                 response = formatResponse("success");
             }
+        }
+    } else if (cmd == "set-menu-hide-invalid") {
+        // 测试/脚本用：是否隐藏无效的菜单项（1 = 隐藏，0 = 灰显占位）——
+        // 正常入口 = 右键菜单「界面 → 隐藏无效菜单项」。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: set-menu-hide-invalid <0|1>");
+        } else {
+            const bool on = args[0] != "0";
+            PlayerViewModel *v = vm;
+            QMetaObject::invokeMethod(v, [v, on] { v->setMenuHideInvalid(on); },
+                                      Qt::QueuedConnection);
+            response = formatResponse("success");
         }
     } else if (cmd == "set-preview-thumbnails") {
         // 测试/脚本用：开关进度条缩略图（正常入口 = 右键菜单「界面 → 缩略图」）。

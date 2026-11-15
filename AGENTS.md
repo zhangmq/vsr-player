@@ -671,7 +671,8 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 预生成；宽度可配置（`previewThumbWidth`，默认 320）但**本期不开放 UI**。
 
 **开关**：右键菜单新增 **「界面」** 组（`ContextMenu.qml` 的 `interfaceMenu()`），
-二级项是可 toggle 的界面元素，第一个是**缩略图**（勾选态 = 开）。toggle 型行的
+二级项是可 toggle 的界面元素：**缩略图**（`previewThumbnails`）与**隐藏无效菜单项**
+（`menuHideInvalid`，见"右键菜单分组"一节），勾选态 = 开。toggle 型行的
 约定：行带 `toggle`（布尔）+ `subSig`/`value`（元素 id），点一下**翻转且菜单保持
 打开**（`activateSubRow` 对 `toggle` 行提前 return），勾选态由
 `isCurrentSubRow()` 的 `row.toggle` 分支给出。关闭时 `PlayerViewModel` 直接
@@ -703,7 +704,15 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 3. **half（每眼被压扁）必须 `setsar=1`**：crop 会把像素宽高比设为 1:2 以保持显示比，
    漏掉 `setsar=1` 时 mpv 的 `dw/dh` 再乘一次（640×360 → 640×720，缩略图变竖条）。
 
-**边界**：网络流/直播（`networkSource`/`isLiveSource`）、纯音频（无视频轨）不启用；
+**边界**：直播/线性流（`isLiveSource`，含"不可 seek/仅部分可 seek"）和纯音频（无视频轨）
+不启用；**网络点播（HTTP/HLS VOD，可 seek）允许**（用户 2026-11-15 报"网络流无法生成
+缩略图"是这里的过度拦截）——预览实例会自己再拉一次流，代价是带宽/首帧时延；
+**yt-dlp 源（YouTube 等，"网络流"菜单那类）**：主实例的 `stream-open-filename` 是
+`edl://`（内含签名直链），复制给预览实例未必能开，所以让**预览实例自己跑一次
+yt-dlp**（`ytdl=yes` + `ytdl-format=worst`，最小画质）。⚠ `ytdl` 不是运行期选项，
+只能在创建前设 → 在"直链/yt-dlp 源"之间切换时销毁重建实例（`instanceYtdl_`）。
+实测 YouTube：预览实例解析 + 首帧约 10–25 s（第二次 yt-dlp，后台进行，不影响播放），
+之后每次 seek 2–500 ms（网络相关）；本地/HTTP 直链不受影响（仍 10–85 ms）；
 `bd://`（本地 ISO）允许；3D 下缩略图按当前 `layout`/`half` **裁单眼**（默认左/上眼），
 预览面板只在**桌面 control 窗口**（presentation 里没有进度条）；内容 HDR 自动插
 `zscale/tonemap` 转 SDR。
@@ -711,7 +720,8 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 **测试**：`./tests/hotkeys/test_thumbnails.py`（26 项：取帧/桶缓存/宽度/章节/QML 面板/
 单眼裁剪/音频不启用/3D 会话）。Wayland 下 `QCursor::setPos` 无效，面板靠 RPC
 `debug-hover <秒|off>` 注入（同时强制显示 overlays，否则抓窗口只有视频）。
-RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-preview-width`。
+RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-preview-width`、
+`set-preview-thumbnails`、`set-menu-hide-invalid`。
 
 ### 反交错（mpv 原生 `--deinterlace`，2026-10-22）
 
@@ -974,6 +984,41 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
 - 分发（2026-09 重构）：**源码构建为推荐路径**——`scripts/build-from-source.sh`（依赖自检→构建→安装→记录快照）；系统库升级后重跑同一条命令即可恢复。预编译 tarball 两个变体：`build_release.sh`（standard，需系统 Qt ≥6.12——Qt 二进制兼容是单向的，构建机 Qt 6.12.0 → 真实下限 6.12）与 `--variant=full`（捆绑最小 Qt：镜像发行版布局 `<prefix>/lib/qt6/{plugins,qml}` + Qt 库在 `<prefix>/lib/`，靠 Qt 自带相对 RUNPATH 解析，**免 patchelf**；`main.cpp` 在 QGuiApplication 前探测并设 `QT_PLUGIN_PATH`/`QML2_IMPORT_PATH`）。依赖收集 = 显式核心集 + 媒体栈动态发现（libcdio/libdvd/libbluray）+ **打包时闭包自检**（未捆绑且非白名单即失败）；`--engine=<已构建引擎>` 跳过 trtexec。
 - **依赖漂移检测**：`scripts/check-deps.sh [--record]` 记录构建时**系统库**快照（路径+mtime+size，排除仓库内自建产物——否则每次重建都误报），系统升级替换后提示重建；staging 目标用 `LD_LIBRARY_PATH` 模拟安装态解析。**soname 变更导致启动失败 → 跑 `build-from-source.sh` 重建**；用户侧排查见 README「故障排查」。
 - `scripts/install.sh`（用户端）：~/.local；VFX 从 **NVIDIA 官方索引 `pypi.nvidia.com`** 取 nvidia-vfx wheel（pypi.org 仅占位 sdist，2026-09 实测），curl 提取不调 pip 不改系统；VFX ~0.6GB 不随 tarball 分发（SLA）。⚠️ `set -euo pipefail` 下所有探测命令（nvidia-smi / pkg-config / curl 管道）必须 `|| true` 兜底，否则"未检测到"会变成"安装静默中止"（本项目实测踩过两次）。
+
+### 右键菜单分组 / 空状态 / 打开入口（2026-11-15）
+
+**菜单结构**（`ContextMenu.qml` 的 `items`，用户 2026-11-15 定）：
+`文件`（打开… ▸ 文件/文件夹/URL；删除文件）→ `播放列表`（添加… ▸ 文件夹/文件；
+从播放列表移除）→ `首选项`（界面 ▸ …）→ `轨道` → `画面处理` → `3D` → `退出`。
+二级项支持右侧快捷键提示（行上写 `hint`，`SubRow` 渲染成灰字；主菜单同款）。
+
+⚠ **无目标时默认「禁用」而不是「隐藏」**（用户 2026-11-15；「界面」菜单的第二个
+toggle = **「隐藏无效菜单项」/ Hide invalid menu items**，`menuHideInvalid`
+默认 **false**，打开才退回隐藏——用户 2026-11-15 定的口径：**"无效"**（此刻
+不成立/用不了）+ 宁可长一点也要准确；不要换成"禁用"（暗示功能被关掉）、
+"不可用/未激活"（前者不精确、后者在 UI 术语里多指窗口/焦点）：条目写 `enabledWhen`（而不是
+`visibleWhen`）→ 行**仍然占位**、文字/图标变灰
+（`#5a5a5a`）、不参与悬停/键盘/点击（委托 `enabled: usable` 会传播到
+HoverHandler/MouseArea/延迟控件），分组标题保持可见。`visibleWhen` 只留给
+「这一行根本不该出现」的场合（当前没有）；`rowFocusable()` 同时看
+`itemShown` 与 `itemEnabled`，键盘不会停在灰行上。
+
+**空状态**（`ui/IdleScreen.qml`）：没有活动文件时在中央显示 dropzone 面板——
+"把文件拖到这里 / 或使用下面的方式打开" + 三行快捷入口（文件/文件夹/URL，
+带快捷键）+ 有可续播列表时多一行「继续上次播放」。真正的拖放落点仍是
+**窗口级 DropArea**（`main.qml`），IdleScreen 只做引导；`dragActive` 由
+`dropArea.containsDrag` 传入，拖入时边框变 `#ffcc00`。任何 popup 打开时
+空状态让位（`!uiLayer.anyPopupOpen`）——菜单是半透明的，后面透出面板文字会显脏。
+无媒体时 `CenterPlayBtn` 隐藏（同一区域让给空状态；续播入口在面板里）。
+
+**右上角「打开」按钮已移除**（用户 2026-11-15：与右键菜单/快捷键冗余）：
+`TopBar.qml` 不再有按钮/`openMenuRequested`，`ui/OpenMenu.qml` 与
+`main.qml` 的实例一并删除；打开入口 = 右键菜单「文件 → 打开…」+ 快捷键
+（Ctrl+O / Ctrl+Shift+O / Ctrl+L）+ 拖放 + 空状态面板。
+
+**测试**：`test_hotkeys.py` 的「Home 到第一行」不再假设索引 0——用
+`rpc.menu_state()["rows"]`（逐行 y/h/vis）取**第一个可聚焦行**（h≥30 且可见；
+表头 h=26、分隔线 h=1）。
 
 ### 按键 / 快捷键（键位表，2026-11-03 重构）
 

@@ -100,7 +100,17 @@ bool PreviewThumbnailer::ensureCreated() {
     opt("config", "no");
     opt("load-scripts", "no");
     opt("osc", "no");
-    opt("ytdl", "no");
+    {
+        // yt-dlp 源（YouTube 等）必须让**本实例自己**跑一次 yt-dlp：
+        // stream-open-filename 在主实例里可能是 edl://（内含签名直链 + 请求头），
+        // 复制过来也未必能开；由 mpv 自己的 ytdl_hook 解析最稳。
+        // ⚠ `ytdl` 不是运行期选项，只能在创建前设 → 模式变化时重建实例。
+        QMutexLocker l(&paramsMutex_);
+        instanceYtdl_ = params_.ytdl;
+        opt("ytdl", params_.ytdl ? "yes" : "no");
+    }
+    // 预览只需要一帧：让 yt-dlp 选最低画质（thumbfast 同款），解析/下载都快
+    opt("ytdl-format", "worst");
     opt("input-default-bindings", "no");
     opt("input-vo-keyboard", "no");
     opt("autoload-files", "no");
@@ -304,6 +314,20 @@ void PreviewThumbnailer::setParams(const Params &p) {
 }
 
 void PreviewThumbnailer::loadSource(const QString &path) {
+    bool wantYtdl = false;
+    {
+        QMutexLocker l(&paramsMutex_);
+        wantYtdl = params_.ytdl;
+    }
+    if (mpv_ && instanceYtdl_ != wantYtdl) {
+        // ytdl 只能在创建前设置：换了源类型就重建（只在不带 ytdl 的直链与
+        // yt-dlp 源之间切换时发生，不常见；代价 ~30ms + 重新 loadfile）。
+        MLOG_INFO("thumb: recreate instance (ytdl %d -> %d)", instanceYtdl_ ? 1 : 0,
+                  wantYtdl ? 1 : 0);
+        destroyInstance();
+        if (!ensureCreated())
+            return;
+    }
     applyChain();
     applyRotate();
     haveSource_.store(false);

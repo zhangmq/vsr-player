@@ -55,6 +55,9 @@ public:
         bool half = false; ///< true = 源里每眼已被压扁一半（裁完要还原宽高比）
         int rotate = 0;    ///< 菜单旋转角（叠加在文件元数据之上，交给 mpv）
         bool hdr = false;  ///< 内容 HDR → 插 tonemap 链
+        /// 源是 yt-dlp 解析出来的（`stream-open-filename` 与 path 不同，
+        /// 如 YouTube）：预览实例要自己跑一次 yt-dlp，否则拿不到可播的直链。
+        bool ytdl = false;
     };
 
     static constexpr qint64 kBucketMs = 2000;   ///< 缓存/请求的时间桶
@@ -131,6 +134,7 @@ private:
     mpv_render_context *rctx_ = nullptr;
     std::thread eventThread_;
     std::atomic<bool> eventsRunning_{false};
+    bool instanceYtdl_ = false;   ///< 实例创建时用的 ytdl 模式（变了要重建）
 
     // 参数（GUI 写、事件线程读 → 用互斥量；atoims 只给渲染路径）
     mutable QMutex paramsMutex_;
