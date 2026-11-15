@@ -109,6 +109,15 @@ bool PreviewThumbnailer::ensureCreated() {
         instanceYtdl_ = params_.ytdl;
         opt("ytdl", params_.ytdl ? "yes" : "no");
     }
+    // 主实例解析出来的 HTTP 头（bilibili CDN 缺 Referer/UA 会 403）。
+    // 这两项是 ytdl_hook 设的**文件级**选项，属性读得到值。
+    {
+        QMutexLocker l(&paramsMutex_);
+        if (!params_.userAgent.isEmpty())
+            opt("user-agent", params_.userAgent.toUtf8().constData());
+        if (!params_.headers.isEmpty())
+            opt("http-header-fields", params_.headers.toUtf8().constData());
+    }
     // 预览只需要一帧：让 yt-dlp 选最低画质（thumbfast 同款），解析/下载都快
     opt("ytdl-format", "worst");
     opt("input-default-bindings", "no");
@@ -298,6 +307,13 @@ void PreviewThumbnailer::setParams(const Params &p) {
         MLOG_VERBOSE("thumb: params w=%d eye=%d layout=%d half=%d hdr=%d rot=%d path='%s'",
                      p.width, p.eye, p.layout, p.half ? 1 : 0, p.hdr ? 1 : 0, p.rotate,
                      p.path.toUtf8().constData());
+    // HTTP 头变了（换站/换页）→ 必须重新 load（旧连接的请求头不会跟着变）
+    const bool headersChanged =
+        p.userAgent != old.userAgent || p.headers != old.headers;
+    if (headersChanged && !p.path.isEmpty()) {
+        loadSource(p.path);
+        return;
+    }
     const bool rotateChanged = p.rotate != old.rotate;
     const bool widthChanged = p.width != old.width;
 
@@ -340,7 +356,10 @@ void PreviewThumbnailer::loadSource(const QString &path) {
         setError(QStringLiteral("loadfile: %1").arg(mpv_error_string(e)));
         return;
     }
-    MLOG_INFO("thumb: load '%s'", p.constData());
+    // 网络源的 stream-open-filename 是自包含 `edl://`（bilibili/YouTube 实测
+    // 几十 KB），整条打进日志既刷屏又没法读——只记前 96 字节 + 总长度。
+    const QByteArray shown = p.size() > 96 ? p.left(96) + "…" : p;
+    MLOG_INFO("thumb: load '%s' (%d bytes)", shown.constData(), int(p.size()));
 }
 
 void PreviewThumbnailer::unloadSource() {
@@ -642,10 +661,19 @@ void PreviewThumbnailer::eventLoop() {
         case MPV_EVENT_VIDEO_RECONFIG:
             onVideoReconfig();
             break;
-        case MPV_EVENT_END_FILE:
+        case MPV_EVENT_END_FILE: {
+            // 失败要记下来：悬停气泡据此显示"无法获取"（用户 2026-11-15 要求
+            // 失败时也给气泡；面板形态/尺寸不变）。正常 unload 不算失败。
+            auto *ef = static_cast<mpv_event_end_file *>(ev->data);
+            const bool failed = ef && ef->reason == MPV_END_FILE_REASON_ERROR;
             haveSource_.store(false);
-            postToGui([this] { emit stateChanged(); });
+            postToGui([this, failed] {
+                if (failed && lastError_.isEmpty())
+                    lastError_ = QStringLiteral("load failed");
+                emit stateChanged();
+            });
             break;
+        }
         case MPV_EVENT_LOG_MESSAGE: {
             auto *m = static_cast<mpv_event_log_message *>(ev->data);
             if (m && m->level && (m->level[0] == 'e' || m->level[0] == 'w'))

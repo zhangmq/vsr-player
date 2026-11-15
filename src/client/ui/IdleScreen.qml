@@ -13,11 +13,22 @@ Item {
     property bool dragActive: false
     /// 有可续播的播放列表时多一行"继续上次播放"
     property bool canContinue: false
+    /// 播放阶段（PlayerViewModel.mediaPhase）：0=idle 1=opening 3=failed。
+    /// （2=playing 时本组件整体隐藏，由宿主控制 visible。）
+    property int phase: 0
+    /// failed = 失败原因（idle 不用）
+    property string detail: ""
+    /// failed 时是否给"重试"（只有网络源给；本地源没有可重试的意义）
+    property bool canRetry: false
+
+    readonly property bool failed: phase === 3
+    readonly property bool idleState: phase === 0
 
     signal openFilesRequested()
     signal openFolderRequested()
     signal openUrlRequested()
     signal continueRequested()
+    signal retryRequested()
 
     /// 「初始操作提示」的一行：图标 + 标签 + 右侧快捷键（与右键菜单同款行高）
     component ActionRow: Item {
@@ -74,41 +85,63 @@ Item {
             anchors.margins: 20
             spacing: 4
 
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                font.family: iconFont; font.pixelSize: 44
-                text: "󰉋"; color: "#e0e0e0"
-                renderType: Text.NativeRendering
+            Rectangle {
+                visible: root.idleState
+                width: parent.width; height: visible ? 44 : 0; color: "transparent"
+                Text {
+                    anchors.centerIn: parent
+                    font.family: iconFont; font.pixelSize: 44
+                    text: "󰉋"; color: "#e0e0e0"
+                    renderType: Text.NativeRendering
+                }
             }
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: qsTr("Drop files here")
+                text: root.failed ? qsTr("Cannot play") : qsTr("Drop files here")
                 color: "#e0e0e0"; font.pixelSize: 14
             }
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: qsTr("or open with")
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideMiddle
+                text: root.idleState ? qsTr("or open with") : root.detail
                 color: "#808080"; font.pixelSize: 13
                 bottomPadding: 6
             }
             Rectangle {
-                width: parent.width; height: 1; color: "#1affffff"
+                visible: root.idleState
+                width: parent.width; height: visible ? 1 : 0; color: "#1affffff"
                 anchors.horizontalCenter: parent.horizontalCenter
             }
             ActionRow {
+                visible: root.idleState || root.failed
+                height: visible ? 32 : 0
                 glyph: "󰈙"; label: qsTr("Open file…"); hint: "Ctrl+O"
                 onActivated: root.openFilesRequested()
             }
             ActionRow {
+                visible: root.idleState || root.failed
+                height: visible ? 32 : 0
                 glyph: "󰉖"; label: qsTr("Open folder…"); hint: "Ctrl+Shift+O"
                 onActivated: root.openFolderRequested()
             }
             ActionRow {
+                visible: root.idleState || root.failed
+                height: visible ? 32 : 0
                 glyph: "󰌷"; label: qsTr("Open URL…"); hint: "Ctrl+L"
                 onActivated: root.openUrlRequested()
             }
             ActionRow {
-                visible: root.canContinue
+                // 失败态：网络源给"重试"（重新打开同一 URL），本地源不给
+                visible: root.failed && root.canRetry
+                height: visible ? 32 : 0
+                glyph: "󰐊"; label: qsTr("Retry"); hint: ""
+                onActivated: root.retryRequested()
+            }
+            ActionRow {
+                // "继续上次播放"只在 idle；失败态显示它会再失败一次（用户 2026-11-15）
+                visible: root.idleState && root.canContinue
                 height: visible ? 32 : 0
                 glyph: "󰐊"; label: qsTr("Continue last session"); hint: qsTr("Space")
                 onActivated: root.continueRequested()

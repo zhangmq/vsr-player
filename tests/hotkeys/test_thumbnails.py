@@ -104,7 +104,13 @@ def t1_basic(p: Player) -> None:
     st = wait_until(lambda: (lambda d: d if d.get("loaded") else None)(
         rpc.call("get-preview-state").get("data")), "预览实例载入文件", timeout=20)
     check(st.get("ready") is True, "preview ready", st)
-    expect_eq(st.get("width"), 320, "默认宽度 320")
+    # 宽度按窗口比例（0.15×窗口逻辑宽，夹 200–480）——用户 2026-11-15 定的口径；
+    # 显式像素宽度仍可用 set-preview-width 覆盖（下面统一成 320 便于断言尺寸）。
+    w0 = st.get("width")
+    check(isinstance(w0, int) and 200 <= w0 <= 480, "宽度按比例落在 200–480", w0)
+    rpc.call("set-preview-width", "320")
+    wait_until(lambda: rpc.call("get-preview-width").get("data") == 320,
+               "切到 320 覆盖宽度", timeout=10)
 
     r = preview(rpc, "t1a", 5)
     check(r["ok"], "preview 5s 成功", r["err"])
@@ -318,6 +324,13 @@ def t10_network() -> None:
         url = f"http://127.0.0.1:{port}/{FIXTURE.name}"
         with Player(SOCK.with_name("vsr-thumb-net.sock"),
                     LOG.with_name("vsr-thumb-net.log"), [url]) as p:
+            # 懒加载：网络源在**第一次请求前**不载入（用户 2026-11-15 定）
+            st0 = p.rpc.call("get-preview-state").get("data") or {}
+            check(st0.get("loaded") is False, "网络源首次请求前不载入（懒加载）",
+                  st0.get("loaded"))
+            p.rpc.call("set-preview-width", "320")
+            # 第一次请求 = 触发懒加载（此时实例可能还没就绪，不吃返回值）
+            p.rpc.call("preview", str(OUT / "t10-warm.png"), "6")
             st = wait_until(
                 lambda: (lambda d: d if d and d.get("ready") else None)(
                     p.rpc.call("get-preview-state").get("data")),

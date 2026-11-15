@@ -27,6 +27,13 @@ Item {
     readonly property real imgH: Math.round(panelWidth * imgAspect)
     readonly property string timeText: viewModel.formatTime(root.hoverMs)
     readonly property string chapter: viewModel.chapterTitleAt(root.hoverMs)
+    /// 取不到图时在气泡里补一句"无法获取"（用户 2026-11-15：失败也要给气泡，
+    /// 最多写"无法获取"；面板不隐藏、尺寸不变）。章节名照常显示。
+    readonly property string unavailableText: qsTr("Thumbnail unavailable")
+    /// 取不到图时气泡补一句"无法获取缩略图"（用户 2026-11-15：失败也要给
+    /// 气泡，最多写"无法获取缩略图"；面板不隐藏、尺寸随文字走）。
+    readonly property string bubbleText: viewModel.previewUnavailable
+        ? timeText + " · " + unavailableText : timeText
     readonly property string labelText: chapter.length > 0
         ? timeText + " · " + chapter : timeText
 
@@ -81,7 +88,7 @@ Item {
         Text {
             id: bubbleLabel
             anchors.centerIn: parent
-            text: root.timeText
+            text: root.bubbleText
             color: "#e0e0e0"
             font.pixelSize: 13
         }

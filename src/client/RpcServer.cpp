@@ -275,6 +275,31 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             QMetaObject::invokeMethod(vm, "playlistClear", Qt::QueuedConnection);
             response = formatResponse("success");
         }
+    } else if (cmd == "get-media-phase") {
+        // 空状态区状态机（测试用）：0=idle 1=opening 2=playing 3=failed
+        if (!vm) response = formatResponse("no view model");
+        else {
+            QJsonObject o;
+            o.insert("phase", vm->mediaPhase());
+            o.insert("detail", vm->mediaPhaseDetail());
+            o.insert("canRetry", vm->canRetryOpen());
+            response = formatResponse(
+                "", QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString());
+        }
+    } else if (cmd == "playlist-play") {
+        // 按索引点播放列表条目（等价面板点击）：测试"用户主动切换即恢复播放"。
+        if (!vm) response = formatResponse("no view model");
+        else if (args.empty()) response = formatResponse("usage: playlist-play <index>");
+        else {
+            bool ok = false;
+            const int idx = QString::fromStdString(args[0]).toInt(&ok);
+            if (!ok) response = formatResponse("invalid index");
+            else {
+                QMetaObject::invokeMethod(vm, "playlistPlayIndex", Qt::QueuedConnection,
+                                          Q_ARG(int, idx));
+                response = formatResponse("success");
+            }
+        }
     } else if (cmd == "remove-current") {
         // 从播放列表移除当前条目（不碰磁盘）。
         if (!vm) response = formatResponse("no view model");
@@ -989,8 +1014,10 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             const double sec = strtod(args[1].c_str(), &end);
             if (!th || end == args[1].c_str() || *end != '\0' || !std::isfinite(sec)) {
                 response = formatResponse("invalid arguments");
-            } else if (!vm->previewReady()) {
-                // 无视频轨 / 网络流 / 直播 / 停止态：不发起请求（否则要等超时）
+            } else if (!vm->previewAvailable()) {
+                // 无视频轨 / 直播 / 停止态：不发起请求（否则要等超时）。
+                // ⚠ 判据用 available（策略）而不是 ready（实例已载入）：
+                // 网络源是懒加载的，第一次请求前实例本来就没载入。
                 response = formatResponse("preview not available (no video, or live stream)");
             } else {
                 const qint64 ms = qint64(sec * 1000.0);
@@ -1014,6 +1041,21 @@ void RpcServer::handleLine(int fd, const std::string &line) {
                 }
             }
         }
+    } else if (cmd == "open") {
+        // 打开一个源（等价菜单"打开文件"，mode 0）：测试"打开即播"策略。
+        // 用法：{"command":["open","<path>"]}
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: open <path>");
+        } else {
+            // 必须排队到 GUI 线程：openFiles 会改 viewModel 状态并发信号，
+            // RPC 线程直接调会让 QML 绑定拿不到/乱序（实测 opening 卡片不出现）。
+            QMetaObject::invokeMethod(vm, [vm, path = args[0]] {
+                vm->openFiles(QStringList{QString::fromStdString(path)}, 0);
+            }, Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
     } else if (cmd == "get-preview-state") {
         // 缩略图引擎状态（测试/诊断；不触发取帧）。
         if (!vm) {
@@ -1021,10 +1063,16 @@ void RpcServer::handleLine(int fd, const std::string &line) {
         } else if (PreviewThumbnailer *th = vm->thumbnailer()) {
             QJsonObject o;
             o.insert("ready", vm->previewReady());
+            o.insert("available", vm->previewAvailable());
+            o.insert("unavailable", vm->previewUnavailable());
             o.insert("thumbs", vm->previewThumbnails());
             o.insert("serial", double(th->serial()));
             o.insert("loaded", th->hasSource());
-            o.insert("path", QString::fromStdString(th->sourcePath().toStdString()));
+            {
+                // edl:// 可能几十 KB（bilibili/YouTube），RPC 输出只留前 96 字符
+                const QString src = th->sourcePath();
+                o.insert("path", src.size() > 96 ? src.left(96) + QStringLiteral("…") : src);
+            }
             o.insert("latencyMs", double(th->lastLatencyMs()));
             o.insert("frames", double(th->framesProduced()));
             o.insert("cacheHits", double(th->cacheHits()));

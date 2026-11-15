@@ -449,17 +449,22 @@ int main(int argc, char *argv[]) {
     //   命令行给了文件 = 明确的播放意图 → 直接载入播放（不进 idle）。
     //   `-- --pause=yes` 仍是命令行优先（mpv 选项语义）：照旧载入并停在
     //     暂停态（海报可见）——这正是用户显式要求的。
-    bool idleStart = false;
-    if (!opts.benchmark && opts.inputs.empty()) {
-        bool explicitPause = false;
-        for (const auto &kv : opts.passthrough)
-            if (kv.first == "pause") explicitPause = true;
+    // 显式 `-- --pause=yes`：这是用户明确要"载入但不动"，openFiles /
+    // 播放列表点击都不再强制恢复播放（见 PlayerViewModel::setStartPaused）。
+    bool explicitPause = false;
+    for (const auto &kv : opts.passthrough)
+        if (kv.first == "pause" && kv.second != "no") explicitPause = true;
+    viewModel.setStartPaused(explicitPause);
+
+    // 无参数启动 = **永远 idle**：只把列表排进 mpv，绝不载入媒体
+    //（用户 2026-11-15：曾按"有没有 watch_later 存档"决定，缺存档时走
+    //  restorePlaylist() 的 `loadlist`（非 append）→ 概率性自动播放）。
+    const bool idleStart = !opts.benchmark && opts.inputs.empty();
+    if (idleStart) {
         const QString target = viewModel.restoredCurrentFile();
-        idleStart = !explicitPause && !target.isEmpty()
-                 && PlayerViewModel::hasResumeState(target);
-        if (idleStart)
-            MLOG_INFO("resume state found → idle start (list restored, media load "
-                      "deferred to Play): %s", target.toUtf8().constData());
+        if (!target.isEmpty() && PlayerViewModel::hasResumeState(target))
+            MLOG_INFO("idle start (resume state present, media load deferred to Play): %s",
+                      target.toUtf8().constData());
     }
 
     MpvController mpv;
@@ -872,6 +877,13 @@ int main(int argc, char *argv[]) {
             // 视频重配（解码器软硬切换、像素格式/尺寸变化）→ mpv 用**加载时的
             // vf 选项串**重建用户滤镜链，运行期 vf-command 设的 3D 每眼映射会
             // 丢（实测：3D auto 倍率在软硬解码切换后回到 2D 公式）→ 补推。
+            if (ev->event_id == MPV_EVENT_FILE_LOADED) {
+                // 每个文件载入完成 → 空状态区让位（playing）。切文件时
+                // fileLoaded_ 一直是 true，只能靠事件驱动。
+                QMetaObject::invokeMethod(&viewModel, "noteFileLoaded",
+                                          Qt::QueuedConnection);
+                return;
+            }
             if (ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
                 viewModel.replayStereoMap();
                 return;
@@ -882,6 +894,12 @@ int main(int argc, char *argv[]) {
             if (ef->reason != MPV_END_FILE_REASON_EOF &&
                 ef->reason != MPV_END_FILE_REASON_ERROR)
                 return;
+            // 载入失败 → 空状态区显示"无法播放"（用户 2026-11-15）。
+            // 事件线程不能直接改 UI 状态，排队到 GUI 线程。
+            if (ef->reason == MPV_END_FILE_REASON_ERROR) {
+                QMetaObject::invokeMethod(&viewModel, "noteLoadFailed",
+                                          Qt::QueuedConnection);
+            }
             if (!opts.benchmark)
                 return;
             double t = std::chrono::duration<double>(

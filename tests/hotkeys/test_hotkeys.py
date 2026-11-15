@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -346,6 +347,119 @@ def t_sanity(p: Player) -> None:
     check("keymap:" in log, "键位表已加载")
 
 
+def t5_open_playback(p: Player) -> None:
+    """打开/切条目即播（用户 2026-11-15 定的策略）。
+
+    - #5 菜单/拖放"打开"一个源 → 立刻播放（即使当前暂停）
+    - #7 播放列表点条目 → 立刻播放
+    - #9 移除当前条目 = **mpv 原生语义**：pause 全局保持 → 暂停态下前进到
+         下一条仍然暂停（不需要客户端介入）
+    """
+    section("T5 打开即播 / 暂停态语义")
+    rpc = p.rpc
+
+    def prop(name):
+        return rpc.call("get_property", name).get("data")
+
+    def time_pos() -> float:
+        try:
+            return float(prop("time-pos") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    # 先往列表尾追加一条（mpv `loadfile … append` 不会自动播放），
+    # 于是列表有 2 条、当前仍是第 0 条。
+    second = FIXTURE.with_name(FIXTURE.stem + "-2.mp4")
+    if not second.exists():
+        shutil.copyfile(FIXTURE, second)
+    def playlist_count() -> int:
+        try:
+            return int(rpc.call("get_property", "playlist-count").get("data") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    rpc.call("command", "loadfile", str(second), "append")
+    wait_until(lambda: playlist_count() == 2, "列表追加到 2 条", timeout=10)
+
+    # ── #9 mpv 原生：暂停态下移除当前条目 → 前进到下一条但仍暂停 ──
+    rpc.call("command", "set", "pause", "yes")
+    time.sleep(0.4)
+    expect_eq(prop("pause"), "yes", "#9 前置：进入暂停")
+    rpc.call("remove-current")
+    wait_until(lambda: prop("pause") == "yes", "移除后仍暂停", timeout=10)
+    expect_eq(prop("pause"), "yes", "#9 移除当前条目后仍是暂停（mpv 原生）")
+
+    # ── #7 暂停态下点播放列表条目 → 立即播放 ──
+    if playlist_count() == 0:
+        rpc.call("open", str(FIXTURE))
+        wait_until(lambda: prop("pause") == "no", "重新打开源", timeout=10)
+    rpc.call("command", "set", "pause", "yes")
+    time.sleep(0.4)
+    expect_eq(prop("pause"), "yes", "#7 前置：进入暂停")
+    rpc.call("playlist-play", "0")
+    wait_until(lambda: prop("pause") == "no", "#7 点条目后恢复播放", timeout=10)
+    t1 = time_pos()
+    time.sleep(1.2)
+    check(time_pos() > t1, "#7 点条目后时间在推进", f"{t1:.2f} -> {time_pos():.2f}")
+
+    # ── #5 暂停态下"打开文件" → 立即播放 ──
+    rpc.call("command", "set", "pause", "yes")
+    time.sleep(0.4)
+    expect_eq(prop("pause"), "yes", "#5 前置：进入暂停")
+    rpc.call("open", str(second))
+    wait_until(lambda: prop("pause") == "no", "#5 打开文件后立即播放", timeout=10)
+    t1 = time_pos()
+    time.sleep(1.2)
+    check(time_pos() > t1, "#5 打开文件后时间在推进", f"{t1:.2f} -> {time_pos():.2f}")
+
+
+def t6_failure_ui(p: Player) -> None:
+    """空状态区状态机：opening / failed / playing（用户 2026-11-15 定）。
+
+    - 本地源失败：phase=3、**不给重试**（canRetry=false）、detail 非空
+    - 网络源失败：phase=3、**给重试**（canRetry=true）
+    - 打开正常文件：phase 回到 2（playing）
+    """
+    section("T6 失败态 UI 状态机")
+    rpc = p.rpc
+
+    def phase() -> dict:
+        return rpc.call("get-media-phase").get("data") or {}
+
+    def wait_phase(want: int, what: str) -> dict:
+        return wait_until(lambda: (lambda d: d if d.get("phase") == want else None)(phase()),
+                          what, timeout=15)
+
+    def wait_failed(prev_detail: str, what: str) -> dict:
+        # open 是排队执行的：先等 phase 离开旧的 3／detail 变化，再等新的 3，
+        # 否则会读到上一次失败的残留状态。
+        return wait_until(
+            lambda: (lambda d: d if d.get("phase") == 3 and d.get("detail") and
+                     d.get("detail") != prev_detail else None)(phase()),
+            what, timeout=20)
+
+    # 本地缺失文件
+    prev = (phase() or {}).get("detail")
+    rpc.call("open", "/tmp/vsr-player-definitely-missing.mp4")
+    st = wait_failed(prev, "本地失败进入 failed")
+    expect_eq(st.get("phase"), 3, "本地打开失败 → failed")
+    check(bool(st.get("detail")), "失败原因非空", st.get("detail"))
+    expect_eq(st.get("canRetry"), False, "本地源不给重试")
+
+    # 网络不可达
+    prev = (phase() or {}).get("detail")
+    rpc.call("open", "http://127.0.0.1:1/none.mp4")
+    st = wait_failed(prev, "网络失败进入 failed")
+    expect_eq(st.get("phase"), 3, "网络打开失败 → failed")
+    check(bool(st.get("detail")), "网络失败原因非空", st.get("detail"))
+    expect_eq(st.get("canRetry"), True, "网络源给重试")
+
+    # 恢复正常文件 → playing
+    rpc.call("open", str(FIXTURE))
+    wait_phase(2, "恢复正常文件回到 playing")
+    expect_eq(phase().get("phase"), 2, "打开正常文件 → playing")
+
+
 def t4_quit(p: Player) -> None:
     section("T4 退出（Ctrl+Q → 进程结束）")
     p.rpc.key("Ctrl+Q")
@@ -368,6 +482,8 @@ def main() -> int:
         if not no_eye:
             phases.append(("T3-d 单眼态分支", t3_stereo_branch))
         phases.append(("T2 菜单状态机", t2_menu_state_machine))
+        phases.append(("T5 打开即播", t5_open_playback))
+        phases.append(("T6 失败态 UI", t6_failure_ui))
         phases.append(("T4 退出", t4_quit))
         for name, fn in phases:
             if not p.alive():

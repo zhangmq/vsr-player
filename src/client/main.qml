@@ -9,6 +9,12 @@ Item {
     id: root
     anchors.fill: parent
 
+    // ── 缩略图宽度 = 窗口逻辑宽 × 比例（上下限在 C++：kThumbWidthRatio）──
+    // 用户 2026-11-15：缩略图大小按窗口比例做，不再固定像素；窗口缩放时重算
+    //（宽度变化会让预览实例清缓存、按新尺寸重渲）。
+    onWidthChanged: viewModel.noteWindowWidth(Math.round(width))
+    Component.onCompleted: viewModel.noteWindowWidth(Math.round(width))
+
     /// 最后一次鼠标位置（键盘打开右键菜单时用它定位；没记录过就开在窗口中间）
     property point lastMenuPos: Qt.point(-1, -1)
 
@@ -143,13 +149,18 @@ Item {
             anchors.fill: parent
             // 任何 popup（含右键菜单）打开时让位：它是"空状态引导"，
             // 菜单盖上来时还透出面板文字会显脏（菜单是半透明的）。
-            visible: !viewModel.hasMedia && !benchmarkMode && !uiLayer.anyPopupOpen
+            // 播放态（mediaPhase 2）整体让位；1=正在打开、3=无法播放 也走这张卡
+            visible: viewModel.mediaPhase !== 2 && !benchmarkMode && !uiLayer.anyPopupOpen
             dragActive: dropArea.containsDrag
+            phase: viewModel.mediaPhase
+            detail: viewModel.mediaPhaseDetail
+            canRetry: viewModel.canRetryOpen
             canContinue: viewModel.playlistModel.count > 0
             onOpenFilesRequested: { fileDialog.mode = 0; fileDialog.open() }
             onOpenFolderRequested: { folderDialog.mode = 0; folderDialog.open() }
             onOpenUrlRequested: urlPopup.open()
             onContinueRequested: viewModel.togglePlayPause()
+            onRetryRequested: viewModel.retryOpen()
         }
 
         // ── Bottom Bar（热区 + 进度条 + bottombar 一体）────────────

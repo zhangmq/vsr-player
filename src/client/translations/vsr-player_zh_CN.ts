@@ -415,37 +415,47 @@
 <context>
     <name>IdleScreen</name>
     <message>
-        <location filename="../ui/IdleScreen.qml" line="85"/>
+        <location filename="../ui/IdleScreen.qml" line="100"/>
+        <source>Cannot play</source>
+        <translation>无法播放</translation>
+    </message>
+    <message>
+        <location filename="../ui/IdleScreen.qml" line="100"/>
         <source>Drop files here</source>
         <translation>把文件拖到这里</translation>
     </message>
     <message>
-        <location filename="../ui/IdleScreen.qml" line="90"/>
+        <location filename="../ui/IdleScreen.qml" line="108"/>
         <source>or open with</source>
         <translation>或使用下面的方式打开</translation>
     </message>
     <message>
-        <location filename="../ui/IdleScreen.qml" line="99"/>
+        <location filename="../ui/IdleScreen.qml" line="120"/>
         <source>Open file…</source>
         <translation>打开文件…</translation>
     </message>
     <message>
-        <location filename="../ui/IdleScreen.qml" line="103"/>
+        <location filename="../ui/IdleScreen.qml" line="126"/>
         <source>Open folder…</source>
         <translation>打开文件夹…</translation>
     </message>
     <message>
-        <location filename="../ui/IdleScreen.qml" line="107"/>
+        <location filename="../ui/IdleScreen.qml" line="132"/>
         <source>Open URL…</source>
         <translation>打开 URL…</translation>
     </message>
     <message>
-        <location filename="../ui/IdleScreen.qml" line="113"/>
+        <location filename="../ui/IdleScreen.qml" line="139"/>
+        <source>Retry</source>
+        <translation>重试</translation>
+    </message>
+    <message>
+        <location filename="../ui/IdleScreen.qml" line="146"/>
         <source>Continue last session</source>
         <translation>继续上次播放</translation>
     </message>
     <message>
-        <location filename="../ui/IdleScreen.qml" line="113"/>
+        <location filename="../ui/IdleScreen.qml" line="146"/>
         <source>Space</source>
         <translation>空格</translation>
     </message>
@@ -461,61 +471,71 @@
 <context>
     <name>PlayerViewModel</name>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="2976"/>
-        <location filename="../PlayerViewModel.cpp" line="2984"/>
+        <location filename="../PlayerViewModel.cpp" line="3050"/>
+        <location filename="../PlayerViewModel.cpp" line="3058"/>
         <source>Source</source>
         <translation>源</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3010"/>
+        <location filename="../PlayerViewModel.cpp" line="3084"/>
         <source>Output</source>
         <translation>输出</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3017"/>
+        <location filename="../PlayerViewModel.cpp" line="3091"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3045"/>
+        <location filename="../PlayerViewModel.cpp" line="3119"/>
         <source>VSR</source>
         <translation>超分</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3070"/>
+        <location filename="../PlayerViewModel.cpp" line="3144"/>
         <source>FRUC</source>
         <translation>插帧</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3089"/>
-        <location filename="../PlayerViewModel.cpp" line="3094"/>
+        <location filename="../PlayerViewModel.cpp" line="3163"/>
+        <location filename="../PlayerViewModel.cpp" line="3168"/>
         <source>Decoder</source>
         <translation>解码器</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3099"/>
+        <location filename="../PlayerViewModel.cpp" line="3173"/>
         <source>Speed</source>
         <translation>速度</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3101"/>
+        <location filename="../PlayerViewModel.cpp" line="3175"/>
         <source>Time</source>
         <translation>时间</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3105"/>
+        <location filename="../PlayerViewModel.cpp" line="3179"/>
         <source>Frames</source>
         <translation>帧数</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3109"/>
+        <location filename="../PlayerViewModel.cpp" line="3183"/>
         <source>GPU</source>
         <translation>显卡</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3112"/>
+        <location filename="../PlayerViewModel.cpp" line="3186"/>
         <source>Audio</source>
         <translation>音频</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="3282"/>
+        <source>Could not open the stream</source>
+        <translation>无法打开该网络流</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="3282"/>
+        <source>Could not open the file</source>
+        <translation>无法打开该文件</translation>
     </message>
     <message>
         <location filename="../FrucBackend.h" line="71"/>
@@ -680,6 +700,14 @@
         <location filename="../ui/QualityPopup.qml" line="232"/>
         <source>Advanced</source>
         <translation>高级</translation>
+    </message>
+</context>
+<context>
+    <name>SeekPreview</name>
+    <message>
+        <location filename="../ui/SeekPreview.qml" line="32"/>
+        <source>Thumbnail unavailable</source>
+        <translation>无法获取缩略图</translation>
     </message>
 </context>
 <context>
@@ -962,54 +990,54 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="495"/>
+        <location filename="../main.qml" line="506"/>
         <source>Open media</source>
         <translation>打开媒体</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="507"/>
+        <location filename="../main.qml" line="518"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>音频文件 (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="499"/>
-        <location filename="../main.qml" line="508"/>
+        <location filename="../main.qml" line="510"/>
+        <location filename="../main.qml" line="519"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>字幕文件 (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="486"/>
+        <location filename="../main.qml" line="497"/>
         <source>Add folder to playlist</source>
         <translation>追加文件夹到播放列表</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="487"/>
+        <location filename="../main.qml" line="498"/>
         <source>Open folder</source>
         <translation>打开文件夹</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="500"/>
-        <location filename="../main.qml" line="509"/>
+        <location filename="../main.qml" line="511"/>
+        <location filename="../main.qml" line="520"/>
         <source>All files (*)</source>
         <translation>所有文件 (*)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="502"/>
+        <location filename="../main.qml" line="513"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>媒体文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="503"/>
+        <location filename="../main.qml" line="514"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</source>
         <translation>视频文件 (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="506"/>
+        <location filename="../main.qml" line="517"/>
         <source>Blu-ray images (*.iso)</source>
         <translation>蓝光镜像 (*.iso)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="688"/>
+        <location filename="../main.qml" line="699"/>
         <source>请戴上眼镜观看</source>
         <translation>请戴上眼镜观看</translation>
     </message>

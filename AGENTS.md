@@ -322,6 +322,20 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **两个拖放区（2026-10-21 确认）**：A = 窗口级 `DropArea`（`main.qml`）→ mode 0，**完全重置**播放列表（首条 replace 播放、其余 append 排队）；B = `PlaylistPanel` 的 `DropArea` → mode 1，**追加**（不打断当前播放）。面板打开时 B 在 popup overlay（`QQuickOverlay` 是 contentItem 的子项、创建在 QML 根之后）里叠在 A 之上，Qt 的拖放投递按 `paintOrderChildItems()` **从上到下找第一个接受者**（`qquickdeliveryagent.cpp: deliverDragEvent`），所以两个区不会同时触发。**追加目录**同样走 mpv 原生语义：`loadfile <dir> append` 只留一个目录条目、点击才展开（实测：追加后列表 = `[/tmp/vsr-dir-test]`，点击 → 4 条目并播放首条）。
   菜单侧同语义（2026-10-21）：右键菜单 = "Add files to playlist"（FileDialog mode 1）+ "Add folder to playlist"（FolderDialog mode 1，同一 `folderDialog` 实例靠 `mode` 属性区分标题与 `onAccepted`）；"打开文件/文件夹"仍分开（平台对话框不能同时选文件与目录），但两者与追加共用 `openFiles` 单一入口，目录路径一律交给 mpv。
 
+### 无参数启动"概率性自动播放"（2026-11-15 报告 + 当天定位并修复）
+
+**现象**（用户报）：**不给任何命令行输入**启动播放器（应 idle：只恢复列表、不载入媒体），
+**有几率**自己开始播放。
+
+**根因**（2026-11-15 定位）：`main.cpp` 的启动分支按"有没有 watch_later 存档"二选一——
+`idleStart = !explicitPause && 有存档`。**缺存档**（新文件、播到接近结尾、存档被删）时会走
+`viewModel.restorePlaylist()`，而它用的是 **`loadlist`（不带 append）**：mpv 的
+`cmd_loadlist` 对 `LOAD_TYPE_REPLACE` 会 `mp_set_playlist_entry(第一条)` → **直接开播**。
+所以"自动播放"取决于存档在不在，表现为概率性；与缩略图/菜单改动无关。
+
+**修法**：`idleStart` 改为 `!benchmark && opts.inputs.empty()`——**无参数启动永远 idle**，
+只 `loadlist … append` 排队条目，绝不载入媒体（存档在不在都一样）。
+验证：无参数启动 → `idle-active=yes`、`playlist-count=2`、`time-pos=None`、`mediaPhase=0`。
 
 ### 当前条目的移除 / 删除（2026-10-23）
 
@@ -729,8 +743,18 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
 3. **half（每眼被压扁）必须 `setsar=1`**：crop 会把像素宽高比设为 1:2 以保持显示比，
    漏掉 `setsar=1` 时 mpv 的 `dw/dh` 再乘一次（640×360 → 640×720，缩略图变竖条）。
 
-**边界**：直播/线性流（`isLiveSource`，含"不可 seek/仅部分可 seek"）和纯音频（无视频轨）
-不启用；**网络点播（HTTP/HLS VOD，可 seek）允许**（用户 2026-11-15 报"网络流无法生成
+**边界**：纯音频（无视频轨）不启用；直播只用 mpv 的通用信号 `isLiveSource()`
+（`seekable=no` 或 seek 失败后确认的线性源）排除。
+
+⚠ **直播流的缩略图"不可信"（2026-11-15 用户定：判不准就不做控制）**：试过两道额外判据都被否：
+- **`duration > 0` 才算点播**：会误伤 HLS **点播**（实测 mux 的 HLS VOD `duration` 也是 `None`）；
+- **"时长在增长"= 直播**：bilibili 直播确实是从 14.5→17.6→21.1s 增长（且 `seekable=yes`），
+  但这条属于**站点行为特征**，且会在点播解析阶段误触发（实测把 bilibili 点播误判成直播、
+  缩略图全没了）。
+
+结论：**不再按站点/时长特征猜直播**，只保留 `isLiveSource()`；因此当 mpv 把某个直播流报成
+`seekable=yes` 时（bilibili 直播就是），进度条悬停会出图，**这张图对直播没有意义**，
+文档层面标注即可。其余说明：；**网络点播（HTTP/HLS VOD，可 seek）允许**（用户 2026-11-15 报"网络流无法生成
 缩略图"是这里的过度拦截）——预览实例会自己再拉一次流，代价是带宽/首帧时延；
 **yt-dlp 源（YouTube 等，"网络流"菜单那类）**：主实例的 `stream-open-filename` 是
 `edl://`（内含签名直链），复制给预览实例未必能开，所以让**预览实例自己跑一次
@@ -742,13 +766,35 @@ yt-dlp**（`ytdl=yes` + `ytdl-format=worst`，最小画质）。⚠ `ytdl` 不�
 预览面板只在**桌面 control 窗口**（presentation 里没有进度条）；内容 HDR 自动插
 `zscale/tonemap` 转 SDR。
 
-⚠ **网络流预览的实缺陷（2026-11-15 实测，未修）**：`ytdl-format=worst` 在
-**bilibili 这类站点不存在** → 预览实例的 yt-dlp 直接报
-`Requested format is not available` + `Failed to recognize file format`（日志前缀
-`thumb:`，**看起来像主实例播放失败，其实只是缩略图引擎**），网络流缩略图恒不出图
-（`get-preview-state` 的 `ready=false`）。另外预览实例是在**文件载入时**就
-`loadfile` 网络地址的（不等第一次悬停），等于主实例之外立刻多拉一路数据。
-排查网络播放问题时要先分清 `thumb:` 前缀：主实例的日志没有这个前缀。
+**网络源的正确接法（2026-11-15 修正，实测通过）**：
+
+- ❌ 旧做法（已废弃）：让预览实例自己跑一次 `yt-dlp`（`ytdl=yes` + `ytdl-format=worst`）。
+  实测 bilibili 直接报 `Requested format is not available` → `Failed to recognize file
+  format`，网络流缩略图**从来没出过图**；而且预览实例不读 mpv.conf、也拿不到 CLI 透传的
+  `ytdl-raw-options`（ff2mpv 的 cookie 就是这么传的），YouTube 那条同样没救。
+- ✅ 现做法：把主实例已经解析好的 **`stream-open-filename`** 原样交给预览实例
+  （`ytdl=no`）。mpv 的 ytdl_hook 把它做成**自包含 `edl://`**（内含各档直链 + 请求头；
+  bilibili 实测 13–68 KB，YouTube 同型），所以预览实例**不跑第二次 yt-dlp**、不需要
+  cookie、也不受 `ytdl-format` 影响。实测 bilibili：`ready=true`、首帧 119 ms、
+  之后 67 ms，且能带出章节名（面板显示 `5:00 · 理念取舍:开放世界`）。
+- ⚠ **必须继承主实例的 HTTP 头**（2026-11-15 实测）：`edl://` 里**不带**请求头，
+  ytdl_hook 是按站点把 `user-agent` / `http-header-fields`（bilibili = `Referer: …`）
+  设成**文件级选项**的。预览实例少了这两个 → bilibili CDN 直接
+  `curl: HTTP error 403` + `timeline: failed to load segment` → 缩略图恒失败
+  （现象：`available=true` 但 `ready=false`、`error="load failed"`）。
+  做法：`stream-open-filename` 观察器里顺带读 `user-agent` / `http-header-fields`，
+  作为 `PreviewThumbnailer::Params` 下发（头变化会重新 loadfile；这两个属性读得到值，
+  `http-cookies` 读不到）。
+- 预览实例**懒加载**：`previewWanted_` 为假时不 load 网络源，**第一次悬停**才拉流
+  （不悬停零流量）；换文件/关开关复位。实测播放 10 s 内 `thumb: load` 计数 0。
+- ⚠ `stream-open-filename` 很长：日志与 RPC 的 `path` 字段都**截断到 96 字符**
+  （否则刷屏、JSON 也难看）。调这类问题时看长度就好，要看内容直接 grep 主实例日志。
+- ⚠ 排查"网络视频播不了"时先分清 `thumb:` 前缀：**主实例的日志没有这个前缀**。
+  这个前缀下出现的 `Failed to recognize file format` 是缩略图引擎的问题，
+  与播放无关（2026-11-15 就因为这个误判过一轮）。
+
+⚠ 仍未做：预览实例没继承 CLI 透传的 ytdl 选项（`edl://` 路线下用不到；只有在
+`stream-open-filename` 拿不到、退回自解析时才需要）、`worst` 格式回退链、YouTube 实测。
 
 **测试**：`./tests/hotkeys/test_thumbnails.py`（26 项：取帧/桶缓存/宽度/章节/QML 面板/
 单眼裁剪/音频不启用/3D 会话）。Wayland 下 `QCursor::setPos` 无效，面板靠 RPC
@@ -1036,6 +1082,16 @@ toggle = **「隐藏无效菜单项」/ Hide invalid menu items**，`menuHideInv
 HoverHandler/MouseArea/延迟控件），分组标题保持可见。`visibleWhen` 只留给
 「这一行根本不该出现」的场合（当前没有）；`rowFocusable()` 同时看
 `itemShown` 与 `itemEnabled`，键盘不会停在灰行上。
+
+**空状态的两态扩展（2026-11-15）**：`PlayerViewModel.mediaPhase`
+（`0 idle` / `2 playing` / `3 failed`，由 RPC `get-media-phase` 可读）驱动同一张卡片：
+- `idle`：dropzone + 打开文件/文件夹/URL + 「继续上次播放」；
+- `failed`：标题「无法播放」+ 原因（「无法打开该文件/该网络流」），行 = 三个打开入口 +
+  **网络源才有「重试」**；**不显示「继续上次播放」**（只会再失败一次）；失败时置黑画面。
+- ⚠ **曾经做过 `opening`（「正在打开…」）已删除**（用户 2026-11-15 要求）：载入耗时不可
+  准确观测——切换文件时 `fileLoaded_` 一直是 true（`setFileLoaded` 去重），目录展开也不
+  保证按预期发事件，卡片会卡住不消失。现在打开动作只做两件事：记住重试目标、把上一次的
+  failed 清掉（`fileLoaded_` 为真则保持 playing，避免闪卡片）。
 
 **空状态**（`ui/IdleScreen.qml`）：没有活动文件时在中央显示 dropzone 面板——
 "把文件拖到这里 / 或使用下面的方式打开" + 三行快捷入口（文件/文件夹/URL，

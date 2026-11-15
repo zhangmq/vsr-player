@@ -58,6 +58,11 @@ public:
         /// 源是 yt-dlp 解析出来的（`stream-open-filename` 与 path 不同，
         /// 如 YouTube）：预览实例要自己跑一次 yt-dlp，否则拿不到可播的直链。
         bool ytdl = false;
+        /// 主实例的 HTTP 头（ytdl_hook 会按站点设 `user-agent` /
+        /// `http-header-fields` 的**文件级**选项）：预览实例必须带同样的头，
+        /// 否则 bilibili 这类 CDN 直接 403（2026-11-15 实测）。
+        QString userAgent;
+        QString headers;
     };
 
     static constexpr qint64 kBucketMs = 2000;   ///< 缓存/请求的时间桶
