@@ -24,16 +24,33 @@ following mpv semantics.
 The UI auto-hides; it appears when the pointer enters the bottom hover zone (progress bar
 plus a margin below it) and hides again when it leaves.
 
-- **Bottom bar** — progress/seek, play/pause, previous/next, volume, quality (scale, VSR
-  quality, denoise, interpolation, SDR→HDR10), hardware/software decode toggle, speed,
-  aspect ratio, loop mode, fullscreen.
-- **Right-click menu** — open file/folder, append to playlist, remove/delete the current
-  entry, **Picture processing** (deinterlace, rotation), **3D**, quit. The 3D block is
-  described on [3D and Single-Eye](3D-and-Single-Eye).
+- **Bottom bar** — progress/seek, play/pause, previous/next, stop, volume, quality (scale,
+  VSR quality, denoise, interpolation, SDR→HDR10), hardware/software decode toggle, speed,
+  aspect ratio, loop mode, fullscreen, playlist.
+- **Progress bar hover** — a thumbnail of that position appears above the pointer, with the
+  time on a black strip at its bottom and, when the source has chapters, the chapter name on
+  a half-transparent strip at the top. It works for local files and for network streams: the
+  player reuses the address and request headers it has already resolved, so hovering does
+  not run a second extraction (the first networked thumbnail is fetched on the first hover).
+  If no thumbnail can be produced, the bubble falls back to the time plus "Thumbnail
+  unavailable" and the next hover retries after a short cooldown. The panel is 192 logical
+  pixels wide and rendered at the display scale, so it stays sharp on HiDPI screens. Switch
+  it off in the menu (**Interface → Thumbnails**); hovering then shows the time only.
+- **Right-click menu** (`Menu`, `Shift+F10` or `F10`) — groups, in this order: **File**
+  (open file / folder / URL, delete the current file), **Playlist** (add file / folder,
+  remove the current entry), **Preferences → Interface** (thumbnails, hide unavailable menu
+  items), **Tracks** (video track and network stream, audio, subtitles including loading an
+  external file, subtitle delay and audio delay), **Picture processing** (deinterlace,
+  rotation), **3D**, **About**, **Quit**. The 3D block is described on
+  [3D and Single-Eye](3D-and-Single-Eye); **About** shows the icon, program name, version,
+  licence and a clickable repository link. Keyboard: `↑`/`↓` move (skipping separators and
+  group headers, wrapping around), `Home`/`End` jump to the first/last entry, `→` opens a
+  submenu, `←` closes it, `Enter` activates, `Esc` steps back (delay control → submenu →
+  menu).
 - **Playlist panel** (`P`) — current entry is centred when the panel opens; drag files onto
   the panel to append them without interrupting playback.
-- **OSD** (`Tab`) — source/output resolution, the **actual** output mode (HDR10 or SDR),
-  content HDR state, VSR factor and cost, interpolation status, decoder, speed, GPU.
+- **OSD** (`Tab`, or `h` in 2D) — source/output resolution, the **actual** output mode
+  (HDR10 or SDR), content HDR state, VSR factor and cost, interpolation status, decoder, speed, GPU.
 - **Aspect ratio** (`A` / `Shift+A`, or the bottom-bar popup) — cycles the same list mpv
   ships with: `16:9` → `4:3` → `2.35:1` → `no`. Use it when a source has a wrong or missing
   display aspect; in 3D mode the value is interpreted as **per-eye** aspect.
@@ -43,20 +60,33 @@ plus a margin below it) and hides again when it leaves.
 | Key | Action |
 |-----|--------|
 | `Space` | Play / pause |
-| `←` / `→` | Seek ±5 s (`Shift` + arrow = ±10 s) |
+| `←` / `→` | Seek ∓5 s (`Shift` + arrow = ±10 s) |
 | `↑` / `↓` | Volume ±5 % |
 | `Ctrl+←` / `Ctrl+→` | Previous / next playlist entry |
+| `,` / `.` | Step one frame back / forward |
 | `A` / `Shift+A` | Cycle aspect ratio forward / backward |
+| `V` | Subtitles on / off |
+| `z` / `Shift+Z` | Subtitle delay −50 / +50 ms |
+| `Ctrl+0` | Reset subtitle delay |
+| `Ctrl++` / `Ctrl+-` | Audio delay +50 / −50 ms |
+| `Ctrl+Alt+0` | Reset audio delay |
 | `S` | Screenshot |
-| `Tab` | Toggle OSD |
-| `N` / `B` | Next / previous file |
-| `[` / `]` / `\` | Speed 0.5× / 2× / 1× |
-| `P` | Toggle playlist panel |
+| `Tab` (2D: also `h`) | Toggle the OSD overlay |
+| `P` | Toggle the playlist panel |
 | `F` | Toggle fullscreen |
-| `Esc` | Exit fullscreen / close the playlist |
-| `Delete` / `Shift+Delete` | Remove current entry from the playlist / move the file to trash |
+| `[` / `]` / `\` | Speed 0.5× / 2× / 1× |
+| `Delete` / `Shift+Delete` | Remove the current entry from the playlist / move the file to trash |
+| `Ctrl+O` / `Ctrl+Shift+O` / `Ctrl+L` | Open file / folder / URL |
+| `Menu` / `Shift+F10` / `F10` | Open the right-click menu |
+| `Ctrl+Q` | Quit |
+| `Esc` | Leave fullscreen / close the playlist (it does not stop playback) |
 | `H` | Toggle the hotkey help overlay (3D presentation) |
 | `J` / `K` / `L` | 3D or single-eye mode: layout · eye order (or eye) · full/half |
+
+While the right-click menu is open, the arrow keys, `Home`/`End`, `Enter` and `Esc` drive the
+menu instead of playback; the subtitle/audio delay keys keep working so a delay can be tuned
+while watching the result. In a 3D session `Esc` is deliberately ignored on the glasses
+(fullscreen would move the window back to the focused desktop); leave 3D from the menu.
 
 ## Command-line options
 
@@ -87,11 +117,26 @@ A Unix socket at `/tmp/vsr-player.sock`, one JSON object per line:
 printf '{"command":["play"]}\n' | socat - UNIX-CONNECT:/tmp/vsr-player.sock
 ```
 
-Commands: `play`, `pause`, `stop`, `seek`, `loadfile`, `set-vsr`, `get-vsr`, `quit`, plus a
-raw `command` passthrough. Debug/inspection helpers used during development include
-`get-playlist` (mpv-side `title`/`filename` plus the panel's display names),
-`get-video-size` (post-filter frame size), `get-source-format`, `set-eye`, `set-rotate`,
-`get-stereo`, `grab-window <path>` (writes a PNG of the player window) and `vf-command`.
+Commands, grouped the way they are used:
+
+- **Playback** — `play`, `pause`, `stop`, `seek`, `open <path>`, `fullscreen`,
+  `resize <w> <h>`, `playlist-play`, `clear-playlist`, `remove-current`, `delete-current`,
+  `quit`.
+- **Processing** — `set-vsr` / `get-vsr`, `set-fruc`, `set-fruc-quality`,
+  `set-fruc-max-fps`, `set-deinterlace` / `get-deinterlace`, `set-rotate` / `get-rotate`,
+  and `vf-command <filter> <cmd> [arg]` to poke a filter at runtime.
+- **Inspection** — `get-playlist` (mpv-side `title`/`filename` plus the panel's display
+  names), `get-video-size` (post-filter frame size), `get-source-format`, `get-media-phase`,
+  `get-chapters`, `get-stereo`, `get-eye`, `get-screens`, `get-menu-state`,
+  `get-control-state`, `get-focus`, `get-keys`, `grab-window <path>` (writes a PNG of the
+  player window).
+- **Thumbnails** — `preview <out.png> <seconds>` (renders one hover thumbnail and waits for
+  it), `get-preview-state`, `get-preview-width`, `set-preview-width`,
+  `set-preview-thumbnails`.
+- **UI test hooks** — `toggle-osd`, `open-menu`, `menu-key`, `key`, `key-log`,
+  `clear-key-log`, `debug-hover`, `warp-pointer`, `nudge-volume`, `set-menu-hide-invalid`.
+- **Generic** — `get_property` / `set_property`, and `command` for a raw mpv command
+  (`{"command":["command","loadfile","<path>","replace"]}`).
 
 ## Standalone `mpv-vsr` CLI
 

@@ -50,7 +50,7 @@ For when you would rather not compile, or your distro lacks FFmpeg 9.x developme
 
 | | standard (the only distributed prebuilt package) | full (source build only — `--variant=full`) |
 |---|---|---|
-| What it ships | **thin package (~6 MB)**: `vsr-player`, `mpv-vsr`, `libmpv.so.2`, the two Wayland helper modules (`libvsr-color-feedback`, `libvsr-idle-wayland`), icon font, translations, licenses, desktop assets, `COMPONENTS.md` | the same **+ Qt6** (libraries / platform plugins / QML modules) |
+| What it ships | **thin package (~7 MB)**: `vsr-player`, `mpv-vsr`, `libmpv.so.2`, the two Wayland helper modules (`libvsr-color-feedback`, `libvsr-idle-wayland`), icon font, translations, licenses, desktop assets, `COMPONENTS.md` | the same **+ Qt6** (libraries / platform plugins / QML modules) |
 | Comes from the system | **everything else**: FFmpeg 9.x (`libav*`), the optical-media stack (libcdio/libdvd/libbluray), CUDA driver, Vulkan loader, Wayland/X11 client libs, mpv's optional deps (libass, libplacebo, libmujs, liblcms2, …), and **Qt ≥ 6.12** | the same minus Qt |
 | VFX runtime | **never bundled** (NVIDIA's SLA forbids redistribution) — `install.sh` downloads it from NVIDIA's index, or you place it in `~/.local/lib/vsr-player/` yourself | same |
 | For | rolling-release distros (Arch/CachyOS/Fedora…) with FFmpeg 9.x and Qt ≥ 6.12 | distros with Qt < 6.12, or when you want a self-contained Qt |
@@ -91,8 +91,11 @@ Ampere and older GPUs, since the default VFG backend requires Ada/Blackwell.
 
 The installer also sets up **desktop integration**: a **VSR Player** entry appears in the
 application menu/launcher (pinnable to the taskbar, usable as the default handler for
-video/audio files). The icon ships with the package — it is currently a placeholder;
-replacing `data/vsr-player.svg` is all it takes to change it.
+video/audio files). The package carries the application icon in two forms — a scalable SVG
+and a 512 px PNG — installed into `~/.local/share/icons/hicolor/{scalable,512x512}/apps/`,
+which is what the launcher, taskbar and file manager show. `data/vsr-player.svg` is the
+single source: `scripts/render-icon.sh` regenerates the PNG from it, and that same PNG is the
+one embedded in the **About** dialog, so the two never diverge.
 
 - The **VFX runtime** (~0.6 GB wheel, ~1.1 GB extracted) is **not** bundled (NVIDIA's SLA
   forbids redistribution): `install.sh` downloads and extracts it from **NVIDIA's official

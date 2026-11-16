@@ -1,4 +1,11 @@
+<p align="center">
+  <img src="data/vsr-player.svg" width="120" alt="VSR Player icon">
+</p>
+
 # VSR Player
+
+[![Latest release](https://img.shields.io/github/v/release/zhangmq/vsr-player?style=flat-square)](https://github.com/zhangmq/vsr-player/releases)
+[![License](https://img.shields.io/badge/license-GPLv2%2B-blue?style=flat-square)](LICENSE)
 
 Real-time AI video processing player for Linux, built directly on the **NVIDIA Video
 Effects SDK**: neural super-resolution + denoising, frame interpolation, and a 10-bit HDR
@@ -16,31 +23,59 @@ mpv.
 - **AI super-resolution + denoise** — real-time 2×/3×/4× (`vf_vsr`); denoise also works at scale=1
 - **AI frame interpolation** — VFX `VideoFrameGeneration` ×2/×3/×4, quality hot-switchable (`vf_vfg`)
 - **10-bit / HDR end to end** — RGB10A2 through the whole chain, automatic HDR10 output for HDR content, opt-in SDR→HDR10 upconversion (`vf_truehdr`)
-- **3D on XR glasses** (this release's headline) — play 3D videos (side-by-side or top-and-bottom) on XR glasses in 3D mode: fullscreen picture on the glasses, controls stay on the desktop
+- **3D on XR glasses** (headline feature) — play 3D videos (side-by-side or top-and-bottom) on XR glasses in 3D mode: fullscreen picture on the glasses, controls stay on the desktop
 - **2D output** — watch one eye of a 3D source as a normal full-frame picture, with VSR applied per eye (`vf_eye`)
 - **Blu-ray ISO (2D titles)** — `.iso` behaves like a folder or m3u: titles are listed with names and durations, nothing auto-plays. 3D Blu-ray (MVC) is out of scope: convert to SBS offline first
-- **Everyday player** — NVDEC decode, Vulkan rendering, auto-hide QML UI, playlist, loop modes, speed, screenshots, JSON IPC, standalone `mpv-vsr` CLI
+- **Hover thumbnails** — the progress bar previews the frame under the pointer, with the time and the chapter name; works for local files and for network streams
+- **Everyday player** — NVDEC decode, Vulkan rendering, auto-hide QML UI, playlist, tracks and delay control, loop modes, speed, screenshots, JSON IPC, standalone `mpv-vsr` CLI
 
-## Recent additions
+## Pipeline
 
-| Feature | Summary |
-|---|---|
-| **2D output** | New `vf_eye` filter extracts one eye *before* upscaling, so VSR runs on the per-eye picture. Half-width/height sources are stretched to natural size inside the filter, so aspect override, rotation and auto-scaling behave like ordinary 2D |
-| **3D menu block** | The right-click menu gained a **3D** group with three independent entries: **Output mode** (Off / 3D glasses / 2D output), **Source layout** (side by side or top and bottom, full or half), **Output option** (left or right eye) |
-| **Aspect ratio aligned with mpv** | The bottom-bar popup and a new `A` hotkey cycle mpv's own list — `16:9`, `4:3`, `2.35:1`, `no`. In 3D the value means *per-eye* aspect and is converted before reaching mpv |
-| **Picture processing group** | Deinterlace and rotation are grouped under one menu header |
-| **Blu-ray title naming** | Playlist rows read `Title 6 · 1:18:30` instead of the ISO file name — including after a restart |
-| **Playlist snapshot** | The playlist is persisted as an m3u8 file and restored through mpv's own playlist parser, so entry names survive restarts |
-| **Startup stays idle** | Launching with no arguments only restores the list: no decode, no engine load, no VRAM use until Play |
+```
+demux → decode → [deint] → [hwup] → [eye] → [rot]
+      → [vsr] → [truehdr] → [vfg] → VO (libmpv) → Qt scene graph
+```
+
+Each bracket is a filter of this project (mpv's own pipeline handles everything else). The
+order is a cost decision, not a matter of taste: software-decoded frames are uploaded to CUDA
+once at the front, upscaling runs **once per source frame** on the small picture, and
+interpolation runs last on the finished picture — everything placed after interpolation would
+be billed ×2/×3/×4.
+
+## What's new
+
+**0.7.0**
+
+- **Hover thumbnails** — hovering the progress bar shows a thumbnail of that position, 192
+  logical pixels wide and rendered at the display scale, so it stays sharp on HiDPI. Local
+  files and network streams alike (the address and headers already resolved are reused, so
+  no second extraction); a failed fetch is retried on the next hover. Switch it off in the
+  menu: **Interface → Thumbnails**.
+- **About** — the right-click menu ends with **About**: icon, program name, version, licence
+  and a clickable repository link.
+- **New application icon** — transparent background, pixel tiles fading into a sharp
+  triangle; it is the launcher/taskbar icon and the one the About dialog shows.
+
+**0.6.0**
+
+- **The right-click menu is the control centre** — video/audio/subtitle tracks, network
+  stream selection, subtitle and audio delay, alongside the picture-processing and 3D
+  blocks; fully keyboard-driven.
+- **One key map** — every shortcut lives in a single table, so 2D playback, 3D presentation
+  and menu navigation cannot drift apart.
 
 ## Screenshots
 
-![Player UI](docs/images/player-screenshot.jpg)
+<p align="center">
+  <img src="docs/images/player-screenshot.jpg" width="760" alt="Player UI">
+</p>
 
-**VSR comparison** — original 720p and the same frame at 4×:
+**VSR comparison** — original 720p (left) and the same frame at 4× (right):
 
-![Original 720p frame](docs/images/00003_orig.jpg)
-![VSR 4x upscaled frame](docs/images/00003_vsr.jpg)
+<p align="center">
+  <img src="docs/images/00003_orig.jpg" width="49%" alt="Original 720p frame">
+  <img src="docs/images/00003_vsr.jpg" width="49%" alt="VSR 4x upscaled frame">
+</p>
 
 ## Quick start
 
@@ -52,7 +87,7 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ./scripts/build-from-source.sh
 ```
 
-**Prebuilt tarball** — `standard` is a **thin ~6 MB package**: it ships the players, libmpv
+**Prebuilt tarball** — `standard` is a **thin ~7 MB package**: it ships the players, libmpv
 and the Wayland helper modules; FFmpeg, the media stack, CUDA and **Qt ≥ 6.12** come from
 your system (VFX is downloaded at install time):
 
@@ -87,14 +122,19 @@ vsr-player                      # restore the last playlist, load nothing until 
 | `Space` | Play / pause |
 | `←` / `→` | Seek ∓5 s (`Shift` = ±10 s) |
 | `↑` / `↓` | Volume ±5 % |
-| `A` / `Shift+A` | Cycle aspect ratio |
+| `Ctrl+←` / `Ctrl+→` | Previous / next playlist entry |
+| `A` / `Shift+A` | Cycle aspect ratio forward / backward |
+| `V` | Subtitles on / off |
+| `,` / `.` | Step one frame back / forward |
 | `P` / `F` / `Tab` / `S` | Playlist · fullscreen · OSD · screenshot |
-| `N` / `B` | Next / previous entry |
+| `Delete` / `Shift+Delete` | Remove the current entry / move the file to trash |
+| `Menu` / `F10` | Right-click menu (keyboard-navigable) |
+| `Ctrl+Q` | Quit |
 | `J` / `K` / `L` | 3D or single-eye mode: layout · eye order · full/half |
 
-The right-click menu holds quality, **Picture processing** (deinterlace, rotation) and the
-whole 3D block. Every option, the JSON IPC commands and the standalone `mpv-vsr` CLI:
-[wiki: Usage](https://github.com/zhangmq/vsr-player/wiki/Usage).
+The right-click menu holds the rest — tracks and network streams, subtitle/audio delay,
+**Picture processing** (deinterlace, rotation), 3D and **About**. Every option, the JSON IPC
+commands and the standalone `mpv-vsr` CLI: [wiki: Usage](https://github.com/zhangmq/vsr-player/wiki/Usage).
 
 ## Documentation
 

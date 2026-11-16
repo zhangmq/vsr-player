@@ -23,6 +23,30 @@ shared with mpv.
 
 ## Recent additions
 
+### 0.7.0
+
+- **Hover thumbnails** — hovering the progress bar shows a thumbnail of that position (local
+  files and network streams alike), with the time and, when the source has chapters, the
+  chapter name. The panel is 192 logical pixels wide and rendered at the display scale, so it
+  stays sharp on HiDPI; a failed fetch is retried on the next hover. Switch it off in the
+  right-click menu (**Interface → Thumbnails**).
+- **About** — the right-click menu ends with **About**: icon, program name, version, licence
+  and a clickable repository link.
+- **New application icon** — transparent background, pixel tiles fading into a sharp
+  triangle, installed into the desktop icon theme.
+
+### 0.6.0
+
+- **The right-click menu is the control centre** — video/audio/subtitle tracks, network
+  stream selection (`yt-dlp` formats), subtitle and audio delay, plus the picture-processing
+  and 3D blocks; fully keyboard-driven (`↑`/`↓`, `Home`/`End`, `→`/`←`, `Enter`, `Esc`).
+- **One key map** — every shortcut is defined in a single table, so 2D playback, 3D
+  presentation and menu navigation cannot drift apart.
+- **3D session fixes** — quitting from either window, menu ownership, per-eye aspect OSD and
+  keyboard control in the screen picker.
+
+### 0.5.0
+
 | Feature | Notes |
 |---|---|
 | **2D output** | New `vf_eye` filter cuts one eye out of an SBS/TAB frame *before* upscaling, so VSR runs on the per-eye picture. Half-width/height sources are stretched back to natural size so aspect override, rotation and auto-scaling behave like ordinary 2D |
@@ -52,7 +76,7 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ./scripts/build-from-source.sh
 ```
 
-**Prebuilt tarball** — `standard` is a thin ~6 MB package; FFmpeg, the media stack, CUDA and
+**Prebuilt tarball** — `standard` is a thin ~7 MB package; FFmpeg, the media stack, CUDA and
 Qt ≥ 6.12 come from the system, VFX is fetched at install time:
 
 ```bash
@@ -85,16 +109,19 @@ vsr-player                      # restores the last playlist, loads nothing unti
 | `Space` | Play / pause |
 | `←` / `→` | Seek ∓5 s (`Shift` = ±10 s) |
 | `↑` / `↓` | Volume ±5 % |
+| `Ctrl+←` / `Ctrl+→` | Previous / next playlist entry |
 | `A` / `Shift+A` | Cycle aspect (`16:9` → `4:3` → `2.35:1` → `no`) |
 | `P` | Playlist panel |
 | `F` | Fullscreen |
 | `Tab` | OSD info overlay |
 | `S` | Screenshot |
-| `N` / `B` | Next / previous file |
+| `Menu` / `F10` | Right-click menu (keyboard-navigable) |
+| `Ctrl+Q` | Quit |
 | `3D` mode: `J` / `K` / `L` | Layout (SBS/TAB) · eye order · full/half |
 
-The right-click menu holds quality, deinterlace/rotation and the whole 3D block. Full
-option list, JSON IPC commands and the standalone `mpv-vsr` CLI: see the wiki.
+The right-click menu holds the rest — tracks and network streams, subtitle/audio delay,
+picture processing, 3D, About — and hovering the progress bar shows thumbnails. Full option
+list, JSON IPC commands and the standalone `mpv-vsr` CLI: see the wiki.
 
 ## Documentation
 
