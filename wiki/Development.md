@@ -52,7 +52,15 @@ Gotchas worth knowing:
 |---|---|
 | `tests/vfg/vfg_timing_probe.c` | pure NvVFX VFG timing, no player (landscape vs portrait paths) |
 | `tests/fs_stress.sh` | fullscreen toggling stress (device-loss regressions) |
+| `tests/hotkeys/test_hotkeys.py` | key map, popup hand-off, menu state machine, single-eye branch — drives a real player through the JSON IPC and injects keys |
+| `tests/hotkeys/test_stereo_keys.py` | real 3D session with a second screen as the glasses: key routing, help overlay, both windows, exit/restore |
+| `tests/hotkeys/test_thumbnails.py` | hover thumbnails: size and DPR, network streams, first-hover replay, retry cooldown, menu toggle |
+| `tests/fruc/build_rife_full_engine.sh` | builds the frozen RIFE TensorRT engine with the system `trtexec` |
+| `tests/ff2mpv/*.c` | libmpv option/terminal probes used while wiring the browser-integration wrapper |
 | `tools/mvc2sbs` | offline MVC → full-width SBS conversion |
+
+The `tests/hotkeys` scripts take over the window, keyboard and audio for their duration, so
+run them when nothing else is playing.
 
 Many behaviours are verifiable without looking at the screen, through the JSON IPC
 (`get-playlist`, `get-video-size`, `get-stereo`, `get-source-format`, `set-eye`, `set-rotate`,
@@ -74,6 +82,7 @@ playlist contents.
 | Document | Subject |
 |---|---|
 | `docs/hdr-pipeline-investigation.md` | 10-bit chain, HDR10 output, colour management measurements |
+| `docs/seekbar-thumbnail-research.md` | hover-thumbnail design: geometry, DPR, network-stream frame extraction |
 | `docs/vfx-sdk-1.3-investigation.md` | VFX SDK 1.3 capabilities and API findings |
 | `docs/vfx-truehdr-investigation.md` | SDR→HDR10 upconversion parameters and behaviour |
 | `docs/mvc-3d-open-source.md` | MVC decoding landscape / why it is not done in the player |

@@ -1,4 +1,11 @@
+<p align="center">
+  <img src="data/vsr-player.svg" width="120" alt="VSR Player 图标">
+</p>
+
 # VSR Player
+
+[![最新版本](https://img.shields.io/github/v/release/zhangmq/vsr-player?style=flat-square)](https://github.com/zhangmq/vsr-player/releases)
+[![许可](https://img.shields.io/badge/license-GPLv2%2B-blue?style=flat-square)](LICENSE)
 
 Linux 桌面实时 AI 视频处理播放器，直接调用 **NVIDIA Video Effects SDK**：超分 + 降噪、插帧，以及 10-bit HDR 通路（HDR10 上屏、SDR→HDR10 上变换）。基于 **libmpv**——解封装、解码、音视频同步、VO 渲染全部交给 mpv；前端是 Qt 6 + QML，与 mpv 共享 Vulkan 设备。
 
@@ -9,31 +16,46 @@ Linux 桌面实时 AI 视频处理播放器，直接调用 **NVIDIA Video Effect
 - **AI 超分 + 降噪** — 实时 2×/3×/4×（`vf_vsr`），降噪在 scale=1 时也能单独生效
 - **AI 插帧** — VFX `VideoFrameGeneration` ×2/×3/×4，质量档可热切换（`vf_vfg`）
 - **10-bit / HDR 全链** — RGB10A2 贯通整条链；HDR 内容自动切 HDR10 上屏；SDR→HDR10 上变换为 opt-in（`vf_truehdr`）
-- **XR 眼镜 3D 播放**（本版核心）— 3D 视频（左右或上下并排）直接在眼镜的 3D 模式下全屏播放，桌面保留控制窗口；这一版的其它改动都是围绕它的周边优化
+- **XR 眼镜 3D 播放**（核心能力）— 3D 视频（左右或上下并排）直接在眼镜的 3D 模式下全屏播放，桌面保留控制窗口
 - **2D 输出** — 只看 3D 片源的一只眼，按正常画幅满屏播放，且超分按单眼算（`vf_eye`）
 - **蓝光 ISO（仅 2D）** — `.iso` 当作文件夹/m3u 处理：列出各 title 的名字与时长，不自动播放；3D 蓝光（MVC）不在支持范围，需先离线转 SBS
-- **日常播放** — NVDEC 硬解、Vulkan 渲染、自动隐藏 QML UI、播放列表、循环、倍速、截图、JSON IPC、独立 `mpv-vsr` CLI
+- **进度条悬停缩略图** — 悬停进度条即预览该时间点的画面，带时间与章节名；本地文件与网络流都支持
+- **日常播放** — NVDEC 硬解、Vulkan 渲染、自动隐藏 QML UI、播放列表、轨道与延迟控制、循环、倍速、截图、JSON IPC、独立 `mpv-vsr` CLI
+
+## 处理链
+
+```
+demux → decode → [deint] → [hwup] → [eye] → [rot]
+      → [vsr] → [truehdr] → [vfg] → VO (libmpv) → Qt 场景图
+```
+
+方括号里是本项目自己的滤镜，其余全部交给 mpv。顺序是**成本决策**而非口味问题：软解帧在链路最前端一次性上传到 CUDA；超分按**每源帧**只算一次，作用在小画面上；插帧放在最后，作用在已完成画面——排在插帧之后的任何一步都要按 ×2/×3/×4 计费。
 
 ## 最近新增
 
-| 功能 | 说明 |
-|---|---|
-| **2D 输出** | 新增 `vf_eye` 滤镜，在**超分之前**取出单眼，因此 VSR 按单眼画面工作。半幅片源由滤镜内部拉伸回自然尺寸，所以画面比例、旋转、自动倍率全都按普通 2D 处理 |
-| **3D 菜单分组** | 右键菜单新增 **3D** 小块，三条**互相独立**的入口：**输出方式**（关闭 / 眼镜 3D / 2D 输出）、**片源格式**（左右或上下，全幅或半幅）、**输出选项**（左眼 / 右眼） |
-| **画面比例与 mpv 对齐** | 底栏弹窗与新增的 `A` 快捷键循环 mpv 自带的那组：`16:9`、`4:3`、`2.35:1`、`no`。3D 下该值表示**每眼**比例，下发前按布局换算 |
-| **「画面处理」分组** | 反交错与旋转归到一个分组标题下 |
-| **蓝光 title 命名** | 播放列表显示 `Title 6 · 1:18:30`，不再是 ISO 文件名——重启后也一样 |
-| **播放列表快照** | 列表持久化为 m3u8，恢复时交给 mpv 自己的播放列表解析器，条目名因此能跨重启保留 |
-| **启动保持 idle** | 无参数启动只还原列表：不解码、不加载引擎、不占显存，按下播放才开始 |
+**0.7.0**
+
+- **进度条悬停缩略图** — 悬停进度条显示该时间点的缩略图，面板逻辑宽 192 px、按显示缩放比渲染，HiDPI 下不发糊。本地文件与网络流都支持（复用已解析好的地址与请求头，不跑第二次解析）；取帧失败由下一次悬停重试。可在右键菜单 **界面 → 缩略图** 关闭。
+- **「关于」弹窗** — 右键菜单底部新增「关于」：图标、软件名、版本号、授权协议、可点开的仓库地址。
+- **应用图标重做** — 透明背景、像素块过渡到锐利三角；启动器/任务栏显示的就是它，「关于」弹窗里也是同一份。
+
+**0.6.0**
+
+- **右键菜单成为控制中心** — 视频/音频/字幕轨道、网络流选择、字幕与音频延迟，与「画面处理」「3D」分组并列；整套菜单可用键盘操作。
+- **键位表统一** — 所有快捷键定义在同一张表里，2D 播放、3D 演示与菜单导航不会再各自漂移。
 
 ## 截图
 
-![播放器界面](docs/images/player-screenshot.jpg)
+<p align="center">
+  <img src="docs/images/player-screenshot.jpg" width="760" alt="播放器界面">
+</p>
 
-**VSR 对比** —— 原始 720p 与同一帧 4× 超分：
+**VSR 对比** —— 原始 720p（左）与同一帧 4× 超分（右）：
 
-![原始 720p](docs/images/00003_orig.jpg)
-![VSR 4× 超分](docs/images/00003_vsr.jpg)
+<p align="center">
+  <img src="docs/images/00003_orig.jpg" width="49%" alt="原始 720p">
+  <img src="docs/images/00003_vsr.jpg" width="49%" alt="VSR 4× 超分">
+</p>
 
 ## 快速开始
 
@@ -45,7 +67,7 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ./scripts/build-from-source.sh
 ```
 
-**预编译包** —— `standard` 是**约 6 MB 的薄包**：只带播放器本体、libmpv 与两个 Wayland 辅助模块；FFmpeg、光盘媒体栈、CUDA 与 **Qt ≥ 6.12** 全部来自系统（VFX 运行时在安装时下载）：
+**预编译包** —— `standard` 是**约 7 MB 的薄包**：只带播放器本体、libmpv 与两个 Wayland 辅助模块；FFmpeg、光盘媒体栈、CUDA 与 **Qt ≥ 6.12** 全部来自系统（VFX 运行时在安装时下载）：
 
 ```bash
 tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
@@ -76,12 +98,17 @@ vsr-player                      # 还原上次列表，按下播放才载入
 | `Space` | 播放 / 暂停 |
 | `←` / `→` | 快退/快进 5 秒（`Shift` = 10 秒） |
 | `↑` / `↓` | 音量 ±5% |
-| `A` / `Shift+A` | 循环画面比例 |
+| `Ctrl+←` / `Ctrl+→` | 上一个 / 下一个条目 |
+| `A` / `Shift+A` | 循环画面比例（正序 / 逆序） |
+| `V` | 字幕开 / 关 |
+| `,` / `.` | 单帧后退 / 前进 |
 | `P` / `F` / `Tab` / `S` | 播放列表 · 全屏 · OSD · 截图 |
-| `N` / `B` | 下一个 / 上一个 |
+| `Delete` / `Shift+Delete` | 从列表移除当前条目 / 把文件移到回收站 |
+| `Menu` / `F10` | 右键菜单（可用键盘操作） |
+| `Ctrl+Q` | 退出 |
 | `J` / `K` / `L` | 3D 或单眼模式：布局 · 眼序 · 全半 |
 
-右键菜单里有画质、**画面处理**（反交错、旋转）和整个 3D 分组。完整选项、JSON IPC 命令与独立 `mpv-vsr` CLI 见 [wiki：使用](https://github.com/zhangmq/vsr-player/wiki/Usage)。
+右键菜单里还有其余入口——轨道与网络流、字幕/音频延迟、**画面处理**（反交错、旋转）、3D 与**关于**。完整选项、JSON IPC 命令与独立 `mpv-vsr` CLI 见 [wiki：使用](https://github.com/zhangmq/vsr-player/wiki/Usage)。
 
 ## 文档
 
