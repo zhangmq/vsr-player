@@ -23,6 +23,20 @@ shared with mpv.
 
 ## Recent additions
 
+### 0.7.1
+
+- **Fixed: the picture freezes on the first fullscreen switch** — video and audio keep
+  going, but the picture stops updating until the window is resized or fullscreen is
+  left. Root cause: a Qt 6.12.0 defect on the Vulkan + Wayland path (upstream
+  QTBUG-151831, fixed in 6.12.1). The package now ships the fixed Qt library and only
+  activates it when the host Qt needs it.
+- **Fixed: closing the player left the process and the terminal behind** — a second Qt
+  6.12.0 defect triggered by the same driver behaviour (upstream QTBUG-150279, fixed in
+  6.12.1); the package ships that fix too.
+- The standard package grows from ~7 MB to ~13 MB because it carries those two Qt
+  libraries; they are installed only when the host Qt is 6.12.x and older than 6.12.1,
+  and are skipped automatically once Qt 6.12.1 or newer is installed.
+
 ### 0.7.0
 
 - **Hover thumbnails** — hovering the progress bar shows a thumbnail of that position (local
