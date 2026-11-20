@@ -144,6 +144,9 @@ is_bundled() { local n="$1" f; for f in "${BUNDLED[@]}"; do [ "$(basename "$f")"
         echo '| Qt | 系统 Qt **≥ 6.12**（捆绑版见 `--variant=full`） |'
     fi
     echo '| FFmpeg ABI | 见上表各 `libav*/libsw*.so.*`（本包按这些 SONAME 构建） |'
+    if [ -e "$STAGE/lib/vsr-player/libQt6Quick.so.6" ] || [ -e "$STAGE/lib/libQt6Quick.so.6" ]; then
+        echo '| Qt (patched) | This package ships `libQt6Quick` = Qt 6.12.0 + **QTBUG-151831** (swapchain not recreated after an out-of-date frame -> picture freezes) and `libQt6Gui` + **QTBUG-150279** (missing Wayland endFrame -> deadlock when closing the window). Whether they take effect is decided by the host Qt version at install time; see `licenses/QT-MODIFICATION-NOTICE.md` |'
+    fi
     echo
     echo "## 排障速查"
     echo

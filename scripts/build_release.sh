@@ -73,7 +73,14 @@ done
 
 VERSION="$(grep -oP "version: '\K[^']+" meson.build | head -1)"
 # 双路径 RPATH：lib/vsr-player（自有捆绑库）+ lib（full 变体的 Qt 库）
-DIST_RPATH='$ORIGIN/../lib/vsr-player:$ORIGIN/../lib'
+# NOTE: `$ORIGIN` itself must be part of the rpath. `libmpv.so.2` lives in
+# `<prefix>/lib/vsr-player/` while `mpv-vsr` lives in `<prefix>/bin/`, so the two
+# have different $ORIGINs. With only `$ORIGIN/../lib/vsr-player` the libmpv case
+# resolved to the non-existent `<prefix>/lib/lib/vsr-player`, so every NEEDED
+# FFmpeg library silently fell back to the system ones (measured 2026-11-20: the
+# full package bundled FFmpeg but never used it, and could not start at all on a
+# machine without system FFmpeg 63).
+DIST_RPATH='$ORIGIN:$ORIGIN/../lib/vsr-player:$ORIGIN/../lib'
 MPV_DIST="$PROJECT_ROOT/build/mpv-dist"
 CLIENT_DIST="$PROJECT_ROOT/build/client-dist"
 # 产物名带后端后缀（仅当后端 ≠ 默认 vfg）：vfg 与 rife 两个包必须能同时存在，
@@ -122,6 +129,33 @@ fi
 cp "$CLIENT_DIST/src/client/vsr-player" "$STAGE/vsr-player"
 cp "$MPV_DIST/_build/mpv" "$STAGE/mpv-vsr"
 cp -L "$MPV_DIST/_build/libmpv.so.2" "$STAGE/lib/vsr-player/libmpv.so.2"
+
+# ── Qt 6.12.0 fixes (QTBUG-151831 fullscreen freeze, QTBUG-150279 close deadlock) ──
+# The patched libQt6Quick / libQt6Gui ship with the package; install.sh decides via a
+# version gate whether they actually land in ~/.local/lib/vsr-player/ (only when the
+# host Qt is exactly 6.12.0: older versions are ABI-incompatible, and >= 6.12.1
+# contains the upstream fixes). Never silently produce a package without them --
+# VSR_SKIP_QT_FIX=1 is the explicit opt-out.
+QT_FIX_LIB="${QT_QUICK_FIX_LIB:-$PROJECT_ROOT/build/qt-fix/libQt6Quick.so.6.12.0}"
+QT_GUI_FIX_LIB="${QT_GUI_FIX_LIB:-$PROJECT_ROOT/build/qt-fix/lib/libQt6Gui.so.6}"
+if [ -f "$QT_FIX_LIB" ]; then
+    cp -aL "$QT_FIX_LIB" "$STAGE/lib/vsr-player/libQt6Quick.so.6"
+    echo "  ok Qt Quick fix library (QTBUG-151831) -> lib/vsr-player/libQt6Quick.so.6"
+    if [ -f "$QT_GUI_FIX_LIB" ]; then
+        cp -aL "$QT_GUI_FIX_LIB" "$STAGE/lib/vsr-player/libQt6Gui.so.6"
+        echo "  ok Qt Gui fix library (QTBUG-150279) -> lib/vsr-player/libQt6Gui.so.6"
+    else
+        echo "  ERROR: missing Qt Gui fix library: $QT_GUI_FIX_LIB (close deadlock, QTBUG-150279)" >&2
+        echo "     Build instructions: build/qt-fix/README.md; set VSR_SKIP_QT_FIX=1 to opt out explicitly." >&2
+        exit 1
+    fi
+elif [ "${VSR_SKIP_QT_FIX:-0}" = "1" ]; then
+    echo "  WARNING: VSR_SKIP_QT_FIX=1 -- Qt fix libraries omitted; this package still freezes on fullscreen with Qt 6.12.0"
+else
+    echo "  ERROR: missing Qt Quick fix library: $QT_FIX_LIB" >&2
+    echo "     Build instructions: build/qt-fix/README.md; set VSR_SKIP_QT_FIX=1 to opt out explicitly." >&2
+    exit 1
+fi
 
 # standard 变体：把 libmpv / mpv-vsr 的 FFmpeg DT_NEEDED 从带版本 soname
 # （libavcodec.so.63）改成无版本名（libavcodec.so），由安装时按**目标机实际版本**
@@ -321,6 +355,12 @@ if [ "$VARIANT" = full ]; then
     for m in QtQuick QtQml; do
         [ -d "/usr/lib/qt6/qml/$m" ] && cp -a "/usr/lib/qt6/qml/$m" "$STAGE/lib/qt6/qml/"
     done
+    # Drop QtQuick/Pdf and QtQuick/VirtualKeyboard: those QML plugins pull
+    # libQt6Pdf* / libQt6VirtualKeyboard* into the dependency closure, and Qt
+    # VirtualKeyboard is GPLv3-only (no LGPL option) while this project does not use
+    # it at all (the QML only imports QtQuick/QtQml). Qt PDF does offer LGPLv3 but is
+    # equally unused, so it is removed as well to save space.
+    rm -rf "$STAGE/lib/qt6/qml/QtQuick/Pdf" "$STAGE/lib/qt6/qml/QtQuick/VirtualKeyboard"
     # Qt 库：直接链接的 + 运行时才加载的（插件/QML 模块 NEEDED，迭代补齐）
     for f in $(needed_of "$STAGE/vsr-player" | grep '^libQt6' || true); do
         collect_to "$STAGE/lib" "$f" /usr/lib
@@ -442,6 +482,21 @@ if [ -n "$WHEEL" ]; then
     fi
 else
     echo "  ⚠ nvidia-vfx wheel not in pip cache — licenses/ 缺 SLA 文本（README 有链接）"
+fi
+
+# Qt runtime licenses plus the "libQt6Quick/libQt6Gui in this package are modified"
+# notice (LGPL compliance: ship the license texts, state the modification and tell
+# users how to obtain the corresponding source -- patches in docs/patches/, rebuild
+# steps in build/qt-fix/). Runs unconditionally: any package that ships a Qt library
+# (standard: the fix libraries; full: the whole Qt) must include it.
+if [ -f "$PROJECT_ROOT/licenses/LGPL-3.0-only.txt" ]; then
+    mkdir -p "$STAGE/licenses"
+    # LGPLv3 section 4(b): both the GPL-3.0 and the LGPL-3.0 texts are required
+    # (LGPLv3 is an additional permission on top of GPLv3).
+    cp "$PROJECT_ROOT/licenses/LGPL-3.0-only.txt" "$STAGE/licenses/"
+    cp "$PROJECT_ROOT/licenses/GPL-3.0-only.txt" "$STAGE/licenses/" 2>/dev/null || true
+    cp "$PROJECT_ROOT/licenses/QT-MODIFICATION-NOTICE.md" "$STAGE/licenses/" 2>/dev/null || true
+    echo "  ok Qt licenses (LGPL-3.0 + GPL-3.0) + modification notice -> licenses/"
 fi
 cat > "$STAGE/README.md" << 'EOR'
 # vsr-player vVERSION_PLACEHOLDER

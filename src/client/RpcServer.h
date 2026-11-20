@@ -8,6 +8,7 @@ struct mpv_handle;
 class MpvController;
 class PlayerViewModel;
 class QQuickWindow;
+class Video;
 
 /// mpv-compatible JSON IPC server (Unix domain socket).
 ///
@@ -41,6 +42,7 @@ public:
     void setMpv(MpvController *mpv) { mpv_ = mpv; }
     void setViewModel(PlayerViewModel *vm) { vm_ = vm; }
     void setWindow(QQuickWindow *win) { win_ = win; }   // resize 命令路由目标
+    void setVideo(Video *v) { video_ = v; }              // diagnostics (get-render-stats / force-render)
     void setStereo(StereoController *s) { stereo_ = s; } // 3D OSD 原型（测试用）
     void setKeys(KeyRouter *k) { keys_ = k; }           // key / key-log 测试钩子
     void setQuitCallback(std::function<void()> cb) { quit_cb_ = std::move(cb); }
@@ -81,6 +83,7 @@ private:
     MpvController *mpv_ = nullptr;
     PlayerViewModel *vm_ = nullptr;
     QQuickWindow *win_ = nullptr;
+    Video *video_ = nullptr;
     StereoController *stereo_ = nullptr;
     KeyRouter *keys_ = nullptr;
     std::function<void()> quit_cb_;

@@ -5,6 +5,7 @@
 #include "StereoController.h"
 #include "Keymap.h"
 #include "KeyRouter.h"
+#include "Video.h"
 #include <QQuickView>
 #include <QQuickItem>
 #include <QImage>
@@ -290,6 +291,59 @@ void RpcServer::handleLine(int fd, const std::string &line) {
         else {
             QMetaObject::invokeMethod(vm, "playlistClear", Qt::QueuedConnection);
             response = formatResponse("success");
+        }
+    } else if (cmd == "force-render") {
+        // Diagnostic (the only state-changing command besides reads): force one
+        // repaint. If the picture comes back, the render pipeline only lacked a
+        // trigger rather than being broken in the GPU/decode path.
+        if (!video_) {
+            response = formatResponse("no video item");
+        } else {
+            Video *v = video_;
+            QMetaObject::invokeMethod(v, "forceRender", Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "get-render-stats") {
+        // Stall diagnostics (read-only): how many times Qt painted, how long ago
+        // the last paint / last rendered mpv frame happened, how many frames mpv
+        // dropped, and whether the window is visible. Tells three cases apart:
+        //   a) window not visible (winVisible=0) -- Qt gets no repaint request;
+        //   b) Qt keeps painting (sincePaint small) but mpv starves (drops idle)
+        //      -- filter/decode side;
+        //   c) mpv drops frames (drops rising) while Qt does not paint
+        //      (sincePaint large) -- the presentation side stalled.
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            int64_t drops = -1;
+            if (mpv_) {
+                int64_t v = 0;
+                if (mpv_get_property(mpv_->handle(), "frame-drop-count", MPV_FORMAT_INT64, &v) >= 0)
+                    drops = v;
+            }
+            const auto nowMs = [] {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch()).count();
+            };
+            const int64_t now = nowMs();
+            const int64_t lastPaint = vm->lastPaintMs();
+            const int64_t lastRender = vm->lastRenderMs();
+            const int winVisible = win_ ? (win_->isVisible() ? 1 : 0) : -1;
+            const int winExposed = win_ ? (win_->isExposed() ? 1 : 0) : -1;
+            const QSize winSize = win_ ? win_->size() : QSize();
+            const QString screen = (win_ && win_->screen()) ? win_->screen()->name() : QStringLiteral("?");
+            char buf[512];
+            snprintf(buf, sizeof buf,
+                     "rendered=%lld paint=%lld updates=%lld swaps=%lld befores=%lld sinceRender=%lldms sincePaint=%lldms "
+                     "drops=%lld winVisible=%d winExposed=%d size=%dx%d screen=%s",
+                     (long long)vm->renderedFrames(), (long long)vm->paintCalls(),
+                     (long long)(video_ ? video_->updateRequests() : -1),
+                     (long long)vm->frameSwaps(), (long long)vm->beforeRenders(),
+                     (long long)(lastRender ? now - lastRender : -1),
+                     (long long)(lastPaint ? now - lastPaint : -1),
+                     (long long)drops, winVisible, winExposed,
+                     winSize.width(), winSize.height(), qUtf8Printable(screen));
+            response = formatResponse("", "\"" + jsonEscape(buf) + "\"");
         }
     } else if (cmd == "get-media-phase") {
         // 空状态区状态机（测试用）：0=idle 1=opening 2=playing 3=failed
