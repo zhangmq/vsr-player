@@ -44,6 +44,17 @@ be billed ×2/×3/×4.
 
 ## What's new
 
+**0.7.1**
+
+- **Fixed: picture freezes on the first fullscreen switch** — video and audio keep
+  running but the picture stops updating until the window is resized or fullscreen
+  is left. Caused by a Qt 6.12.0 defect on the Vulkan + Wayland path (upstream
+  QTBUG-151831, fixed in 6.12.1); this package ships the fixed Qt library and
+  enables it only when your host Qt needs it.
+- **Fixed: closing the player leaves the process (and the terminal) behind** —
+  same driver trigger, a second Qt 6.12.0 defect (upstream QTBUG-150279, fixed in
+  6.12.1). This package ships that fix as well.
+
 **0.7.0**
 
 - **Hover thumbnails** — hovering the progress bar shows a thumbnail of that position, 192
