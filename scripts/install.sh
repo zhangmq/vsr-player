@@ -170,13 +170,74 @@ if [ -n "${MPV_LIB_SRC:-}" ] && [ -d "$MPV_LIB_SRC" ]; then
     [ ${#mpv_libs[@]} -gt 0 ] && copy_into "$LIB_DIR" "${mpv_libs[@]}"
     echo "  ✅ libmpv（dev 构建树，${#mpv_libs[@]} 个）→ $LIB_DIR/"
 fi
+# ── Version gate for the Qt fix libraries (QTBUG-151831, QTBUG-150279) ────────────
+# The bundled libQt6Quick.so.6 / libQt6Gui.so.6 are "Qt 6.12.0 + upstream fix"
+# (QTBUG-151831: the swapchain is not recreated after an out-of-date frame, so the
+# picture freezes on fullscreen; QTBUG-150279: a missing Wayland endFrame leaks the
+# surface read lock, so closing the window deadlocks). They only match a host Qt
+# that is exactly 6.12.0: older versions are ABI-incompatible (mixing them
+# crashes), and 6.12.1+ already contains the fixes, where installing ours would
+# shadow a newer official library. Hence install/skip by host Qt version, and drop
+# stale copies when skipping.
+sys_qt_version() {
+    local v=""
+    if command -v qmake6 >/dev/null 2>&1; then
+        v="$(qmake6 -query QT_VERSION 2>/dev/null || true)"
+    fi
+    if [ -z "$v" ]; then
+        local f
+        for f in /usr/lib/libQt6Core.so.6.* /usr/lib64/libQt6Core.so.6.* \
+                 /usr/lib/x86_64-linux-gnu/libQt6Core.so.6.*; do
+            [ -e "$f" ] || continue
+            v="${f##*.so.}"
+            break
+        done
+    fi
+    printf '%s' "$v"
+}
+SYS_QT="$(sys_qt_version)"
+QT_FIX_ALLOW=0
+QT_FIX_REASON=""
+if [ -d "$SRC/lib/qt6" ]; then
+    # The full variant bundles the whole Qt (6.12.0 at build time, the same source the
+    # fix libraries come from), so it is independent of the host Qt and always gets
+    # them. Checking the host Qt here would wrongly skip machines with Qt 6.11 and
+    # leave them freezing on fullscreen.
+    QT_FIX_ALLOW=1
+    QT_FIX_REASON="bundled Qt"
+elif [ "$SYS_QT" = "6.12.0" ]; then
+    QT_FIX_ALLOW=1
+    QT_FIX_REASON="host Qt $SYS_QT"
+fi
+
 if [ -d "$LIB_SRC" ]; then
     # ⚠ 必须**原子替换**（临时文件 + rename）：`cp` 直接覆盖会被
     # **正在运行的播放器** mmap 着——截断的瞬间进程收到 SIGBUS（实测 2026-10-26：
     # vo 线程在 libmpv.so.2 里 BUS_ADRERR，core dumped），等于安装把用户正在看的
     # 播放器打崩。rename 只换目录项，运行中的实例继续用旧 inode，下次启动才换新。
-    copy_into "$LIB_DIR" "$LIB_SRC"/*   # -L 由 copy_into 内部处理（跟随软链）
+    # The Qt fix libraries are handled separately (version gate); everything else
+    # is copied as one batch.
+    lib_files=()
+    for f in "$LIB_SRC"/*; do
+        case "$(basename "$f")" in
+            libQt6Quick.so.6*) continue ;;
+        esac
+        lib_files+=("$f")
+    done
+    [ ${#lib_files[@]} -gt 0 ] && copy_into "$LIB_DIR" "${lib_files[@]}"
     echo "  ✅ 捆绑库（libmpv + 光盘媒体栈）→ $LIB_DIR/"
+    for pair in "libQt6Quick.so.6:QTBUG-151831 (freeze on fullscreen)" \
+                "libQt6Gui.so.6:QTBUG-150279 (deadlock on window close)"; do
+        f="${pair%%:*}"; why="${pair#*:}"
+        [ -e "$LIB_SRC/$f" ] || continue
+        if [ "$QT_FIX_ALLOW" = "1" ]; then
+            copy_into "$LIB_DIR" "$LIB_SRC/$f"
+            echo "  ok Qt fix library $f -> $LIB_DIR/ ($QT_FIX_REASON, $why)"
+        else
+            rm -f "$LIB_DIR/$f"
+            echo "  - skipping Qt fix library $f ($why): host Qt ${SYS_QT:-unknown} (>= 6.12.1 has it upstream)"
+        fi
+    done
 fi
 # dev 模式：按 docs 把 wheel 的 nvidia_vfx.libs 放在 third_party/nvidia_vfx.libs，
 # 安装时必须落到上面 RPATH 期望的位置——否则装出来的库加载失败 → VSR 静默直通。
