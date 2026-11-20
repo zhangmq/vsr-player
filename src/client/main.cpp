@@ -112,10 +112,14 @@ static std::atomic<bool> g_quitting{false};
 
 static void quitApp(StereoController *stereo)
 {
-    if (g_quitting.exchange(true))
+    if (g_quitting.exchange(true)) {
+        MLOG_INFO("quit: already quitting (duplicate request ignored)");
         return;                       // 已经在退出（closeEvent/菜单/快捷键并发）
+    }
+    MLOG_INFO("quit: requested (stereo active=%d)", stereo && stereo->active() ? 1 : 0);
     if (stereo && stereo->active())
         stereo->stop();               // 先把窗口恢复到桌面，别让 closeEvent 拦
+    MLOG_INFO("quit: calling QCoreApplication::quit()");
     QCoreApplication::quit();
 }
 
@@ -133,6 +137,8 @@ protected:
     // `escape-swallow`（KeyRouter，应用级过滤器）负责，而过滤器在弹窗打开时
     // 会让位——窗口层再吞一次会让"3D 下右键菜单的 Esc 关不掉"（实测）。
     void closeEvent(QCloseEvent *e) override {
+        MLOG_INFO("close: StereoView (quitting=%d, stereo=%d)", g_quitting.load() ? 1 : 0,
+                  stereo && stereo->active() ? 1 : 0);
         if (g_quitting.load()) {          // 应用正在退出：别再拦
             QQuickView::closeEvent(e);
             return;
@@ -155,6 +161,7 @@ public:
 protected:
     // Esc 同 StereoView：交给键位表（3D 下吞、弹窗打开时让位）。
     void closeEvent(QCloseEvent *e) override {
+        MLOG_INFO("close: ControlView");
         QQuickView::closeEvent(e);
         quitApp(stereo);
     }
@@ -513,9 +520,18 @@ int main(int argc, char *argv[]) {
 
         StereoView view;
         view.stereo = &stereo;
-        view.setVulkanInstance(&qtVi);
-        view.setGraphicsDevice(QQuickGraphicsDevice::fromDeviceObjects(
-            vk.physicalDevice(), vk.device(), vk.queueFamilyIndex()));
+        // Diagnostic switch VSR_QT_OWN_VK=1: let Qt create its own Vulkan device
+        // instead of sharing ours, to isolate whether "external VkDevice + Wayland
+        // fullscreen" is the root cause of the stall. Video output breaks (the
+        // rtImage lives on the other device); only useful to observe whether Qt
+        // keeps producing frames.
+        if (qEnvironmentVariableIsEmpty("VSR_QT_OWN_VK")) {
+            view.setVulkanInstance(&qtVi);
+            view.setGraphicsDevice(QQuickGraphicsDevice::fromDeviceObjects(
+                vk.physicalDevice(), vk.device(), vk.queueFamilyIndex()));
+        } else {
+            MLOG_WARN("VSR_QT_OWN_VK=1: Qt creates its own Vulkan device (diagnostic only)");
+        }
         view.setColor("#202020");
         view.setTitle("vsr-player");
         // 默认 SizeViewToRootObject 会用 QML 根对象 implicitSize（500x500）
@@ -786,6 +802,19 @@ int main(int argc, char *argv[]) {
         video->setFrameRenderedCallback([&viewModel]() {
             viewModel.notifyFrameRendered();
         });
+        // Diagnostic: count every updatePaintNode (RPC get-render-stats uses this
+        // to tell "Qt stopped repainting" from "mpv delivers no frames").
+        video->setPaintCallback([&viewModel]() {
+            viewModel.notifyPaint();
+        });
+        // Diagnostic: Qt's own render cadence (tells "Qt never started painting"
+        // from "painted but never swapped" when it stalls).
+        QObject::connect(&view, &QQuickWindow::frameSwapped, &app,
+                         [&viewModel]() { viewModel.notifyFrameSwapped(); },
+                         Qt::DirectConnection);
+        QObject::connect(&view, &QQuickWindow::beforeRendering, &app,
+                         [&viewModel]() { viewModel.notifyBeforeRender(); },
+                         Qt::DirectConnection);
         video->setCompositeObjects(comp.pipeline(), comp.pipelineLayout());
         mpv.setUpdateCallback([](void *data) {
             auto *v = (Video*)data;
@@ -900,6 +929,10 @@ int main(int argc, char *argv[]) {
             if (ev->event_id != MPV_EVENT_END_FILE)
                 return;
             auto *ef = (mpv_event_end_file *)ev->data;
+            // Log every end reason (diagnoses "silently ends up idle after a track
+            // switch"; previously only EOF/error reached the logging below, so stop
+            // and redirect produced no output at all).
+            viewModel.logEndFile(ef->reason, ef->error);
             if (ef->reason != MPV_END_FILE_REASON_EOF &&
                 ef->reason != MPV_END_FILE_REASON_ERROR)
                 return;
@@ -956,6 +989,7 @@ int main(int argc, char *argv[]) {
             rpc.setMpv(&mpv);
             rpc.setViewModel(&viewModel);
             rpc.setWindow(&view);   // resize 命令（逐级 resize 压测）
+            rpc.setVideo(video);    // diagnostics (get-render-stats / force-render)
             rpc.setStereo(&stereo); // 3D OSD 原型（测试用 RPC）
             rpc.setKeys(&keyRouter); // key / key-log 测试钩子
             rpc.setQuitCallback([&app]() {

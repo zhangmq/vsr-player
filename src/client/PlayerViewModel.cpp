@@ -2868,7 +2868,16 @@ void PlayerViewModel::updatePlaying(bool p) {
     if (playing_ != p) { playing_ = p; emit playingChanged(); }
 }
 
+void PlayerViewModel::notifyPaint() {
+    // Counting/timestamps only, no side effects (counterpart of frameRenderedCb_).
+    paintCalls_.fetch_add(1);
+    lastPaintMs_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
 void PlayerViewModel::notifyFrameRendered() {
+    lastRenderMs_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count());
     // 暂停时不计数：暂停时 mpv 的 OSD 重绘/重复帧也产生 uf>0——
     // 计数会与 osd-msg1 推送形成自激（推送→渲染→计数→文本变→推送，
     // 实测暂停时 rendered 每秒 +10 虚增）。playing_ 乐观更新（主线程
@@ -3303,6 +3312,40 @@ bool PlayerViewModel::canRetryOpen() const {
 void PlayerViewModel::retryOpen() {
     if (!canRetryOpen()) return;
     openFiles(QStringList{pendingOpenPath_}, 0);
+}
+
+void PlayerViewModel::logEndFile(int reason, int error) {
+    // Read-only property (reading mpv properties from the event thread is fine;
+    // a synchronous read on the GUI thread is what deadlocks).
+    const char *rs = "unknown";
+    switch (reason) {
+    case MPV_END_FILE_REASON_EOF:      rs = "eof"; break;
+    case MPV_END_FILE_REASON_STOP:     rs = "stop"; break;
+    case MPV_END_FILE_REASON_QUIT:     rs = "quit"; break;
+    case MPV_END_FILE_REASON_ERROR:    rs = "error"; break;
+    case MPV_END_FILE_REASON_REDIRECT: rs = "redirect"; break;
+    }
+    int64_t pos = -1, count = -1;
+    double tpos = -1.0, dur = -1.0;
+    char *path = nullptr;
+    if (mpv_) {
+        mpv_handle *h = mpv_->handle();
+        mpv_get_property(h, "playlist-pos", MPV_FORMAT_INT64, &pos);
+        mpv_get_property(h, "playlist-count", MPV_FORMAT_INT64, &count);
+        mpv_get_property(h, "time-pos", MPV_FORMAT_DOUBLE, &tpos);
+        mpv_get_property(h, "duration", MPV_FORMAT_DOUBLE, &dur);
+        mpv_get_property(h, "path", MPV_FORMAT_STRING, &path);
+    }
+    if (reason == MPV_END_FILE_REASON_ERROR) {
+        MLOG_WARN("end-file: reason=%s error=%d (%s) pos=%lld/%lld t=%.1f/%.1f path=%s",
+                  rs, error, mpv_error_string(error), (long long)pos, (long long)count,
+                  tpos, dur, path ? path : "(none)");
+    } else {
+        MLOG_INFO("end-file: reason=%s pos=%lld/%lld t=%.1f/%.1f path=%s",
+                  rs, (long long)pos, (long long)count, tpos, dur,
+                  path ? path : "(none)");
+    }
+    mpv_free(path);
 }
 
 void PlayerViewModel::noteLoadFailed() {

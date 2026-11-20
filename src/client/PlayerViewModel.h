@@ -437,6 +437,17 @@ public:
     int audioChannels() const { return audioChannels_.load(); }
     double renderFps() const { return renderFps_.load(); }
     int64_t renderedFrames() const { return renderedFrames_.load(); }
+    /// Stall diagnostics (RPC get-render-stats): number of Qt paints plus the
+    /// timestamps of the last paint and the last rendered mpv frame
+    /// (steady clock ms; 0 = never happened).
+    void notifyPaint();
+    void notifyFrameSwapped() { frameSwaps_.fetch_add(1); }
+    int64_t frameSwaps() const { return frameSwaps_.load(); }
+    void notifyBeforeRender() { beforeRenders_.fetch_add(1); }
+    int64_t beforeRenders() const { return beforeRenders_.load(); }
+    int64_t paintCalls() const { return paintCalls_.load(); }
+    int64_t lastPaintMs() const { return lastPaintMs_.load(); }
+    int64_t lastRenderMs() const { return lastRenderMs_.load(); }
     int videoBitDepth() const { return videoBitDepth_.load(); }
     bool fullscreen() const     { return fullscreen_; }
     bool osdVisible() const     { return osdVisible_; }
@@ -468,6 +479,10 @@ public:
     Q_INVOKABLE void retryOpen();
     /// END_FILE(reason=ERROR)：进入 failed 阶段（事件线程排队调用）。
     Q_INVOKABLE void noteLoadFailed();
+    /// Event thread: log MPV_EVENT_END_FILE (reason / error code / current entry)
+    /// to diagnose failures that end in idle with no output at all, such as
+    /// "silently ends up idle after a track switch" (measured 2026-11-19).
+    void logEndFile(int reason, int error);
     /// 每个 FILE_LOADED 事件 → playing（不依赖 fileLoaded_ 去重）
     Q_INVOKABLE void noteFileLoaded();
     bool previewThumbnails() const { return previewThumbnails_; }
@@ -948,6 +963,11 @@ private:
     std::atomic<int> audioSampleRate_{0}, audioChannels_{0};
     std::atomic<double> renderFps_{0.0};
     std::atomic<int64_t> renderedFrames_{0};
+    std::atomic<int64_t> paintCalls_{0};
+    std::atomic<int64_t> frameSwaps_{0};      // QQuickWindow::frameSwapped
+    std::atomic<int64_t> beforeRenders_{0};   // QQuickWindow::beforeRendering
+    std::atomic<int64_t> lastPaintMs_{0};
+    std::atomic<int64_t> lastRenderMs_{0};
     bool seekingPrev_ = false;       // seeking 观察器翻转检测
     // 连续快进/快退门控（2026-10-21）：mpv 在一次 seek 尚未出帧时会合并/丢弃
     // 后续 seek，按住方向键时表现为整段跳画面。改为：上一次 seek 明确成功

@@ -247,7 +247,15 @@ void Video::setBlank(bool on) {
     MLOG_INFO("video: %s", on ? "blank (no media)" : "content");
 }
 
+void Video::forceRender() {
+    if (!window()) return;
+    renderRequested_.store(true, std::memory_order_release);
+    update();
+    QCoreApplication::postEvent(window(), new QEvent(QEvent::UpdateRequest));
+}
+
 void Video::requestRender() {
+    updateReqs_.fetch_add(1, std::memory_order_relaxed);
     // GUI 线程（mpv update callback 经 QMetaObject::invokeMethod
     // QueuedConnection 驱动——Qt 官方跨线程通道，社区标准模式）。
     // 条件检查：mpv 有渲染请求（新帧/seek/reconfig）才投递——播放时
@@ -505,6 +513,7 @@ void Video::kickstart() {
 
 QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
     static int fc = 0; fc++;
+    if (paintCb_) paintCb_();   // diagnostic: Qt really painted this frame (RPC get-render-stats)
     if (g_video_t0 == 0.0) g_video_t0 = now();
     double t_upn = now();
 
@@ -582,7 +591,8 @@ QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
         // seek/reconfig leaves pending VO work (vo_libmpv flip_page waits
         // on next_frame) which render() must consume, or the core declares
         // the render context stuck and ends playback.
-        bool need_render = uf > 0 || renderRequested_.exchange(false);
+        const bool req = renderRequested_.exchange(false);
+        bool need_render = uf > 0 || req;
         if (need_render) {
             // 只统计真实新帧（uf>0）；renderRequested_ 触发的状态渲染
             // （seek/reconfig 消费 pending VO 工作）不计入 benchmark。
@@ -594,6 +604,14 @@ QSGNode *Video::updatePaintNode(QSGNode *old, UpdatePaintNodeData *) {
             double t_rnd0 = now();
             mpv_->render(rtImage_, renderFormat_, w_, h_);
             double t_rnd1 = now();
+            // Diagnostic: a normal render takes 1-15 ms. A long block (typically
+            // while the window is closing/hidden: the VO stops producing frames
+            // and render() waits for flip_page's next_frame) pins the GUI thread,
+            // which shows up as "the player is closed but the process/terminal
+            // never exits" (reported 2026-11-20).
+            if ((t_rnd1 - t_rnd0) > 0.3)
+                MLOG_WARN("render blocked %.0f ms (up=%llu requested=%d) — GUI thread stuck here would block quit",
+                          (t_rnd1 - t_rnd0) * 1000.0, (unsigned long long)uf, req ? 1 : 0);
             mpv_->reportSwap();
             double t_wait0 = now();
             vkQueueWaitIdle(queue_);

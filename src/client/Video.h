@@ -80,13 +80,25 @@ public:
     /// Benchmark counters (updated on the render/main thread, read by the
     /// event thread on END_FILE — hence atomic).
     std::atomic<int> benchFrames_{0};
+    /// Diagnostic: how often the mpv update callback drove requestRender (tells
+    /// "mpv still notifies" from "notifications stopped" when it stalls).
+    std::atomic<int64_t> updateReqs_{0};
+    int64_t updateRequests() const { return updateReqs_.load(); }
     std::atomic<double> benchT0_{0.0};
 
     /// 渲染新帧回调（uf>0 分支，主线程）——viewModel 段内 rendered 计数。
     void setFrameRenderedCallback(std::function<void()> cb) { frameRenderedCb_ = std::move(cb); }
+    /// Called on every updatePaintNode() (GUI thread). Distinguishes "Qt keeps
+    /// painting but mpv delivers no new frame" from "Qt was never asked to
+    /// repaint" -- used by the RPC get-render-stats diagnostics.
+    void setPaintCallback(std::function<void()> cb) { paintCb_ = std::move(cb); }
 
 public slots:
     void kickstart();
+    /// Diagnostic hook (RPC force-render): force one repaint -- sets
+    /// renderRequested_, calls update() and posts an UpdateRequest. Used to test
+    /// whether a stalled pipeline only lacks a trigger.
+    void forceRender();
     /// 标记"无画面"：true 时合成输出纯黑（播放列表清空），有新文件载入时复位。
     void setBlank(bool on);
     /// mpv update callback（核心线程）invokeMethod(QueuedConnection) 驱动
@@ -127,6 +139,7 @@ private:
     VkDescriptorSet       compDs_ = VK_NULL_HANDLE;
 
     std::function<void()> frameRenderedCb_;
+    std::function<void()> paintCb_;
 
     // ── 临时诊断：帧级黑帧探测（VSR_LOG_BLACK=1 时启用）─────────────────
     // 渲染完 mpv 的一帧后，从 rtImage 中心读回一小块，算平均亮度并按帧打
