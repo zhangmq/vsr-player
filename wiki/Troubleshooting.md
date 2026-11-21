@@ -60,7 +60,7 @@ source-build path is to make it disappear.
 | Install method | Action |
 |---|---|
 | **Source build** | Re-run `./scripts/build-from-source.sh` — one command rebuilds binaries that match your current system libraries. **This is the main reason the source path is recommended** |
-| **standard tarball** (thin package; a self-built full variant additionally bundles Qt) | It ships only `libmpv` and the two Wayland helper modules — FFmpeg, the media stack, CUDA, Vulkan and Qt all come from your system, so a soname bump hits it directly. In order: ① download a **newer tarball** ② switch to a source build ③ temporary workaround below |
+| **standard tarball** (thin package: system libraries + a checked dependency manifest; a self-built full variant instead carries FFmpeg, CUDA, Qt, the media stack, libplacebo and libsndio) | Its libraries come from your system, so a soname bump can still break it — but not silently: `install.sh` verifies `deps.manifest` and names the missing library and what needs it. For a player that is already installed, `ldd ~/.local/bin/vsr-player \| grep 'not found'` shows the culprit. In order: ① download a **newer tarball** ② switch to a source build ③ temporary workaround below |
 
 **Temporary workaround (not for the long term)**: create compatibility symlinks for the
 missing soname — **only safe when the old and new libraries are ABI-compatible**:

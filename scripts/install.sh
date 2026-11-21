@@ -458,17 +458,60 @@ echo "--- [6/6] verify ---"
 # 构建机不一致，这里必须**明确失败**（否则表现为"双击没反应"，用户无从判断）。
 # 与 VFX 的策略一致：要么装成，要么明确报错。
 ldd_check() {  # ldd_check <二进制> <显示名>
-    local bin="$1" name="$2" missing
+    local bin="$1" name="$2" missing soname who
     [ -x "$bin" ] || return 0
-    missing="$(ldd "$bin" 2>/dev/null | grep "not found" | head -5 || true)"
-    if [ -n "$missing" ]; then
-        echo "  ❌ $name 依赖缺失（装完也起不来）:" >&2
-        printf '%s\n' "$missing" | sed 's/^/     /' >&2
-        echo "     standard 包不捆绑 FFmpeg / CUDA runtime / Qt，要求系统提供与构建机" >&2
-        echo "     一致的 soname。处理：① 安装对应版本的系统库；② 换 full 变体包" >&2
-        echo "     （./scripts/build_release.sh --variant=full，自带这三类）；③ 源码构建。" >&2
+    # LC_ALL=C: the loader's "=> not found" marker is translated otherwise.
+    missing="$(LC_ALL=C ldd "$bin" 2>/dev/null \
+               | sed -n 's/^[[:space:]]*\([^[:space:]]*\) => not found.*/\1/p' || true)"
+    [ -n "$missing" ] || return 0
+    echo "  ❌ $name 依赖缺失（装完也起不来）:" >&2
+    while read -r soname; do
+        [ -n "$soname" ] || continue
+        who=""
+        # deps.manifest is generated at package time; it turns "a library is
+        # missing" into "this library is missing and X needs it".
+        [ -f "$LIB_DIR/deps.manifest" ] && \
+            who="$(awk -v s="$soname" '$1==s{printf "%s ", $2}' "$LIB_DIR/deps.manifest" \
+                   | sed 's/[[:space:]]*$//')"
+        if [ -n "$who" ]; then
+            echo "     $soname（由 $who 需要）" >&2
+        else
+            echo "     $soname" >&2
+        fi
+    done <<< "$missing"
+    echo "     standard 包不捆绑系统级依赖：目标机必须提供同一个 SONAME" >&2
+    echo "     （完整清单：$LIB_DIR/deps.manifest）。处理：① 安装对应版本的系统库；" >&2
+    echo "     ② 换 full 变体包（./scripts/build_release.sh --variant=full，捆绑了会变的那些）；" >&2
+    echo "     ③ 源码构建（./scripts/build-from-source.sh，与系统库天然匹配）。" >&2
+    return 1
+}
+manifest_check() {  # 依赖清单逐项校验（standard 契约："不符合就不能用"）
+    local mf="$LIB_DIR/deps.manifest" soname needed_by buildpath n=0 missing="" cache
+    [ -f "$mf" ] || return 0
+    cache="$(ldconfig -p 2>/dev/null || true)"
+    while read -r soname needed_by buildpath; do
+        case "$soname" in ''|\#*) continue;; esac
+        [ -e "$LIB_DIR/$soname" ] && continue          # bundled by the package
+        if printf '%s\n' "$cache" \
+           | awk -v s="$soname" '$1==s{found=1} END{exit !found}'; then
+            continue
+        fi
+        # Fallback for names ldconfig does not index (e.g. unversioned -dev links)
+        if [ -e "/usr/lib/$soname" ] || [ -e "/usr/lib64/$soname" ] \
+           || [ -e "/opt/cuda/lib64/$soname" ]; then
+            continue
+        fi
+        missing+="     $soname（由 $needed_by 需要；构建机: $buildpath）"$'\n'
+        n=$((n+1))
+    done < "$mf"
+    if [ "$n" -gt 0 ]; then
+        echo "  ❌ 依赖清单校验失败：$n 项在目标机解析不到" >&2
+        printf '%s' "$missing" >&2
+        echo "     standard 包的系统级依赖不在包内，必须由系统提供同一个 SONAME。" >&2
+        echo "     处理：① 安装对应版本的系统库；② 换 full 变体；③ 源码构建。" >&2
         return 1
     fi
+    echo "  ✅ 依赖清单校验通过（$(grep -vc '^#' "$mf") 项全部满足）"
     return 0
 }
 LDD_OK=1
@@ -476,6 +519,10 @@ run_checks() {
 LDD_OK=1
 ldd_check "$BIN_DIR/vsr-player" "vsr-player" || LDD_OK=0
 ldd_check "$BIN_DIR/mpv-vsr" "mpv-vsr" || LDD_OK=0
+# The manifest is the package-side contract ("these system libraries are
+# required"); only check it when ldd is clean, otherwise ldd already named the
+# culprit with its owner.
+[ "$LDD_OK" -eq 1 ] && { manifest_check || LDD_OK=0; }
 # libmpv 必须解析到**本包**：系统若装了 mpv（/usr/lib/libmpv.so.2），捆绑库缺失时
 # 加载器会静默回落到它——程序照样能启动，但跑的是没有 vf_vsr/vf_vfg/vf_rot 和
 # libmpv vo 互操作的原版 mpv（现象："能开但超分/插帧全没了"，且没有任何报错）。
