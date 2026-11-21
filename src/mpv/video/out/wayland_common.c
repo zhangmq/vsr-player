@@ -340,6 +340,8 @@ static void set_surface_scaling(struct vo_wayland_state *wl);
 static void update_output_scaling(struct vo_wayland_state *wl);
 static void update_output_geometry(struct vo_wayland_state *wl);
 static void destroy_offer(struct vo_wayland_data_offer *o);
+static void apply_toplevel_config(struct vo_wayland_state *wl);
+static void apply_decorations(struct vo_wayland_state *wl);
 #if HAVE_WAYLAND_PROTOCOLS_1_48
 static char *session_file(void *talloc_ctx, const char *session, struct vo *vo);
 static char *read_session_id(void *talloc_ctx, struct vo_wayland_state *wl, const char *path);
@@ -1687,9 +1689,13 @@ static void surface_handle_enter(void *data, struct wl_surface *wl_surface,
     if (outputs == 1)
         update_output_geometry(wl);
 
-    MP_VERBOSE(wl, "Surface entered output %s %s (%s) (0x%x), scale = %f, refresh rate = %f Hz\n",
-               wl->current_output->make, wl->current_output->model, wl->current_output->name,
-               wl->current_output->id, wl->scaling_factor, wl->current_output->refresh_rate);
+    if (wl->current_output) {
+        MP_VERBOSE(wl, "Surface entered output %s %s (%s) (0x%x), scale = %f, refresh rate = %f Hz\n",
+                   wl->current_output->make, wl->current_output->model, wl->current_output->name,
+                   wl->current_output->id, wl->scaling_factor, wl->current_output->refresh_rate);
+    } else {
+        MP_VERBOSE(wl, "Surface entered unknown output\n");
+    }
 
     wl->pending_vo_events |= VO_EVENT_WIN_STATE;
 }
@@ -1777,6 +1783,12 @@ static const struct xdg_wm_base_listener xdg_wm_base_listener = {
 static void handle_surface_config(void *data, struct xdg_surface *surface,
                                   uint32_t serial)
 {
+    struct vo_wayland_state *wl = data;
+
+    wl->surface_configured = true;
+    wl->pending_vo_events |= VO_EVENT_EXPOSE;
+    apply_decorations(wl);
+    apply_toplevel_config(wl);
     xdg_surface_ack_configure(surface, serial);
 }
 
@@ -1788,55 +1800,75 @@ static void handle_toplevel_config(void *data, struct xdg_toplevel *toplevel,
                                    int32_t width, int32_t height, struct wl_array *states)
 {
     struct vo_wayland_state *wl = data;
-    struct mp_vo_opts *opts = wl->opts;
-    struct mp_rect old_geometry = wl->geometry;
+    struct vo_wayland_toplevel_pending_state *pending = &wl->pending_state;
+    struct vo_wayland_toplevel_pending_flags *flags = &pending->flags;
 
     if (width < 0 || height < 0) {
         MP_WARN(wl, "Compositor sent negative width/height values. Treating them as zero.\n");
         width = height = 0;
     }
 
-    bool is_maximized = false;
-    bool is_fullscreen = false;
-    bool is_activated = false;
-    bool is_resizing = false;
-    bool is_suspended = false;
-    bool is_tiled = false;
+    pending->width = width;
+    pending->height = height;
+    *flags = (struct vo_wayland_toplevel_pending_flags){ 0 };
+
     enum xdg_toplevel_state *state;
     wl_array_for_each(state, states) {
         switch (*state) {
         case XDG_TOPLEVEL_STATE_FULLSCREEN:
-            is_fullscreen = true;
+            flags->is_fullscreen = true;
             break;
         case XDG_TOPLEVEL_STATE_RESIZING:
-            is_resizing = true;
+            flags->is_resizing = true;
             break;
         case XDG_TOPLEVEL_STATE_ACTIVATED:
-            is_activated = true;
-            /*
-             * If we get an ACTIVATED state, we know it cannot be
-             * minimized, but it may not have been minimized
-             * previously, so we can't detect the exact state.
-             */
-            opts->window_minimized = false;
-            m_config_cache_write_opt(wl->opts_cache,
-                                     &opts->window_minimized);
+            flags->is_activated = true;
             break;
         case XDG_TOPLEVEL_STATE_TILED_TOP:
         case XDG_TOPLEVEL_STATE_TILED_LEFT:
         case XDG_TOPLEVEL_STATE_TILED_RIGHT:
         case XDG_TOPLEVEL_STATE_TILED_BOTTOM:
-            is_tiled = true;
+            flags->is_tiled = true;
             break;
         case XDG_TOPLEVEL_STATE_MAXIMIZED:
-            is_maximized = true;
+            flags->is_maximized = true;
             break;
         case XDG_TOPLEVEL_STATE_SUSPENDED:
-            is_suspended = true;
+            flags->is_suspended = true;
             break;
         }
     }
+}
 
+static void apply_toplevel_config(struct vo_wayland_state *wl)
+{
+    struct mp_vo_opts *opts = wl->opts;
+    struct mp_rect old_geometry = wl->geometry;
+    struct vo_wayland_toplevel_pending_state *pending = &wl->pending_state;
+    struct vo_wayland_toplevel_pending_flags *flags = &pending->flags;
+
+    wl->bounded_width = pending->bounded_width;
+    wl->bounded_height = pending->bounded_height;
+
+    int32_t width = pending->width;
+    int32_t height = pending->height;
+    bool is_maximized = flags->is_maximized;
+    bool is_fullscreen = flags->is_fullscreen;
+    bool is_activated = flags->is_activated;
+    bool is_resizing = flags->is_resizing;
+    bool is_suspended = flags->is_suspended;
+    bool is_tiled = flags->is_tiled;
+
+    if (is_activated) {
+        /*
+         * If we get an ACTIVATED state, we know it cannot be
+         * minimized, but it may not have been minimized
+         * previously, so we can't detect the exact state.
+         */
+        opts->window_minimized = false;
+        m_config_cache_write_opt(wl->opts_cache,
+                                 &opts->window_minimized);
+    }
     /* Only update the toplevel state values if either mpv already has
      * configured its initial geometry or if the compositor gives us some
      * initial state to use. */
@@ -1874,7 +1906,9 @@ static void handle_toplevel_config(void *data, struct xdg_toplevel *toplevel,
                                    opts->autofit_larger.wh_valid || opts->autofit_smaller.wh_valid;
         if (width && height && !autofit_or_geometry) {
             wl->initial_size_hint = true;
-            wl->window_size = (struct mp_rect){0, 0, width, height};
+            wl->window_size = (struct mp_rect){0, 0,
+                handle_round(wl->scaling, width), handle_round(wl->scaling, height)
+            };
             wl->geometry = wl->window_size;
         } else {
             wl->override_surface_local = true;
@@ -1934,8 +1968,6 @@ resize:
                    mp_rect_w(old_geometry), mp_rect_h(old_geometry),
                    mp_rect_w(wl->geometry), mp_rect_h(wl->geometry));
         wl->pending_vo_events |= VO_EVENT_RESIZE;
-    } else if (wl->resizing) {
-        wl->pending_vo_events |= VO_EVENT_EXPOSE;
     }
 
     wl->override_surface_local = width == 0 || height == 0 || wl->reconfigured;
@@ -1953,8 +1985,8 @@ static void handle_configure_bounds(void *data, struct xdg_toplevel *xdg_topleve
                                     int32_t width, int32_t height)
 {
     struct vo_wayland_state *wl = data;
-    wl->bounded_width = handle_round(wl->scaling, width);
-    wl->bounded_height = handle_round(wl->scaling, height);
+    wl->pending_state.bounded_width = handle_round(wl->scaling, width);
+    wl->pending_state.bounded_height = handle_round(wl->scaling, height);
 }
 
 static void handle_wm_capabilities(void *data, struct xdg_toplevel *xdg_toplevel,
@@ -2488,7 +2520,22 @@ static void configure_decorations(void *data,
                                   uint32_t mode)
 {
     struct vo_wayland_state *wl = data;
+    struct vo_wayland_toplevel_pending_state *pending = &wl->pending_state;
+
+    pending->new_decoration_mode = mode;
+}
+
+static void apply_decorations(struct vo_wayland_state *wl)
+{
     struct mp_vo_opts *opts = wl->opts;
+    struct vo_wayland_toplevel_pending_state *pending = &wl->pending_state;
+    uint32_t mode = pending->new_decoration_mode;
+
+    if (mode == 0) {
+        return;
+    }
+
+    pending->new_decoration_mode = 0;
 
     if (wl->requested_decoration && mode != wl->requested_decoration) {
         MP_DBG(wl,
@@ -2844,6 +2891,13 @@ static void registry_handle_add(void *data, struct wl_registry *reg, uint32_t id
         wl->shm = wl_registry_bind(reg, id, &wl_shm_interface, ver);
     }
 
+#ifdef WL_FIXES_ACK_GLOBAL_REMOVE
+    if (!strcmp(interface, wl_fixes_interface.name) && (ver >= 2) && found++) {
+        ver = 2;
+        wl->fixes = wl_registry_bind(reg, id, &wl_fixes_interface, ver);
+    }
+#endif
+
 #if HAVE_WAYLAND_PROTOCOLS_1_44
     if (!strcmp(interface, wp_color_representation_manager_v1_interface.name) && found++) {
         ver = 1;
@@ -2959,7 +3013,7 @@ static void registry_handle_remove(void *data, struct wl_registry *reg, uint32_t
             remove_output(output);
             if (wl_list_length(&wl->output_list) == 0)
                 wl->current_output = NULL;
-            return;
+            goto ack_global_remove;
         }
     }
 
@@ -2967,9 +3021,16 @@ static void registry_handle_remove(void *data, struct wl_registry *reg, uint32_t
     wl_list_for_each_safe(seat, seat_tmp, &wl->seat_list, link) {
         if (seat->id == id) {
             remove_seat(seat);
-            return;
+            goto ack_global_remove;
         }
     }
+
+ack_global_remove:
+#ifdef WL_FIXES_ACK_GLOBAL_REMOVE
+    if (wl->fixes)
+        wl_fixes_ack_global_remove(wl->fixes, reg, id);
+#endif
+    return;
 }
 
 static const struct wl_registry_listener registry_listener = {
@@ -3633,14 +3694,12 @@ static void set_color_management(struct vo_wayland_state *wl, struct pl_color_sp
         goto nosupport;
 
     struct wp_image_description_v1 *image_description;
-#if PL_API_VER >= 362
     // scRGB has dedicated creator, and not using the generic one.
     if (color->transfer == PL_COLOR_TRC_SCRGB && wl->supports_scrgb) {
         image_description = wp_color_manager_v1_create_windows_scrgb(wl->color_manager);
         cm_dispatch_color_queue(wl, image_description);
         return;
     }
-#endif
 
     int primaries = wl->primaries_map[color->primaries];
     int transfer = wl->transfer_map[color->transfer];
@@ -3889,12 +3948,22 @@ static int set_cursor_visibility_all_seats(struct vo_wayland_state *wl, bool on)
 static void set_geometry(struct vo_wayland_state *wl, bool resize)
 {
     struct vo *vo = wl->vo;
+    struct mp_vo_opts *opts = wl->opts;
     if (!wl->current_output)
         return;
 
+    bool autofit_or_geometry = opts->geometry.wh_valid || opts->autofit.wh_valid ||
+                               opts->autofit_larger.wh_valid || opts->autofit_smaller.wh_valid;
     struct vo_win_geometry geo;
     struct mp_rect screenrc = wl->current_output->geometry;
-    vo_calc_window_geometry(vo, wl->opts, &screenrc, &screenrc, wl->scaling_factor, false, &geo, NULL);
+    struct m_geometry bounds = {
+        .w = wl->bounded_width,
+        .h = wl->bounded_height,
+        .wh_valid = opts->wl_configure_bounds == 1 ||
+            (opts->wl_configure_bounds == -1 && !autofit_or_geometry),
+    };
+    vo_calc_window_geometry(vo, opts, &screenrc, &screenrc, wl->scaling_factor,
+                            false, &geo, &bounds);
     vo_apply_window_geometry(vo, &geo);
 
     int gcd = mp_gcd(vo->dwidth, vo->dheight);
@@ -3956,25 +4025,6 @@ static void set_surface_scaling(struct vo_wayland_state *wl)
     wl->scaling_factor = wl->scaling / WAYLAND_SCALE_FACTOR;
     rescale_geometry(wl, old_scale);
     wl->pending_vo_events |= VO_EVENT_DPI;
-}
-
-static void set_window_bounds(struct vo_wayland_state *wl)
-{
-    // If the user has set geometry/autofit and the option is auto,
-    // don't use these.
-    if (wl->opts->wl_configure_bounds == -1 && (wl->opts->geometry.wh_valid ||
-        wl->opts->autofit.wh_valid || wl->opts->autofit_larger.wh_valid ||
-        wl->opts->autofit_smaller.wh_valid))
-    {
-        return;
-    }
-
-    apply_keepaspect(wl, &wl->bounded_width, &wl->bounded_height);
-
-    if (wl->bounded_width && wl->bounded_width < wl->window_size.x1)
-        wl->window_size.x1 = wl->bounded_width;
-    if (wl->bounded_height && wl->bounded_height < wl->window_size.y1)
-        wl->window_size.y1 = wl->bounded_height;
 }
 
 static bool single_output_spanned(struct vo_wayland_state *wl)
@@ -4091,7 +4141,8 @@ static void update_output_geometry(struct vo_wayland_state *wl)
         force_resize = true;
     }
 
-    if (!mp_rect_equals(&wl->old_output_geometry, &wl->current_output->geometry)) {
+    if (wl->current_output &&
+        !mp_rect_equals(&wl->old_output_geometry, &wl->current_output->geometry)) {
         set_geometry(wl, false);
         force_resize = true;
     }
@@ -4694,11 +4745,18 @@ bool vo_wayland_init(struct vo *vo)
 
     wl->frame_callback = wl_surface_frame(wl->callback_surface);
     wl_callback_add_listener(wl->frame_callback, &frame_listener, wl);
+
+    // Do a commit without any buffer attached to ensure the compositor
+    // configures the surface.
     wl_surface_commit(wl->surface);
 
-    /* Do another roundtrip to ensure all of the above is initialized
-     * before mpv does anything else. */
-    wl_display_roundtrip(wl->display);
+    // Block until the compositor has configured the surface. Since all requests
+    // are processed in order, this also ensures that all requests preceding
+    // the above surface commit have also been seen by the compositor.
+    while (!wl->surface_configured) {
+        if (wl_display_dispatch(wl->display) < 0)
+            goto err;
+    }
 
     return true;
 
@@ -4727,9 +4785,6 @@ bool vo_wayland_reconfig(struct vo *vo)
 
     if (wl->geometry_configured && wl->opts->auto_window_resize)
         wl->reconfigured = true;
-
-    if (wl->opts->wl_configure_bounds)
-        set_window_bounds(wl);
 
     if (wl->opts->cursor_passthrough)
         set_input_region(wl, true);
@@ -4877,6 +4932,11 @@ void vo_wayland_uninit(struct vo *vo)
 
     if (wl->shm)
         wl_shm_destroy(wl->shm);
+
+#ifdef WL_FIXES_DESTROY
+    if (wl->fixes)
+        wl_fixes_destroy(wl->fixes);
+#endif
 
     if (wl->single_pixel_manager)
         wp_single_pixel_buffer_manager_v1_destroy(wl->single_pixel_manager);

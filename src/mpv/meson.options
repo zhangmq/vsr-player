@@ -11,6 +11,7 @@ option('disable-packet-pool', type: 'boolean', value: false, description: 'disab
 option('cdda', type: 'feature', value: 'auto', description: 'cdda support (libcdio)')
 option('cplugins', type: 'feature', value: 'auto', description: 'C plugins')
 option('dvbin', type: 'feature', value: 'auto', description: 'DVB input module')
+option('dvda', type: 'feature', value: 'auto', description: 'DVD-Audio support (libdvdread)')
 option('dvdnav', type: 'feature', value: 'auto', description: 'dvdnav support')
 option('iconv', type: 'feature', value: 'auto', description: 'iconv')
 option('javascript', type: 'feature', value: 'auto', description: 'Javascript (MuJS backend)')
@@ -22,7 +23,7 @@ option('libbluray', type: 'feature', value: 'auto', description: 'Bluray support
 option('libcurl', type: 'feature', value: 'auto', description: 'libcurl-based stream backend')
 option('lua',
     type: 'combo',
-    choices: ['lua', 'lua52', 'lua5.2', 'lua-5.2', 'luajit', 'lua51',
+    choices: ['luajit', 'lua', 'lua52', 'lua5.2', 'lua-5.2', 'lua51',
               'lua5.1', 'lua-5.1', 'auto', 'enabled', 'disabled'],
     value: 'auto',
     description: 'Lua'

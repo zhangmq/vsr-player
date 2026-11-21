@@ -215,45 +215,49 @@ pl_vulkan mppl_create_vulkan(struct vulkan_opts *opts,
         VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
 #endif
         VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
+        VK_EXT_SHADER_REPLICATED_COMPOSITES_EXTENSION_NAME,
+        VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME,
         VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
-        VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME,
+        VK_KHR_SHADER_EXPECT_ASSUME_EXTENSION_NAME,
+        VK_KHR_SHADER_MAXIMAL_RECONVERGENCE_EXTENSION_NAME,
+        VK_KHR_SHADER_RELAXED_EXTENDED_INSTRUCTION_EXTENSION_NAME,
+        VK_KHR_SHADER_SUBGROUP_ROTATE_EXTENSION_NAME,
+        VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME,
         VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
         VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME,
+        VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME,
+        VK_KHR_VIDEO_MAINTENANCE_1_EXTENSION_NAME,
+        VK_KHR_VIDEO_MAINTENANCE_2_EXTENSION_NAME,
         VK_KHR_VIDEO_QUEUE_EXTENSION_NAME,
+        VK_KHR_WORKGROUP_MEMORY_EXPLICIT_LAYOUT_EXTENSION_NAME,
         VK_KHR_ZERO_INITIALIZE_WORKGROUP_MEMORY_EXTENSION_NAME,
+        VK_NV_OPTICAL_FLOW_EXTENSION_NAME,
         /*
          * Extensions below this point are newer than our minimum required Vulkan
          * headers and so we only activate them if the build time headers contain
          * them.
          */
-#ifdef VK_EXT_shader_object
-        VK_EXT_SHADER_OBJECT_EXTENSION_NAME, /* 1.3.246 */
-#endif
-#ifdef VK_KHR_cooperative_matrix
-        VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME, /* 1.3.255 */
-#endif
-#ifdef VK_KHR_video_maintenance1
-        VK_KHR_VIDEO_MAINTENANCE_1_EXTENSION_NAME, /* 1.3.274 */
-#endif
-#ifdef VK_KHR_shader_expect_assume
-        VK_KHR_SHADER_EXPECT_ASSUME_EXTENSION_NAME, /* 1.3.276 */
-#endif
-#ifdef VK_KHR_shader_subgroup_rotate
-        VK_KHR_SHADER_SUBGROUP_ROTATE_EXTENSION_NAME, /* 1.3.276 */
-#endif
-        /*
-         * Because the AV1 extension does not require a feature flag to be enabled,
-         * we can include it as a string literal and have it work.
-         */
-        "VK_KHR_video_decode_av1", /* VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME 1.3.277 */
-#ifdef VK_KHR_shader_relaxed_extended_instruction
-        VK_KHR_SHADER_RELAXED_EXTENDED_INSTRUCTION_EXTENSION_NAME, /* 1.3.288 */
-#endif
-#ifdef VK_KHR_video_maintenance2
-        VK_KHR_VIDEO_MAINTENANCE_2_EXTENSION_NAME, /* 1.4.306 */
+#ifdef VK_EXT_zero_initialize_device_memory
+        VK_EXT_ZERO_INITIALIZE_DEVICE_MEMORY_EXTENSION_NAME, /* 1.4.315 */
 #endif
 #ifdef VK_KHR_video_decode_vp9
         VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME, /* 1.4.317 */
+#endif
+#ifdef VK_KHR_maintenance9
+        VK_KHR_MAINTENANCE_9_EXTENSION_NAME, /* 1.4.317 */
+#endif
+#ifdef VK_KHR_unified_image_layouts
+        VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME, /* 1.4.317 */
+#endif
+#ifdef VK_EXT_shader_long_vector
+        VK_EXT_SHADER_LONG_VECTOR_EXTENSION_NAME, /* 1.4.337 */
+#endif
+#ifdef VK_KHR_maintenance11
+        VK_KHR_MAINTENANCE_11_EXTENSION_NAME, /* 1.4.350 */
+#endif
+#if defined(VK_KHR_internally_synchronized_queues) && PL_API_VER >= 365 && \
+    LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(60, 32, 100)
+        VK_KHR_INTERNALLY_SYNCHRONIZED_QUEUES_EXTENSION_NAME,
 #endif
     };
 
@@ -263,101 +267,141 @@ pl_vulkan mppl_create_vulkan(struct vulkan_opts *opts,
      * the next extension that chains on to it will also be present.
      */
 
+#ifdef VK_KHR_maintenance11
+    VkPhysicalDeviceMaintenance11FeaturesKHR maintenance_11_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_11_FEATURES_KHR,
+        .maintenance11 = true,
+    };
+#endif
+
+#ifdef VK_EXT_shader_long_vector
+    VkPhysicalDeviceShaderLongVectorFeaturesEXT long_vector_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_LONG_VECTOR_FEATURES_EXT,
+#ifdef VK_KHR_maintenance11
+        .pNext = &maintenance_11_feature,
+#endif
+        .longVector = true,
+    };
+#endif
+
+#ifdef VK_KHR_unified_image_layouts
+    VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR unified_image_layouts_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFIED_IMAGE_LAYOUTS_FEATURES_KHR,
+#ifdef VK_EXT_shader_long_vector
+        .pNext = &long_vector_feature,
+#endif
+        .unifiedImageLayouts = true,
+        .unifiedImageLayoutsVideo = true,
+    };
+#endif
+
+#ifdef VK_KHR_maintenance9
+    VkPhysicalDeviceMaintenance9FeaturesKHR maintenance_9_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_9_FEATURES_KHR,
+#ifdef VK_KHR_unified_image_layouts
+        .pNext = &unified_image_layouts_feature,
+#endif
+        .maintenance9 = true,
+    };
+#endif
+
 #ifdef VK_KHR_video_decode_vp9
      VkPhysicalDeviceVideoDecodeVP9FeaturesKHR video_decode_vp9_feature = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_DECODE_VP9_FEATURES_KHR,
+#ifdef VK_KHR_maintenance9
+        .pNext = &maintenance_9_feature,
+#endif
         .videoDecodeVP9 = true,
     };
 #endif
 
-#ifdef VK_KHR_video_maintenance2
-    VkPhysicalDeviceVideoMaintenance2FeaturesKHR video_maintenance_2_feature = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_2_FEATURES_KHR,
+#ifdef VK_EXT_zero_initialize_device_memory
+    VkPhysicalDeviceZeroInitializeDeviceMemoryFeaturesEXT zero_init_device_memory_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ZERO_INITIALIZE_DEVICE_MEMORY_FEATURES_EXT,
 #ifdef VK_KHR_video_decode_vp9
         .pNext = &video_decode_vp9_feature,
 #endif
+        .zeroInitializeDeviceMemory = true,
+    };
+#endif
+
+    /*
+     * Newer libplacebo enables the video maintenance features itself, but
+     * our minimum accepted version 7.360.1 does not.
+     */
+    VkPhysicalDeviceVideoMaintenance2FeaturesKHR video_maintenance_2_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_2_FEATURES_KHR,
+#ifdef VK_EXT_zero_initialize_device_memory
+        .pNext = &zero_init_device_memory_feature,
+#endif
         .videoMaintenance2 = true,
     };
-#endif
 
-#ifdef VK_KHR_shader_relaxed_extended_instruction
     VkPhysicalDeviceShaderRelaxedExtendedInstructionFeaturesKHR shader_relaxed_feature = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_RELAXED_EXTENDED_INSTRUCTION_FEATURES_KHR,
-#ifdef VK_KHR_video_maintenance2
         .pNext = &video_maintenance_2_feature,
-#endif
         .shaderRelaxedExtendedInstruction = true,
     };
-#endif
 
-#ifdef VK_KHR_shader_subgroup_rotate
+    VkPhysicalDeviceShaderReplicatedCompositesFeaturesEXT replicated_composites_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_REPLICATED_COMPOSITES_FEATURES_EXT,
+        .pNext = &shader_relaxed_feature,
+        .shaderReplicatedComposites = true,
+    };
+
+    VkPhysicalDeviceShaderMaximalReconvergenceFeaturesKHR maximal_reconvergence_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MAXIMAL_RECONVERGENCE_FEATURES_KHR,
+        .pNext = &replicated_composites_feature,
+        .shaderMaximalReconvergence = true,
+    };
+
     VkPhysicalDeviceShaderSubgroupRotateFeaturesKHR shader_subgroup_rotate_feature = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SUBGROUP_ROTATE_FEATURES_KHR,
-#ifdef VK_KHR_shader_relaxed_extended_instruction
-        .pNext = &shader_relaxed_feature,
-#endif
+        .pNext = &maximal_reconvergence_feature,
        .shaderSubgroupRotate = true,
     };
-#endif
 
-#ifdef VK_KHR_shader_expect_assume
     VkPhysicalDeviceShaderExpectAssumeFeaturesKHR shader_expect_assume_feature = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_EXPECT_ASSUME_FEATURES_KHR,
-#ifdef VK_KHR_shader_subgroup_rotate
         .pNext = &shader_subgroup_rotate_feature,
-#endif
        .shaderExpectAssume = true,
     };
-#endif
 
-#ifdef VK_KHR_video_maintenance1
+    /*
+     * Newer libplacebo enables the video maintenance features itself, but
+     * our minimum accepted version 7.360.1 does not.
+     */
     VkPhysicalDeviceVideoMaintenance1FeaturesKHR video_maintenance_1_feature = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_1_FEATURES_KHR,
-#ifdef VK_KHR_shader_expect_assume
         .pNext = &shader_expect_assume_feature,
-#endif
         .videoMaintenance1 = true,
     };
-#endif
 
-#ifdef VK_KHR_cooperative_matrix
      VkPhysicalDeviceCooperativeMatrixFeaturesKHR cooperative_matrix_feature = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
-#ifdef VK_KHR_video_maintenance1
         .pNext = &video_maintenance_1_feature,
-#endif
         .cooperativeMatrix = true,
     };
-#endif
 
-#ifdef VK_EXT_shader_object
-    VkPhysicalDeviceShaderObjectFeaturesEXT shader_object_feature = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT,
-#ifdef VK_KHR_cooperative_matrix
+    VkPhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR explicit_mem_layout_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_WORKGROUP_MEMORY_EXPLICIT_LAYOUT_FEATURES_KHR,
         .pNext = &cooperative_matrix_feature,
-#endif
-        .shaderObject = true,
-    };
-#endif
-
-    VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR zero_init_feature = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ZERO_INITIALIZE_WORKGROUP_MEMORY_FEATURES_KHR,
-#ifdef VK_EXT_shader_object
-        .pNext = &shader_object_feature,
-#endif
-       .shaderZeroInitializeWorkgroupMemory = true,
+        .workgroupMemoryExplicitLayout = true,
+        .workgroupMemoryExplicitLayoutScalarBlockLayout = true,
+        .workgroupMemoryExplicitLayout8BitAccess = true,
+        .workgroupMemoryExplicitLayout16BitAccess = true,
     };
 
-    VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamic_rendering_feature = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
-        .pNext = &zero_init_feature,
-       .dynamicRendering = true,
+    VkPhysicalDeviceOpticalFlowFeaturesNV optical_flow_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPTICAL_FLOW_FEATURES_NV,
+        .pNext = &explicit_mem_layout_feature,
+        .opticalFlow = true,
     };
 
 #if LIBAVUTIL_VERSION_INT < AV_VERSION_INT(60, 26, 0)
     VkPhysicalDeviceDescriptorBufferFeaturesEXT descriptor_buffer_feature = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT,
-        .pNext = &dynamic_rendering_feature,
+        .pNext = &optical_flow_feature,
         .descriptorBuffer = true,
         .descriptorBufferPushDescriptors = true,
     };
@@ -368,16 +412,30 @@ pl_vulkan mppl_create_vulkan(struct vulkan_opts *opts,
 #if LIBAVUTIL_VERSION_INT < AV_VERSION_INT(60, 26, 0)
         .pNext = &descriptor_buffer_feature,
 #else
-        .pNext = &dynamic_rendering_feature,
+        .pNext = &optical_flow_feature,
 #endif
         .shaderBufferFloat32Atomics = true,
         .shaderBufferFloat32AtomicAdd = true,
     };
 
+    /*
+     * Features that libplacebo does not request on its own. The core 1.1-1.3
+     * features it already enables (directly or through its required/recommended
+     * feature chains) are not repeated here.
+     */
+    VkPhysicalDeviceVulkan13Features recommended_vk13 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext = &atomic_float_feature,
+        .dynamicRendering = true,
+        .subgroupSizeControl = true,
+    };
+
     VkPhysicalDeviceVulkan12Features recommended_vk12 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-        .pNext = &atomic_float_feature,
+        .pNext = &recommended_vk13,
         .scalarBlockLayout = true,
+        .vulkanMemoryModelAvailabilityVisibilityChains = true,
+        .shaderSubgroupExtendedTypes = true,
         .shaderUniformBufferArrayNonUniformIndexing = true,
         .shaderSampledImageArrayNonUniformIndexing = true,
         .shaderStorageBufferArrayNonUniformIndexing = true,
@@ -405,9 +463,34 @@ pl_vulkan mppl_create_vulkan(struct vulkan_opts *opts,
 
     features.pNext = &recommended_features;
 
+#if defined(VK_KHR_internally_synchronized_queues) && PL_API_VER >= 365 && \
+    LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(60, 32, 100)
+    /*
+     * libplacebo creates every queue with
+     * VK_DEVICE_QUEUE_CREATE_INTERNALLY_SYNCHRONIZED_BIT_KHR when this is
+     * requested, and hwdec_vulkan passes the flag on through
+     * AVVulkanDeviceContext.queue_flags. Older lavu retrieves queues with
+     * flags 0 and gets VK_NULL_HANDLE, so only request it from lavu that
+     * knows the flags, and from libplacebo that will use it too.
+     */
+    VkPhysicalDeviceInternallySynchronizedQueuesFeaturesKHR synchronized_queues_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INTERNALLY_SYNCHRONIZED_QUEUES_FEATURES_KHR,
+        .pNext = features.pNext,
+        .internallySynchronizedQueues = true,
+    };
+    features.pNext = &synchronized_queues_feature;
+#endif
+
     AVUUID param_uuid = { 0 };
     bool is_uuid = opts->device &&
                    av_uuid_parse(opts->device, param_uuid) == 0;
+
+    /*
+     * Request extra queue families opportunistically. These will only be
+     * enabled if present.
+     */
+    VkQueueFlags extra_queues = VK_QUEUE_VIDEO_DECODE_BIT_KHR |
+                                VK_QUEUE_OPTICAL_FLOW_BIT_NV;
 
     mp_assert(pllog);
     mp_assert(vkinst);
@@ -419,7 +502,7 @@ pl_vulkan mppl_create_vulkan(struct vulkan_opts *opts,
         .async_transfer = opts->async_transfer,
         .async_compute = opts->async_compute,
         .queue_count = opts->queue_count,
-        .extra_queues = VK_QUEUE_VIDEO_DECODE_BIT_KHR,
+        .extra_queues = extra_queues,
         .opt_extensions = opt_extensions,
         .num_opt_extensions = MP_ARRAY_SIZE(opt_extensions),
         .features = &features,
@@ -565,11 +648,7 @@ static bool set_color(struct ra_swapchain *sw, struct mp_image_params *params)
 
     // Vulkan Wayland needs special handling to avoid duplicated color surface.
     bool waylandvk = strcmp(sw->ctx->fns->name, "waylandvk") == 0;
-    // Assume anything else is supported when set_color is defined. However,
-    // everything else can use Vulkan API colorspace without issues, so unlikely
-    // that set_color is used outside of Wayland.
-    bool supported = PL_API_VER >= 361 || !waylandvk;
-    if (supported && p->params.set_color) {
+    if (p->params.set_color) {
         if (waylandvk && params) {
           // Request VK_COLOR_SPACE_PASS_THROUGH_EXT, and also force immediate
           // cleanup of swapchain retired by pl_swapchain_colorspace_hint,
