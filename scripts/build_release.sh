@@ -18,8 +18,10 @@
 #   ├── mpv-vsr               # CLI 二进制（RPATH 同款）
 #   ├── lib/vsr-player/       # 安装 → ~/.local/lib/vsr-player/（与 VFX 汇合）
 #   │   ├── libmpv.so.2       #    libmpv + 闭包捆绑依赖（RPATH 同款）
-#   │   ├── 光盘媒体栈         #    libcdio*/libdvd*/libbluray（cdda/蓝光/ISO）
-#   │   ├── ffmpeg ×7         #    仅 full（standard 用系统 FFmpeg）
+#   │   ├── deps.manifest     #    完整系统依赖清单（standard 的"不符合就不能用"契约）
+#   │   ├── 光盘媒体栈         #    libcdio*/libdvd*/libbluray（cdda/蓝光/ISO）· 仅 full
+#   │   ├── libplacebo + shader 栈 + libmujs + libsndio  # 仅 full（SONAME 易变，见 4b2/4b3）
+#   │   ├── ffmpeg ×7         #    仅 full（standard 用系统 FFmpeg，NEEDED 去版本化）
 #   │   ├── libnvrtc/builtins/cudart.so.13   # 仅 full（standard 用系统 CUDA runtime）
 #   │   └── libnvinfer(+plugin).so.11        # 仅 rife：TRT 11.2.1.2（engine 版本绑定）
 #   ├── lib/                  # 仅 full：Qt6 库（插件 RUNPATH 期望 <prefix>/lib）
@@ -38,11 +40,15 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # ── 变体 + 插帧后端 ──────────────────────────────────────────────────
-# standard（默认）：只捆 libmpv + 光盘媒体栈；**FFmpeg / CUDA runtime / Qt 一律用系统**
-#                   （要求系统 Qt ≥ 6.12、FFmpeg soname 与构建机一致、CUDA runtime 可解析）。
+# standard（默认）：薄包。只带 libmpv + 两个修补过的 Qt 库 + 两个 Wayland 模块；
+#                   **所有系统级依赖一律由系统提供**（FFmpeg/CUDA/Qt/光盘栈/libplacebo/
+#                   libsndio…），并把完整依赖清单写进 lib/vsr-player/deps.manifest。
+#                   契约：清单里任一项在目标系统解析不到 → install.sh 明确失败
+#                   （"不符合就不能用"），不做静默降级。
 # full：额外捆绑 FFmpeg ×7 + CUDA runtime（libnvrtc/builtins/cudart）+ 最小 Qt
-#       （库 + 平台插件 + QML 模块，镜像发行版布局）；
-#       用户侧只需驱动 + Vulkan loader + 基础 C 运行库。
+#       + 光盘媒体栈 + libplacebo（含 shader 栈）+ libmujs + libsndio ——
+#       即"已知会因发行版升级而坏"的那批；驱动/Vulkan/音频会话/X11/Wayland
+#       这些系统级 ABI 仍由系统提供。VFX SDK 两个变体都**不捆**（NVIDIA 许可禁止）。
 # 依赖收集 = 传递闭包 + 系统白名单：非白名单的 NEEDED 自动捆绑，
 # 因此系统 soname 升级（如 libcdio .so.19→.so.21）不会漏收。
 VARIANT=standard
@@ -278,16 +284,13 @@ if [ "$FRUC_BACKEND" = rife ]; then
     collect libnvinfer_plugin.so.11 /usr/lib || echo "  ⚠ plugin missing（RIFE 图无 plugin 算子，可缺）"
 fi
 
-# 4b. 光盘/蓝光媒体栈：从实际 NEEDED 发现 soname——**不要硬编码**。
-# ⚠ 2026-10-26 用户发的"标准版不携带第三方依赖"规则：整段只在 full 变体执行，
-# standard 由系统提供（缺了安装自检会明确报错，不会静默）。
+# 4b. Optical/Blu-ray media stack: discover the sonames from the actual
+# NEEDED entries instead of hard-coding them. full only: the standard package
+# is a thin package by contract (system libraries + a dependency manifest that
+# install.sh enforces), while full carries everything that can break on a
+# distro upgrade. This group changed SONAME twice in 2026-09 (libcdio
+# .so.19->.so.21, libbluray .so.3->.so.4).
 if [ "$VARIANT" = full ]; then
-#     2026-09 事故：libcdio .so.19→.so.21、libbluray .so.3→.so.4 升级后，
-#     未捆绑的旧 soname 让二进制启动失败（libmpv 的 cdda/蓝光 + libavformat 的 bluray）。
-#     发现必须**迭代到不动点**：libmpv → libcdio/libdvdnav → libdvdread 是两层链，
-#     只看 libmpv 的 NEEDED 会漏掉第二层（standard 不捆 libavformat 后实测：
-#     libdvdnav.so.4 → libdvdread.so.8 闭包自检报"未捆绑"）。之前没暴露是因为
-#     libavformat 的 NEEDED 里恰好也有 libdvdread。
 MEDIA=""
 prev=""
 for _ in 1 2 3 4; do
@@ -301,23 +304,27 @@ for _ in 1 2 3 4; do
 done
 [ -n "$MEDIA" ] && echo "  ✓ 媒体栈: $(printf '%s' "$MEDIA" | tr '\n' ' ')"
 else
-    echo "  · standard：光盘媒体栈由系统提供（libcdio/libdvd/libbluray）"
+    echo "  · standard：光盘媒体栈由系统提供（缺了由 install.sh 的依赖清单校验拦下）"
 fi
 
-# 4b2. 两个"跨版本不可替换"的小库：**两个变体都捆**（合计 ~0.5 MB）
-#  ① libplacebo（soname = API 版本，每次 libplacebo 发版就跳）：mpv 传给
-#     pl_log_create 的 api_ver 在库里是 "historical, ignored currently"
-#     （/usr/include/libplacebo/log.h:69）→ 跨版本链接是**静默 ABI 赌注**，
-#     不像 libnvrtc 会明确报错。0.4 MB 换确定性，值。
-#  ② libmujs：**没有 SONAME**，mpv 链接时把绝对路径 /usr/lib/libmujs.so 整条记进
-#     NEEDED（Debian 在 /usr/lib/x86_64-linux-gnu/）→ 换个发行版直接起不来。
-#     rewrite-needed.py 会把该 NEEDED 改成 basename，所以这里必须把库带上。
+# 4b2. Libraries that cannot be substituted across versions: full only (the
+# standard package keeps them as system dependencies and refuses to start on a
+# mismatch instead of gambling on the ABI).
+#  1) libplacebo: its SONAME is the API version and jumps on every libplacebo
+#     release (7.360 -> 7.387 in 2026-11 broke every installed package). mpv
+#     passes api_ver to pl_log_create, which libplacebo treats as "historical,
+#     ignored currently" (/usr/include/libplacebo/log.h:69), so linking across
+#     versions is a silent ABI gamble rather than a clean error.
+#  2) libmujs: it has NO SONAME, so the link records the absolute path
+#     (/usr/lib/libmujs.so) in NEEDED (Debian: /usr/lib/x86_64-linux-gnu/),
+#     which breaks on any other distro layout. rewrite-needed.py rewrites that
+#     entry to a basename, so the library itself has to be carried.
 PLACEBO_SO="$(needed_of "$LIB/libmpv.so.2" | grep -E '^libplacebo\.so\.[0-9]+$' | head -1)"
 if [ "$VARIANT" = full ] && [ -n "$PLACEBO_SO" ]; then
     collect "$PLACEBO_SO" /usr/lib
-    # libplacebo 自己的 shader 编译栈（glslang/shaderc）与 Dolby Vision 依赖，
-    # 按 NEEDED 推导；整栈压缩后 ~0.5 MB，一起带走才算真自洽。
-    # 迭代到不动点：glslang/shaderc 还会拖出 libSPIRV-Tools(-opt) 这一层
+    # libplacebo's shader compiler stack (glslang/shaderc) and the Dolby Vision
+    # helper, derived from NEEDED and iterated to a fixed point (glslang pulls
+    # in the libSPIRV-Tools(-opt) layer).
     for _ in 1 2 3 4 5; do
         added=0
         for f in $(for b in "$LIB"/*.so*; do
@@ -331,8 +338,20 @@ if [ "$VARIANT" = full ] && [ -n "$PLACEBO_SO" ]; then
     done
     collect libmujs.so /usr/lib
     echo "  ✓ 小库（跨版本不可替换）: $PLACEBO_SO（含 shader 栈）+ libmujs.so"
+elif [ "$VARIANT" = full ]; then
+    echo "  ⚠ libmpv 未链接 libplacebo？（预期必有）" >&2
 else
-    echo "  · standard：libplacebo / libmujs 由系统提供（跨版本不兼容 → 缺了会明确报错）"
+    echo "  · standard：libplacebo / libmujs / 完整依赖清单见 lib/vsr-player/deps.manifest"
+fi
+
+# 4b3. libsndio: pulled in by mpv's sndio AO. Its SONAME went .so.7 -> .so.9
+# on 2026-11-21 and made every installed package fail at the dynamic loader.
+# full carries it; standard declares it in deps.manifest and refuses to start
+# when the system no longer provides it.
+SNDIO_SO="$(needed_of "$LIB/libmpv.so.2" | grep -E '^libsndio\.so\.[0-9]+$' | head -1)"
+if [ "$VARIANT" = full ] && [ -n "$SNDIO_SO" ]; then
+    collect "$SNDIO_SO" /usr/lib >/dev/null
+    echo "  ✓ $SNDIO_SO（音频后端，SONAME 易变）"
 fi
 
 # 4c. full 变体：最小 Qt（镜像发行版布局，插件自带相对 RUNPATH 才能解析）
@@ -600,6 +619,44 @@ PYEOF
 cp scripts/install.sh "$STAGE/install.sh" && chmod +x "$STAGE/install.sh"
 # 缺 soname 的兼容兜底（install.sh 的 [6/6] 会在系统 ffmpeg/CUDA 大版本升级后调用它）
 cp scripts/soname-compat.sh "$STAGE/soname-compat.sh" && chmod +x "$STAGE/soname-compat.sh"
+
+# ── 依赖清单（standard 的"不符合就不能用"契约）──────────────────────
+# 一行一个 soname（不在包内的）：<soname> <needed-by,...> <构建机路径>。
+# install.sh 用它把"缺哪个库、谁需要它"讲清楚（否则用户只会看到加载器的
+# "cannot open shared object file"）；COMPONENTS.md 是给人读的版本，这里是机器可
+# 读的同一份事实。full 变体同样生成，但绝大多数条目会被"包内自带"过滤掉。
+gen_deps_manifest() {
+    local out="$LIB/deps.manifest" b name dep base son p k
+    declare -A need=() path_of=()
+    # Build-machine soname -> real path (ldconfig cache), so the manifest records
+    # /usr/lib/libfoo.so.N rather than a path relative to the build directory.
+    while IFS=$'\t' read -r son p; do
+        [ -n "$son" ] && [ -n "$p" ] && path_of["$son"]="$p"
+    # Skip /usr/lib32 entries: the manifest documents the 64-bit requirement.
+    done < <(ldconfig -p 2>/dev/null | awk '/=>/ && $NF !~ /lib32/{print $1"\t"$NF}')
+    for b in "$STAGE/vsr-player" "$STAGE/mpv-vsr" "$LIB/libmpv.so.2"; do
+        [ -f "$b" ] || continue
+        name="$(basename "$b")"
+        while read -r dep; do
+            [ -n "$dep" ] || continue
+            base="$(basename "$dep")"
+            [ -e "$LIB/$base" ] && continue            # bundled
+            [ -e "$STAGE/lib/$base" ] && continue      # bundled (Qt layout)
+            need["$base"]+=" $name"
+        done < <(needed_of "$b")
+    done
+    {
+        echo "# vsr-player deps manifest (variant=$VARIANT, fruc_backend=$FRUC_BACKEND)"
+        echo "# format: <soname> <needed-by,...> <build-machine path>"
+        echo "# standard: every entry must resolve on the target system, otherwise install.sh fails."
+        for son in $(printf '%s\n' "${!need[@]}" | sort); do
+            k="$(printf '%s\n' ${need[$son]} | sort -u | tr '\n' ',' | sed 's/,$//')"
+            echo "$son $k ${path_of[$son]:-unknown}"
+        done
+    } > "$out"
+    echo "  ✓ 依赖清单: $(grep -vc '^#' "$out") 项 → lib/vsr-player/deps.manifest"
+}
+gen_deps_manifest
 
 # 组件版本表（发版必备：full 列自带清单，standard 列系统要求）
 bash scripts/gen-components.sh "$STAGE" "$VARIANT"

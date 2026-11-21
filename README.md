@@ -44,6 +44,17 @@ be billed ×2/×3/×4.
 
 ## What's new
 
+**0.7.2**
+
+- **Fixed: the player would not start after a system update** — sndio 1.11.0 renamed its
+  library (`libsndio.so.7` → `libsndio.so.9`), so the dynamic loader aborted before the
+  player could run. The `full` package now carries `libsndio`.
+- **Clearer dependency failures** — alongside the existing `COMPONENTS.md` table, the
+  package now ships `lib/vsr-player/deps.manifest` (one line per required SONAME, which
+  binary needs it, and the build-machine path). `install.sh` verifies it and lists *every*
+  missing entry with its owner, instead of the previous five raw loader lines whose text
+  only mentioned FFmpeg/CUDA/Qt.
+
 **0.7.1**
 
 - **Fixed: picture freezes on the first fullscreen switch** — video and audio keep
@@ -98,9 +109,11 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ./scripts/build-from-source.sh
 ```
 
-**Prebuilt tarball** — `standard` is a **thin ~7 MB package**: it ships the players, libmpv
-and the Wayland helper modules; FFmpeg, the media stack, CUDA and **Qt ≥ 6.12** come from
-your system (VFX is downloaded at install time):
+**Prebuilt tarball** — `standard` is a **thin package (~13 MB)**: it ships the players,
+libmpv, the two Wayland helper modules, the two patched Qt libraries and a machine-readable
+dependency manifest. FFmpeg, the media stack, CUDA, libplacebo and **Qt ≥ 6.12** come from
+your system (VFX is downloaded at install time), and `install.sh` refuses to install when
+the system cannot satisfy a manifest entry — naming the missing library and what needs it:
 
 ```bash
 tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
