@@ -33,6 +33,11 @@ demux → decode → [deint] → [hwup] → [eye] → [rot]
 
 ## 最近新增
 
+**0.7.2**
+
+- **修复：系统更新后播放器无法启动** —— sndio 1.11.0 把库名从 `libsndio.so.7` 改成 `libsndio.so.9`，动态加载器在进入程序前就中止。`full` 包现在自带 `libsndio`。
+- **依赖缺失的报错更清楚** —— 在既有的 `COMPONENTS.md` 版本表之外，包内新增 `lib/vsr-player/deps.manifest`（每个必需 SONAME 一行，含哪个二进制需要它、构建机路径）。`install.sh` 逐项校验，并把**所有**缺失项连同归属一起列出；旧版只打前 5 行原始加载器输出，文案也只提 FFmpeg/CUDA/Qt。
+
 **0.7.1**
 
 - **修复：首次切全屏后画面定格** —— 视频和音频照常走，画面却不再刷新，直到缩放窗口或退出全屏。原因是 Qt 6.12.0 在 Vulkan + Wayland 下的一处缺陷（上游 QTBUG-151831，6.12.1 修复）；本包随附修好的 Qt 库，只在你的系统 Qt 需要时才启用。
@@ -72,7 +77,7 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ./scripts/build-from-source.sh
 ```
 
-**预编译包** —— `standard` 是**约 7 MB 的薄包**：只带播放器本体、libmpv 与两个 Wayland 辅助模块；FFmpeg、光盘媒体栈、CUDA 与 **Qt ≥ 6.12** 全部来自系统（VFX 运行时在安装时下载）：
+**预编译包** —— `standard` 是**薄包（约 13 MB）**：带播放器本体、libmpv、两个 Wayland 辅助模块、两个修补过的 Qt 库，以及机器可读的依赖清单；FFmpeg、光盘媒体栈、CUDA、libplacebo 与 **Qt ≥ 6.12** 全部来自系统（VFX 运行时在安装时下载）。系统满足不了清单时 `install.sh` 会直接失败，并指出缺哪个库、谁需要它：
 
 ```bash
 tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz

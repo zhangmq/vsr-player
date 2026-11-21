@@ -23,6 +23,17 @@ shared with mpv.
 
 ## Recent additions
 
+### 0.7.2
+
+- **Fixed: the player would not start after a system update** — sndio 1.11.0 renamed its
+  library (`libsndio.so.7` → `libsndio.so.9`), so the dynamic loader aborted before the
+  player could run. The `full` package now carries `libsndio`.
+- **Clearer dependency failures** — in addition to the existing `COMPONENTS.md` version
+  table, the package ships `lib/vsr-player/deps.manifest` (one line per required SONAME,
+  which binary needs it, and the build-machine path). `install.sh` verifies it and lists
+  *every* missing entry with its owner, instead of the previous five raw loader lines whose
+  text only mentioned FFmpeg/CUDA/Qt.
+
 ### 0.7.1
 
 - **Fixed: the picture freezes on the first fullscreen switch** — video and audio keep
@@ -90,8 +101,10 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ./scripts/build-from-source.sh
 ```
 
-**Prebuilt tarball** — `standard` is a thin ~7 MB package; FFmpeg, the media stack, CUDA and
-Qt ≥ 6.12 come from the system, VFX is fetched at install time:
+**Prebuilt tarball** — `standard` is a thin package: it ships the players, libmpv, the
+Wayland helper modules, the patched Qt libraries and a dependency manifest; FFmpeg, the
+media stack, CUDA, libplacebo and Qt ≥ 6.12 come from the system, VFX is fetched at install
+time:
 
 ```bash
 tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
