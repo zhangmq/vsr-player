@@ -942,8 +942,16 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             if (vm) {
                 const QStringList names = vm->playlistDisplayNames();
                 out += "-- model.display --\n";
-                for (int i = 0; i < names.size(); i++)
-                    out += std::to_string(i) + ": '" + names[i].toStdString() + "'\n";
+                for (int i = 0; i < names.size(); i++) {
+                    // 失败标记（mpv end-file 错误码）也打出来：测试/排障用，
+                    // 面板上对应的文案是 "（无法播放）" / "（空文件夹）"。
+                    const auto idx = vm->playlistModel()->index(i, 0);
+                    const int err = vm->playlistModel()->data(idx, PlaylistModel::ErrorCodeRole).toInt();
+                    const bool isDir = vm->playlistModel()->data(idx, PlaylistModel::IsFolderRole).toBool();
+                    out += std::to_string(i) + ": '" + names[i].toStdString() + "'";
+                    if (err) out += " [error=" + std::to_string(err) + (isDir ? " folder]" : "]");
+                    out += "\n";
+                }
             }
             response = formatResponse("success", "\"" + jsonEscape(out) + "\"");
         }

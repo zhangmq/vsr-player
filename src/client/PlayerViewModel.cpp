@@ -322,6 +322,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
     mpv_->observeProperty("playlist", MPV_FORMAT_NODE, [this, post] {
         QStringList files;
         QStringList titles;
+        QVector<qint64> ids;
         int cur = -1;
         mpv_node node;
         if (mpv_get_property(mpv_->handle(), "playlist", MPV_FORMAT_NODE,
@@ -332,6 +333,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
                     if (entry->format != MPV_FORMAT_NODE_MAP)
                         continue;
                     QString fn, ti;
+                    int64_t eid = 0;
                     for (int j = 0; j < entry->u.list->num; j++) {
                         const char *k = entry->u.list->keys[j];
                         mpv_node *v = &entry->u.list->values[j];
@@ -339,10 +341,13 @@ void PlayerViewModel::attach(MpvController *mpv) {
                             fn = v->u.string;
                         else if (!strcmp(k, "title") && v->format == MPV_FORMAT_STRING)
                             ti = v->u.string;
+                        else if (!strcmp(k, "id") && v->format == MPV_FORMAT_INT64)
+                            eid = v->u.int64;
                         else if (!strcmp(k, "current") && v->format == MPV_FORMAT_FLAG
                                  && v->u.flag)
                             cur = i;
                     }
+                    ids.append(eid);
                     files.append(fn);
                     titles.append(ti);
                 }
@@ -352,7 +357,7 @@ void PlayerViewModel::attach(MpvController *mpv) {
         // 全量快照 → PlaylistModel 前缀 diff 增量生效（切歌只刷
         // current 行高亮，不重建列表——QStringList 属性全量 reset
         // 是大列表卡顿主因）
-        post([this, files, titles, cur] {
+        post([this, files, titles, ids, cur] {
             // 缓存的 current 索引（= mpv playlist-pos，-1 = 无当前条目）。
             // "移除当前条目"用它，避免在 GUI 线程同步读 playlist-pos
             //（同 path 观察器注释：同步 mpv API 会和 DR 帧分配互锁）。
@@ -383,7 +388,19 @@ void PlayerViewModel::attach(MpvController *mpv) {
             int shown = cur;
             if (shown < 0 && idlePlayIndex_ >= 0 && idlePlayIndex_ < files.size())
                 shown = idlePlayIndex_;
-            playlistModel_.setSnapshot(files, shown, titles);
+            // entry id → 路径（end-file 只给 id；文案要判断"是不是目录"）
+            entryPathById_.clear();
+            for (int i = 0; i < ids.size() && i < files.size(); i++)
+                entryPathById_.insert(ids[i], files[i]);
+            // 失败标记按路径保存；列表里已消失的路径一并丢弃（不残留）
+            for (auto it = entryErrors_.begin(); it != entryErrors_.end(); ) {
+                if (!files.contains(it.key())) it = entryErrors_.erase(it);
+                else ++it;
+            }
+            QVector<int> errs(files.size(), 0);
+            for (int i = 0; i < files.size(); i++)
+                errs[i] = entryErrors_.value(files[i], 0);
+            playlistModel_.setSnapshot(files, shown, titles, errs);
             // 持久化上次播放列表：写**m3u8 快照**（带 #EXTINF 标题），恢复时
             // 交给 mpv 的 `loadlist` —— 条目名由 demux_playlist 解析出来，
             // 客户端不再自己维护"路径→名字"表（蓝光 title 因此天然保留）。
@@ -1289,12 +1306,14 @@ void PlayerViewModel::togglePlayPause() {
 }
 
 void PlayerViewModel::setFileLoaded(bool v) {
+    // 载入成功 = 进入 playing。必须放在**去重之前**：切歌时 fileLoaded_ 一直是
+    // true，去重会提前 return，于是上一条失败留下的 phase=3 永远清不掉
+    //（"无法播放"卡片不消失的根因）。
+    if (v && mediaPhase_ != 2)
+        setMediaPhase(2);
     if (fileLoaded_ == v) return;
     fileLoaded_ = v;
     emit hasMediaChanged();
-    // 载入成功 = 进入 playing（失败态由 END_FILE(ERROR) 写成 3，别在这里覆盖）
-    if (v && mediaPhase_ != 2)
-        setMediaPhase(2);
 }
 
 void PlayerViewModel::stop() {
@@ -1891,6 +1910,10 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
     if (!mpv_ || pathsIn.isEmpty()) return;
     QStringList paths;
     for (const QString &p : pathsIn) paths.append(toLocalPath(p));
+    // 重新打开这些路径 = 重新尝试；此前的失败标记随之作废（mpv 会重新探测）。
+    bool cleared = false;
+    for (const QString &p : paths) cleared |= entryErrors_.remove(p);
+    if (cleared) refreshPlaylistErrors();
     if (mode == 2) {   // 加载字幕
         for (const QString &p : paths) {
             mpv_->commandAsync({"sub-add", p.toUtf8().constData(), "select", nullptr});
@@ -2423,6 +2446,11 @@ void PlayerViewModel::playlistClear() {
     // 真正清空 + 停止（idle）；配合"列表变空 → 忘掉 lastPath_"避免点播放复活。
     mpv_->commandAsync({"playlist-clear", nullptr});
     mpv_->commandAsync({"playlist-remove", "0", nullptr});
+    // 列表清空 → 失败标记一并作废（条目已不存在）
+    if (!entryErrors_.isEmpty()) {
+        entryErrors_.clear();
+        refreshPlaylistErrors();
+    }
 }
 
 void PlayerViewModel::screenshot() {
@@ -3002,6 +3030,9 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
         pendingSubs_.clear();
         if (!p.empty())
             lastPath_ = QString::fromStdString(p);
+        // 这次载入成功 → 该条目先前的失败标记作废（mpv 的状态变了）
+        if (!lastPath_.isEmpty() && entryErrors_.remove(lastPath_))
+            refreshPlaylistErrors();
         // 每次加载完成重新同步 playing = !pause。path 在曲目切换时
         // 会临时清空（误触发 updatePlaying(false)），而 pause 值未变
         // 时 mpv 不通知——此回调保证 UI 状态必然收敛到真实值。
@@ -3289,21 +3320,17 @@ QImage PlayerViewModel::previewImage() const {
 // ── 播放阶段（用户 2026-11-15）────────────────────────────────────
 // 只服务 UI 的空状态区：opening = "正在打开…"、failed = "无法播放"。
 // 事件（FILE_LOADED / END_FILE）都在观察器/事件线程里，写入一律排队到 GUI 线程。
-void PlayerViewModel::setMediaPhase(int phase, const QString &detail) {
-    if (mediaPhase_ == phase && mediaPhaseDetail_ == detail)
+void PlayerViewModel::setMediaPhase(int phase, const QString &detail,
+                                    bool isFolder) {
+    if (mediaPhase_ == phase && mediaPhaseDetail_ == detail &&
+        mediaPhaseIsFolder_ == isFolder)
         return;
     mediaPhase_ = phase;
     mediaPhaseDetail_ = detail;
+    mediaPhaseIsFolder_ = isFolder;
     emit mediaPhaseChanged();
 }
 
-void PlayerViewModel::noteFileLoaded() {
-    // 每个文件载入完成都置 playing（`setFileLoaded` 有去重，切文件时不会触发）。
-    // 但**没有活动文件**时的事件要忽略：启动恢复列表（loadlist … append）
-    // 也会来 FILE_LOADED，那时应该保持 idle 引导（实测否则会显示成播放态）。
-    if (!fileLoaded_) return;
-    setMediaPhase(2);
-}
 
 bool PlayerViewModel::canRetryOpen() const {
     return mediaPhase_ == 3 && pendingOpenIsNetwork_ && !pendingOpenPath_.isEmpty();
@@ -3348,15 +3375,54 @@ void PlayerViewModel::logEndFile(int reason, int error) {
     mpv_free(path);
 }
 
-void PlayerViewModel::noteLoadFailed() {
-    // 已经在 failed 就不重复（mpv 可能连发多个错误）。
-    if (mediaPhase_ == 3) return;
-    const QString why = pendingOpenIsNetwork_
-        ? tr("Could not open the stream") : tr("Could not open the file");
-    setMediaPhase(3, why);
-    // 失败时把画面置黑：否则错误卡片后面还停在上一段的最后一帧，
-    // 看起来像"还在播"（与 clear/stop 同一条置黑路径）。
-    emit playlistEmptied();
+QString PlayerViewModel::loadErrorText(int code) const {
+    // mpv 的错误码是"事实"，但显示文本必须是我们自己的（要进 i18n）。
+    // 只覆盖载入阶段实际可能出现的码；其余归到通用文案。
+    switch (code) {
+    case MPV_ERROR_UNKNOWN_FORMAT:    return tr("Unrecognized format");
+    case MPV_ERROR_NOTHING_TO_PLAY:   return tr("Nothing to play");
+    case MPV_ERROR_LOADING_FAILED:    return tr("Could not load the file");
+    case MPV_ERROR_UNSUPPORTED:       return tr("Not supported");
+    case MPV_ERROR_AO_INIT_FAILED:    return tr("Audio output failed to start");
+    case MPV_ERROR_VO_INIT_FAILED:    return tr("Video output failed to start");
+    case MPV_ERROR_INVALID_PARAMETER: return tr("Invalid request");
+    case MPV_ERROR_NOT_IMPLEMENTED:   return tr("Not implemented");
+    case MPV_ERROR_NOMEM:             return tr("Out of memory");
+    default:
+        return pendingOpenIsNetwork_ ? tr("Could not open the stream")
+                                     : tr("Could not open the file");
+    }
+}
+
+void PlayerViewModel::noteLoadFailed(qint64 entryId, int error) {
+    // mpv 的事实：这个条目载入失败（end-file reason=error，错误码见 error）。
+    // 客户端只做两件事——把错误码挂到该条目上；单条目时把它显示出来。
+    const QString path = entryPathById_.value(entryId);
+    const bool isDir = !path.isEmpty() && QFileInfo(path).isDir();
+    if (!path.isEmpty())
+        entryErrors_.insert(path, error);
+
+    // 单条目（打开单个文件/文件夹，没有列表可参考）→ 才弹错误卡。
+    // 多条目时 mpv 会继续；是否停下由 mpv 自己决定（全失败时它会 idle），
+    // 我们只在列表里给该条目打标，不打断播放。
+    if (playlistCount_ <= 1) {
+        // 目录 + "无法识别格式" = 空文件夹：文案用它自己的说法，
+        // 而不是把 mpv 的 "unrecognized file format" 当成播放错误展示。
+        const bool emptyFolder = isDir && error == MPV_ERROR_UNKNOWN_FORMAT;
+        setMediaPhase(3, emptyFolder ? QString() : loadErrorText(error),
+                      emptyFolder);
+        // 失败时把画面置黑：否则错误卡片后面还停在上一段的最后一帧。
+        emit playlistEmptied();
+    } else {
+        refreshPlaylistErrors();
+    }
+}
+
+void PlayerViewModel::refreshPlaylistErrors() {
+    QVector<int> errs(playlistModel_.count(), 0);
+    for (int i = 0; i < playlistModel_.count(); i++)
+        errs[i] = entryErrors_.value(playlistModel_.pathAt(i), 0);
+    playlistModel_.setErrors(errs);
 }
 
 bool PlayerViewModel::previewUnavailable() const {

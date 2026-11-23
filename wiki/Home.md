@@ -23,6 +23,17 @@ shared with mpv.
 
 ## Recent additions
 
+### 0.7.3
+
+- **Fixed: the "cannot play" card stayed on screen after the playlist moved on** — an
+  empty folder or an unreadable file set a sticky failure state, and the handler that
+  should have cleared it sat behind an unreachable duplicate branch. Any successful load
+  now clears it.
+- **Playlist failures no longer interrupt playback** — entries mpv could not open are
+  marked in the list (`(unplayable)` / `(empty folder)`, dimmed); mpv decides whether to
+  continue. The card appears only when the failed item is the sole entry, and its text is
+  our own translation of the mpv error code instead of mpv's English string.
+
 ### 0.7.2
 
 - **Fixed: the player would not start after a system update** — sndio 1.11.0 renamed its
