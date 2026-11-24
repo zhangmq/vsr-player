@@ -62,6 +62,9 @@ Item {
                         color: "#e0e0e0"
                         font.family: iconFont
                         font.pixelSize: 26
+                        // 固定宽度：两个字形推进宽度不一定相同，否则整行会左右跳
+                        width: 28
+                        horizontalAlignment: Text.AlignHCenter
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Rectangle {
@@ -82,6 +85,10 @@ Item {
                         text: Math.round(root.volume * 100) + "%"
                         color: "#e0e0e0"
                         font.pixelSize: 13
+                        // 固定宽度 + 右对齐："5%" → "100%" 时 Row 宽度不变，
+                        // 图标与进度条不会跟着百分比位数左右移动（用户 2026-11-24 报）。
+                        width: 40
+                        horizontalAlignment: Text.AlignRight
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }
