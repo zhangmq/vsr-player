@@ -1071,6 +1071,12 @@ int main(int argc, char *argv[]) {
             loadMedia();
         }
 
+        // 音量只在"交互结束/退出"落盘（滑杆 live 拖动期间写配置会让
+        // QSettings 重写整个文件，卡顿；见 PlayerViewModel::setVolume）。
+        QObject::connect(&app, &QCoreApplication::aboutToQuit, &viewModel, [&viewModel] {
+            viewModel.persistVolume();
+            viewModel.persistUpHdrParams();
+        });
         app.exec();
 
         // 保存最后文件进度：mpv_terminate_destroy 不写 watch-later，

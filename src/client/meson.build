@@ -203,6 +203,23 @@ mpv_dep = declare_dependency(
     link_args: ['-L' + mpv_build_dir, '-lmpv', '-Wl,-rpath,' + mpv_rpath],
 )
 
+# Dev builds only: load the patched Qt 6.12.0 libraries from build/qt-fix when
+# they exist, so `build/src/client/vsr-player` runs the same Qt as the released
+# package (QTBUG-151831 fullscreen stall / QTBUG-150279 close deadlock).
+# Without this the dev binary silently uses the system Qt and reproduces the
+# very defect the release fixes -- easy to misread as a regression.
+# Release builds do not use this path: build_release.sh installs the same two
+# libraries next to the binary and they are found via $ORIGIN/../lib/vsr-player.
+dev_qt_fix_args = []
+if get_option('dist-rpath') == ''
+    foreach d : ['build/qt-fix', 'build/qt-fix/lib']
+        dir = meson.project_source_root() / d
+        if _fs.is_dir(dir)
+            dev_qt_fix_args += '-Wl,-rpath,' + dir
+        endif
+    endforeach
+endif
+
 # ── MOC ────────────────────────────────────────────────────────────────
 processed = qt6.preprocess(
     moc_headers: ['Video.h', 'PlayerViewModel.h', 'PlaylistModel.h', 'StereoController.h',
@@ -236,5 +253,6 @@ executable('vsr-player',
         '../../third_party/mpv/include',
     ),
     cpp_args: ['-std=c++20', '-g', '-O0', '-fPIC'] + _qt6_priv_inc,
+    link_args: dev_qt_fix_args,
     install: false,
 )

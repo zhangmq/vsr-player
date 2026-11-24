@@ -11,6 +11,9 @@ PopupBase {
 
     width: 48; padding: 12
     onOpened: { volSlider.value = root.volume * 100 }
+    // 拖动过程中不落盘（每次移动写配置会让 QSettings 重写整个文件 → 卡顿）；
+    // 松手/关闭弹窗时才保存。
+    onClosed: viewModel.persistVolume()
 
     Column {
         spacing: 8; anchors.horizontalCenter: parent.horizontalCenter
@@ -21,6 +24,7 @@ PopupBase {
             orientation: Qt.Vertical; height: 120
             from: 0; to: 100; live: true
             onMoved: root.volAdjusted(value / 100.0)
+            onPressedChanged: if (!pressed) viewModel.persistVolume()
             handle: Rectangle { implicitWidth: 14; implicitHeight: 14; radius: 7; color: "#ffffff"
                 x: parent.leftPadding + parent.availableWidth / 2 - width / 2
                 y: parent.topPadding + parent.visualPosition * (parent.availableHeight - height) }

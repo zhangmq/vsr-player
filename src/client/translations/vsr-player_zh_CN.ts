@@ -504,114 +504,114 @@
 <context>
     <name>PlayerViewModel</name>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3117"/>
-        <location filename="../PlayerViewModel.cpp" line="3125"/>
+        <location filename="../PlayerViewModel.cpp" line="3251"/>
+        <location filename="../PlayerViewModel.cpp" line="3259"/>
         <source>Source</source>
         <translation>源</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3151"/>
+        <location filename="../PlayerViewModel.cpp" line="3285"/>
         <source>Output</source>
         <translation>输出</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3158"/>
+        <location filename="../PlayerViewModel.cpp" line="3292"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3186"/>
+        <location filename="../PlayerViewModel.cpp" line="3320"/>
         <source>VSR</source>
         <translation>超分</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3211"/>
+        <location filename="../PlayerViewModel.cpp" line="3345"/>
         <source>FRUC</source>
         <translation>插帧</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3230"/>
-        <location filename="../PlayerViewModel.cpp" line="3235"/>
+        <location filename="../PlayerViewModel.cpp" line="3364"/>
+        <location filename="../PlayerViewModel.cpp" line="3369"/>
         <source>Decoder</source>
         <translation>解码器</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3240"/>
+        <location filename="../PlayerViewModel.cpp" line="3374"/>
         <source>Speed</source>
         <translation>速度</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3242"/>
+        <location filename="../PlayerViewModel.cpp" line="3376"/>
         <source>Time</source>
         <translation>时间</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3246"/>
+        <location filename="../PlayerViewModel.cpp" line="3380"/>
         <source>Frames</source>
         <translation>帧数</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3250"/>
+        <location filename="../PlayerViewModel.cpp" line="3384"/>
         <source>GPU</source>
         <translation>显卡</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3253"/>
+        <location filename="../PlayerViewModel.cpp" line="3387"/>
         <source>Audio</source>
         <translation>音频</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3382"/>
+        <location filename="../PlayerViewModel.cpp" line="3516"/>
         <source>Unrecognized format</source>
         <translation>无法识别的格式</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3383"/>
+        <location filename="../PlayerViewModel.cpp" line="3517"/>
         <source>Nothing to play</source>
         <translation>没有可播放的内容</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3384"/>
+        <location filename="../PlayerViewModel.cpp" line="3518"/>
         <source>Could not load the file</source>
         <translation>无法载入文件</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3385"/>
+        <location filename="../PlayerViewModel.cpp" line="3519"/>
         <source>Not supported</source>
         <translation>不支持此格式</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3386"/>
+        <location filename="../PlayerViewModel.cpp" line="3520"/>
         <source>Audio output failed to start</source>
         <translation>音频输出初始化失败</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3387"/>
+        <location filename="../PlayerViewModel.cpp" line="3521"/>
         <source>Video output failed to start</source>
         <translation>视频输出初始化失败</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3388"/>
+        <location filename="../PlayerViewModel.cpp" line="3522"/>
         <source>Invalid request</source>
         <translation>无效的请求</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3389"/>
+        <location filename="../PlayerViewModel.cpp" line="3523"/>
         <source>Not implemented</source>
         <translation>尚未实现</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3390"/>
+        <location filename="../PlayerViewModel.cpp" line="3524"/>
         <source>Out of memory</source>
         <translation>内存不足</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3392"/>
+        <location filename="../PlayerViewModel.cpp" line="3526"/>
         <source>Could not open the stream</source>
         <translation>无法打开串流</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3393"/>
+        <location filename="../PlayerViewModel.cpp" line="3527"/>
         <source>Could not open the file</source>
         <translation>无法打开文件</translation>
     </message>
@@ -999,47 +999,47 @@
 <context>
     <name>TrueHdrAdvancedPopup</name>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="54"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="57"/>
         <source>SDR → HDR10</source>
         <translation>SDR → HDR10</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="63"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="66"/>
         <source>Target peak (Luminance)</source>
         <translation>目标峰值（亮度）</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="68"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="71"/>
         <source>Auto</source>
         <translation>自动</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="69"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="72"/>
         <source>Manual</source>
         <translation>手动</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="79"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="82"/>
         <source> nit</source>
         <translation> nit</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="91"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="94"/>
         <source>Saturation</source>
         <translation>饱和度</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="100"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="103"/>
         <source>Contrast</source>
         <translation>对比度</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="109"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="112"/>
         <source>Middle gray</source>
         <translation>中灰</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="122"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="125"/>
         <source>Debanding</source>
         <translation>抗色带</translation>
     </message>
@@ -1065,12 +1065,12 @@
 <context>
     <name>VolumePopup</name>
     <message>
-        <location filename="../ui/VolumePopup.qml" line="37"/>
+        <location filename="../ui/VolumePopup.qml" line="41"/>
         <source>Unmute</source>
         <translation>取消静音</translation>
     </message>
     <message>
-        <location filename="../ui/VolumePopup.qml" line="37"/>
+        <location filename="../ui/VolumePopup.qml" line="41"/>
         <source>Mute</source>
         <translation>静音</translation>
     </message>

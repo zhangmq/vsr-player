@@ -357,6 +357,12 @@ public:
     /// 播放列表选取同路径）：有记忆恢复，无记忆走自动字幕策略
     ///（autoSelectSubtitle，2026-08-06）。
     void saveTrackMemory();
+    /// 轨道记忆搬到独立 JSON（~/.config/vsr-player/track-memory.json）：
+    /// 它曾经作为 QSettings 的一个 1.2 MB 键存在，导致任何一次配置写入都要
+    /// 重写 1.5 MB 文件（实测 19 ms/次，卡顿根因）。
+    void loadTrackMemory();
+    void writeTrackMemory();
+    QString trackMemoryPath() const;
     void restoreTrackMemory(const QString &path);
     void setFullscreen(bool fs);   // Q_PROPERTY WRITE（QML 窗口同步回写）
     /// mpv 报告 seek 失败（"Cannot seek ..."）→ 事件线程调用，转主线程标记直播。
@@ -481,6 +487,11 @@ public:
     bool mediaPhaseIsFolder() const { return mediaPhaseIsFolder_; }
     /// 重新打开上一次失败的目标（仅网络源；本地不提供重试）。
     Q_INVOKABLE void retryOpen();
+    /// 把当前音量写进配置（**只在交互结束/退出时调用**：每次滑杆移动都写会
+    /// 触发 QSettings 全文件重写，见 setVolume 注释）。
+    Q_INVOKABLE void persistVolume();
+    /// TrueHDR 的 4 个滑块同理：拖动期间只下发 vf-command，收起弹窗/退出时落盘。
+    Q_INVOKABLE void persistUpHdrParams();
     /// END_FILE(reason=ERROR)：进入 failed 阶段（事件线程排队调用）。
     /// mpv 报某条目载入失败（事件线程调用，GUI 线程落状态）。
     /// entryId = mpv playlist entry id；error = mpv end-file 错误码。
@@ -768,7 +779,6 @@ private:
     //    （实测卡死））────────────────────────────────────────────
     void updatePlaying(bool p);
     void updateTime(int64_t t, int64_t d);
-    void updateVolume(double v);
     void updateSpeed(double s);
     void updateHwDecoding(bool hw, bool announce = true);
     /// 由 hwdec-current / 解码器 / video-params 观察器与 FILE_LOADED 调用：
@@ -883,6 +893,7 @@ private:
     /// -1 = 无待补发请求。
     qint64 pendingPreviewMs_ = -1;
     bool startPaused_ = false;   ///< `--pause=yes` 启动：打开源后保持暂停
+    void applyObservedVolume(double v);
     void setMediaPhase(int phase, const QString &detail = QString(),
                        bool isFolder = false);
     /// mpv 错误码 → 本地化文案。**不要**直接显示 mpv_error_string()：
@@ -907,7 +918,13 @@ private:
     QString decoderName_;                 // 实际解码器（软解 libdav1d 等 / 硬解 codec 名）
     QString hwdecName_;                   // hwdec-current 原值（nvdec-copy/nvdec/no）
     bool overlaysVisible_ = true;
-    double volume_ = 1.0;    // 初始与持久化默认一致（0.65 从未生效——观察器首轮回填覆盖）
+    /// **UI 显示值 = mpv 观察到的音量**（唯一写入者是 volume 属性的观察器）。
+    /// 用户操作只改 requestedVolume_ 并下发命令，不直接改它——否则"乐观更新"
+    /// 与异步回写会互相覆盖（按住方向键时 OSD 会来回跳）。
+    double volume_ = 1.0;
+    /// 下发给 mpv 的目标音量：连续按键/拖动时以它为基准累加，避免"观察值还没
+    /// 回来就把同一步重复发一遍"导致丢步。**不参与显示**。
+    double requestedVolume_ = 1.0;
     double savedVolume_ = 0.5;   // 静音前音量（toggle mute 恢复用；未静音过则 0.5）
     std::atomic<double> speed_{1.0};
     void applyAspect();                          // 按 2D/3D 语义下发比例
@@ -1064,6 +1081,9 @@ private:
     // ── 持久化（QSettings 原生格式 → ~/.config/vsr-player/vsr-player.conf）─
     // 主线程专用（setter/观察器 post 均主线程）。benchmark 不调用 loadSettings。
     QSettings settings_{QStringLiteral("vsr-player"), QStringLiteral("vsr-player")};
+    QVariantMap trackMem_;        ///< path → 轨道记忆（独立 JSON，见 loadTrackMemory）
+    QStringList trackMemOrder_;   ///< LRU 顺序（头部 = 最近使用）
+    bool trackMemLoaded_ = false;
     bool settingsEnabled_ = false;   // loadSettings 调用后才允许写（benchmark 恒 false）
     QVariantList trackList_;      // track-list 观察器填充（Task 3）
     QStringList pendingSubs_;     // 刚 sub-add 未回写 trackList_ 的路径（保存合并用）
