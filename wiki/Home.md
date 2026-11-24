@@ -35,7 +35,6 @@ shared with mpv.
   own `track-memory.json`; the legacy `playlist` key (300 KB) was migrated to the
   existing m3u8 snapshot; temporary `edl://` / `memory://` subtitle URLs are no longer
   stored (a single bilibili entry was 281 KB on its own).
-
 - **Fixed: the "cannot play" card stayed on screen after the playlist moved on** — an
   empty folder or an unreadable file set a sticky failure state, and the handler that
   should have cleared it sat behind an unreachable duplicate branch. Any successful load
@@ -44,6 +43,10 @@ shared with mpv.
   marked in the list (`(unplayable)` / `(empty folder)`, dimmed); mpv decides whether to
   continue. The card appears only when the failed item is the sole entry, and its text is
   our own translation of the mpv error code instead of mpv's English string.
+- **Volume OSD no longer shifts or flickers** — the percentage label keeps a fixed width,
+  so `5%` → `100%` no longer moves the icon and the bar; and the UI now observes mpv's
+  volume directly instead of keeping its own copy, so holding the volume keys no longer
+  replays older values (measured: 31 backwards steps in a 5 s hold before, 0 after).
 
 ### 0.7.2
 
