@@ -562,114 +562,114 @@
         <translation>120 fps</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3117"/>
-        <location filename="../PlayerViewModel.cpp" line="3125"/>
+        <location filename="../PlayerViewModel.cpp" line="3234"/>
+        <location filename="../PlayerViewModel.cpp" line="3242"/>
         <source>Source</source>
         <translation>Source</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3151"/>
+        <location filename="../PlayerViewModel.cpp" line="3268"/>
         <source>Output</source>
         <translation>Output</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3158"/>
+        <location filename="../PlayerViewModel.cpp" line="3275"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3186"/>
+        <location filename="../PlayerViewModel.cpp" line="3303"/>
         <source>VSR</source>
         <translation>VSR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3211"/>
+        <location filename="../PlayerViewModel.cpp" line="3328"/>
         <source>FRUC</source>
         <translation>FRUC</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3230"/>
-        <location filename="../PlayerViewModel.cpp" line="3235"/>
+        <location filename="../PlayerViewModel.cpp" line="3347"/>
+        <location filename="../PlayerViewModel.cpp" line="3352"/>
         <source>Decoder</source>
         <translation>Decoder</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3240"/>
+        <location filename="../PlayerViewModel.cpp" line="3357"/>
         <source>Speed</source>
         <translation>Speed</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3242"/>
+        <location filename="../PlayerViewModel.cpp" line="3359"/>
         <source>Time</source>
         <translation>Time</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3246"/>
+        <location filename="../PlayerViewModel.cpp" line="3363"/>
         <source>Frames</source>
         <translation>Frames</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3250"/>
+        <location filename="../PlayerViewModel.cpp" line="3367"/>
         <source>GPU</source>
         <translation>GPU</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3253"/>
+        <location filename="../PlayerViewModel.cpp" line="3370"/>
         <source>Audio</source>
         <translation>Audio</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3382"/>
+        <location filename="../PlayerViewModel.cpp" line="3499"/>
         <source>Unrecognized format</source>
         <translation>Unrecognized format</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3383"/>
+        <location filename="../PlayerViewModel.cpp" line="3500"/>
         <source>Nothing to play</source>
         <translation>Nothing to play</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3384"/>
+        <location filename="../PlayerViewModel.cpp" line="3501"/>
         <source>Could not load the file</source>
         <translation>Could not load the file</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3385"/>
+        <location filename="../PlayerViewModel.cpp" line="3502"/>
         <source>Not supported</source>
         <translation>Not supported</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3386"/>
+        <location filename="../PlayerViewModel.cpp" line="3503"/>
         <source>Audio output failed to start</source>
         <translation>Audio output failed to start</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3387"/>
+        <location filename="../PlayerViewModel.cpp" line="3504"/>
         <source>Video output failed to start</source>
         <translation>Video output failed to start</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3388"/>
+        <location filename="../PlayerViewModel.cpp" line="3505"/>
         <source>Invalid request</source>
         <translation>Invalid request</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3389"/>
+        <location filename="../PlayerViewModel.cpp" line="3506"/>
         <source>Not implemented</source>
         <translation>Not implemented</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3390"/>
+        <location filename="../PlayerViewModel.cpp" line="3507"/>
         <source>Out of memory</source>
         <translation>Out of memory</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3392"/>
+        <location filename="../PlayerViewModel.cpp" line="3509"/>
         <source>Could not open the stream</source>
         <translation>Could not open the stream</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3393"/>
+        <location filename="../PlayerViewModel.cpp" line="3510"/>
         <source>Could not open the file</source>
         <translation>Could not open the file</translation>
     </message>
@@ -999,47 +999,47 @@
 <context>
     <name>TrueHdrAdvancedPopup</name>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="54"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="57"/>
         <source>SDR → HDR10</source>
         <translation>SDR → HDR10</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="63"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="66"/>
         <source>Target peak (Luminance)</source>
         <translation>Target peak (Luminance)</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="68"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="71"/>
         <source>Auto</source>
         <translation>Auto</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="69"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="72"/>
         <source>Manual</source>
         <translation>Manual</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="79"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="82"/>
         <source> nit</source>
         <translation> nit</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="91"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="94"/>
         <source>Saturation</source>
         <translation>Saturation</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="100"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="103"/>
         <source>Contrast</source>
         <translation>Contrast</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="109"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="112"/>
         <source>Middle gray</source>
         <translation>Middle gray</translation>
     </message>
     <message>
-        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="122"/>
+        <location filename="../ui/TrueHdrAdvancedPopup.qml" line="125"/>
         <source>Debanding</source>
         <translation>Debanding</translation>
     </message>
@@ -1065,12 +1065,12 @@
 <context>
     <name>VolumePopup</name>
     <message>
-        <location filename="../ui/VolumePopup.qml" line="37"/>
+        <location filename="../ui/VolumePopup.qml" line="41"/>
         <source>Unmute</source>
         <translation>Unmute</translation>
     </message>
     <message>
-        <location filename="../ui/VolumePopup.qml" line="37"/>
+        <location filename="../ui/VolumePopup.qml" line="41"/>
         <source>Mute</source>
         <translation>Mute</translation>
     </message>

@@ -25,6 +25,17 @@ shared with mpv.
 
 ### 0.7.3
 
+- **Fixed: dragging the volume slider stuttered the video** — the slider saved the
+  setting on every movement, and each settings write rewrites the whole configuration
+  file synchronously on the GUI thread (which is also the render thread): measured
+  19 ms per write with the 1.5 MB file, ~6 ms with the 7 KB one, and now nothing is
+  written while dragging. Volume (and the TrueHDR sliders) persist when the interaction
+  ends.
+- **Configuration file shrank from 1.5 MB to 7 KB** — track memory (1.2 MB) moved to its
+  own `track-memory.json`; the legacy `playlist` key (300 KB) was migrated to the
+  existing m3u8 snapshot; temporary `edl://` / `memory://` subtitle URLs are no longer
+  stored (a single bilibili entry was 281 KB on its own).
+
 - **Fixed: the "cannot play" card stayed on screen after the playlist moved on** — an
   empty folder or an unreadable file set a sticky failure state, and the handler that
   should have cleared it sat behind an unreachable duplicate branch. Any successful load

@@ -18,6 +18,9 @@ PopupBase {
     id: root
     padding: 16
     modal: true
+    // 滑块拖动期间只下发 vf-command（不写配置：每次 sync 约 6 ms，卡画面）；
+    // 收起弹窗时统一落盘。
+    onClosed: viewModel.persistUpHdrParams()
     width: 420
     // modal 居中（显式，Popup 默认 x/y=0 靠左）
     x: parent ? (parent.width - width) / 2 : 0
