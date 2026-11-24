@@ -56,7 +56,6 @@ be billed ×2/×3/×4.
   own `track-memory.json`; the legacy `playlist` key (300 KB) was migrated to the
   existing m3u8 snapshot; temporary `edl://` / `memory://` subtitle URLs are no longer
   stored (a single bilibili entry was 281 KB on its own).
-
 - **Fixed: the "cannot play" card stayed on screen after the playlist moved on** — an
   empty folder or an unreadable file used to set a sticky failure state; the next entry
   could not clear it because the handler that would have done so sat behind an
@@ -66,6 +65,10 @@ be billed ×2/×3/×4.
   to continue. The card is shown only when the failed item is the only entry, and its
   text comes from our own translation of the mpv error code, not from mpv's English
   string.
+- **Volume OSD no longer shifts or flickers** — the percentage label keeps a fixed width,
+  so `5%` → `100%` no longer moves the icon and the bar; and the UI now observes mpv's
+  volume directly instead of keeping its own copy, so holding the volume keys no longer
+  replays older values (measured: 31 backwards steps in a 5 s hold before, 0 after).
 
 **0.7.2**
 
