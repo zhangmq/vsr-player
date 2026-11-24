@@ -915,13 +915,6 @@ int main(int argc, char *argv[]) {
             // 视频重配（解码器软硬切换、像素格式/尺寸变化）→ mpv 用**加载时的
             // vf 选项串**重建用户滤镜链，运行期 vf-command 设的 3D 每眼映射会
             // 丢（实测：3D auto 倍率在软硬解码切换后回到 2D 公式）→ 补推。
-            if (ev->event_id == MPV_EVENT_FILE_LOADED) {
-                // 每个文件载入完成 → 空状态区让位（playing）。切文件时
-                // fileLoaded_ 一直是 true，只能靠事件驱动。
-                QMetaObject::invokeMethod(&viewModel, "noteFileLoaded",
-                                          Qt::QueuedConnection);
-                return;
-            }
             if (ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
                 viewModel.replayStereoMap();
                 return;
@@ -939,8 +932,12 @@ int main(int argc, char *argv[]) {
             // 载入失败 → 空状态区显示"无法播放"（用户 2026-11-15）。
             // 事件线程不能直接改 UI 状态，排队到 GUI 线程。
             if (ef->reason == MPV_END_FILE_REASON_ERROR) {
+                // 带上 entry id + 错误码：客户端只把 mpv 的这个事实挂到条目上，
+                // 显示形态（空文件夹 / 无法播放）由条目自身类型决定。
                 QMetaObject::invokeMethod(&viewModel, "noteLoadFailed",
-                                          Qt::QueuedConnection);
+                                          Qt::QueuedConnection,
+                                          Q_ARG(qint64, ef->playlist_entry_id),
+                                          Q_ARG(int, ef->error));
             }
             if (!opts.benchmark)
                 return;

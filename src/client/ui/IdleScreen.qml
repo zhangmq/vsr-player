@@ -18,6 +18,8 @@ Item {
     property int phase: 0
     /// failed = 失败原因（idle 不用）
     property string detail: ""
+    /// failed 的条目是目录 → 标题显示"空文件夹"而不是"无法播放"
+    property bool failedIsFolder: false
     /// failed 时是否给"重试"（只有网络源给；本地源没有可重试的意义）
     property bool canRetry: false
 
@@ -97,7 +99,9 @@ Item {
             }
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: root.failed ? qsTr("Cannot play") : qsTr("Drop files here")
+                text: root.failed
+                      ? (root.failedIsFolder ? qsTr("Empty folder") : qsTr("Cannot play"))
+                      : qsTr("Drop files here")
                 color: "#e0e0e0"; font.pixelSize: 14
             }
             Text {

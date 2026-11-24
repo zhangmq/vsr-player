@@ -25,6 +25,8 @@ class PlaylistModel : public QAbstractListModel {
 public:
     enum Role {
         PathRole = Qt::UserRole + 1,   // 完整路径（tooltip）
+        ErrorCodeRole,                  // mpv end-file 错误码（0 = 无；-17 = 无法识别格式）
+        IsFolderRole,                   // 该条目在磁盘上是目录（决定文案：空文件夹 / 无法播放）
     };
 
     explicit PlaylistModel(QObject *parent = nullptr);
@@ -37,8 +39,10 @@ public:
     /// 当前播放条目索引（-1 = 无）。
     /// titles 可选：与 paths 等长的显示名覆盖（mpv playlist 条目的 `title`
     /// 字段，如蓝光展开后的 "Title 6 · 1:18:30"）；空串表示按路径推导。
+    /// errors 可选：与 paths 等长的 mpv 错误码（0 = 该条目没有失败记录）。
     void setSnapshot(const QStringList &paths, int current,
-                     const QStringList &titles = {});
+                     const QStringList &titles = {},
+                     const QVector<int> &errors = {});
 
     int currentIndex() const { return current_; }
     int count() const { return paths_.size(); }
@@ -48,6 +52,10 @@ public:
     int indexOfPath(const QString &path) const { return paths_.indexOf(path); }
     /// 当前显示名快照（面板渲染的就是它；排障/脚本用）。
     QStringList displayNames() const { return display_; }
+    /// 第 row 条的完整路径（-1 越界时返回空串）。
+    QString pathAt(int row) const { return paths_.value(row); }
+    /// 只更新失败标记（不碰显示名/标题/当前行）。
+    void setErrors(const QVector<int> &errors);
 
 signals:
     void currentIndexChanged();
@@ -59,5 +67,7 @@ private:
     QVector<QString> paths_;      // 完整路径（与 mpv playlist filename 一致）
     QVector<QString> display_;    // 显示名（titles_ 优先，否则 basename）
     QVector<QString> titles_;     // 显示名覆盖（mpv playlist entry 的 title）
+    QVector<int> errors_;         // mpv end-file 错误码（0 = 无）
+    QVector<bool> folders_;       // 条目在磁盘上是目录（文案区分用）
     int current_ = -1;
 };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include <QHash>
 #include <QObject>
 #include <QImage>
 #include <QSettings>
@@ -203,6 +204,8 @@ class PlayerViewModel : public QObject {
     Q_PROPERTY(int mediaPhase READ mediaPhase NOTIFY mediaPhaseChanged)
     Q_PROPERTY(QString mediaPhaseDetail READ mediaPhaseDetail NOTIFY mediaPhaseChanged)
     Q_PROPERTY(bool canRetryOpen READ canRetryOpen NOTIFY mediaPhaseChanged)
+    /// failed 时该条目在磁盘上是目录 → UI 用 "空文件夹" 而不是 "无法播放"
+    Q_PROPERTY(bool mediaPhaseIsFolder READ mediaPhaseIsFolder NOTIFY mediaPhaseChanged)
     /// 当前文件**允许**做预览（有视频轨、非直播/线性流、开关打开）。
     /// 与 previewReady 的区别：ready = 实例已载入源（懒加载下网络源要等到
     /// 第一次请求）；available = 策略上可以做（RPC/UI 的入口判据）。
@@ -475,16 +478,18 @@ public:
     int mediaPhase() const { return mediaPhase_; }
     QString mediaPhaseDetail() const { return mediaPhaseDetail_; }
     bool canRetryOpen() const;
+    bool mediaPhaseIsFolder() const { return mediaPhaseIsFolder_; }
     /// 重新打开上一次失败的目标（仅网络源；本地不提供重试）。
     Q_INVOKABLE void retryOpen();
     /// END_FILE(reason=ERROR)：进入 failed 阶段（事件线程排队调用）。
-    Q_INVOKABLE void noteLoadFailed();
+    /// mpv 报某条目载入失败（事件线程调用，GUI 线程落状态）。
+    /// entryId = mpv playlist entry id；error = mpv end-file 错误码。
+    Q_INVOKABLE void noteLoadFailed(qint64 entryId, int error);
     /// Event thread: log MPV_EVENT_END_FILE (reason / error code / current entry)
     /// to diagnose failures that end in idle with no output at all, such as
     /// "silently ends up idle after a track switch" (measured 2026-11-19).
     void logEndFile(int reason, int error);
     /// 每个 FILE_LOADED 事件 → playing（不依赖 fileLoaded_ 去重）
-    Q_INVOKABLE void noteFileLoaded();
     bool previewThumbnails() const { return previewThumbnails_; }
     void setPreviewThumbnails(bool on);
     bool menuHideInvalid() const { return menuHideInvalid_; }
@@ -878,8 +883,17 @@ private:
     /// -1 = 无待补发请求。
     qint64 pendingPreviewMs_ = -1;
     bool startPaused_ = false;   ///< `--pause=yes` 启动：打开源后保持暂停
-    void setMediaPhase(int phase, const QString &detail = QString());
+    void setMediaPhase(int phase, const QString &detail = QString(),
+                       bool isFolder = false);
+    /// mpv 错误码 → 本地化文案。**不要**直接显示 mpv_error_string()：
+    /// 那是 mpv 的英文串，进不了我们的 .ts（i18n 会漏）。
+    QString loadErrorText(int code) const;
+    /// 把 entryErrors_ 按当前列表顺序推给 PlaylistModel（失败条目打标）。
+    void refreshPlaylistErrors();
     int mediaPhase_ = 0;             ///< 见 mediaPhase Q_PROPERTY
+    bool mediaPhaseIsFolder_ = false;   ///< failed 的条目是否目录（文案区分）
+    QHash<QString, int> entryErrors_;   ///< 条目路径 → mpv 错误码（0/缺省 = 无）
+    QHash<qint64, QString> entryPathById_;  ///< mpv playlist entry id → 路径
     QString mediaPhaseDetail_;       ///< opening = 源名；failed = 失败原因
     QString pendingOpenPath_;        ///< 最近一次"打开"的目标（重试用）
     bool pendingOpenIsNetwork_ = false;

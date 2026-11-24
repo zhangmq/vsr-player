@@ -172,6 +172,7 @@ Item {
             dragActive: dropArea.containsDrag
             phase: viewModel.mediaPhase
             detail: viewModel.mediaPhaseDetail
+            failedIsFolder: viewModel.mediaPhaseIsFolder
             canRetry: viewModel.canRetryOpen
             canContinue: viewModel.playlistModel.count > 0
             onOpenFilesRequested: { fileDialog.mode = 0; fileDialog.open() }

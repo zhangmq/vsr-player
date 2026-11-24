@@ -155,9 +155,16 @@ Drawer {
                         anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
 
                         Text {
-                            text: (index + 1) + ". " + model.display
+                            // 失败标记来自 mpv 的 end-file 错误码（role errorCode）；
+                            // 文案按条目类型区分：目录 → 空文件夹，其它 → 无法播放。
+                            readonly property string errorLabel:
+                                model.errorCode === 0 ? ""
+                                : (model.isFolder ? qsTr(" (empty folder)")
+                                                  : qsTr(" (unplayable)"))
+                            text: (index + 1) + ". " + model.display + errorLabel
                             width: 260
-                            color: index === viewModel.playlistModel.currentIndex ? "#ffcc00" : "#e0e0e0"
+                            color: model.errorCode !== 0 ? "#8a8a8a"
+                                 : (index === viewModel.playlistModel.currentIndex ? "#ffcc00" : "#e0e0e0")
                             font.pixelSize: 13
                             elide: Text.ElideMiddle
                             renderType: Text.NativeRendering
