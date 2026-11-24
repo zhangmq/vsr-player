@@ -176,9 +176,13 @@ void PlayerViewModel::attach(MpvController *mpv) {
         });
     });
 
+    // volume：**UI 直接 observe mpv 的值**（唯一写入者）。
+    // 用户操作只下发命令（见 setVolume），不预写 volume_——"乐观更新 + 异步
+    // 回写"会让两个来源抢同一个变量：按住方向键时回写落后于用户操作，OSD
+    // 百分比就会往回跳（2026-11-24 实测 5 秒内 31 次倒退）。
     mpv_->observeProperty("volume", MPV_FORMAT_DOUBLE, [this, post] {
-        double v = mpv_->propertyDouble("volume") / 100.0;
-        post([this, v] { updateVolume(v); });
+        const double v = mpv_->propertyDouble("volume") / 100.0;
+        post([this, v] { applyObservedVolume(v); });
     });
 
     // 无 mute 状态位：volume 观察回写即推导静音（volume==0）——
@@ -1413,7 +1417,7 @@ void PlayerViewModel::notePlaybackRestart() {
 // ── Audio（乐观更新）────────────────────────────────────────────────
 
 void PlayerViewModel::nudgeVolume(double delta) {
-    setVolume(volume_ + delta);
+    setVolume(requestedVolume_ + delta);
     emit volumeNudged();
 }
 
@@ -1421,9 +1425,8 @@ void PlayerViewModel::setVolume(double vol) {
     if (!mpv_) return;
     if (vol < 0.0) vol = 0.0;
     if (vol > 1.0) vol = 1.0;
-    // 乐观更新：QML 立即反馈，mpv volume 观察事件随后回写校正。
-    // 静音为派生状态（volume==0），无需额外状态迁移。
-    if (volume_ != vol) { volume_ = vol; emit volumeChanged(); }
+    // 只记目标 + 下发；**不改 volume_**（显示值由观察器写，见 applyObservedVolume）。
+    requestedVolume_ = vol;
     // 不在这里写 QSettings：滑杆 live 拖动时每移动一次都会触发一次
     // QSettings 全文件重写（实测 19 ms 均值 / 88 ms 峰值，GUI 线程 = 渲染
     // 线程 → 视频卡顿）。落盘改到交互结束（见 persistVolume 调用点）。
@@ -1442,18 +1445,30 @@ void PlayerViewModel::setVolume(double vol) {
 
 // 静音 = 音量 0：进入静音记录当前音量（过小则记可听下限），退出恢复。
 // 全程只操作 volume 属性（mpv `mute` 属性不使用），乐观更新走 setVolume。
+void PlayerViewModel::applyObservedVolume(double v) {
+    // mpv 的音量（唯一事实源）→ UI。观察器是 volume_ 的**唯一写入者**。
+    if (volume_ != v) {
+        volume_ = v;
+        emit volumeChanged();
+    }
+}
+
 void PlayerViewModel::persistVolume() {
-    saveSettings("volume", volume_);
+    // 保存"用户意图"（requestedVolume_）：观察值可能还落后最后一次写入。
+    // 圆到 4 位小数，避免 0.05 累加出来的 0.7499999999999998 落盘。
+    saveSettings("volume", qRound(requestedVolume_ * 10000.0) / 10000.0);
 }
 
 void PlayerViewModel::toggleMute() {
     if (!mpv_) return;
-    if (muted()) {
+    // 判定用"下发目标"：观察值可能还停在上一档（异步），按它判断会连点两次
+    // 都执行同一个方向。
+    if (requestedVolume_ == 0.0) {
         setVolume(savedVolume_);
         persistVolume();
     } else {
         // 音量过小（如 slider 拖到 0 附近）→ 记录可听下限，退出静音后可听
-        savedVolume_ = std::max(volume_, kMinUnmuteVolume);
+        savedVolume_ = std::max(requestedVolume_, kMinUnmuteVolume);
         setVolume(0.0);
         persistVolume();
     }
@@ -3049,9 +3064,6 @@ void PlayerViewModel::updateTime(int64_t t, int64_t d) {
     }
 }
 
-void PlayerViewModel::updateVolume(double v) {
-    if (volume_ != v) { volume_ = v; emit volumeChanged(); }
-}
 
 void PlayerViewModel::updateSpeed(double s) {
     if (speed_.load() != s) { speed_.store(s); emit speedChanged(); }
@@ -3134,12 +3146,17 @@ void PlayerViewModel::onFileLoadedFromEventThread() {
     if (!mpv_) return;
     std::string p = mpv_->propertyString("path");
     bool paused = mpv_->propertyFlag("pause");
+    // mpv 可能按 watch_later 恢复"按文件音量"；观察器会把它作为一次正常
+    // 通知送上来（UI 单一写入者），这里只把"下发目标"同步过去。
+    const double loadedVolume = mpv_->propertyDouble("volume") / 100.0;
     int64_t drops = mpv_->propertyInt64("frame-drop-count");
     // 直播/线性流：不可 seek 或仅部分可 seek → resume 无意义（见 isLiveSource）
     const bool linear = !mpv_->propertyFlag("seekable")
                      || mpv_->propertyFlag("partially-seekable");
-    QMetaObject::invokeMethod(this, [this, p, paused, drops, linear] {
+    QMetaObject::invokeMethod(this, [this, p, paused, drops, linear, loadedVolume] {
         setFileLoaded(true);
+        if (loadedVolume >= 0.0 && loadedVolume <= 1.0)
+            requestedVolume_ = loadedVolume;
         idlePlayIndex_ = -1;   // 已有活动文件 → idle 的"待载入索引"作废
         // 按文件记忆：即时落盘保证旧文件状态已随动作写盘，无需在此保存。
         // external 轨随文件切换被 mpv 清除——pending 待确认列表作废

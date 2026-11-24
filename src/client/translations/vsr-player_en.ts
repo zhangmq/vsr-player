@@ -562,114 +562,114 @@
         <translation>120 fps</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3234"/>
-        <location filename="../PlayerViewModel.cpp" line="3242"/>
+        <location filename="../PlayerViewModel.cpp" line="3251"/>
+        <location filename="../PlayerViewModel.cpp" line="3259"/>
         <source>Source</source>
         <translation>Source</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3268"/>
+        <location filename="../PlayerViewModel.cpp" line="3285"/>
         <source>Output</source>
         <translation>Output</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3275"/>
+        <location filename="../PlayerViewModel.cpp" line="3292"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3303"/>
+        <location filename="../PlayerViewModel.cpp" line="3320"/>
         <source>VSR</source>
         <translation>VSR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3328"/>
+        <location filename="../PlayerViewModel.cpp" line="3345"/>
         <source>FRUC</source>
         <translation>FRUC</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3347"/>
-        <location filename="../PlayerViewModel.cpp" line="3352"/>
+        <location filename="../PlayerViewModel.cpp" line="3364"/>
+        <location filename="../PlayerViewModel.cpp" line="3369"/>
         <source>Decoder</source>
         <translation>Decoder</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3357"/>
+        <location filename="../PlayerViewModel.cpp" line="3374"/>
         <source>Speed</source>
         <translation>Speed</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3359"/>
+        <location filename="../PlayerViewModel.cpp" line="3376"/>
         <source>Time</source>
         <translation>Time</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3363"/>
+        <location filename="../PlayerViewModel.cpp" line="3380"/>
         <source>Frames</source>
         <translation>Frames</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3367"/>
+        <location filename="../PlayerViewModel.cpp" line="3384"/>
         <source>GPU</source>
         <translation>GPU</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3370"/>
+        <location filename="../PlayerViewModel.cpp" line="3387"/>
         <source>Audio</source>
         <translation>Audio</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3499"/>
+        <location filename="../PlayerViewModel.cpp" line="3516"/>
         <source>Unrecognized format</source>
         <translation>Unrecognized format</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3500"/>
+        <location filename="../PlayerViewModel.cpp" line="3517"/>
         <source>Nothing to play</source>
         <translation>Nothing to play</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3501"/>
+        <location filename="../PlayerViewModel.cpp" line="3518"/>
         <source>Could not load the file</source>
         <translation>Could not load the file</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3502"/>
+        <location filename="../PlayerViewModel.cpp" line="3519"/>
         <source>Not supported</source>
         <translation>Not supported</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3503"/>
+        <location filename="../PlayerViewModel.cpp" line="3520"/>
         <source>Audio output failed to start</source>
         <translation>Audio output failed to start</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3504"/>
+        <location filename="../PlayerViewModel.cpp" line="3521"/>
         <source>Video output failed to start</source>
         <translation>Video output failed to start</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3505"/>
+        <location filename="../PlayerViewModel.cpp" line="3522"/>
         <source>Invalid request</source>
         <translation>Invalid request</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3506"/>
+        <location filename="../PlayerViewModel.cpp" line="3523"/>
         <source>Not implemented</source>
         <translation>Not implemented</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3507"/>
+        <location filename="../PlayerViewModel.cpp" line="3524"/>
         <source>Out of memory</source>
         <translation>Out of memory</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3509"/>
+        <location filename="../PlayerViewModel.cpp" line="3526"/>
         <source>Could not open the stream</source>
         <translation>Could not open the stream</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3510"/>
+        <location filename="../PlayerViewModel.cpp" line="3527"/>
         <source>Could not open the file</source>
         <translation>Could not open the file</translation>
     </message>
