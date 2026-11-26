@@ -339,7 +339,8 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   - 验证钩子：RPC `get-playlist` 打印 mpv 侧 `title/filename`（带 `*`=current、`P`=playing）
     与模型侧 `model.display`。实测：ISO 会话与无参数重启都显示
     `Title 1 · 0:00:00 … Title 6 · 1:18:30`；普通视频列表仍显示文件名，索引也随快照恢复。
-  - ⚠ **恢复后的 bd:// 条目一开始点不动（2026-10-27 修）**：`bd` stream 的
+  - ⚠ **恢复后的 bd:// 条目一开始点不动（2026-10-27 修；2026-11-26 已随基座更新撤销，
+    见「光盘」一节——现在按 mpv 默认行为拒绝本地列表里的 `bd://` 条目）**：`bd` stream 的
     `stream_origin` 是 **UNSAFE**，mpv 的 origin 检查只放行 DIRECT 来源；m3u 快照
     是本地文件（FS 来源）→ 里面的 `bd://` 条目被拒。而 `stream_create()` 的循环把
     UNSAFE 当 NO_MATCH 继续，最终**报成 "No protocol handler found"**（很容易误判成
@@ -972,10 +973,13 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
 `bd://mpls/N//dev`）**：0.42 在 stream 层先认领 `.iso`，两者冲突——`disc` 自己的 lavf
 slave 打开被我们那条"让 lavf 给 playlist 让路"的补丁拒掉 → **ISO 直接打不开**
 （`bdmv/bluray` redirect 后 `[disc]` 已声明流，最后 `Failed to recognize file format`）。
-2026-11-26 用户定：撤三处 overlay 补丁（`parse_bluray` / `bluray_image.h` /
-`demux_lavf` 让路），只留 `demux_playlist.c` 的"本地播放列表里的 `bd://` 条目提升
-DIRECT"（老 m3u8 快照仍带 `bd://mpls/N//dev`，UNSAFE origin 会被 check_origin 拒）。
-`playlist_exts` 里的 `iso` 保留，只为目录展开能列出盘镜像。
+2026-11-26 用户定：**四处 overlay 补丁全撤**（`parse_bluray` / `bluray_image.h` /
+`demux_lavf` 让路 / `demux_playlist` 的"本地 `bd://` 条目提升 DIRECT"），
+`demux_playlist.c` 现在与上游 v0.42.0 **逐字节相同并从 overlay 删除**。
+后果（期望现状，用户 2026-11-26 定）：本地 m3u 里的 `bd://mpls/N//dev` 条目按 mpv
+默认行为被拒（`stream_info_bluray` 是 UNSAFE origin，`check_origin()` 只放行 DIRECT，
+报 "No protocol handler found"）——**不再特殊照顾**。`playlist_exts` 里的 `iso` 保留，
+只为目录展开能列出盘镜像。
 
 **客户端（2026-11-26 新增）**：
 

@@ -150,10 +150,12 @@ git -C third_party/mpv checkout b0841e8c4d156b8403dc1876c4cbd9011eb583f3   # v0.
      盘内菜单（HDMV/BD-J）也走这条路径。我们原来的 `parse_bluray`（把 ISO 拆成
      每 title 一条 `bd://mpls/N//dev`）和它冲突——`disc` 自己的 lavf slave 打开
      会被我们那条"让路"补丁拒掉，ISO 直接打不开。**2026-11-26 决定贴上游**：
-     `parse_bluray` / `bluray_image.h` / `demux_lavf` 让路三处补丁全部撤掉，
-     只保留 `demux_playlist.c` 里"本地播放列表中的 `bd://` 条目提升 DIRECT"
-     （老 m3u8 快照仍带 `bd://mpls/N//dev`）。`playlist_exts` 里的 `iso` 保留，
-     但只为目录展开能列出盘镜像。客户端对应改动见 `AGENTS.md` 的「光盘」一节。
+     `parse_bluray` / `bluray_image.h` / `demux_lavf` 让路 / `demux_playlist` 的
+     "本地 `bd://` 条目提升 DIRECT" 四处补丁全部撤掉——`demux_playlist.c` 现在与
+     上游 v0.42.0 逐字节相同，已从 overlay 删除。本地 m3u 里的 `bd://mpls/N//dev`
+     条目因此按 mpv 默认行为被拒（UNSAFE origin），这是期望现状（用户 2026-11-26 定）。
+     `playlist_exts` 里的 `iso` 保留，但只为目录展开能列出盘镜像。
+     客户端对应改动见 `AGENTS.md` 的「光盘」一节。
 - 版本对应关系是**固定提交/tag**，不是"上游 master 开发线"。
 - 自行推导别的基座时，候选提交需同时满足：① 其 `meson.build` 的源文件清单是
   overlay 版的子集（`meson.build` 变动频繁，锚点比 `options.h` 紧）②
