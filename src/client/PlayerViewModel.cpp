@@ -13,6 +13,7 @@
 #include <QMetaObject>
 #include <QVariantMap>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QDir>
 #include <QSet>
@@ -730,6 +731,28 @@ void PlayerViewModel::attach(MpvController *mpv) {
         post([this, d] { if (audioDelay_ != d) { audioDelay_ = d; emit audioDelayChanged(); } });
     });
 
+    // ── 光盘内容判定（蓝光 ISO / BDMV / bd:// 条目 / DVD）───────────────
+    // 只认 mpv 的 file-format == "disc"：这是唯一对"上游原生开 ISO"（path 是
+    // 普通文件名）和"我们的 bd://mpls 条目"（path 带 scheme）都成立的判据。
+    // 用途见 discSource 的 Q_PROPERTY 注释（右键菜单不能把盘上的 title 当码流）。
+    mpv_->observeProperty("file-format", MPV_FORMAT_STRING, [this, post] {
+        const std::string f = mpv_->propertyString("file-format");
+        post([this, f] {
+            const bool disc = f == "disc";
+            if (discSource_ != disc) { discSource_ = disc; emit discSourceChanged(); }
+        });
+    });
+
+    // 盘内菜单是否在屏上：只在它为真时把方向键/Enter/鼠标转发给 `discnav`
+    //（mpv 的 `{discnav}` input section 就是按这个信号开关的，见 input.conf）。
+    // 非光盘源该属性不可用 → propertyFlag 读回 false，不用额外判 discSource。
+    mpv_->observeProperty("disc-menu-active", MPV_FORMAT_FLAG, [this, post] {
+        const bool v = mpv_->propertyFlag("disc-menu-active");
+        post([this, v] {
+            if (discMenuActive_ != v) { discMenuActive_ = v; emit discMenuActiveChanged(); }
+        });
+    });
+
     // ── 网络流（ytdl_hook 把每个可选格式做成一个 edition）─────────────
     // edition-list = [{id,title}]，本地视频通常是 1 条（等于没有可选流）；
     // current-edition 是**实际生效**的 id（mpv 的 `edition` 选项可能是 auto）。
@@ -984,6 +1007,12 @@ void PlayerViewModel::loadSettings() {
                                        kMiddleGrayMin, kMiddleGrayMax);
     persistUpHdrDebanding_ = settings_.value("upHdrDebanding", kDebandingDefault).toBool();
 
+    // ── 光盘（蓝光 / DVD）──────────────────────────────────────────────
+    // 默认进盘自己的菜单（用户 2026-11-26 定）；关掉 = 直接播最长 title。
+    // hide-short-titles 默认关（保持上游行为），开了才过滤菜单用的超短 title。
+    discMenuBoot_ = settings_.value("discMenuBoot", true).toBool();
+    discHideShortTitles_ = settings_.value("discHideShortTitles", false).toBool();
+
     // ── 反交错（0=Off / 1=Auto / 2=Force）─────────────────────────────
     // 手改越界 → 夹回 0..2（不整份丢弃）。CLI `-- --deinterlace=…` 优先，
     // 见 initDeinterlace()（在 applyPlaybackSettings 之前调用）。
@@ -1002,6 +1031,65 @@ void PlayerViewModel::loadSettings() {
     previewThumbWidth_ = thumbRenderWidth();
     previewThumbnails_ = settings_.value("previewThumbnails", true).toBool();
     menuHideInvalid_ = settings_.value("menuHideInvalid", false).toBool();
+}
+
+void PlayerViewModel::applyDiscOptions() {
+    if (!mpv_) return;
+    // 两个都是 **stream 打开时读取**的选项（stream_bluray.c 的 bdmv_dir_stream_open
+    // 用 disc-menu 决定开菜单还是最长 title；title 列表按 min-title-length 过滤），
+    // 所以只在 loadfile 之前设有效。用 `options/<name>` 属性命名空间下发
+    //（mpv 的 options 是属性树的子树，运行期可写，下一步 loadfile 就用新值）。
+    mpv_->setPropertyStringAsync("options/disc-menu", discMenuBoot_ ? "yes" : "no");
+    mpv_->setPropertyStringAsync("options/bluray-min-title-length",
+                                 discHideShortTitles_ ? "180" : "0");
+    MLOG_VERBOSE("disc: boot-into-menu=%d hide-short-titles=%d",
+                 discMenuBoot_ ? 1 : 0, discHideShortTitles_ ? 1 : 0);
+}
+
+void PlayerViewModel::setDiscMenuBoot(bool on) {
+    if (discMenuBoot_ == on) return;
+    discMenuBoot_ = on;
+    emit discMenuBootChanged();
+    saveSettings("discMenuBoot", on);
+    applyDiscOptions();
+    MLOG_INFO("disc: boot into disc menu = %s", on ? "yes" : "no");
+}
+
+void PlayerViewModel::setDiscHideShortTitles(bool on) {
+    if (discHideShortTitles_ == on) return;
+    discHideShortTitles_ = on;
+    emit discHideShortTitlesChanged();
+    saveSettings("discHideShortTitles", on);
+    applyDiscOptions();
+    MLOG_INFO("disc: hide short titles = %s (takes effect on the next open)",
+              on ? "yes" : "no");
+}
+
+void PlayerViewModel::toggleDiscOption(int id) {
+    if (id == 0)      setDiscMenuBoot(!discMenuBoot_);
+    else if (id == 1) setDiscHideShortTitles(!discHideShortTitles_);
+}
+
+void PlayerViewModel::discNav(const QString &action) {
+    if (!mpv_ || !discMenuActive_) return;
+    const std::string a = action.toStdString();
+    mpv_->commandAsync({"discnav", a.c_str(), nullptr});
+}
+
+void PlayerViewModel::discNavMouse(const QString &action, double nx, double ny) {
+    if (!mpv_ || !discMenuActive_) return;
+    // 菜单按钮只关心"当前指在哪"，中间点丢了无所谓：鼠标移动按 40 ms 节流
+    //（点击不节流）。坐标是画面内归一化值，mpv 自己按 OSD 分辨率映射到按钮。
+    if (action == "mouse-move") {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (now - lastDiscMouseMs_ < 40) return;
+        lastDiscMouseMs_ = now;
+    }
+    char xs[32], ys[32];
+    snprintf(xs, sizeof xs, "%.4f", qBound(0.0, nx, 1.0));
+    snprintf(ys, sizeof ys, "%.4f", qBound(0.0, ny, 1.0));
+    const std::string a = action.toStdString();
+    mpv_->commandAsync({"discnav", a.c_str(), xs, ys, nullptr});
 }
 
 void PlayerViewModel::applyPlaybackSettings() {
@@ -1032,6 +1120,7 @@ void PlayerViewModel::applyPlaybackSettings() {
         }
     }
     refreshHwDecodeAvailability();
+    applyDiscOptions();
 }
 
 /// bd:// 条目依赖全局选项 bluray-device —— 启动恢复前必须先设回去，
@@ -1977,16 +2066,14 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
     items.reserve(paths.size());
     for (const QString &p : paths) {
         if (mode != 4 && !isSubtitleFile(p) && bdisc::isBlurayPath(p)) {
-            // ISO 由 **mpv 自己**展开（src/mpv/demux/demux_playlist.c 的
-            // parse_bluray：`.iso` + libbluray 枚举 → bd://mpls/<n>//<path>
-            // 条目，带 title），语义与"文件夹 / m3u 容器"完全一致。
-            // 客户端只做两件事：① 把 ISO 路径原样交给 mpv；
-            // ② 顺便枚举一次登记友好名（播放列表里显示 "Title 6 · 1:18:30"
-            //    而不是一长串 URL）。失败不影响播放（mpv 会自己报错）。
-            // ISO 由 mpv 自己展开（demux_playlist 的 parse_bluray），条目名也由
-            // 它给（"Title N · H:MM:SS"）。客户端只枚举一次做日志/设备记录，
-            // 不再自己维护条目名（恢复列表走 m3u8 快照 + loadlist，同样由 mpv
-            // 解析 #EXTINF 得到名字）。
+            // 光盘 = **mpv 的一条流**（v0.42 的 disc 层：stream_bluray.c 认领
+            // `.iso`/BDMV 目录，demux_disc.c 把盘声明的 segment 映射成时间轴）。
+            // 盘上的 title 不是播放列表条目，而是这条流的 edition
+            //（`edition-list`，右键菜单「标题」里选）；默认播最长那条，进不进
+            // 盘自己的菜单由 --disc-menu 决定（见 applyDiscOptions）。
+            // 客户端这里只做两件事：① 把路径原样交给 mpv；② 顺便用 libbluray
+            // 枚举一次做日志，并把设备记进全局 bluray-device（老快照里不带设备
+            // 的裸 `bd://mpls/N` 条目回退用它）。失败不影响播放。
             const BlurayDiscInfo info = bdisc::enumerate(p);
             if (!info.ok)
                 MLOG_WARN("bluray: %s: %s (mpv will report the real error)",
@@ -1997,6 +2084,9 @@ void PlayerViewModel::openFiles(const QStringList &pathsIn, int mode) {
         }
         items.append({p, QString()});
     }
+
+    // 光盘选项必须在 loadfile 之前下发（stream 打开时读取）
+    applyDiscOptions();
 
     // 兜底：把最后一张盘设成全局 bluray-device（URL 里的设备优先，不影响正确性；
     // 但老版本持久化下来的裸 `bd://mpls/N` 条目靠它还能打开）。

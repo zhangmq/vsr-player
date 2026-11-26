@@ -71,6 +71,9 @@ PopupBase {
     signal stereoSelected(int value, int group)
     /// 右键菜单「界面」二级项：翻转某个界面元素（0 = 缩略图）。
     signal uiElementToggled(int id)
+    signal titlePicked(int id)               // 盘上的 title（mpv edition，不是轨道）
+    signal chapterPicked(int index)          // 章节序号（0 起）
+    signal discOptionToggled(int id)         // 0 = 打开进菜单；1 = 隐藏超短 title
     /// 「关于」弹窗（图标 / 名称 / 版本 / 许可 / 仓库）。
     signal aboutRequested()
     signal quitRequested()
@@ -121,6 +124,8 @@ PopupBase {
         {header: qsTr("Preferences")},
         {icon: "󰨇", text: qsTr("Interface"),
          submenu: function() { return root.interfaceMenu() }},
+        {icon: "󰥠", text: qsTr("Disc"),
+         submenu: function() { return root.discPrefsMenu() }},
 
         // ── 轨道 / 流（按文件；无媒体时整块隐藏）──────────────────────
         {sep: true},
@@ -135,6 +140,25 @@ PopupBase {
         {icon: "󰕧", text: qsTr("Video"),
          submenu: function() { return root.videoMenu() },
          enabledWhen: function() { return root.hasVideoMenu() }},
+        // 光盘的 title 是 mpv 的 edition：既不是码流（上面「网络流」那一段），
+        // 也不是视频轨道。一张盘在播放列表里只有一条条目，title 只能从这里选
+        //（用户 2026-11-26 定的模型；上游 0.42 的 edition 就是"盘上的 title"）。
+        // 标签形如 `Title 6 · 1:18:30`；盘支持导航时还会多一条 `Disc menu`。
+        {icon: "󰿎", text: qsTr("Title"),
+         hint: function() { return root.currentDiscTitleLabel() },
+         subSig: "titlePicked",
+         current: function() { return viewModel.currentEdition },
+         submenu: function() { return root.discTitlesMenu() },
+         enabledWhen: function() { return root.hasDiscTitles() }},
+        // 章节：mpv 的 chapter-list 镜象（= 上游 menu.conf 的 $chapters）。
+        // 盘上的 title 动辄十几章（本机测试盘主 title 16 章），没有列表就只能靠
+        // 进度条摸；条目名优先用盘/容器给的章节名，没有就显示序号 + 起始时间。
+        {icon: "󰉻", text: qsTr("Chapter"),
+         hint: function() { return root.currentChapterLabel() },
+         subSig: "chapterPicked",
+         current: function() { return root.currentChapterIndex() },
+         submenu: function() { return root.chaptersMenu() },
+         enabledWhen: function() { return viewModel.chapters.length > 0 }},
         {icon: "󰝚", text: qsTr("Audio"),
          subSig: "audioTrackPicked",
          current: function() { return root.selectedTrackId("audio") },
@@ -272,12 +296,110 @@ PopupBase {
         ]
     }
 
+    /// 「光盘」偏好：进盘菜单 / 隐藏超短 title。都是二值 → toggle 行
+    ///（与 Interface 里的缩略图开关同一形态：点一下翻转、菜单不关）。
+    function discPrefsMenu() {
+        return [
+            {label: qsTr("Boot into disc menu"),
+             toggle: viewModel.discMenuBoot,
+             subSig: "discOptionToggled", value: 0},
+            {label: qsTr("Hide titles shorter than 3 min"),
+             toggle: viewModel.discHideShortTitles,
+             subSig: "discOptionToggled", value: 1}
+        ]
+    }
+
+    /// 本片是不是"盘"：edition-list 代表盘上的 title，而不是网络码流。
+    function hasDiscTitles() {
+        return viewModel.discSource && viewModel.editions.length > 1
+    }
+
+    /// mpv 给的盘上 title 标签是 `title: 6 (01:18:30.539) (00003.mpls)`；
+    /// 盘支持导航时 demux_disc 还会合成一条 `Disc Menu`（没有任何时长/playlist）。
+    function discTitleLabel(title) {
+        var t = String(title || "")
+        if (t === "Disc Menu") return qsTr("Disc menu")
+        var m = t.match(/^title:\s*(\d+)\s*\((\d+):(\d+):(\d+)/)
+        // 小时去掉前导零（mpv 的标签是 "01:18:30"），分钟/秒保持两位
+        if (m) return qsTr("Title %1 · %2:%3:%4").arg(m[1])
+                    .arg(String(parseInt(m[2], 10))).arg(m[3]).arg(m[4])
+        return t
+    }
+
+    /// 「Title」入口右上角显示的当前 title（不带 mpls 号）
+    function currentDiscTitleLabel() {
+        var eds = viewModel.editions
+        for (var i = 0; i < eds.length; i++)
+            if (eds[i].id === viewModel.currentEdition)
+                return root.discTitleLabel(eds[i].title)
+        return qsTr("Auto")
+    }
+
+    /// 「Title」二级面板：盘上的 title 列表（= mpv 的 edition-list）
+    function discTitlesMenu() {
+        var out = []
+        var eds = viewModel.editions
+        for (var i = 0; i < eds.length; i++)
+            out.push({label: root.discTitleLabel(eds[i].title),
+                      value: eds[i].id,
+                      subSig: "titlePicked",
+                      current: eds[i].id === viewModel.currentEdition,
+                      section: "titles", sectionRows: root.trackSectionRows})
+        return out
+    }
+
+    /// 当前章节序号（按 currentTime 落在哪个章节起点之后；无章节 → -1）
+    function currentChapterIndex() {
+        var ch = viewModel.chapters
+        if (!ch || ch.length === 0) return -1
+        var t = viewModel.currentTime / 1000
+        var idx = 0
+        for (var i = 0; i < ch.length; i++) {
+            if (ch[i].time <= t + 0.05) idx = i
+            else break
+        }
+        return idx
+    }
+
+    function chapterTimeLabel(sec) {
+        var s = Math.max(0, Math.floor(sec))
+        var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60
+        var p2 = function(v) { return (v < 10 ? "0" : "") + v }
+        return h > 0 ? h + ":" + p2(m) + ":" + p2(ss) : m + ":" + p2(ss)
+    }
+
+    /// 章节行文本：容器/盘给了名字就用它，否则「第 N 章」+ 起始时间
+    function chapterLabel(index) {
+        var ch = viewModel.chapters
+        if (!ch || index < 0 || index >= ch.length) return ""
+        var name = String(ch[index].title || "")
+        if (name.length === 0) name = qsTr("Chapter %1").arg(index + 1)
+        return name + " · " + root.chapterTimeLabel(ch[index].time)
+    }
+
+    function currentChapterLabel() {
+        var i = root.currentChapterIndex()
+        return i < 0 ? "" : root.chapterLabel(i)
+    }
+
+    /// 「章节」二级面板（固定高度滚动区；长片几十章也只在区内滚）
+    function chaptersMenu() {
+        var out = []
+        var ch = viewModel.chapters
+        var cur = root.currentChapterIndex()
+        for (var i = 0; i < ch.length; i++)
+            out.push({label: root.chapterLabel(i), value: i, subSig: "chapterPicked",
+                      current: i === cur,
+                      section: "chapters", sectionRows: root.trackSectionRows})
+        return out
+    }
+
     /// 「视频」二级面板：网络流 + 视频轨道两段（各自固定高度滚动区）。
     /// 行自带 `current`（勾选）与 `subSig`（点它调哪个信号）——两段语义不同，
     /// 不能再共用父条目的 subSig。
     function videoMenu() {
         var out = []
-        if (root.hasEditions()) {
+        if (root.hasStreamChoices()) {
             out.push({header: qsTr("Network stream")})
             var eds = viewModel.editions
             for (var i = 0; i < eds.length; i++)
@@ -302,9 +424,9 @@ PopupBase {
         return out
     }
 
-    /// 「视频」入口是否显示：有网络流可选，或本片有多条视频轨
+    /// 「视频」入口是否显示：有可选码流（网络流），或本片有多条视频轨
     function hasVideoMenu() {
-        return (viewModel.networkSource && root.hasEditions()) || root.tracksOf("video").length > 1
+        return root.hasStreamChoices() || root.tracksOf("video").length > 1
     }
 
     function audioTracksMenu() {
@@ -397,6 +519,15 @@ PopupBase {
 
     // ── 网络流（mpv edition）──────────────────────────────────────────
     function hasEditions() { return viewModel.editions.length > 1 }
+
+    /// 本片真正的**可选码流**（ytdl 的每个格式一个 edition）。
+    /// ⚠ 光盘的 edition-list 是盘上的 title，不是码流：蓝光 ISO 在我们的播放
+    /// 列表里已经一条一条列出（parse_bluray），不能再当"网络流"挂进「视频」面板
+    /// （用户 2026-11-26 报：盘上的 title 出现在视频轨道面板、二级标题写着
+    /// "网络流"）。本地多 edition 的文件同理（mpv 自己也没有 edition 菜单）。
+    function hasStreamChoices() {
+        return !viewModel.discSource && viewModel.networkSource && root.hasEditions()
+    }
 
     /// mpv 给的标题形如 "1080P 高清 (av1 1920x1080 29 fps 1922 kbps)"：
     /// 整理成 "1080P 高清 · AV1 · 1.9M"（跳过 null 编码），解析失败就原样显示。

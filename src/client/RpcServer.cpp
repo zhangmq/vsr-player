@@ -639,8 +639,9 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             response = formatResponse("no view model");
         } else {
             char buf[256];
-            snprintf(buf, sizeof buf, "media=%d net=%d tracks=%d editions=%d cur=%d eye=%d subDelay=%.0fms audioDelay=%.0fms",
+            snprintf(buf, sizeof buf, "media=%d net=%d disc=%d discMenu=%d tracks=%d editions=%d cur=%d eye=%d subDelay=%.0fms audioDelay=%.0fms",
                      vm->hasMedia() ? 1 : 0, vm->networkSource() ? 1 : 0,
+                     vm->discSource() ? 1 : 0, vm->discMenuActive() ? 1 : 0,
                      int(vm->trackList().size()), int(vm->editions().size()),
                      vm->currentEdition(), vm->eyeMode(),
                      vm->subDelay() * 1000.0, vm->audioDelay() * 1000.0);

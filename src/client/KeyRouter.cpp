@@ -46,6 +46,30 @@ bool KeyRouter::eventFilter(QObject *watched, QEvent *event)
         return false;
 
     auto *ke = static_cast<QKeyEvent *>(event);
+
+    // 盘内菜单在屏上：方向键/Enter/Esc 交给盘的虚拟机（mpv `discnav` 命令，
+    // 与上游 input.conf 的 {discnav} section 同一套映射），其余键照旧。
+    // 3D 下不接管：菜单是一整幅画面，分屏输出时会被切成两半（同 mpv OSD）。
+    if (vm_ && vm_->discMenuActive() && !mode3d()) {
+        const char *nav = nullptr;
+        switch (ke->key()) {
+        case Qt::Key_Up:        nav = "up"; break;
+        case Qt::Key_Down:      nav = "down"; break;
+        case Qt::Key_Left:      nav = "left"; break;
+        case Qt::Key_Right:     nav = "right"; break;
+        case Qt::Key_Return:
+        case Qt::Key_Enter:     nav = "select"; break;
+        case Qt::Key_Escape:
+        case Qt::Key_Backspace: nav = "prev"; break;
+        default: break;
+        }
+        if (nav) {
+            vm_->discNav(QString::fromLatin1(nav));
+            MLOG_VERBOSE("key: discnav %s", nav);
+            return true;
+        }
+    }
+
     const int idx = keymap::find(ke->key(), ke->modifiers(), mode3d());
     if (idx < 0)
         return false;
@@ -118,6 +142,15 @@ bool KeyRouter::exec(const QString &id)
     if (id == "playlist-prev") { vm_->playlistPrev(); return true; }
     if (id == "playlist-next") { vm_->playlistNext(); return true; }
     if (id == "toggle-osd") { vm_->toggleOsd(); return true; }
+    // ── 光盘菜单（Ctrl+M / Ctrl+Shift+M）─────────────────────────────
+    if (id == "disc-menu-root" || id == "disc-menu-popup") {
+        if (!vm_->discSource()) {
+            MLOG_VERBOSE("key: %s ignored (not a disc source)", qUtf8Printable(id));
+            return true;
+        }
+        vm_->discNav(id == "disc-menu-root" ? "menu" : "popup");
+        return true;
+    }
     if (id == "toggle-subtitles") { vm_->toggleSubtitles(); return true; }
     if (id == "toggle-fullscreen") { vm_->toggleFullscreen(); return true; }
     if (id == "remove-from-playlist") { vm_->removeCurrentFromPlaylist(); return true; }

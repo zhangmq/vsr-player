@@ -101,7 +101,11 @@ Item {
         // 写回初始值；onChanged 只在翻转时触发），鼠标不在热区则初始
         // 隐藏。弹窗注册表化：新增弹窗只需在 Component.onCompleted 的
         // _popups 数组中登记一行。
-        property bool showUi: bottomBar.mouseInRegion || topBar.mouseInRegion || anyPopupOpen
+        // 盘内菜单在屏上时不显示控制层：控制条/进度条会压在盘的菜单画面上面
+        //（用户 2026-11-26 提的交互模型）。右键菜单等 popup 不算控制层，照常可用。
+        property bool showUi: !viewModel.discMenuActive
+                              && (bottomBar.mouseInRegion || topBar.mouseInRegion
+                                  || anyPopupOpen)
         onShowUiChanged: viewModel.overlaysVisible = showUi
         property var _popups: []
         readonly property bool anyPopupOpen: {
@@ -158,6 +162,28 @@ Item {
             // 同一个动作），否则两个东西会叠在一起。
             visible: viewModel.hasMedia
             onClicked: viewModel.togglePlayPause()
+        }
+
+        // ── 光盘菜单的鼠标转发（蓝光 HDMV / BD-J、DVD）────────────────
+        // 菜单画面是 mpv 画进视频帧的 OSD 位图（player/discnav.c →
+        // OSDTYPE_DISC_MENU），命中判定由盘自己做，我们只把位置交出去。
+        // 坐标用**画面内归一化值**（0..1，左上角 0,0）：视频铺满窗口
+        //（letterbox 是 mpv 烘进帧里的），所以窗口坐标归一化即为画面坐标。
+        // 只在菜单在屏时存在——否则会抢走"点击切换播放/暂停"。
+        MouseArea {
+            id: discNavArea
+            anchors.fill: parent
+            enabled: viewModel.discMenuActive
+            visible: enabled
+            acceptedButtons: Qt.LeftButton
+            hoverEnabled: true
+            onPositionChanged: {
+                if (!viewModel.discMenuActive) return
+                viewModel.discNavMouse("mouse-move", mouse.x / width, mouse.y / height)
+            }
+            onClicked: function(mouse) {
+                viewModel.discNavMouse("mouse-click", mouse.x / width, mouse.y / height)
+            }
         }
 
         // ── 无媒体：dropzone + 初始操作提示（用户 2026-11-15）────────
@@ -341,6 +367,17 @@ Item {
             onExternalSubtitleRemoveRequested: function(id) { viewModel.removeTrack("sub", id) }
             onNearbySubtitlePicked: function(path) { viewModel.loadExternalSubtitle(path) }
             onEditionPicked: function(id) { viewModel.setEdition(id) }
+            // 「标题」二级项：盘上的 title = mpv edition（原地跳，不重开文件）
+            onTitlePicked: function(id) { viewModel.setEdition(id) }
+            // 「章节」二级项：按章节起点做精确 seek（与进度条同一个入口，
+            // 因此同样会带 vf 的 seek-target 标记，VSR 下不会白跑帧）
+            onChapterPicked: function(index) {
+                var ch = viewModel.chapters
+                if (index >= 0 && index < ch.length)
+                    viewModel.seekAbsolute(Math.round(ch[index].time * 1000))
+            }
+            // 「光盘」偏好：0 = 打开进菜单，1 = 隐藏超短 title
+            onDiscOptionToggled: function(id) { viewModel.toggleDiscOption(id) }
             // 延迟：UI 立即乐观更新，PlayerViewModel 内 500ms debounce 后写 mpv
             onSubDelayNudged: function(d) { viewModel.adjustSubDelay(d) }
             onSubDelayResetRequested: { viewModel.resetSubDelay() }

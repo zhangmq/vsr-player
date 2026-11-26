@@ -78,6 +78,12 @@ QList<Binding> buildTable()
     t.append(Binding{.id = "open-menu", .seqs = {"Menu", "Shift+F10", "F10"},
                      .owner = Owner::Shortcut, .handler = Handler::Qml});
     t.append(Binding{.id = "quit", .seqs = {"Ctrl+Q"}, .owner = Owner::Shortcut});
+    // 光盘菜单（上游 input.conf 的 Ctrl+m / Ctrl+M）：跳盘的根菜单 / 蓝光弹出菜单。
+    // 只有光盘源才有意义，exec() 里按 discSource 判空操作。
+    t.append(Binding{.id = "disc-menu-root", .seqs = {"Ctrl+M"}, .owner = Owner::Shortcut});
+    t.append(Binding{.id = "disc-menu-popup", .seqs = {"Ctrl+Shift+M"},
+                     .owner = Owner::Shortcut});
+
     t.append(Binding{.id = "playlist-prev", .seqs = {"Ctrl+Left"}, .scope = Scope::TwoD,
                      .owner = Owner::Shortcut});
     t.append(Binding{.id = "playlist-next", .seqs = {"Ctrl+Right"}, .scope = Scope::TwoD,
