@@ -302,12 +302,14 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **无参数启动 = idle**：只恢复上次播放列表（`restorePlaylistIdle()` 全 `loadfile … append`，mpv 无 current 条目 → 不解码、不建滤镜链、不 Load 引擎、不做续播 seek），按播放才 `resumeLastPath()` → `playlist-play-index` 载入，mpv 用 watch_later 自动恢复上次进度。命令行给了文件、或显式 `-- --pause=yes` → 立即载入（mpv 语义）。
 - 起因：曾有"启动暂停"实现（`pause=yes` 选项 + 启动即载入），但 mpv 精确 seek 会把"关键帧→目标位置"的帧**过完滤镜链再丢掉**（实测 `start=12.302`/关键帧 6.25s → 142 源帧、VFG 570 输出帧白跑、海报晚 1.6s）；日志里那批 `vfg-status` 是丢弃帧不是播放。完整测量与被否方案：`docs/memory/startup-idle-policy.md`。
 - idle 时 mpv 的 `pause` 初值为 false → `pause` 观察器按 `updatePlaying(!p && fileLoaded_)` 判定，否则 UI 未载入就显示"播放中"。
-- **播放列表条目名（蓝光 title）= 交给 mpv，不在客户端做名字表（2026-10-27）**：
+- **播放列表条目名 = 交给 mpv，不在客户端做名字表（2026-10-27）**：
+  （0.42 起一张盘在播放列表里只有一条条目（ISO 的路径），盘上 title 改成
+  「标题」面板里的 edition —— 见「光盘」一节；"名字一律来自 mpv" 这条原则不变。）
   - 症状：ISO 展开的 title 全显示成 iso 文件名；**关掉再以无参数启动**（idle 恢复列表）
     之后又变回 iso 文件名。
   - 根因（两段）：① `PlaylistModel` 只按路径推导显示名（`bd://mpls/N//…` 的 basename
     就是 ISO 名）；② 启动恢复是逐条 `loadfile bd://mpls/N//…`，**这些条目没有 title**
-    （title 只在 `parse_bluray` 展开 ISO 时才有），于是名字又丢了。
+    （title 只在 mpv 展开 ISO 时才生成），于是名字又丢了。
   - 结论：**名字的唯一来源是 mpv 的 playlist 条目 `title`**
     （`player/command.c` 的 `{"title", SUB_PROP_STR(e->title)}`），客户端只负责显示。
     曾经试过在客户端维护"路径→名字"表和 `bdisc::labelFor` 注册表，被用户否掉
@@ -334,8 +336,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
     `stream_origin` 是 **UNSAFE**，mpv 的 origin 检查只放行 DIRECT 来源；m3u 快照
     是本地文件（FS 来源）→ 里面的 `bd://` 条目被拒。而 `stream_create()` 的循环把
     UNSAFE 当 NO_MATCH 继续，最终**报成 "No protocol handler found"**（很容易误判成
-    "URL 存错了"）。ISO 展开那条路径没事，是因为 `parse_bluray` 分支已把条目提升为
-    DIRECT（我们自己的 patch）。修法（`src/mpv/demux/demux_playlist.c`）：本地
+    "URL 存错了"）。修法（`src/mpv/demux/demux_playlist.c`）：本地
     播放列表（`demuxer->stream_origin == STREAM_ORIGIN_FS`）里以 `bd:`/`bluray:`
     开头的条目逐条提升为 `STREAM_ORIGIN_DIRECT`；**远程列表仍按 mpv 原始策略拒绝**。
     验证：重启→列表有 title→点任一 title 正常播放（日志 `Playing: bd://…` 后直接出
@@ -944,84 +945,55 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
 - Toggle 与 `send_field` 的连带影响：反交错在链最前面 → VSR 按翻倍后的帧数计费；
   VFG 按 `k × 反交错后帧率` 判 `max-fps`（默认 60：50p 源 ×2 = 100 > 60 → 直通）。
 
-### 蓝光 ISO / BDMV（2026-10-26，按"文件夹"展开）
+### 光盘（蓝光 / DVD）：0.42 起 = 一条盘流 + title 当 edition（2026-11-26 定）
 
-**容器语义（2026-10-26 用户要求，"像文件夹 / m3u 那样"）**：**扩展了 mpv**——
-`.iso` 由 `demux_playlist` 展开成 title 条目，客户端不再自己造 URL。三个 overlay 文件：
-- `src/mpv/demux/bluray_image.h`（新增）：`mp_is_bluray_image()`——本地路径 +
-  扩展名 `.iso` + `bd_open()` 能枚举出 title 才算（只读元数据，毫秒级）。
-- `src/mpv/demux/demux_playlist.c`：新增 `parse_bluray()`（挂进 `playlist_formats[]`
-  首位），生成 `bd://mpls/<%05u>//<绝对路径去掉前导 />` 条目并设 `title`
-  （`Title N · H:MM:SS`）。
-- `src/mpv/demux/demux_lavf.c`：入口处对蓝光镜像 **主动让路**（`return -1`）。
-  ⚠ 必须这么做：demuxer 列表里 lavf 排在 playlist **之前**，而 lavf 会"认领"任何文件
-  （把 ISO 当成无流的 mpeg），不拦就永远走不到 playlist。
-- `src/mpv/options/options.c`：`playlist_exts` 加 **`iso`**。
-  ⚠ 不加的话"打开一个**只装了 .iso 的文件夹**"会得到 **0 条目**：目录展开
-  （`parse_dir` → `test_path`）只按扩展名表挑选，而 `iso` 原本既不在
-  video/audio/image、也不在 archive/playlist 表里 → 目录当成普通文件打开、
-  报 `Failed to recognize file format`，播放列表里只剩一个点不动的目录条目
-  （2026-10-26 用户实测报的正是这个）。
-- ⚠ **stream origin 坑（最花时间的一处）**：`bd://` 的 `stream_info_bluray.stream_origin`
-  是 `STREAM_ORIGIN_UNSAFE`（设备路径可指向任意文件），而 `check_origin()` 只允许
-  DIRECT/UNSAFE 来源打开它；demuxer 展开出来的条目默认是 **FS** 来源 → 被静默拒绝，
-  报 `No protocol handler found to open URL bd://...`（错误文案完全不提 origin）。
-  修法：`parse_bluray` 成功后把这些条目提升为 `STREAM_ORIGIN_DIRECT`（镜像已本地打开
-  并枚举成功，条目只是同一张盘里的 title，不是权限放宽）。
-  对照：客户端用 `loadfile bd://…` 手塞条目时是 DIRECT → 一直能用，所以这个坑只在
-  "让 mpv 自己展开"之后才暴露。
+**模型（贴上游 v0.42.0，"B" 方案）**：一张盘 = mpv 的**一条 stream**
+（`stream_bluray.c` 的 `stream_info_bdmv_dir` 在 stream 层认领 `.iso` / BDMV 目录，
+`demux_disc.c` 把盘声明的 segment 映射成时间轴并跟随盘 VM 跳转）。盘上的 title
+**不是播放列表条目**，而是这条流的 **edition**（`edition-list`）：
 
-**交互（用户 2026-10-26 定，含一次修正）**：ISO 与普通文件**同等对待**——
-展开成多个 title 条目后**按播放列表顺序播放**（首条播放、其余 append 排队），
-命令行 / 打开文件 / 打开文件夹 / 拖入 dropzone 四条入口一致。
-（最初实现是"列出来但不自动播放"，用户否掉："符合一般播放习惯，应该按顺序播放"。）
-⚠ 蓝光 3D 盘的第 1 个 title 常常是 0:00 的 logo/警告片，按顺序播放会瞬间跳过它
-再进第 2 个——这是"按顺序"的正常结果，不是 bug。
+- 播放列表里**一张盘一条**；默认播**最长**的 title（`bd_get_main_title`），播完就结束（不连播）。
+- `edition` 在 disc 上 SET 走 `STREAM_CTRL_SET_CURRENT_TITLE` → `play_title()`，**原地跳**
+  （不重开文件、不重建滤镜链）。
+- 盘支持导航时 `demux_disc` 还会合成一条 `Disc Menu` edition（`bd_menu_call`）。
+- 上游依据：RELEASE_NOTES 头条 = "DVD-Video, Blu-ray HDMV and BD-J menu navigation"
+  + "Direct playback of .iso images"；man 的 `g-e` 写作 "Select an MKV edition or
+  DVD/Blu-ray title"；`--bluray-min-title-length` 文档原话是"盘上大量只给菜单用的超短
+  playlist，会以 edition 形式出现"。
 
-**实现**：
-- `src/client/BlurayDisc.{h,cpp}`：进程内链 **libbluray**（meson 里
-  `dependency('libbluray', version: '>= 1.0.0')`；standard 用系统的、full 已捆
-  `libbluray.so.4`）。`bdisc::enumerate()` 只读 mpls/clpi 元数据（**不解码**），
-  返回 `{index, mpls, durationMs, chapterCount, clipCount, label}`。
-  ⚠ 命名空间不能叫 `bluray`——libbluray 头里有 `struct bluray`，同名会
-  "redeclared as different kind of entity"（实测）。
-- `PlayerViewModel::openFiles`：ISO **只把路径原样交给 mpv**（mpv 自己展开，见上），
-  顺带枚举一次只为**登记友好名**（`bdisc::registerLabel`，注册 `%05u` 与不补零两种
-  写法）；普通文件原样混排，首条 `loadfile` 播放、其余 `append`，`mode == 1` 全部
-  append。
-- **UI 入口必须能选到 ISO**：`FileDialog` 的媒体过滤器原本只有
-  `*.mp4 *.mkv …`，`.iso` 只能靠"All files (*)"才看得见 → 等于没有 UI 途径。
-  现在媒体过滤器含 `*.iso *.m2ts *.mts`，并单列 `Blu-ray images (*.iso)`。
-  ⚠ 用 **mpls 编号**而不是 title index：libbluray 的 title 索引随
-  `TITLES_*` 过滤条件变化，mpls 是盘上稳定标识。
-  **设备编进 URL（2026-10-26，解决了多盘混排）**：条目 URL 是
-  `bd://mpls/<n>//<绝对路径去掉前导 />`，即
-  `bd://mpls/3//home/zmq/视频/test.iso`。每条自带设备 → 同一播放列表里放**多张
-  不同 ISO** 也各自正确；URL 就是 mpv playlist 的 `filename` → **持久化免费成立**
-  （重启后条目自带设备，不再依赖全局设置）；`watch_later` 续播同理能定位回同一张盘。
-  ⚠ 两条硬约束（都实测过）：
-  ① **必须双斜杠**：`bd://mpls/<n>/<device>` 在第一个 `/` 处切分设备串，单斜杠会把
-     绝对路径的前导 `/` 吃掉（`/home/…` → `home/…`)；写 `///home/…` 又多一个斜杠，
-     所以生成时把路径自己的前导 `/` 去掉、固定用 `//` 作分隔。
-  ② **必须绝对路径**：相对路径会被解析成相对 root（`test.iso` → `/test.iso`）。
-  路径含中文/空格都验证可用（不需要 URL 编码）。
-  全局 `--bluray-device` 仍会设置一次作兜底（老持久化里的裸 `bd://mpls/N` 条目靠它）。
-- 播放列表面板显示名：`bdisc::labelFor("bd://mpls/5")` → `Title 6 · 01:18:30`
-  （进程级 QHash 在枚举时登记；未知 URL 回退 basename）。
-- **持久化**：`bluray-device` 是全局选项，重启后 bd:// 条目会打不开
-  （mpv 报 "No protocol handler found"）。所以把 ISO 路径存 `blurayDevice`
-  （设置写入后**立即 `settings_.sync()`**——被 SIGTERM 杀掉时不落盘，实测），
-  `restorePlaylist*` 在装载前先设回去。启动阶段同步写属性是安全的
-  （core 空闲、无 DR 竞争，见"GUI 线程不得同步调 mpv API"的例外条款）。
-- 枚举失败（非蓝光结构/损坏）→ 退回 `loadfile bd://`（mpv 默认播最长 title）。
-- CLI 输入也改走 `viewModel.openFiles`（原先直接 `mpv.loadFile`），否则
-  `vsr-player xxx.iso` 这条路径拿不到 ISO 特殊处理。
+**为什么放弃自己展开（2026-10-26 的 A 方案：`parse_bluray` 把 ISO 拆成每 title 一条
+`bd://mpls/N//dev`）**：0.42 在 stream 层先认领 `.iso`，两者冲突——`disc` 自己的 lavf
+slave 打开被我们那条"让 lavf 给 playlist 让路"的补丁拒掉 → **ISO 直接打不开**
+（`bdmv/bluray` redirect 后 `[disc]` 已声明流，最后 `Failed to recognize file format`）。
+2026-11-26 用户定：撤三处 overlay 补丁（`parse_bluray` / `bluray_image.h` /
+`demux_lavf` 让路），只留 `demux_playlist.c` 的"本地播放列表里的 `bd://` 条目提升
+DIRECT"（老 m3u8 快照仍带 `bd://mpls/N//dev`，UNSAFE origin 会被 check_origin 拒）。
+`playlist_exts` 里的 `iso` 保留，只为目录展开能列出盘镜像。
 
-**实测（本机 `test.iso`，20.6 GB）**：卷标 `CW3DBD_04`（3D 蓝光，`BDMV/STREAM/SSIF/`
-5 个 ssif），枚举 6 个 title（0:00 / 0:10 / 0:30 / 1:30 / 4:00 / **1:18:30**，
-主片 mpls=00003、16 章），`aacs=0`；点击主片 → `bd://mpls/3`、
-`h264 [High] 1920x1080`、`hwdec=nvdec`、`chapter-list/count=16`；重启后自动
-恢复 6 条 + 设备。普通文件与目录播放未受影响。
+**客户端（2026-11-26 新增）**：
+
+| UI | mpv 侧 | 备注 |
+|---|---|---|
+| Tracks →「标题」 | `edition` / `edition-list` | 盘上 title + 合成 `Disc menu`；**title 不是轨道**（与 `track-list` 无交集） |
+| Tracks →「章节」 | `chapter-list` | = 上游 `menu.conf` 的 `$chapters`；盘主 title 常十几章 |
+| 偏好 → 光盘 →「打开时进入菜单」 | `options/disc-menu` | **默认开**（用户 2026-11-26 定） |
+| 偏好 → 光盘 →「隐藏 <3 分钟标题」 | `options/bluray-min-title-length=180` | 默认关 |
+| 菜单键鼠 | `discnav` + `disc-menu-active` | ←→↑↓/Enter/Esc；鼠标按画面归一化坐标；Ctrl+M 根菜单、Ctrl+Shift+M 弹出菜单 |
+
+- **菜单画面不用我们画**：上游把 HDMV/BD-J overlay 拷成
+  `osd_set_bitmaps(OSDTYPE_DISC_MENU)`（`player/discnav.c`），会烙进 `vo=libmpv` 的
+  输出帧，且**不受 `osd-level=0` 影响**（我们本来就关着 mpv OSD）。菜单在屏时 QML
+  控制层隐藏（`showUi` 与 `discMenuActive` 互斥），鼠标事件转给盘。
+- 两个 `options/...` 都是 **stream 打开时读取**：必须在 `loadfile` 之前下发
+  （`applyDiscOptions()`，`openFiles` 与 `applyPlaybackSettings` 各调一次）。
+- ⚠ **进菜单模式下断点续播静默失效**（实测 `--disc-menu=yes --start=1800`：盘 VM 接管，
+  start 被忽略）。**2026-11-26 用户定：先按静默失效处理**，不特殊处理、不提示，后续再讨论。
+- 实测（本机 20.6 GB / 18.8 GB 两张盘）：`--disc-menu=yes` 打开 → 先播盘上的 first-play
+  （约 30 s）→ ~38.5 s 时 `disc-menu-active=1`、日志
+  `current-edition 1->6 (menu_active=1)` + `overlay on`；`edition-list` = N 条 title +
+  `Disc Menu`。`--disc-menu=no`（默认关时）直接进最长 title（1:18:30 / 1:48:26）。
+- 老快照/老列表里的 `bd://mpls/N//dev` 条目**仍能播**（走 `bluray_stream_open` 的
+  `mpls/<n>` 解析），只是它们各算"一条盘流"，与新的"一张盘一条"混在同一个播放列表里。
 
 **⚠ 该盘是双轨 MVC（蓝光 3D），只能播 base view（2D）**：SSIF 里两条视频 PID
 （0x1011 base + 0x1012 dependent/MVC），依赖视图的 NAL 是 type 15（subset SPS）
