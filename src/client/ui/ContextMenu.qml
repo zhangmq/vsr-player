@@ -1004,7 +1004,12 @@ PopupBase {
         if (row.toggle !== undefined) {
             // toggle 型：翻转后**保持打开**（还要能连点其它界面元素）；
             // 勾选态由 row.toggle 的绑定（viewModel 属性）刷新。
-            if (row.subSig) root[row.subSig](row.value, row.group || 0)
+            // 没有 value 的 toggle 行（如 Preferences → Disc）是零参信号，不能硬塞
+            // (value, group)：QML 会报 "Too many arguments, ignoring 1"。
+            if (row.subSig) {
+                if (row.value !== undefined) root[row.subSig](row.value, row.group || 0)
+                else root[row.subSig]()
+            }
             return
         }
         if (row.sig !== undefined) {

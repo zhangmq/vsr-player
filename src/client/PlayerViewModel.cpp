@@ -2229,6 +2229,18 @@ void PlayerViewModel::setEdition(int id) {
     // 位置由 mpv 自己维持；UI 的勾选由 current-edition 观察器回填。
     if (currentEdition_ != id) { currentEdition_ = id; emit currentEditionChanged(); }
     mpv_->setPropertyInt64Async("edition", id);
+    // On a disc, setting the property jumps the disc VM *and* pins mpv's `edition`
+    // option (command.c writes opts->edition_id). That pin is an absolute title index
+    // and is applied to whatever disc is opened next, where it may not exist: picking
+    // "Disc menu" (index 6) on a 6-title disc made the next, 5-title disc fail with
+    // "Couldn't start title '6'". Clear the pin once it has done its job -- an option
+    // change has no side effects here (no option-change callback for `edition`), so
+    // the current disc keeps the title it jumped to and the next open falls back to
+    // the configured default (disc menu / longest title).
+    // Network streams are the opposite case: there the option *is* the selection, so
+    // only reset it for disc sources.
+    if (discSource_)
+        mpv_->setPropertyStringAsync("options/edition", "auto");
 }
 
 void PlayerViewModel::removeTrack(const QString &type, qlonglong id) {
