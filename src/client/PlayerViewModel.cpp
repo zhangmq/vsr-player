@@ -1055,7 +1055,12 @@ void PlayerViewModel::setDiscMenuBoot(bool on) {
 }
 
 void PlayerViewModel::discNav(const QString &action) {
-    if (!mpv_ || !discMenuActive_) return;
+    // Gate on the source, not on discMenuActive: the menu-local keys (arrows/Enter/Esc)
+    // are only routed while a menu is on screen (KeyRouter checks that), but the
+    // `menu`/`popup` actions must also work when *nothing* is on screen -- that is the
+    // only way back from a still/photo page, where mpv considers the disc-menu section
+    // inactive because no button overlay is visible.
+    if (!mpv_ || !discSource_) return;
     const std::string a = action.toStdString();
     mpv_->commandAsync({"discnav", a.c_str(), nullptr});
 }
