@@ -239,6 +239,18 @@ if [ -d "$LIB_SRC" ]; then
         fi
     done
 fi
+# A package built on a host with Qt >= 6.12.1 does not carry the fix libraries at all,
+# so the loop above cannot see them -- drop copies installed by an older release, or the
+# binary keeps loading a 6.12.0 libQt6Gui against a 6.12.1 libQt6Core and dies with
+# "undefined symbol: _ZN14QObjectPrivateC2E16QtPrivate_6_12_0, version Qt_6_PRIVATE_API".
+if [ -d "$LIB_SRC" ] && [ "$QT_FIX_ALLOW" = "0" ]; then
+    for f in libQt6Quick.so.6 libQt6Gui.so.6; do
+        if [ -e "$LIB_DIR/$f" ]; then
+            rm -f "$LIB_DIR/$f"
+            echo "  - removed stale Qt fix library $f (host Qt ${SYS_QT:-unknown} has the fixes upstream)"
+        fi
+    done
+fi
 # dev 模式：按 docs 把 wheel 的 nvidia_vfx.libs 放在 third_party/nvidia_vfx.libs，
 # 安装时必须落到上面 RPATH 期望的位置——否则装出来的库加载失败 → VSR 静默直通。
 if [ "$MODE" = dev ] && [ -d "$SRC/third_party/nvidia_vfx.libs" ]; then

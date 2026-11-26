@@ -137,14 +137,34 @@ cp "$MPV_DIST/_build/mpv" "$STAGE/mpv-vsr"
 cp -L "$MPV_DIST/_build/libmpv.so.2" "$STAGE/lib/vsr-player/libmpv.so.2"
 
 # ── Qt 6.12.0 fixes (QTBUG-151831 fullscreen freeze, QTBUG-150279 close deadlock) ──
-# The patched libQt6Quick / libQt6Gui ship with the package; install.sh decides via a
-# version gate whether they actually land in ~/.local/lib/vsr-player/ (only when the
-# host Qt is exactly 6.12.0: older versions are ABI-incompatible, and >= 6.12.1
-# contains the upstream fixes). Never silently produce a package without them --
-# VSR_SKIP_QT_FIX=1 is the explicit opt-out.
+# The patched libQt6Quick / libQt6Gui are built from 6.12.0 sources, so they only make
+# sense for a host Qt that is exactly 6.12.0: anything older is ABI-incompatible, and
+# 6.12.1+ already carries both upstream fixes (shipping ours would shadow a newer
+# official library and fail at load time with "undefined symbol:
+# _ZN14QObjectPrivateC2E16QtPrivate_6_12_0, version Qt_6_PRIVATE_API"). install.sh
+# applies the same host-version gate when it decides what to place in ~/.local.
+sys_qt_version() {
+    local v=""
+    if command -v qmake6 >/dev/null 2>&1; then
+        v="$(qmake6 -query QT_VERSION 2>/dev/null || true)"
+    fi
+    if [ -z "$v" ]; then
+        local f
+        for f in /usr/lib/libQt6Core.so.6.* /usr/lib64/libQt6Core.so.6.* \
+                 /usr/lib/x86_64-linux-gnu/libQt6Core.so.6.*; do
+            [ -e "$f" ] || continue
+            v="${f##*.so.}"
+            break
+        done
+    fi
+    printf '%s' "$v"
+}
 QT_FIX_LIB="${QT_QUICK_FIX_LIB:-$PROJECT_ROOT/build/qt-fix/libQt6Quick.so.6.12.0}"
 QT_GUI_FIX_LIB="${QT_GUI_FIX_LIB:-$PROJECT_ROOT/build/qt-fix/lib/libQt6Gui.so.6}"
-if [ -f "$QT_FIX_LIB" ]; then
+SYS_QT="$(sys_qt_version)"
+if [ -n "$SYS_QT" ] && [ "$(printf '%s\n6.12.1\n' "$SYS_QT" | sort -V | head -1)" = "6.12.1" ]; then
+    echo "  skip Qt fix libraries (host Qt $SYS_QT already contains QTBUG-151831/150279)"
+elif [ -f "$QT_FIX_LIB" ]; then
     cp -aL "$QT_FIX_LIB" "$STAGE/lib/vsr-player/libQt6Quick.so.6"
     echo "  ok Qt Quick fix library (QTBUG-151831) -> lib/vsr-player/libQt6Quick.so.6"
     if [ -f "$QT_GUI_FIX_LIB" ]; then
@@ -158,54 +178,8 @@ if [ -f "$QT_FIX_LIB" ]; then
 elif [ "${VSR_SKIP_QT_FIX:-0}" = "1" ]; then
     echo "  WARNING: VSR_SKIP_QT_FIX=1 -- Qt fix libraries omitted; this package still freezes on fullscreen with Qt 6.12.0"
 else
-    echo "  ERROR: missing Qt Quick fix library: $QT_FIX_LIB" >&2
+    echo "  ERROR: missing Qt Quick fix library: $QT_FIX_LIB (host Qt ${SYS_QT:-unknown})" >&2
     echo "     Build instructions: build/qt-fix/README.md; set VSR_SKIP_QT_FIX=1 to opt out explicitly." >&2
-    exit 1
-fi
-
-# standard 变体：把 libmpv / mpv-vsr 的 FFmpeg DT_NEEDED 从带版本 soname
-# （libavcodec.so.63）改成无版本名（libavcodec.so），由安装时按**目标机实际版本**
-# 建链接 —— 这样包本身不再钉任何 FFmpeg 版本。只用 FFmpeg 家族：libnvrtc 的符号
-# 版本命名空间就是 soname，改 NEEDED 会破坏符号版本（见 rewrite-needed.py 注释）。
-# 记录**构建期的 FFmpeg 主版本**：standard 把 NEEDED 去版本化后就再也看不出
-# 原本依赖哪个 major 了，而跨 major 是没有 ABI 承诺的（能加载 ≠ 行为对）。
-# install.sh 会拿这个文件对照目标机实际装的 libavcodec 主版本，不一致就告警。
-# 注意：needed_of() 在 [4/6] 才定义，这里用 readelf 直读（staging 早于它）
-readelf -d "$MPV_DIST/_build/libmpv.so.2" \
-    | sed -n 's/.*(NEEDED).*\[libavcodec\.so\.\([0-9]*\)\].*/\1/p' \
-    > "$STAGE/lib/vsr-player/VSR-FFMPEG-MAJOR"
-echo "  ✓ 记录构建期 FFmpeg 主版本: $(cat "$STAGE/lib/vsr-player/VSR-FFMPEG-MAJOR")"
-
-# 绝对路径形式的 NEEDED（libmujs）两个变体都要改成 basename；FFmpeg 去版本化
-# 只在 standard 做（full 自带匹配的库，没必要改）。
-if [ "$VARIANT" = standard ]; then
-    python3 scripts/rewrite-needed.py --ffmpeg \
-        "$STAGE/lib/vsr-player/libmpv.so.2" "$STAGE/mpv-vsr"
-    echo "  ✓ FFmpeg NEEDED 去版本化 + 绝对路径去目录（安装时链接系统实际版本）"
-else
-    python3 scripts/rewrite-needed.py \
-        "$STAGE/lib/vsr-player/libmpv.so.2" "$STAGE/mpv-vsr"
-    echo "  ✓ 绝对路径 NEEDED 去目录（libmujs）"
-fi
-# Wayland 空闲抑制模块（可选）：主程序 dlopen；目标机无 QtWaylandClient 时
-# 加载失败 → 回退 org.freedesktop.ScreenSaver（不会导致启动失败）。
-IDLE_MOD="$CLIENT_DIST/src/client/libvsr-idle-wayland.so"
-if [ -f "$IDLE_MOD" ]; then
-    cp "$IDLE_MOD" "$STAGE/lib/vsr-player/"
-    echo "  ✓ wayland idle-inhibit 模块"
-fi
-# Wayland 显示能力模块（可选）：主程序 dlopen 读合成器给本窗口的**表面色彩偏好**
-# （HDR 能力/物理峰值）→ 决定 HDR10 自动上屏与上变换的目标峰值。
-# ⚠ 漏打包的后果是**静默降级**：找不到模块 → 显示能力不可读 → 恒退 SDR
-# （HDR 片源不会上屏、SDR→HDR10 的目标峰值退回 650 兜底）。
-# 该模块由 #26 引入（HDR 那批改动）；v0.3.0-fix 早于 #26、不含 HDR 代码，
-# 因此只有首次带 HDR 的包（0.4.0）受影响——2026-10-18 安装后核对发现并修复。
-COLOR_MOD="$CLIENT_DIST/src/client/libvsr-color-feedback.so"
-if [ -f "$COLOR_MOD" ]; then
-    cp "$COLOR_MOD" "$STAGE/lib/vsr-player/"
-    echo "  ✓ wayland color-feedback 模块（HDR 显示能力）"
-else
-    echo "  ❌ 缺 libvsr-color-feedback.so —— 打出来的包 HDR 自动上屏会静默失效" >&2
     exit 1
 fi
 
