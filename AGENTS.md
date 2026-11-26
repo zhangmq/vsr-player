@@ -1002,6 +1002,13 @@ DIRECT"（老 m3u8 快照仍带 `bd://mpls/N//dev`，UNSAFE origin 会被 check_
 - 老快照/老列表里的 `bd://mpls/N//dev` 条目**仍能播**（走 `bluray_stream_open` 的
   `mpls/<n>` 解析），只是它们各算"一条盘流"，与新的"一张盘一条"混在同一个播放列表里。
 
+**概念边界（用户 2026-11-26 定，按上游理念）**：
+- **播放列表条目 = 一个实际文件**（或 URL）。title 与章节都**不进播放列表**：
+  title 是 `edition`（盘级节目），章节是当前 title 时间轴上的点。
+  以前"ISO 展开成每 title 一条"的做法把盘级概念塞进了文件级列表，已废弃。
+- **章节只做"选"**（「章节」二级面板），**不加快捷键**（键位表里没有 chapter 动作，
+  上游 mpv 的 `PGUP/PGDWN`、`!`/`@` 默认也是注释状态）。
+
 **⚠ 该盘是双轨 MVC（蓝光 3D），只能播 base view（2D）**：SSIF 里两条视频 PID
 （0x1011 base + 0x1012 dependent/MVC），依赖视图的 NAL 是 type 15（subset SPS）
 与 type 20（slice extension）。FFmpeg 9.0.2 **不能解 MVC**（`sps_id 1 out of range`）。
