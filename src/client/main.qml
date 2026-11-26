@@ -380,8 +380,8 @@ Item {
                 if (index >= 0 && index < ch.length)
                     viewModel.seekAbsolute(Math.round(ch[index].time * 1000))
             }
-            // Preferences -> Disc: 0 = boot into menu, 1 = hide short titles
-            onDiscOptionToggled: function(id) { viewModel.toggleDiscOption(id) }
+            // Preferences -> Disc: flip "boot into disc menu"
+            onDiscMenuBootToggled: viewModel.discMenuBoot = !viewModel.discMenuBoot
             // 延迟：UI 立即乐观更新，PlayerViewModel 内 500ms debounce 后写 mpv
             onSubDelayNudged: function(d) { viewModel.adjustSubDelay(d) }
             onSubDelayResetRequested: { viewModel.resetSubDelay() }

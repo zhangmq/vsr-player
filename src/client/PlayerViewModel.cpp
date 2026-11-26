@@ -1011,10 +1011,8 @@ void PlayerViewModel::loadSettings() {
 
     // ── Disc (Blu-ray / DVD) ─────────────────────────────────────────
     // Boot into the disc's own menu by default (decided 2026-11-26); off = play the
-    // longest title directly. hide-short-titles is off by default (stock behaviour);
-    // enabling it filters out the very short menu-only titles.
+    // longest title directly.
     discMenuBoot_ = settings_.value("discMenuBoot", true).toBool();
-    discHideShortTitles_ = settings_.value("discHideShortTitles", false).toBool();
 
     // ── 反交错（0=Off / 1=Auto / 2=Force）─────────────────────────────
     // 手改越界 → 夹回 0..2（不整份丢弃）。CLI `-- --deinterlace=…` 优先，
@@ -1038,17 +1036,13 @@ void PlayerViewModel::loadSettings() {
 
 void PlayerViewModel::applyDiscOptions() {
     if (!mpv_) return;
-    // Both are **read when the stream is opened** (stream_bluray.c's
-    // bdmv_dir_stream_open uses disc-menu to pick menu vs. longest title; the title
-    // list is filtered by min-title-length), so they only take effect if set before
+    // Read when the stream is opened (stream_bluray.c's bdmv_dir_stream_open uses
+    // disc-menu to pick menu vs. longest title), so it only takes effect if set before
     // loadfile. Pushed through the `options/<name>` property namespace (mpv's options
     // are a subtree of the property tree, writable at runtime, and the next loadfile
-    // picks them up).
+    // picks the value up).
     mpv_->setPropertyStringAsync("options/disc-menu", discMenuBoot_ ? "yes" : "no");
-    mpv_->setPropertyStringAsync("options/bluray-min-title-length",
-                                 discHideShortTitles_ ? "180" : "0");
-    MLOG_VERBOSE("disc: boot-into-menu=%d hide-short-titles=%d",
-                 discMenuBoot_ ? 1 : 0, discHideShortTitles_ ? 1 : 0);
+    MLOG_VERBOSE("disc: boot-into-menu=%d", discMenuBoot_ ? 1 : 0);
 }
 
 void PlayerViewModel::setDiscMenuBoot(bool on) {
@@ -1058,21 +1052,6 @@ void PlayerViewModel::setDiscMenuBoot(bool on) {
     saveSettings("discMenuBoot", on);
     applyDiscOptions();
     MLOG_INFO("disc: boot into disc menu = %s", on ? "yes" : "no");
-}
-
-void PlayerViewModel::setDiscHideShortTitles(bool on) {
-    if (discHideShortTitles_ == on) return;
-    discHideShortTitles_ = on;
-    emit discHideShortTitlesChanged();
-    saveSettings("discHideShortTitles", on);
-    applyDiscOptions();
-    MLOG_INFO("disc: hide short titles = %s (takes effect on the next open)",
-              on ? "yes" : "no");
-}
-
-void PlayerViewModel::toggleDiscOption(int id) {
-    if (id == 0)      setDiscMenuBoot(!discMenuBoot_);
-    else if (id == 1) setDiscHideShortTitles(!discHideShortTitles_);
 }
 
 void PlayerViewModel::discNav(const QString &action) {

@@ -166,11 +166,6 @@ class PlayerViewModel : public QObject {
     /// (the escape hatch is the Disc menu row in the Title panel).
     Q_PROPERTY(bool discMenuBoot READ discMenuBoot WRITE setDiscMenuBoot
                NOTIFY discMenuBootChanged)
-    /// Hide disc titles shorter than 3 minutes (= upstream
-    /// `--bluray-min-title-length=180`). Discs carry many very short playlists used only
-    /// by their menus, and those show up as editions.
-    Q_PROPERTY(bool discHideShortTitles READ discHideShortTitles WRITE setDiscHideShortTitles
-               NOTIFY discHideShortTitlesChanged)
     Q_PROPERTY(QString videoInfo READ videoInfo NOTIFY videoInfoChanged)
     // OSD 数据源（观察器填充，主线程持有）
     Q_PROPERTY(int videoWidth READ videoWidth NOTIFY osdDataChanged)
@@ -346,8 +341,8 @@ public:
     void loadSettings();
     /// mpv init 后应用持久化的音量/倍速/循环（观察器随后回填 viewModel）。
     void applyPlaybackSettings();
-    /// Push the disc-related mpv options (disc-menu / bluray-min-title-length).
-    /// Must run **before** loadfile: both are read when the stream is opened.
+    /// Push the disc-related mpv option (`disc-menu`). Must run **before** loadfile:
+    /// it is read when the stream is opened.
     void applyDiscOptions();
     /// 恢复上次播放列表（无 CLI 文件时调用）：首条 replace 开始播放，
     /// 其余 append，最后定位上次条目。
@@ -448,9 +443,7 @@ public:
     bool discSource() const { return discSource_; }
     bool discMenuActive() const { return discMenuActive_; }
     bool discMenuBoot() const { return discMenuBoot_; }
-    bool discHideShortTitles() const { return discHideShortTitles_; }
     void setDiscMenuBoot(bool on);
-    void setDiscHideShortTitles(bool on);
     QString videoInfo() const   { return videoInfo_; }
     int videoWidth() const { return videoWidth_.load(); }
     int videoHeight() const { return videoHeight_.load(); }
@@ -706,8 +699,6 @@ public slots:
     Q_INVOKABLE void setEdition(int id);
     /// In-disc navigation (mpv `discnav`): up/down/left/right/select/prev/menu/popup.
     Q_INVOKABLE void discNav(const QString &action);
-    /// Toggle from Preferences -> Disc (0 = boot into menu, 1 = hide short titles)
-    Q_INVOKABLE void toggleDiscOption(int id);
     /// Forward the mouse; nx/ny are picture-normalized coordinates (0..1, 0,0 top-left).
     Q_INVOKABLE void discNavMouse(const QString &action, double nx, double ny);
     /// 移除某条轨道（字幕轨用 sub-remove；音视频轨不支持移除）
@@ -796,7 +787,6 @@ signals:
     void discSourceChanged();
     void discMenuActiveChanged();
     void discMenuBootChanged();
-    void discHideShortTitlesChanged();
     void videoInfoChanged();
     void osdDataChanged();
     void videoHdrChanged();
@@ -983,7 +973,6 @@ private:
     bool discSource_ = false;      // file-format == "disc"（光盘内容：title 不是码流）
     bool discMenuActive_ = false;  // disc-menu-active（盘内菜单在屏上）
     bool discMenuBoot_ = true;     // boot a disc into its menu (decided 2026-11-26)
-    bool discHideShortTitles_ = false;  // --bluray-min-title-length=180
     qint64 lastDiscMouseMs_ = 0;   // throttle for disc-menu mouse moves (40 ms)
     bool hwdecKnown_ = false;                  // hwdec-current 读到过真实值（false = 解码器未建立/属性不可用）
     std::atomic<bool> hwDecodeEnabled_{true};  // 用户偏好（我们下发的 hwdec 开关）

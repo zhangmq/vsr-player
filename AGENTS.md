@@ -988,15 +988,18 @@ slave 打开被我们那条"让 lavf 给 playlist 让路"的补丁拒掉 → **I
 | Tracks →「标题」 | `edition` / `edition-list` | 盘上 title + 合成 `Disc menu`；**title 不是轨道**（与 `track-list` 无交集） |
 | Tracks →「章节」 | `chapter-list` | = 上游 `menu.conf` 的 `$chapters`；盘主 title 常十几章 |
 | 偏好 → 光盘 →「打开时进入菜单」 | `options/disc-menu` | **默认开**（用户 2026-11-26 定） |
-| 偏好 → 光盘 →「隐藏 <3 分钟标题」 | `options/bluray-min-title-length=180` | 默认关 |
 | 菜单键鼠 | `discnav` + `disc-menu-active` | ←→↑↓/Enter/Esc；鼠标按画面归一化坐标；Ctrl+M 根菜单、Ctrl+Shift+M 弹出菜单 |
 
 - **菜单画面不用我们画**：上游把 HDMV/BD-J overlay 拷成
   `osd_set_bitmaps(OSDTYPE_DISC_MENU)`（`player/discnav.c`），会烙进 `vo=libmpv` 的
   输出帧，且**不受 `osd-level=0` 影响**（我们本来就关着 mpv OSD）。菜单在屏时 QML
   控制层隐藏（`showUi` 与 `discMenuActive` 互斥），鼠标事件转给盘。
-- 两个 `options/...` 都是 **stream 打开时读取**：必须在 `loadfile` 之前下发
+- `options/disc-menu` 是 **stream 打开时读取**：必须在 `loadfile` 之前下发
   （`applyDiscOptions()`，`openFiles` 与 `applyPlaybackSettings` 各调一次）。
+- ⚠ **不做"隐藏超短 title"开关**（用户 2026-11-26 定）：上游有
+  `--bluray-min-title-length`（文档自己举例 180 s），但我们评估后认为把这类偏好的
+  UI 做全（阈值档位、重开生效的提示、它会改变 `edition` 编号的说明）属于臃肿、
+  用处不大，所以**不暴露**，保持上游默认（0 = 全列）。
 - ⚠ **进菜单模式下断点续播静默失效**（实测 `--disc-menu=yes --start=1800`：盘 VM 接管，
   start 被忽略）。**2026-11-26 用户定：先按静默失效处理**，不特殊处理、不提示，后续再讨论。
 - 实测（本机 20.6 GB / 18.8 GB 两张盘）：`--disc-menu=yes` 打开 → 先播盘上的 first-play

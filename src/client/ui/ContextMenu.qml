@@ -73,7 +73,6 @@ PopupBase {
     signal uiElementToggled(int id)
     signal titlePicked(int id)               // disc title (mpv edition, not a track)
     signal chapterPicked(int index)          // chapter index, 0-based
-    signal discOptionToggled(int id)         // 0 = boot into menu; 1 = hide short titles
     /// 「关于」弹窗（图标 / 名称 / 版本 / 许可 / 仓库）。
     signal aboutRequested()
     signal quitRequested()
@@ -298,17 +297,13 @@ PopupBase {
         ]
     }
 
-    /// Preferences -> Disc: boot into menu / hide short titles. Both are boolean, so
-    /// they are toggle rows (same shape as the thumbnail switch under Interface: click
-    /// flips it and the menu stays open).
+    /// Preferences -> Disc: a single boolean, so one toggle row (same shape as the
+    /// thumbnail switch under Interface: a click flips it and the menu stays open).
     function discPrefsMenu() {
         return [
             {label: qsTr("Boot into disc menu"),
              toggle: viewModel.discMenuBoot,
-             subSig: "discOptionToggled", value: 0},
-            {label: qsTr("Hide titles shorter than 3 min"),
-             toggle: viewModel.discHideShortTitles,
-             subSig: "discOptionToggled", value: 1}
+             subSig: "discMenuBootToggled"}
         ]
     }
 
