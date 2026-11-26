@@ -71,9 +71,9 @@ PopupBase {
     signal stereoSelected(int value, int group)
     /// 右键菜单「界面」二级项：翻转某个界面元素（0 = 缩略图）。
     signal uiElementToggled(int id)
-    signal titlePicked(int id)               // 盘上的 title（mpv edition，不是轨道）
-    signal chapterPicked(int index)          // 章节序号（0 起）
-    signal discOptionToggled(int id)         // 0 = 打开进菜单；1 = 隐藏超短 title
+    signal titlePicked(int id)               // disc title (mpv edition, not a track)
+    signal chapterPicked(int index)          // chapter index, 0-based
+    signal discOptionToggled(int id)         // 0 = boot into menu; 1 = hide short titles
     /// 「关于」弹窗（图标 / 名称 / 版本 / 许可 / 仓库）。
     signal aboutRequested()
     signal quitRequested()
@@ -140,19 +140,21 @@ PopupBase {
         {icon: "󰕧", text: qsTr("Video"),
          submenu: function() { return root.videoMenu() },
          enabledWhen: function() { return root.hasVideoMenu() }},
-        // 光盘的 title 是 mpv 的 edition：既不是码流（上面「网络流」那一段），
-        // 也不是视频轨道。一张盘在播放列表里只有一条条目，title 只能从这里选
-        //（用户 2026-11-26 定的模型；上游 0.42 的 edition 就是"盘上的 title"）。
-        // 标签形如 `Title 6 · 1:18:30`；盘支持导航时还会多一条 `Disc menu`。
+        // A disc's titles are mpv editions: neither streams (the "Network stream"
+        // section above) nor video tracks. A disc has a single playlist entry, so this
+        // is the only place to pick a title (model decided 2026-11-26; upstream 0.42's
+        // edition *is* "a title on the disc"). Rows read `Title 6 · 1:18:30`, plus a
+        // `Disc menu` entry when the disc supports navigation.
         {icon: "󰿎", text: qsTr("Title"),
          hint: function() { return root.currentDiscTitleLabel() },
          subSig: "titlePicked",
          current: function() { return viewModel.currentEdition },
          submenu: function() { return root.discTitlesMenu() },
          enabledWhen: function() { return root.hasDiscTitles() }},
-        // 章节：mpv 的 chapter-list 镜象（= 上游 menu.conf 的 $chapters）。
-        // 盘上的 title 动辄十几章（本机测试盘主 title 16 章），没有列表就只能靠
-        // 进度条摸；条目名优先用盘/容器给的章节名，没有就显示序号 + 起始时间。
+        // Chapters: a mirror of mpv's chapter-list (= upstream menu.conf's $chapters).
+        // A disc title often has a dozen or more of them (the test disc's main title has
+        // 16), and without a list the only way in is the seek bar. Row labels use the
+        // chapter name when the disc/container provides one, otherwise index + start.
         {icon: "󰉻", text: qsTr("Chapter"),
          hint: function() { return root.currentChapterLabel() },
          subSig: "chapterPicked",
@@ -296,8 +298,9 @@ PopupBase {
         ]
     }
 
-    /// 「光盘」偏好：进盘菜单 / 隐藏超短 title。都是二值 → toggle 行
-    ///（与 Interface 里的缩略图开关同一形态：点一下翻转、菜单不关）。
+    /// Preferences -> Disc: boot into menu / hide short titles. Both are boolean, so
+    /// they are toggle rows (same shape as the thumbnail switch under Interface: click
+    /// flips it and the menu stays open).
     function discPrefsMenu() {
         return [
             {label: qsTr("Boot into disc menu"),
@@ -314,8 +317,9 @@ PopupBase {
         return viewModel.discSource && viewModel.editions.length > 1
     }
 
-    /// mpv 给的盘上 title 标签是 `title: 6 (01:18:30.539) (00003.mpls)`；
-    /// 盘支持导航时 demux_disc 还会合成一条 `Disc Menu`（没有任何时长/playlist）。
+    /// mpv labels disc titles as `title: 6 (01:18:30.539) (00003.mpls)`; when the disc
+    /// supports navigation demux_disc also appends a synthetic `Disc Menu` (no duration
+    /// and no playlist).
     function discTitleLabel(title) {
         var t = String(title || "")
         if (t === "Disc Menu") return qsTr("Disc menu")
@@ -326,7 +330,7 @@ PopupBase {
         return t
     }
 
-    /// 「Title」入口右上角显示的当前 title（不带 mpls 号）
+    /// Current title shown as the hint of the Title row (no mpls number)
     function currentDiscTitleLabel() {
         var eds = viewModel.editions
         for (var i = 0; i < eds.length; i++)
@@ -368,7 +372,8 @@ PopupBase {
         return h > 0 ? h + ":" + p2(m) + ":" + p2(ss) : m + ":" + p2(ss)
     }
 
-    /// 章节行文本：容器/盘给了名字就用它，否则「第 N 章」+ 起始时间
+    /// Chapter row label: the container/disc name when there is one, else
+    /// "Chapter N" + start time
     function chapterLabel(index) {
         var ch = viewModel.chapters
         if (!ch || index < 0 || index >= ch.length) return ""
@@ -424,7 +429,8 @@ PopupBase {
         return out
     }
 
-    /// 「视频」入口是否显示：有可选码流（网络流），或本片有多条视频轨
+    /// Whether the Video entry is shown: there are streams to pick (network source) or
+    /// this file has more than one video track
     function hasVideoMenu() {
         return root.hasStreamChoices() || root.tracksOf("video").length > 1
     }
@@ -520,11 +526,11 @@ PopupBase {
     // ── 网络流（mpv edition）──────────────────────────────────────────
     function hasEditions() { return viewModel.editions.length > 1 }
 
-    /// 本片真正的**可选码流**（ytdl 的每个格式一个 edition）。
-    /// ⚠ 光盘的 edition-list 是盘上的 title，不是码流：蓝光 ISO 在我们的播放
-    /// 列表里已经一条一条列出（parse_bluray），不能再当"网络流"挂进「视频」面板
-    /// （用户 2026-11-26 报：盘上的 title 出现在视频轨道面板、二级标题写着
-    /// "网络流"）。本地多 edition 的文件同理（mpv 自己也没有 edition 菜单）。
+    /// Real **selectable streams** (one edition per ytdl format).
+    /// ⚠ A disc's edition-list is its title list, not streams: those used to be listed
+    /// under "Network stream" in the Video panel (reported 2026-11-26: disc titles
+    /// showed up in the video-track panel with a "Network stream" heading). Same for
+    /// local files with several editions (mpv has no edition menu of its own either).
     function hasStreamChoices() {
         return !viewModel.discSource && viewModel.networkSource && root.hasEditions()
     }

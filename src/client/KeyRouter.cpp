@@ -47,9 +47,10 @@ bool KeyRouter::eventFilter(QObject *watched, QEvent *event)
 
     auto *ke = static_cast<QKeyEvent *>(event);
 
-    // 盘内菜单在屏上：方向键/Enter/Esc 交给盘的虚拟机（mpv `discnav` 命令，
-    // 与上游 input.conf 的 {discnav} section 同一套映射），其余键照旧。
-    // 3D 下不接管：菜单是一整幅画面，分屏输出时会被切成两半（同 mpv OSD）。
+    // A disc menu is on screen: arrows/Enter/Esc go to the disc's virtual machine
+    // (mpv's `discnav` command, the same mapping as upstream's {discnav} input
+    // section), other keys behave normally. Not taken over in 3D: the menu is one
+    // whole picture and would be split across the two eyes (same as mpv's OSD).
     if (vm_ && vm_->discMenuActive() && !mode3d()) {
         const char *nav = nullptr;
         switch (ke->key()) {
@@ -142,7 +143,7 @@ bool KeyRouter::exec(const QString &id)
     if (id == "playlist-prev") { vm_->playlistPrev(); return true; }
     if (id == "playlist-next") { vm_->playlistNext(); return true; }
     if (id == "toggle-osd") { vm_->toggleOsd(); return true; }
-    // ── 光盘菜单（Ctrl+M / Ctrl+Shift+M）─────────────────────────────
+    // ── Disc menu (Ctrl+M / Ctrl+Shift+M) ───────────────────────────
     if (id == "disc-menu-root" || id == "disc-menu-popup") {
         if (!vm_->discSource()) {
             MLOG_VERBOSE("key: %s ignored (not a disc source)", qUtf8Printable(id));

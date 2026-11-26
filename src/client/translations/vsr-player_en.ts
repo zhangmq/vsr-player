@@ -158,31 +158,31 @@
 <context>
     <name>ContextMenu</name>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="188"/>
-        <location filename="../ui/ContextMenu.qml" line="282"/>
-        <location filename="../ui/ContextMenu.qml" line="335"/>
-        <location filename="../ui/ContextMenu.qml" line="416"/>
-        <location filename="../ui/ContextMenu.qml" line="433"/>
-        <location filename="../ui/ContextMenu.qml" line="586"/>
+        <location filename="../ui/ContextMenu.qml" line="190"/>
+        <location filename="../ui/ContextMenu.qml" line="284"/>
+        <location filename="../ui/ContextMenu.qml" line="339"/>
+        <location filename="../ui/ContextMenu.qml" line="421"/>
+        <location filename="../ui/ContextMenu.qml" line="439"/>
+        <location filename="../ui/ContextMenu.qml" line="592"/>
         <source>Auto</source>
         <translation>Auto</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="189"/>
-        <location filename="../ui/ContextMenu.qml" line="587"/>
+        <location filename="../ui/ContextMenu.qml" line="191"/>
+        <location filename="../ui/ContextMenu.qml" line="593"/>
         <source>Force</source>
         <translation>Force</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="187"/>
-        <location filename="../ui/ContextMenu.qml" line="196"/>
-        <location filename="../ui/ContextMenu.qml" line="208"/>
-        <location filename="../ui/ContextMenu.qml" line="449"/>
-        <location filename="../ui/ContextMenu.qml" line="451"/>
-        <location filename="../ui/ContextMenu.qml" line="480"/>
-        <location filename="../ui/ContextMenu.qml" line="588"/>
-        <location filename="../ui/ContextMenu.qml" line="603"/>
-        <location filename="../ui/ContextMenu.qml" line="623"/>
+        <location filename="../ui/ContextMenu.qml" line="189"/>
+        <location filename="../ui/ContextMenu.qml" line="198"/>
+        <location filename="../ui/ContextMenu.qml" line="210"/>
+        <location filename="../ui/ContextMenu.qml" line="455"/>
+        <location filename="../ui/ContextMenu.qml" line="457"/>
+        <location filename="../ui/ContextMenu.qml" line="486"/>
+        <location filename="../ui/ContextMenu.qml" line="594"/>
+        <location filename="../ui/ContextMenu.qml" line="609"/>
+        <location filename="../ui/ContextMenu.qml" line="629"/>
         <source>Off</source>
         <translation>Off</translation>
     </message>
@@ -207,32 +207,32 @@
         <translation>Video</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="162"/>
+        <location filename="../ui/ContextMenu.qml" line="164"/>
         <source>Audio</source>
         <translation>Audio</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="169"/>
+        <location filename="../ui/ContextMenu.qml" line="171"/>
         <source>Subtitles</source>
         <translation>Subtitles</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="174"/>
+        <location filename="../ui/ContextMenu.qml" line="176"/>
         <source>Subtitle delay</source>
         <translation>Subtitle delay</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="176"/>
+        <location filename="../ui/ContextMenu.qml" line="178"/>
         <source>Audio delay</source>
         <translation>Audio delay</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="403"/>
+        <location filename="../ui/ContextMenu.qml" line="408"/>
         <source>Network stream</source>
         <translation>Network stream</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="181"/>
+        <location filename="../ui/ContextMenu.qml" line="183"/>
         <source>Picture processing</source>
         <translation>Picture processing</translation>
     </message>
@@ -280,80 +280,80 @@
         <translation>Disc</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="147"/>
+        <location filename="../ui/ContextMenu.qml" line="148"/>
         <source>Title</source>
         <translation>Title</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="156"/>
+        <location filename="../ui/ContextMenu.qml" line="158"/>
         <source>Chapter</source>
         <translation>Chapter</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="182"/>
+        <location filename="../ui/ContextMenu.qml" line="184"/>
         <source>Deinterlace</source>
         <translation>Deinterlace</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="191"/>
+        <location filename="../ui/ContextMenu.qml" line="193"/>
         <source>Rotate</source>
         <translation>Rotate</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="197"/>
-        <location filename="../ui/ContextMenu.qml" line="621"/>
+        <location filename="../ui/ContextMenu.qml" line="199"/>
+        <location filename="../ui/ContextMenu.qml" line="627"/>
         <source>90°</source>
         <translation>90°</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="198"/>
-        <location filename="../ui/ContextMenu.qml" line="622"/>
+        <location filename="../ui/ContextMenu.qml" line="200"/>
+        <location filename="../ui/ContextMenu.qml" line="628"/>
         <source>270°</source>
         <translation>270°</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="202"/>
+        <location filename="../ui/ContextMenu.qml" line="204"/>
         <source>3D</source>
         <translation>3D</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="203"/>
+        <location filename="../ui/ContextMenu.qml" line="205"/>
         <source>Output mode</source>
         <translation>Output mode</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="209"/>
-        <location filename="../ui/ContextMenu.qml" line="601"/>
+        <location filename="../ui/ContextMenu.qml" line="211"/>
+        <location filename="../ui/ContextMenu.qml" line="607"/>
         <source>3D glasses</source>
         <translation>3D glasses</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="212"/>
+        <location filename="../ui/ContextMenu.qml" line="214"/>
         <source>Source layout</source>
         <translation>Source layout</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="217"/>
+        <location filename="../ui/ContextMenu.qml" line="219"/>
         <source>Side by side · full</source>
         <translation>Side by side · full</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="218"/>
+        <location filename="../ui/ContextMenu.qml" line="220"/>
         <source>Side by side · half</source>
         <translation>Side by side · half</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="219"/>
+        <location filename="../ui/ContextMenu.qml" line="221"/>
         <source>Top and bottom · full</source>
         <translation>Top and bottom · full</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="220"/>
+        <location filename="../ui/ContextMenu.qml" line="222"/>
         <source>Top and bottom · half</source>
         <translation>Top and bottom · half</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="222"/>
+        <location filename="../ui/ContextMenu.qml" line="224"/>
         <source>Output option</source>
         <translation>Output option</translation>
     </message>
@@ -363,120 +363,120 @@
         <translation>Interface</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="231"/>
+        <location filename="../ui/ContextMenu.qml" line="233"/>
         <source>About</source>
         <translation>About</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="240"/>
+        <location filename="../ui/ContextMenu.qml" line="242"/>
         <source>Track %1</source>
         <translation>Track %1</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="247"/>
+        <location filename="../ui/ContextMenu.qml" line="249"/>
         <source>External</source>
         <translation>External</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="290"/>
+        <location filename="../ui/ContextMenu.qml" line="292"/>
         <source>Thumbnails</source>
         <translation>Thumbnails</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="293"/>
+        <location filename="../ui/ContextMenu.qml" line="295"/>
         <source>Hide unavailable menu items</source>
         <translation>Hide unavailable menu items</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="303"/>
+        <location filename="../ui/ContextMenu.qml" line="306"/>
         <source>Boot into disc menu</source>
         <translation>Boot into disc menu</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="306"/>
+        <location filename="../ui/ContextMenu.qml" line="309"/>
         <source>Hide titles shorter than 3 min</source>
         <translation>Hide titles shorter than 3 min</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="321"/>
+        <location filename="../ui/ContextMenu.qml" line="325"/>
         <source>Disc menu</source>
         <translation>Disc menu</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="324"/>
+        <location filename="../ui/ContextMenu.qml" line="328"/>
         <source>Title %1 · %2:%3:%4</source>
         <translation>Title %1 · %2:%3:%4</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="376"/>
+        <location filename="../ui/ContextMenu.qml" line="381"/>
         <source>Chapter %1</source>
         <translation>Chapter %1</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="415"/>
+        <location filename="../ui/ContextMenu.qml" line="420"/>
         <source>Video tracks</source>
         <translation>Video tracks</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="481"/>
+        <location filename="../ui/ContextMenu.qml" line="487"/>
         <source>Load subtitle file…</source>
         <translation>Load subtitle file…</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="484"/>
+        <location filename="../ui/ContextMenu.qml" line="490"/>
         <source>Remove external subtitle</source>
         <translation>Remove external subtitle</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="490"/>
+        <location filename="../ui/ContextMenu.qml" line="496"/>
         <source>Nearby subtitles</source>
         <translation>Nearby subtitles</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="512"/>
+        <location filename="../ui/ContextMenu.qml" line="518"/>
         <source>Subtitle tracks</source>
         <translation>Subtitle tracks</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="611"/>
+        <location filename="../ui/ContextMenu.qml" line="617"/>
         <source>Top and bottom</source>
         <translation>Top and bottom</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="611"/>
+        <location filename="../ui/ContextMenu.qml" line="617"/>
         <source>Side by side</source>
         <translation>Side by side</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="612"/>
+        <location filename="../ui/ContextMenu.qml" line="618"/>
         <source>half</source>
         <translation>half</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="612"/>
+        <location filename="../ui/ContextMenu.qml" line="618"/>
         <source>full</source>
         <translation>full</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="228"/>
-        <location filename="../ui/ContextMenu.qml" line="616"/>
+        <location filename="../ui/ContextMenu.qml" line="230"/>
+        <location filename="../ui/ContextMenu.qml" line="622"/>
         <source>Right eye</source>
         <translation>Right eye</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="227"/>
-        <location filename="../ui/ContextMenu.qml" line="616"/>
+        <location filename="../ui/ContextMenu.qml" line="229"/>
+        <location filename="../ui/ContextMenu.qml" line="622"/>
         <source>Left eye</source>
         <translation>Left eye</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="210"/>
-        <location filename="../ui/ContextMenu.qml" line="602"/>
+        <location filename="../ui/ContextMenu.qml" line="212"/>
+        <location filename="../ui/ContextMenu.qml" line="608"/>
         <source>2D output</source>
         <translation>2D output</translation>
     </message>
     <message>
-        <location filename="../ui/ContextMenu.qml" line="232"/>
+        <location filename="../ui/ContextMenu.qml" line="234"/>
         <source>Quit</source>
         <translation>Quit</translation>
     </message>
@@ -603,114 +603,114 @@
         <translation>120 fps</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3341"/>
         <location filename="../PlayerViewModel.cpp" line="3349"/>
+        <location filename="../PlayerViewModel.cpp" line="3357"/>
         <source>Source</source>
         <translation>Source</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3375"/>
+        <location filename="../PlayerViewModel.cpp" line="3383"/>
         <source>Output</source>
         <translation>Output</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3382"/>
+        <location filename="../PlayerViewModel.cpp" line="3390"/>
         <source>HDR</source>
         <translation>HDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3410"/>
+        <location filename="../PlayerViewModel.cpp" line="3418"/>
         <source>VSR</source>
         <translation>VSR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3435"/>
+        <location filename="../PlayerViewModel.cpp" line="3443"/>
         <source>FRUC</source>
         <translation>FRUC</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3454"/>
-        <location filename="../PlayerViewModel.cpp" line="3459"/>
+        <location filename="../PlayerViewModel.cpp" line="3462"/>
+        <location filename="../PlayerViewModel.cpp" line="3467"/>
         <source>Decoder</source>
         <translation>Decoder</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3464"/>
+        <location filename="../PlayerViewModel.cpp" line="3472"/>
         <source>Speed</source>
         <translation>Speed</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3466"/>
+        <location filename="../PlayerViewModel.cpp" line="3474"/>
         <source>Time</source>
         <translation>Time</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3470"/>
+        <location filename="../PlayerViewModel.cpp" line="3478"/>
         <source>Frames</source>
         <translation>Frames</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3474"/>
+        <location filename="../PlayerViewModel.cpp" line="3482"/>
         <source>GPU</source>
         <translation>GPU</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3477"/>
+        <location filename="../PlayerViewModel.cpp" line="3485"/>
         <source>Audio</source>
         <translation>Audio</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3606"/>
+        <location filename="../PlayerViewModel.cpp" line="3614"/>
         <source>Unrecognized format</source>
         <translation>Unrecognized format</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3607"/>
+        <location filename="../PlayerViewModel.cpp" line="3615"/>
         <source>Nothing to play</source>
         <translation>Nothing to play</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3608"/>
+        <location filename="../PlayerViewModel.cpp" line="3616"/>
         <source>Could not load the file</source>
         <translation>Could not load the file</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3609"/>
+        <location filename="../PlayerViewModel.cpp" line="3617"/>
         <source>Not supported</source>
         <translation>Not supported</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3610"/>
+        <location filename="../PlayerViewModel.cpp" line="3618"/>
         <source>Audio output failed to start</source>
         <translation>Audio output failed to start</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3611"/>
+        <location filename="../PlayerViewModel.cpp" line="3619"/>
         <source>Video output failed to start</source>
         <translation>Video output failed to start</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3612"/>
+        <location filename="../PlayerViewModel.cpp" line="3620"/>
         <source>Invalid request</source>
         <translation>Invalid request</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3613"/>
+        <location filename="../PlayerViewModel.cpp" line="3621"/>
         <source>Not implemented</source>
         <translation>Not implemented</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3614"/>
+        <location filename="../PlayerViewModel.cpp" line="3622"/>
         <source>Out of memory</source>
         <translation>Out of memory</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3616"/>
+        <location filename="../PlayerViewModel.cpp" line="3624"/>
         <source>Could not open the stream</source>
         <translation>Could not open the stream</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3617"/>
+        <location filename="../PlayerViewModel.cpp" line="3625"/>
         <source>Could not open the file</source>
         <translation>Could not open the file</translation>
     </message>
@@ -1119,54 +1119,54 @@
 <context>
     <name>main</name>
     <message>
-        <location filename="../main.qml" line="573"/>
+        <location filename="../main.qml" line="577"/>
         <source>Open media</source>
         <translation>Open media</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="585"/>
+        <location filename="../main.qml" line="589"/>
         <source>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Audio files (*.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="577"/>
-        <location filename="../main.qml" line="586"/>
+        <location filename="../main.qml" line="581"/>
+        <location filename="../main.qml" line="590"/>
         <source>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</source>
         <translation>Subtitle files (*.srt *.ass *.ssa *.vtt *.sub *.sbv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="564"/>
+        <location filename="../main.qml" line="568"/>
         <source>Add folder to playlist</source>
         <translation>Add folder to playlist</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="565"/>
+        <location filename="../main.qml" line="569"/>
         <source>Open folder</source>
         <translation>Open folder</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="578"/>
-        <location filename="../main.qml" line="587"/>
+        <location filename="../main.qml" line="582"/>
+        <location filename="../main.qml" line="591"/>
         <source>All files (*)</source>
         <translation>All files (*)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="580"/>
+        <location filename="../main.qml" line="584"/>
         <source>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</source>
         <translation>Media files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv *.iso *.mp3 *.flac *.wav *.ogg *.m4a)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="581"/>
+        <location filename="../main.qml" line="585"/>
         <source>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</source>
         <translation>Video files (*.mp4 *.mkv *.webm *.avi *.mov *.ts *.m2ts *.mts *.flv *.wmv)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="584"/>
+        <location filename="../main.qml" line="588"/>
         <source>Blu-ray images (*.iso)</source>
         <translation>Blu-ray images (*.iso)</translation>
     </message>
     <message>
-        <location filename="../main.qml" line="766"/>
+        <location filename="../main.qml" line="770"/>
         <source>请戴上眼镜观看</source>
         <translation>Please put on your glasses</translation>
     </message>

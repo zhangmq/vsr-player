@@ -147,23 +147,28 @@ class PlayerViewModel : public QObject {
     /// 右键菜单"网络流"只对网络源显示——本地 MKV 的 edition 是"章节版本"，
     /// 不该挂"网络流"这个名字。
     Q_PROPERTY(bool networkSource READ networkSource NOTIFY networkSourceChanged)
-    /// 当前播放的是光盘内容（mpv 的 file-format == "disc"：蓝光 ISO / BDMV 目录 /
-    /// `bd://mpls/…` 条目 / DVD）。光盘的 edition-list 是**盘上的 title**，
-    /// 不是可选码流 —— 右键菜单不能再把它当"网络流"列出来（用户 2026-11-26 报）。
-    /// 判定必须用 file-format：v0.42 上游原生开 ISO 时 path 是普通文件名（没有
-    /// scheme），靠 "://" 分辨不出来；而 `bd://` 条目反过来会被误判成网络源。
+    /// The current source is disc content (mpv `file-format == "disc"`: Blu-ray ISO,
+    /// BDMV directory, `bd://mpls/...` entry, DVD). A disc's edition-list is its
+    /// **title list**, not a set of selectable streams, so the context menu must not
+    /// present it as "Network stream" (reported 2026-11-26).
+    /// Classify with file-format: for an ISO opened natively by v0.42 the path is a
+    /// plain filename without a scheme, so "://" cannot tell them apart, while a
+    /// `bd://` entry would be mistaken for a network source.
     Q_PROPERTY(bool discSource READ discSource NOTIFY discSourceChanged)
-    /// 光盘菜单是否在屏上（mpv 的 `disc-menu-active`）。菜单本身是 mpv 画进
-    /// 视频帧里的 OSD 位图（OSDTYPE_DISC_MENU），客户端不画；只在它活跃时把
-    /// 方向键/Enter/鼠标转发给 `discnav`，并把自己的控制条藏起来。
+    /// A disc menu is on screen (mpv `disc-menu-active`). The menu itself is drawn by
+    /// mpv into the video frame as an OSD bitmap (OSDTYPE_DISC_MENU); the client draws
+    /// nothing and only forwards arrows/Enter/mouse to `discnav` while it is active,
+    /// hiding its own chrome at the same time.
     Q_PROPERTY(bool discMenuActive READ discMenuActive NOTIFY discMenuActiveChanged)
-    /// 打开光盘时进入盘自己的菜单（默认 true，用户 2026-11-26 定）。
-    /// 关掉 = 直接播最长 title；但上游只有"菜单模式启动"才有盘内导航，
-    /// 关掉后本盘就没菜单可进（救急入口 = Title 面板的 Disc menu 行）。
+    /// Boot a disc into its own menu (default true, decided 2026-11-26).
+    /// Off = play the longest title directly; upstream only has in-disc navigation when
+    /// playback starts in menu mode, so a disc opened this way has no menu to enter
+    /// (the escape hatch is the Disc menu row in the Title panel).
     Q_PROPERTY(bool discMenuBoot READ discMenuBoot WRITE setDiscMenuBoot
                NOTIFY discMenuBootChanged)
-    /// 隐藏盘上时长 < 3 分钟的 title（= 上游 `--bluray-min-title-length=180`）。
-    /// 盘上常带大量只给菜单用的超短 playlist，它们会以 edition 形式出现。
+    /// Hide disc titles shorter than 3 minutes (= upstream
+    /// `--bluray-min-title-length=180`). Discs carry many very short playlists used only
+    /// by their menus, and those show up as editions.
     Q_PROPERTY(bool discHideShortTitles READ discHideShortTitles WRITE setDiscHideShortTitles
                NOTIFY discHideShortTitlesChanged)
     Q_PROPERTY(QString videoInfo READ videoInfo NOTIFY videoInfoChanged)
@@ -341,8 +346,8 @@ public:
     void loadSettings();
     /// mpv init 后应用持久化的音量/倍速/循环（观察器随后回填 viewModel）。
     void applyPlaybackSettings();
-    /// 下发光盘相关 mpv 选项（disc-menu / bluray-min-title-length）。
-    /// 必须在 loadfile **之前**执行：两者都是 stream 打开时读取的选项。
+    /// Push the disc-related mpv options (disc-menu / bluray-min-title-length).
+    /// Must run **before** loadfile: both are read when the stream is opened.
     void applyDiscOptions();
     /// 恢复上次播放列表（无 CLI 文件时调用）：首条 replace 开始播放，
     /// 其余 append，最后定位上次条目。
@@ -699,11 +704,11 @@ public slots:
     Q_INVOKABLE void resetAudioDelay();
     /// 切换网络流（edition id，来自 editions 列表）
     Q_INVOKABLE void setEdition(int id);
-    /// 盘内导航（mpv `discnav` 命令）：up/down/left/right/select/prev/menu/popup。
+    /// In-disc navigation (mpv `discnav`): up/down/left/right/select/prev/menu/popup.
     Q_INVOKABLE void discNav(const QString &action);
-    /// 右键菜单「光盘」偏好里的 toggle（0 = 进菜单，1 = 隐藏超短 title）
+    /// Toggle from Preferences -> Disc (0 = boot into menu, 1 = hide short titles)
     Q_INVOKABLE void toggleDiscOption(int id);
-    /// 鼠标转发：nx/ny 是**画面内归一化坐标**（0..1，左上角 0,0）。
+    /// Forward the mouse; nx/ny are picture-normalized coordinates (0..1, 0,0 top-left).
     Q_INVOKABLE void discNavMouse(const QString &action, double nx, double ny);
     /// 移除某条轨道（字幕轨用 sub-remove；音视频轨不支持移除）
     Q_INVOKABLE void removeTrack(const QString &type, qlonglong id);
@@ -977,9 +982,9 @@ private:
     bool networkSource_ = false;   // 当前路径带 "://"（右键菜单"网络流"的显示条件之一）
     bool discSource_ = false;      // file-format == "disc"（光盘内容：title 不是码流）
     bool discMenuActive_ = false;  // disc-menu-active（盘内菜单在屏上）
-    bool discMenuBoot_ = true;     // 打开光盘进菜单（用户 2026-11-26 定）
+    bool discMenuBoot_ = true;     // boot a disc into its menu (decided 2026-11-26)
     bool discHideShortTitles_ = false;  // --bluray-min-title-length=180
-    qint64 lastDiscMouseMs_ = 0;   // disc-menu 鼠标移动节流（40 ms）
+    qint64 lastDiscMouseMs_ = 0;   // throttle for disc-menu mouse moves (40 ms)
     bool hwdecKnown_ = false;                  // hwdec-current 读到过真实值（false = 解码器未建立/属性不可用）
     std::atomic<bool> hwDecodeEnabled_{true};  // 用户偏好（我们下发的 hwdec 开关）
     std::atomic<bool> hwDecodeAvailable_{true};// 当前文件能否硬解（UI 禁用依据）
