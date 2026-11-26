@@ -144,10 +144,16 @@ git -C third_party/mpv checkout b0841e8c4d156b8403dc1876c4cbd9011eb583f3   # v0.
   2. **私有 Vulkan 渲染参数改为 `23/24`**（`MPV_RENDER_PARAM_VULKAN_INIT_PARAMS`
      / `_VULKAN_IMAGE`）：0.42 新增的 D3D11 libmpv 后端占用了原来的 `21/22`。
      `include/mpv/render.h` 里的编号与 `src/client` 必须一致（同一份 overlay 头）。
-  3. **`.iso` 的行为变了**：0.42 让 `stream_info_bdmv_dir`（注册 `file`/`""` 协议）
-     直接把 ISO 交给 libbluray，标题变成 demux_disc 的 editions（含合成的
-     Disc Menu edition）。我们 `parse_bluray` 那条"每 title 一条播放列表"的路径
-     可能不再被走到——**这是本基座上的已知待办**（见 `AGENTS.md` 的 ISO 一节）。
+  3. **光盘不再由我们自己展开**：0.42 让 `stream_info_bdmv_dir`（注册 `file`/`""`
+     协议）在 stream 层就认领 `.iso`，交给 libbluray 当**一条盘流**打开，盘上的
+     title 变成 `demux_disc` 的 editions（含合成的 `Disc Menu` edition），
+     盘内菜单（HDMV/BD-J）也走这条路径。我们原来的 `parse_bluray`（把 ISO 拆成
+     每 title 一条 `bd://mpls/N//dev`）和它冲突——`disc` 自己的 lavf slave 打开
+     会被我们那条"让路"补丁拒掉，ISO 直接打不开。**2026-11-26 决定贴上游**：
+     `parse_bluray` / `bluray_image.h` / `demux_lavf` 让路三处补丁全部撤掉，
+     只保留 `demux_playlist.c` 里"本地播放列表中的 `bd://` 条目提升 DIRECT"
+     （老 m3u8 快照仍带 `bd://mpls/N//dev`）。`playlist_exts` 里的 `iso` 保留，
+     但只为目录展开能列出盘镜像。客户端对应改动见 `AGENTS.md` 的「光盘」一节。
 - 版本对应关系是**固定提交/tag**，不是"上游 master 开发线"。
 - 自行推导别的基座时，候选提交需同时满足：① 其 `meson.build` 的源文件清单是
   overlay 版的子集（`meson.build` 变动频繁，锚点比 `options.h` 紧）②

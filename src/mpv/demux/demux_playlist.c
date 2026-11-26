@@ -34,8 +34,6 @@
 #include "misc/natural_sort.h"
 #include "demux.h"
 
-#include "demux/bluray_image.h"
-
 #define PROBE_SIZE (8 * 1024)
 
 enum dir_mode {
@@ -445,63 +443,6 @@ static bool test_path(struct pl_parser *p, char *path, int autocreate)
 }
 
 // Return true if this was a readable directory.
-// ── 蓝光镜像当容器（用户 2026-10-26 要求，语义对齐"文件夹 / m3u"）──────────
-// `.iso` 走 libbluray 枚举 title，生成的条目是
-//   bd://mpls/<n>//<绝对路径去掉前导 '/'>
-//（双斜杠是 mpv 自己的 URL 形式：`bd://mpls/<n>/<device>` 在第一个 '/' 处切分，
-//  单斜杠会把绝对路径的前导 '/' 吃掉；路径必须绝对，相对路径会解析成相对 root）。
-static int parse_bluray(struct pl_parser *p)
-{
-    if (!mp_is_bluray_image(bstr0(p->real_stream->url)))
-        return -1;
-
-    char *path = mp_file_get_path(p, bstr0(p->real_stream->url));
-    if (!path)
-        return -1;
-
-    BLURAY *bd = bd_open(path, NULL);
-    if (!bd) {
-        MP_VERBOSE(p, "Not a Blu-ray image: %s\n", path);
-        talloc_free(path);
-        return -1;
-    }
-    uint32_t n = bd_get_titles(bd, TITLES_RELEVANT, 0);
-    if (!n) {
-        bd_close(bd);
-        talloc_free(path);
-        return -1;
-    }
-
-    // URL 里的设备串：绝对路径去掉自己的前导 '/'，固定用 "//" 分隔
-    const char *dev = path;
-    while (*dev == '/')
-        dev++;
-
-    for (uint32_t i = 0; i < n; i++) {
-        BLURAY_TITLE_INFO *ti = bd_get_title_info(bd, i, 0);
-        if (!ti)
-            continue;
-        char *url = talloc_asprintf(p, "bd://mpls/%05u//%s", ti->playlist, dev);
-        pl_add(p, bstr0(url));
-        struct playlist_entry *e = playlist_get_last(p->pl);
-        if (e) {
-            unsigned long long secs = (unsigned long long)(ti->duration / 90000);
-            e->title = talloc_asprintf(e, "Title %u \xc2\xb7 %llu:%02llu:%02llu",
-                                       i + 1, secs / 3600, (secs % 3600) / 60, secs % 60);
-        }
-        talloc_free(url);
-        bd_free_title_info(ti);
-    }
-    bd_close(bd);
-    talloc_free(path);
-
-    p->format = "bluray";
-    // 探测阶段会先试一次（p->probing），只在真正展开时记一行
-    if (!p->probing)
-        MP_INFO(p, "Blu-ray image: %u title(s)\n", (unsigned)n);
-    return 0;
-}
-
 static bool scan_dir(struct pl_parser *p, char *path,
                      struct stat *dir_stack, int num_dir_stack, int autocreate)
 {
@@ -669,9 +610,6 @@ static const struct pl_format dir_formats[] = {
 };
 
 static const struct pl_format playlist_formats[] = {
-#if HAVE_LIBBLURAY
-    {"bluray", parse_bluray},
-#endif
     {"m3u", parse_m3u,
      MIME_TYPES("audio/mpegurl", "audio/x-mpegurl", "application/x-mpegurl")},
     {"strm", parse_m3u},
@@ -750,36 +688,23 @@ static int open_file(struct demuxer *demuxer, enum demux_check check)
     p->s = demuxer->stream;
     p->utf16 = stream_skip_bom(p->s);
     bool ok = fmt->parse(p) >= 0 && !p->error;
-    // 蓝光条目用 bd:// —— 这个 stream handler 的 stream_origin 是 UNSAFE
-    // （设备路径可指向任意文件），而 mpv 的 check_origin() 只允许 DIRECT/
-    // UNSAFE 来源打开它。普通播放列表条目是 FS 来源 → 会被静默拒绝，表现为
-    // "No protocol handler found"（实测）。这里把**我们自己展开出来的**条目
-    // 提升为 DIRECT：能走到这一步说明镜像已经本地打开并成功枚举（条目只是同一
-    // 镜像里的 title，没有引入新的来源），因此不是权限放宽。
-    if (ok && fmt->name && strcmp(fmt->name, "bluray") == 0) {
-        MP_VERBOSE(p, "bluray: entry origin %d -> DIRECT\n", demuxer->stream_origin);
-        playlist_set_stream_flags(p->pl, STREAM_ORIGIN_DIRECT);
-    } else {
-        playlist_set_stream_flags(p->pl, demuxer->stream_origin);
-        // 本地播放列表里的 bd:// 条目：蓝光 stream 的 stream_origin 是 UNSAFE
-        // （设备路径可指向任意文件），mpv 的 origin 检查只放行 DIRECT →
-        // **本地 m3u 恢复出来的 bd:// 会被拒**，而 stream_create() 的循环会把
-        // UNSAFE 当成 NO_MATCH 继续，最终报成
-        // "No protocol handler found"（实测 2026-10-27：从 m3u8 快照恢复的
-        // 蓝光 title 点播放必失败，而 ISO 展开的条目正常——后者走上面的
-        // bluray 分支已被提升为 DIRECT）。
-        // 这里只在**播放列表本身来自本地 FS** 时把这些条目提升为 DIRECT：
-        // 远程列表仍按 mpv 原始策略拒绝，不放宽攻击面；本地 m3u 里的 bd://
-        // 条目本身也只是"用光盘读取器打开一个本地镜像"，没有引入新能力。
-        if (ok && demuxer->stream_origin == STREAM_ORIGIN_FS) {
-            for (int n = 0; n < p->pl->num_entries; n++) {
-                struct playlist_entry *e = p->pl->entries[n];
-                bstr url = bstr0(e->filename);
-                if (bstr_startswith0(url, "bd:") ||
-                    bstr_startswith0(url, "bluray:")) {
-                    e->stream_flags = STREAM_ORIGIN_DIRECT;
-                    MP_VERBOSE(p, "playlist: local bd:// entry -> DIRECT\n");
-                }
+    playlist_set_stream_flags(p->pl, demuxer->stream_origin);
+    // 本地播放列表里的 bd:// 条目：蓝光 stream 的 stream_origin 是 UNSAFE
+    // （设备路径可指向任意文件），mpv 的 origin 检查只放行 DIRECT →
+    // **本地 m3u 恢复出来的 bd:// 会被拒**，而 stream_create() 的循环会把
+    // UNSAFE 当成 NO_MATCH 继续，最终报成 "No protocol handler found"
+    // （实测 2026-10-27：从 m3u8 快照恢复的蓝光 title 点播放必失败）。
+    // 这里只在**播放列表本身来自本地 FS** 时把这些条目提升为 DIRECT：
+    // 远程列表仍按 mpv 原始策略拒绝，不放宽攻击面；本地 m3u 里的 bd://
+    // 条目本身也只是"用光盘读取器打开一个本地镜像"，没有引入新能力。
+    if (ok && demuxer->stream_origin == STREAM_ORIGIN_FS) {
+        for (int n = 0; n < p->pl->num_entries; n++) {
+            struct playlist_entry *e = p->pl->entries[n];
+            bstr url = bstr0(e->filename);
+            if (bstr_startswith0(url, "bd:") ||
+                bstr_startswith0(url, "bluray:")) {
+                e->stream_flags = STREAM_ORIGIN_DIRECT;
+                MP_VERBOSE(p, "playlist: local bd:// entry -> DIRECT\n");
             }
         }
     }
