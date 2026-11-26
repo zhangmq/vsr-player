@@ -7,7 +7,7 @@
 # 「Subtitle tracks 漏译」都是这一类）。
 #
 # 用法：
-#   ./scripts/precommit.sh                # 键位表 → 更新 .ts → lrelease → 完整性检查
+#   ./scripts/precommit.sh                # 键位表 → QML 静态检查 → 更新 .ts → lrelease → 完整性检查
 #   ./scripts/precommit.sh --no-build     # 跳过 ninja（只查键位表与 .ts，快）
 #   ./scripts/precommit.sh --install-hook # 装成 .git/hooks/pre-commit（软链）
 #
@@ -47,7 +47,7 @@ FAIL=0
 say()  { printf '%s\n' "$*"; }
 fail() { printf '  ✗ %s\n' "$*"; FAIL=1; }
 
-say "── 1/5 键位表静态检查（重复按键 / 未实现动作 / 键位回流 QML）──────"
+say "── 1/6 键位表静态检查（重复按键 / 未实现动作 / 键位回流 QML）──────"
 # 快捷键的 bug 几乎都是"同一件事写了多份、漏了一处"：QML 里多一条 Shortcut、
 # 菜单里另抄一份偏移键映射、某个 id 没人实现。编译/启动/截图都看不出来，只有
 # 用户按到那个组合才发现——所以放在最前面，改键位时第一时间拦住。
@@ -57,7 +57,27 @@ else
     fail "键位表检查未通过（见上方输出）"
 fi
 
-say "── 2/5 更新 .ts（lupdate）────────────────────────────────────"
+say "── 2/6 QML 静态检查（qmllint：语法 / 信号处理器）──────────────"
+# qmllint 能抓到运行期才会炸的那一类：`onFoo:` 没有对应的 `signal foo`（QML 实例化时
+# 报 "Cannot assign to non-existent property"，界面直接坏掉，但编译和 lrelease 都
+# 通过）。2026-11-26 改信号名 `discOptionToggled`→`discMenuBootToggled` 时漏了声明，
+# 就是靠人工跑一次才发现的。
+QMLLINT="${QMLLINT:-$(command -v qmllint || echo /usr/lib/qt6/bin/qmllint)}"
+if [ ! -x "$QMLLINT" ]; then
+    say "  · 跳过（未找到 qmllint）"
+else
+    qml_files=$(find src/client -name '*.qml' | sort)
+    # 只看致命三类，其余（pragma ComponentBehavior 等 Info/警告）不拦
+    lint_bad="$("$QMLLINT" $qml_files 2>&1 | grep -E "no matching signal|Syntax error|non-existent property" || true)"
+    if [ -n "$lint_bad" ]; then
+        fail "QML 静态检查失败（信号处理器不存在 / 语法错误）"
+        printf '%s\n' "$lint_bad" | head -20 | sed 's/^/      /'
+    else
+        say "  ✓ $(printf '%s\n' "$qml_files" | wc -l) 个 QML 文件通过"
+    fi
+fi
+
+say "── 3/6 更新 .ts（lupdate）────────────────────────────────────"
 if ! ./scripts/update-translations.sh; then
     fail "update-translations.sh 执行失败"
 fi
@@ -93,7 +113,7 @@ PY
 fi
 
 if [ "$DO_BUILD" = 1 ]; then
-    say "── 3/5 lrelease（ninja -C build）─────────────────────────────"
+    say "── 4/6 lrelease（ninja -C build）─────────────────────────────"
     if ! ninja -C build >/tmp/precommit-ninja.log 2>&1; then
         fail "构建失败，日志尾巴："
         tail -n 15 /tmp/precommit-ninja.log | sed 's/^/      /'
@@ -101,17 +121,17 @@ if [ "$DO_BUILD" = 1 ]; then
         say "  ✓ 构建通过（.qm 已刷新）"
     fi
 else
-    say "── 3/5 跳过构建（--no-build）─────────────────────────────────"
+    say "── 4/6 跳过构建（--no-build）─────────────────────────────────"
 fi
 
-say "── 4/5 完整性检查（--check）───────────────────────────────────"
+say "── 5/6 完整性检查（--check）───────────────────────────────────"
 if ./scripts/update-translations.sh --check; then
     say "  ✓ 字面量/译文完整"
 else
     fail "完整性检查未通过（见上方输出）"
 fi
 
-say "── 5/5 运行期抽查（.qm 里反查新文案）──────────────────────────"
+say "── 6/6 运行期抽查（.qm 里反查新文案）──────────────────────────"
 QM="build/src/client/vsr-player_zh_CN.qm"
 if [ ! -f "$QM" ]; then
     fail "$QM 不存在（构建产物缺失）"

@@ -73,6 +73,7 @@ PopupBase {
     signal uiElementToggled(int id)
     signal titlePicked(int id)               // disc title (mpv edition, not a track)
     signal chapterPicked(int index)          // chapter index, 0-based
+    signal discMenuBootToggled()             // Preferences -> Disc: flip boot-into-menu
     /// 「关于」弹窗（图标 / 名称 / 版本 / 许可 / 仓库）。
     signal aboutRequested()
     signal quitRequested()
