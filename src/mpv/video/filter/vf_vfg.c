@@ -115,6 +115,12 @@
 // 1e-6 会把“30fps ×2 @cap60”误判成超限；1e-4（0.01%）覆盖这种漂移，
 // 同时仍能拦住真正的超限（如 30.1fps ×2 = 60.2）。
 #define VFG_MAX_FPS_TOL 1e-4
+// nominal_fps 可能是"场率"而不是帧率：1080i 的 title 报 59.94，而解码器实际
+// 交付 23.98–29.97 帧（soft telecine），mpv 的反交错器（bwdif send_field）
+// 也会在滤镜链前面把帧数翻倍。实测帧间隔与 nominal 相差超过这个倍数时，
+// max-fps 判据改采信实测值（见 effective_src_fps），否则 2x 会被当成 119.88
+// 而误判直通（2026-11-26 用户实测：盘上 24fps 的片源被当成 59.94 → 直通）。
+#define VFG_FIELD_RATE_RATIO 1.5
 
 // 输入帧率估计（仅 container 帧率未知、即直播流时，用于 max-fps；见
 // track_input_fps）。中位数窗口 31 个间隔 ≈ 0.5s @60fps，抗偶发坏时间戳；
@@ -317,6 +323,17 @@ struct priv {
 //   passthrough: vfg-status: mode=passthrough reason=<原因>
 // cost = 本节点**每输出帧**的处理耗时（含流同步；观测量，不参与决策）。
 
+// 判据实际采用的源帧率：nominal 已知且与实测帧间隔明显矛盾（>1.5x）时，采信实测值。
+// 只往"更低"的方向纠正（nominal 报场率/翻倍的情况），不把直播流的抖动用到这里；
+// 实测不可用（未热身/坏时间戳）时照旧用 nominal。
+static double effective_src_fps(struct priv *p)
+{
+    if (p->src_fps > 0 && p->est_ready && p->est_fps > 0 &&
+        p->src_fps > p->est_fps * VFG_FIELD_RATE_RATIO)
+        return p->est_fps;
+    return p->src_fps;
+}
+
 static void vfg_status(struct mp_filter *f, struct priv *p)
 {
     if (p->passthrough) {
@@ -328,10 +345,11 @@ static void vfg_status(struct mp_filter *f, struct priv *p)
     // %.2f（客户端 OSD 原样显示、如有数值消费者也能解析），且 src=0.00 已
     // 表达"源帧率未知"，不会像 inf/nan 那样骗人；不改成 "?" 以免破坏字段
     // 语法（字段名/顺序/数值格式都不动）。
-    double out_fps = p->src_fps > 0 ? p->k * p->src_fps : 0.0;
+    const double src_fps = effective_src_fps(p);
+    double out_fps = src_fps > 0 ? p->k * src_fps : 0.0;
     mp_msg(f->log, MSGL_STATUS,
            "vfg-status: mode=active src=%.2f k=%d out=%.2f cost=%.1fms\n",
-           p->src_fps, p->k, out_fps,
+           src_fps, p->k, out_fps,
            p->status_frames > 0 ? p->status_cost_ms / p->status_frames : 0.0);
     p->status_frames = 0;
     p->status_cost_ms = 0;
@@ -388,8 +406,11 @@ static void track_input_fps(struct mp_filter *f, struct priv *p, double pts)
     p->est_fps = med > 0 ? 1.0 / med : 0.0;
     if (!p->est_ready && p->est_fps > 0) {
         p->est_ready = true;
-        MP_INFO(f, "vfg: input fps estimated %.2f (container fps unknown)\n",
-                p->est_fps);
+        // Only worth a log line when the estimate is the only thing we have; when
+        // nominal is known the value is just a cross-check (see effective_src_fps).
+        if (p->src_fps <= 0)
+            MP_INFO(f, "vfg: input fps estimated %.2f (container fps unknown)\n",
+                    p->est_fps);
     }
 }
 
@@ -408,14 +429,21 @@ static bool max_fps_hit(struct mp_filter *f, struct priv *p)
 
     const double k = p->opts->fps;
     const double cap = p->opts->max_fps;
-    if (p->src_fps > 0) {
+    const double src = effective_src_fps(p);
+    if (src > 0) {
         // 已知帧率：精确判据（不去抖、不等估计）。**相等允许插帧**
         // （如 30×2=60 @cap=60），用 1e-4 相对容差吸收容器 avg_frame_rate
         // 的微小漂移（goose 30.0000003；3D 测试片 30.0000745）。
-        const bool hit = k * p->src_fps > cap * (1.0 + VFG_MAX_FPS_TOL);
-        if (hit != p->cap_engaged)
-            MP_INFO(f, "vfg: max-fps %s (src=%.6f k=%.0f cap=%d)\n",
-                    hit ? "engaged" : "released", p->src_fps, k, p->opts->max_fps);
+        const bool hit = k * src > cap * (1.0 + VFG_MAX_FPS_TOL);
+        if (hit != p->cap_engaged) {
+            if (src != p->src_fps)
+                MP_INFO(f, "vfg: max-fps %s (src=%.6f measured, nominal=%.6f, "
+                           "k=%.0f cap=%d)\n", hit ? "engaged" : "released",
+                        src, p->src_fps, k, p->opts->max_fps);
+            else
+                MP_INFO(f, "vfg: max-fps %s (src=%.6f k=%.0f cap=%d)\n",
+                        hit ? "engaged" : "released", src, k, p->opts->max_fps);
+        }
         p->cap_engaged = hit;
         p->cap_enter_cnt = p->cap_exit_cnt = 0;
         return p->cap_engaged;
@@ -918,7 +946,9 @@ static void f_process(struct mp_filter *f)
 
     // 源帧率未知（直播/URL 流）且启用了 max-fps → 用输入 PTS 间隔估计；
     // nominal 已知的源**不维护估计值**（精确值直接判定，见 max_fps_hit）。
-    if (p->src_fps <= 0 && p->opts->max_fps > 0)
+    // 一直维护实测帧间隔：max-fps 判据在 nominal 明显偏高时要用它（场率/翻倍），
+    // 只有在 nominal 未知（直播流）时才直接拿它当源帧率。
+    if (p->opts->max_fps > 0)
         track_input_fps(f, p, cur->pts);
 
     // ── 3. 直通判定（逐帧重估：vf-command 热更新下一帧即生效）──────────
