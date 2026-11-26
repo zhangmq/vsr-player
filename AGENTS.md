@@ -1014,6 +1014,18 @@ slave 打开被我们那条"让 lavf 给 playlist 让路"的补丁拒掉 → **I
   （约 30 s）→ ~38.5 s 时 `disc-menu-active=1`、日志
   `current-edition 1->6 (menu_active=1)` + `overlay on`；`edition-list` = N 条 title +
   `Disc Menu`。`--disc-menu=no`（默认关时）直接进最长 title（1:18:30 / 1:48:26）。
+- **第三处偏离（2026-11-26）**：`stream_bluray.c` 在事件循环里给 `current_title` 加兜底解析。
+  根因（mpv 侧）：`current_title` 只由 `BD_EVENT_PLAYLIST` 解析，而"从盘菜单进正片/选章节"
+  是**同一 playlist 内换 playitem/mark**，不宣告 playlist；进菜单时它已被解析成 -1
+  （菜单 playlist 不在 title 列表里）→ `STREAM_CTRL_GET_CURRENT_TITLE` 报"无"
+  → `player/discnav.c:264 sync_current_edition()` 只能保持合成 `Disc menu` 条目
+  → 客户端「标题」行一直显示"光盘菜单"。修法：`current_title < 0` 时用
+  `bd_get_current_title()`（在读线程上调用，libbluray handle 归它所有）兜底，
+  只接受 `< num_titles`。单盘直开 + `--disc-menu=yes` 必现，`--disc-menu=no` 不复现
+  （那条路径 `play_title()` 直接写 `current_title`）。**与"播放列表里放几张盘"无关**。
+  上游查过：mpv 现有 issue/PR 里没有这条（#18423/#18824/#18481/#18718 都是别的症状），
+  是否上报由用户定。
+
 - 老快照/老列表里的 `bd://mpls/N//dev` 条目**仍能播**（走 `bluray_stream_open` 的
   `mpls/<n>` 解析），只是它们各算"一条盘流"，与新的"一张盘一条"混在同一个播放列表里。
 

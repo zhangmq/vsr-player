@@ -821,6 +821,23 @@ static int bluray_stream_fill_buffer(stream_t *s, void *buf, int len)
             break;
         }
 
+        // BD_EVENT_PLAYLIST is what resolves current_title, but a disc menu can
+        // enter a title by switching play items inside a playlist (chapter
+        // selection) without announcing a new playlist. current_title then stays
+        // -1, STREAM_CTRL_GET_CURRENT_TITLE reports nothing, and mpv keeps
+        // reporting the synthetic "Disc Menu" edition even though a title is
+        // playing. Ask libbluray directly -- safe here, this is the thread that
+        // owns the handle -- and accept only a real title index.
+        if (b->current_title < 0) {
+            uint32_t cur = bd_get_current_title(b->bd);
+            if (cur < b->num_titles) {
+                mp_mutex_lock(&b->overlay_lock);
+                b->current_title = (int)cur;
+                mp_mutex_unlock(&b->overlay_lock);
+                MP_VERBOSE(s, "current title resolved from libbluray: %u\n", cur);
+            }
+        }
+
         mp_mutex_lock(&b->overlay_lock);
         int64_t scr = b->pending_scr;
         b->pending_scr = -1;
