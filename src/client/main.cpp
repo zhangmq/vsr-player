@@ -184,8 +184,13 @@ public:
     QImage requestImage(const QString &, QSize *size, const QSize &) override {
         QImage img = vm_->previewImage();
         if (!img.isNull() && hdr::windowIsPqOutput(win_)) {
-            img = hdr::encodeSdrImageToPq(img);
-            MLOG_VERBOSE("thumb: pq-encode %dx%d (window output is PQ)", img.width(), img.height());
+            // 白点用**合成器自己的 SDR 参考白**：它按这个值把 1.0 映射成屏幕上的
+            // SDR 白，用 203（mpv 口径）整体会暗约 9%。读不到才退 203。
+            const hdr::DisplayInfo d = hdr::displayInfoFor(win_);
+            const float white = (d.valid && d.refLuma > 1.0f) ? d.refLuma : 203.0f;
+            img = hdr::encodeSdrImageToPq(img, white);
+            MLOG_VERBOSE("thumb: pq-encode %dx%d (window output is PQ, sdr white %.0f nit)",
+                         img.width(), img.height(), double(white));
         }
         if (size) *size = img.size();
         return img;

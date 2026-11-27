@@ -1291,8 +1291,19 @@ scrgb 下 186 = sRGB_encode(0.5)、240 = sRGB_encode(0.878)、99 ≈ sRGB_encode
 - 修法 B（QML 层）：把 UI 子树 `layer.enabled` + 一个 sRGB→PQ 的 `ShaderEffect`。
   但 popup 由 Qt 挂到窗口 overlay（不在我们的子树里），只能覆盖一部分 UI；且
   多一趟全屏 FBO。
-- 修法 C（局部）：只在 HDR 下把缩略图 QImage 预编码成 PQ（用户看到的那一处会正常，
-  其它 UI 仍偏亮 → 不一致）。
+- 修法 C（局部，**已实施**）：只在 HDR 下把缩略图 QImage 预编码成 PQ
+  （`PreviewImageProvider` → `hdr::encodeSdrImageToPq(img, white)`，`white` 取
+  `DisplayInfo::refLuma`，读不到退 203）。其它 Qt 画的 UI 仍偏亮（Qt 侧限制）。
+  实测（spectacle 抓屏、同一冻结帧、缩略图面板中心位值）：
+
+  | 片源 | 缩略图 | SDR 输出 | HDR10 输出 |
+  |---|---|---|---|
+  | HDR | mean / p50 / p99 | 76.1 / 60 / 212 | 74.6 / 66 / 199 |
+  | SDR（SDR→HDR 上变换态） | mean / p50 / p99 | 124.6 / 112 / 255 | 120.1 / 110 / 255 |
+
+  修前同一格是中间调 +33%、高光削顶（`#e0e0e0` 224→255）。⚠ 白点用 203（mpv 口径）
+  而不是合成器参考白时整体暗约 9%（SDR 片源中位 112→101）——合成器是按**它自己的**
+  SDR 白把 1.0 映射到屏幕的。
 - 修法 D（不修）：HDR 输出下接受 UI 偏亮，文档标注已知限制。
 - 参考数据：HDR10 swapchain 是本项目唯一可用的 10-bit 路（`A2B10G10R10_UNORM`），
   换成 scRGB 并不解决问题（见 23.3），且会把视频通路改成线性 16F。

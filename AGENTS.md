@@ -378,7 +378,12 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   判定过程/数据/修法选项见 `docs/hdr-pipeline-investigation.md` §23；复跑脚本
   `build/scratch/ui_hdr_capture.sh`、`build/scratch/scRGB-probe/`。
   进度条缩略图**已单独修**：`PreviewImageProvider` 按该窗口真实格式把 QImage 预编码成
-  PQ（`hdr::encodeSdrImageToPq()`，白点 203 nit；8-bit 量化误差 mean 0.13/p99 0.6 码值），
+  PQ（`hdr::encodeSdrImageToPq()`，8-bit 量化误差 mean 0.13/p99 0.6 码值）。
+  ⚠ **白点必须用合成器的参考白**（`DisplayInfo::refLuma`，本机 249 nit）：它按这个值把
+  1.0 映射成屏幕上的 SDR 白；用 mpv 口径的 203 会整体暗约 9%（实测中位 112→101）。
+  读不到描述才退 203。验证（spectacle 抓屏，同一冻结帧，SDR 输出 vs HDR10 输出）：
+  HDR 片源 缩略图 mean 76.1→74.6 / p50 60→66；SDR 片源 124.6→120.1 / p50 112→110
+  （残差 = 合成器 HDR→SDR tonemap），修前是中间调 +33% + 高光削顶。
   其余 Qt 绘制的 UI 仍是 sRGB 码值（Qt 侧限制）。
   ⚠ **抓图陷阱**：`grab-window` 的离屏回读在 HDR10 窗口上是**花的**（10-bit 缓冲被当
   8-bit 读，整窗噪声；屏幕本身正常）→ 验 HDR 窗口一律用 `spectacle -b -n -a -o x.png`
