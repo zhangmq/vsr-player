@@ -11,17 +11,27 @@ import "components"
 /// `submenu` 可以是数组，也可以是**函数**（返回数组）——轨道/网络流是动态的，
 /// 用函数可以让面板每次展开时取最新值，而不必重建整个 items。
 ///
-/// ⚠ 二级面板画在**同一个 Popup 里**（打开子菜单时 popup 加宽、面板占右半边），
-/// 不用嵌套 Popup：两个 popup 会各自抢 grab，点面板会被外层判成"点击外部"
-/// → 菜单自己关掉。代价是 popup 几何在子菜单打开时变化，所以背景用两条独立的
-/// Rectangle 分别画"主菜单"和"二级面板"（PopupBase 的默认背景是整块）。
+/// ⚠ 二级面板是**独立的子 Popup**（2026-11-28 方案 A），不再和主菜单共用
+/// 一个 popup。共用时为了让面板不被裁掉，popup 要加宽到 `主菜单 + 面板`，
+/// 于是面板上方/下方的空白区域落在 **popup 内部**：`CloseOnPressOutside`
+/// 不触发、也没有行接住这次按压 → 点空白处菜单不关（用户报的 bug；是否复现
+/// 取决于二级菜单的行数和从哪一行展开，看起来像"偶发"）。
+/// 拆成两个 popup 后主菜单的几何就是它自己，面板外的空白天然是"popup 之外"。
+/// ⚠ 子面板的 closePolicy 必须带 `CloseMultiple`：Qt 默认只让**最上层**的
+/// popup 吃到"点击外部"，没有它时子面板关掉后主菜单会留在原处
+///（Qt 6.12 `QQuickOverlay::childMouseEventFilter` 的 close cascade）。
+/// 子面板 `focus: false`：键盘仍归主菜单的 contentItem（方向键/Enter/Esc）。
+/// 子面板的 `parent` 是主菜单的 contentItem，`CloseOnPressOutsideParent` 因此
+/// 表示"按在主菜单里不关面板"——点主菜单换行时面板不会先闪掉。
 PopupBase {
     id: root
 
     padding: 0
-    width: menuWidth + (subVisible ? subMenuGap + subMenuWidth : 0)
-    // 主菜单自身高度（popup 高度 = 它；二级面板必须在这个范围内排布，
-    // 否则会被 popup 裁掉 —— popup 是固定大小的自绘 Item，不随子项长高）。
+    /// 主菜单宽度：二级面板是独立 popup，不再算进这里（见文件头）
+    width: menuWidth
+    /// 主菜单自身高度（= popup 高度）。二级面板的高度按它钳制（subY），
+    /// 于是面板永远落在主菜单竖直范围内 —— 与"面板画在同一个 popup 里"时
+    /// 的排版完全一致，不引入新的视觉变化。
     readonly property real mainPanelH: mainColumn
         ? mainColumn.implicitHeight + 2 * padY : 0
 
@@ -39,7 +49,9 @@ PopupBase {
     property int currentIndex: -1
     /// 二级面板当前行（面板可见时才有意义）
     property int subCurrentIndex: -1
-    /// 二级面板是否展开：当前行有二级菜单就展开，移到没有的行/标题/分隔线就收起
+    /// 二级面板是否展开：当前行有二级菜单就展开，移到没有的行/标题/分隔线就收起。
+    /// 这是面板唯一的开关状态（鼠标/键盘/Esc 都只改它，子 popup 由下面的
+    /// onSubVisibleChanged 跟着开合）。
     property bool subVisible: false
     /// Esc 由 handleKey 两段式处理（先收面板、再关菜单），不让 Popup 直接关
     closePolicy: Popup.CloseOnPressOutside
@@ -924,9 +936,9 @@ PopupBase {
                 break
             }
         }
-        // 底部钳制：面板不能超出**主菜单自身**的下边缘（popup 高度 = 主菜单
-        // 高度，超出部分会被裁掉）。分组后 3D 面板有 6 行，条目靠下时整块
-        // 跑出可视区 → 整体上移到刚好放得下。
+        // 底部钳制：面板保持在**主菜单自身的竖直范围内**（子 popup 本身不会被
+        // 裁，这里只是沿用原排版：面板不跑到菜单下边缘之外）。分组后 3D 面板
+        // 有 6 行，条目靠下时整块跑出菜单 → 整体上移到刚好放得下。
         var maxY = root.mainPanelH - root.subViewH - root.padY
         if (y > maxY)
             y = Math.max(root.padY, maxY)
@@ -1071,10 +1083,24 @@ PopupBase {
 
     /// 打开后让内容项拿到键盘焦点（否则 ↑↓/Enter 收不到）
     onOpened: if (contentRoot) contentRoot.forceActiveFocus()
-    /// 展开二级面板时 panel 可能比主菜单高：把整个菜单往上推，避免面板出屏。
+    /// 二级面板是独立 popup：subVisible 是唯一开关，子 popup 跟着它开合。
     onSubVisibleChanged: {
-        if (subVisible && parent)
-            root.y = Math.max(4, Math.min(root.y, parent.height - root.height - 4))
+        if (subVisible) subMenu.open()
+        else subMenu.close()
+    }
+    /// 主菜单关掉时子面板必须一起关：两个 popup 各自注册在窗口 overlay 上，
+    /// 父 popup 关闭只解绑自己的 popupItem，不替子面板收尾
+    ///（QQuickPopupPrivate::setWindow 只 setParentItem(nullptr)，不 close）。
+    onAboutToHide: subMenu.close()
+    /// 子面板的 opened 状态（RPC get-menu-state 断言用：两个 popup 是否真的都关了）
+    readonly property bool subPopupOpened: subMenu ? subMenu.opened : false
+    /// 子面板的场景几何（RPC get-menu-state 用：测试要点面板中央/空白处时
+    /// 不用自己按 subY/menuWidth 推算）
+    readonly property var subGeom: {
+        if (!contentRoot) return ({ x: 0, y: 0, w: 0, h: 0 })
+        var p = contentRoot.mapToItem(null, subMenu.x, subMenu.y)
+        return ({ x: Math.round(p.x), y: Math.round(p.y),
+                  w: Math.round(subMenu.width), h: Math.round(subMenu.height) })
     }
 
     /// 在 item 坐标系 (x,y)（即鼠标位置）弹出，屏幕边缘钳制。
@@ -1089,24 +1115,9 @@ PopupBase {
         open()
     }
 
-    background: Item {
-        // 主菜单底（高度 = 主菜单自身，不随 popup 长高拉伸）
-        Rectangle {
-            width: root.menuWidth
-            height: root.mainPanelH
-            color: "#d9111111"; radius: 8
-            border { width: 1; color: "#22ffffff" }
-        }
-        // 二级面板底（比条目行上下各多 6px；高度 = 可视高度，内部可滚动）
-        Rectangle {
-            visible: root.subVisible
-            x: root.menuWidth + root.subMenuGap
-            y: root.subY - 6
-            width: root.subMenuWidth
-            height: root.subViewH + 12
-            color: "#d9111111"; radius: 8
-            border { width: 1; color: "#22ffffff" }
-        }
+    background: Rectangle {
+        color: "#d9111111"; radius: 8
+        border { width: 1; color: "#22ffffff" }
     }
 
     // ── 二级面板的一行（分组标题 / 分隔线 / 普通项 / 动作项）──────────────
@@ -1182,9 +1193,8 @@ PopupBase {
                 ev.accepted = true
         }
         implicitWidth: root.menuWidth
-        // 二级面板比主菜单高时，popup 也要跟着长高，否则面板被裁
-        implicitHeight: Math.max(mainColumn.implicitHeight + 2 * root.padY,
-                                 root.subVisible ? root.subY + root.subViewH + root.padY : 0)
+        // 主菜单高度（= mainPanelH）。二级面板是另一个 popup，不再撑高这个 popup。
+        implicitHeight: mainColumn.implicitHeight + 2 * root.padY
 
         Column {
             id: mainColumn
@@ -1375,99 +1385,74 @@ PopupBase {
             }
         }
 
-        // ── 二级菜单面板 ────────────────────────────────────────────────
+        // ── 二级菜单面板（独立 popup，见文件头）───────────────────────────
         // 「附近字幕」「字幕轨道」是**固定高度的滚动区**（用户 2026-11-02 要求）：
         // 内容超出时在区顶/区底显示上下小三角（可点，翻一行；灰=已到头）。
         // 区内的滚轮由 Flickable 自己处理；面板本身不再整体滚动。
-        Item {
-            id: subPanel
-            visible: root.subVisible
+        Popup {
+            id: subMenu
+            parent: contentRoot
+            /// 面板贴在主菜单右侧、与所属条目行对齐（subY 见上）
             x: root.menuWidth + root.subMenuGap
-            y: root.subY
+            y: root.subY - 6
             width: root.subMenuWidth
-            height: root.subViewH
+            height: root.subViewH + 12
+            padding: 0
+            /// 键盘始终归主菜单：方向键/Enter/Esc 在 contentRoot 的 Keys 上
+            focus: false
+            /// 主菜单外按下才关（点主菜单换行时面板不闪）；CloseMultiple 让同一次
+            /// 按压继续传给它下面的主菜单（见文件头）
+            closePolicy: Popup.CloseOnPressOutsideParent | Popup.CloseMultiple
+            background: Rectangle {
+                color: "#d9111111"; radius: 8
+                border { width: 1; color: "#22ffffff" }
+            }
+            contentItem: Item {
+                Item {
+                    id: subPanel
+                    // 背景上下各比内容多 6px（子 popup 的 y 已经减掉上面的 6px）
+                    x: 0
+                    y: 6
+                    width: root.subMenuWidth
+                    height: root.subViewH
 
-            Column {
-                id: subColumn
-                width: parent.width
-                Repeater {
-                    model: root.subGroups
-                    delegate: Item {
-                        id: groupItem
-                        width: subColumn.width
-                        height: root.groupHeight(modelData)
-                        readonly property var gitems: modelData.items
-                        readonly property bool scrolls: root.groupScrolls(modelData)
-                        readonly property int maxRows: modelData.maxRows
-                        readonly property int gstart: modelData.start !== undefined ? modelData.start : 0
+                    Column {
+                        id: subColumn
+                        width: parent.width
+                        Repeater {
+                            model: root.subGroups
+                            delegate: Item {
+                                id: groupItem
+                                width: subColumn.width
+                                height: root.groupHeight(modelData)
+                                readonly property var gitems: modelData.items
+                                readonly property bool scrolls: root.groupScrolls(modelData)
+                                readonly property int maxRows: modelData.maxRows
+                                readonly property int gstart: modelData.start !== undefined ? modelData.start : 0
 
-                        /// 当前行落到本组时把它滚进可视区（键盘 ↓ 到第 9 行以后
-                        /// 只改下标不动滚动，看起来"没反应"）
-                        function ensureRowVisible(j) {
-                            if (!scrolls || j < gstart || j >= gstart + gitems.length)
-                                return
-                            var rowTop = (j - gstart) * root.rowH
-                            if (rowTop < gFlick.contentY)
-                                gFlick.contentY = rowTop
-                            else if (rowTop + root.rowH > gFlick.contentY + gFlick.height)
-                                gFlick.contentY = rowTop + root.rowH - gFlick.height
-                        }
-                        readonly property real scrollPos: gFlick ? gFlick.contentY : -1
-                        Connections {
-                            target: root
-                            function onSubCurrentIndexChanged() {
-                                groupItem.ensureRowVisible(root.subCurrentIndex)
-                            }
-                        }
-
-                        // ── 非滚动组：逐行（分隔线/标题/普通项）──────────────
-                        Column {
-                            visible: !groupItem.scrolls
-                            width: parent.width
-                            Repeater {
-                                model: groupItem.gitems
-                                delegate: SubRow {
-                                    row: modelData
-                                    rowIndex: groupItem.gstart + index
-                                    onActivated: root.activateSubRow(row)
+                                /// 当前行落到本组时把它滚进可视区（键盘 ↓ 到第 9 行以后
+                                /// 只改下标不动滚动，看起来"没反应"）
+                                function ensureRowVisible(j) {
+                                    if (!scrolls || j < gstart || j >= gstart + gitems.length)
+                                        return
+                                    var rowTop = (j - gstart) * root.rowH
+                                    if (rowTop < gFlick.contentY)
+                                        gFlick.contentY = rowTop
+                                    else if (rowTop + root.rowH > gFlick.contentY + gFlick.height)
+                                        gFlick.contentY = rowTop + root.rowH - gFlick.height
                                 }
-                            }
-                        }
+                                readonly property real scrollPos: gFlick ? gFlick.contentY : -1
+                                Connections {
+                                    target: root
+                                    function onSubCurrentIndexChanged() {
+                                        groupItem.ensureRowVisible(root.subCurrentIndex)
+                                    }
+                                }
 
-                        // ── 滚动组：▲ + 固定高度 Flickable + ▼ ────────────────
-                        Column {
-                            visible: groupItem.scrolls
-                            width: parent.width
-                            spacing: 0
-                            Item {   // 上小三角
-                                width: parent.width; height: root.triH
-                                Text {
-                                    anchors.centerIn: parent
-                                    font.family: iconFont; font.pixelSize: 12
-                                    text: "󱨊"; renderType: Text.NativeRendering
-                                    color: gFlick.contentY > 0
-                                           ? (upTri.containsMouse ? "#e0e0e0" : "#b0b0b0")
-                                           : "#505050"
-                                }
-                                MouseArea {
-                                    id: upTri
-                                    anchors.fill: parent; hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: gFlick.contentY = Math.max(0, gFlick.contentY - root.rowH)
-                                }
-                            }
-                            Flickable {
-                                id: gFlick
-                                width: parent.width
-                                height: groupItem.maxRows * root.rowH
-                                contentWidth: width
-                                contentHeight: rowsCol.height
-                                clip: true
-                                boundsBehavior: Flickable.StopAtBounds
-                                interactive: true
+                                // ── 非滚动组：逐行（分隔线/标题/普通项）──────────────
                                 Column {
-                                    id: rowsCol
-                                    width: gFlick.width
+                                    visible: !groupItem.scrolls
+                                    width: parent.width
                                     Repeater {
                                         model: groupItem.gitems
                                         delegate: SubRow {
@@ -1477,24 +1462,70 @@ PopupBase {
                                         }
                                     }
                                 }
-                            }
-                            Item {   // 下小三角
-                                width: parent.width; height: root.triH
-                                Text {
-                                    anchors.centerIn: parent
-                                    font.family: iconFont; font.pixelSize: 12
-                                    text: "󱨉"; renderType: Text.NativeRendering
-                                    color: gFlick.contentY < gFlick.contentHeight - gFlick.height - 1
-                                           ? (downTri.containsMouse ? "#e0e0e0" : "#b0b0b0")
-                                           : "#505050"
-                                }
-                                MouseArea {
-                                    id: downTri
-                                    anchors.fill: parent; hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: gFlick.contentY =
-                                        Math.min(gFlick.contentHeight - gFlick.height,
-                                                 gFlick.contentY + root.rowH)
+
+                                // ── 滚动组：▲ + 固定高度 Flickable + ▼ ────────────────
+                                Column {
+                                    visible: groupItem.scrolls
+                                    width: parent.width
+                                    spacing: 0
+                                    Item {   // 上小三角
+                                        width: parent.width; height: root.triH
+                                        Text {
+                                            anchors.centerIn: parent
+                                            font.family: iconFont; font.pixelSize: 12
+                                            text: "󱨊"; renderType: Text.NativeRendering
+                                            color: gFlick.contentY > 0
+                                                   ? (upTri.containsMouse ? "#e0e0e0" : "#b0b0b0")
+                                                   : "#505050"
+                                        }
+                                        MouseArea {
+                                            id: upTri
+                                            anchors.fill: parent; hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: gFlick.contentY = Math.max(0, gFlick.contentY - root.rowH)
+                                        }
+                                    }
+                                    Flickable {
+                                        id: gFlick
+                                        width: parent.width
+                                        height: groupItem.maxRows * root.rowH
+                                        contentWidth: width
+                                        contentHeight: rowsCol.height
+                                        clip: true
+                                        boundsBehavior: Flickable.StopAtBounds
+                                        interactive: true
+                                        Column {
+                                            id: rowsCol
+                                            width: gFlick.width
+                                            Repeater {
+                                                model: groupItem.gitems
+                                                delegate: SubRow {
+                                                    row: modelData
+                                                    rowIndex: groupItem.gstart + index
+                                                    onActivated: root.activateSubRow(row)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Item {   // 下小三角
+                                        width: parent.width; height: root.triH
+                                        Text {
+                                            anchors.centerIn: parent
+                                            font.family: iconFont; font.pixelSize: 12
+                                            text: "󱨉"; renderType: Text.NativeRendering
+                                            color: gFlick.contentY < gFlick.contentHeight - gFlick.height - 1
+                                                   ? (downTri.containsMouse ? "#e0e0e0" : "#b0b0b0")
+                                                   : "#505050"
+                                        }
+                                        MouseArea {
+                                            id: downTri
+                                            anchors.fill: parent; hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: gFlick.contentY =
+                                                Math.min(gFlick.contentHeight - gFlick.height,
+                                                         gFlick.contentY + root.rowH)
+                                        }
+                                    }
                                 }
                             }
                         }

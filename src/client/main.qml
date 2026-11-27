@@ -675,6 +675,11 @@ Item {
                      "winActive=" + (window ? (window.active ? 1 : 0) : -1),
                      "ctlWin=" + (controlMode ? 1 : 0),
                      "subOpen=" + (c.subVisible ? 1 : 0),
+                     "subPopup=" + (c.subPopupOpened ? 1 : 0),
+                     "pos=" + Math.round(c.x) + "," + Math.round(c.y)
+                            + " size=" + Math.round(c.width) + "x" + Math.round(c.height),
+                     "subGeom=" + (c.subGeom ? c.subGeom.x + "," + c.subGeom.y
+                                             + "," + c.subGeom.w + "x" + c.subGeom.h : "-"),
                      "subIdx=" + c.currentIndex,
                      "contentH=" + Math.round(c.subContentH),
                      c.navState]
@@ -705,13 +710,10 @@ Item {
     function openMenuAt(x, y, subIndex) {
         contextMenu.showAt(uiLayer, x, y)
         // 可选：直接展开第 subIndex 个条目的二级面板（截图核对分组排版用）。
-        // 必须 callLater：ContextMenu.onAboutToShow 会重置 subOpen/subIndex，
+        // 必须 callLater：ContextMenu.onAboutToShow 会把当前行/面板收起，
         // 而它在 open() 期间（异步）才触发 → 立刻赋值会被覆盖掉。
         if (typeof subIndex === "number" && subIndex >= 0) {
-            Qt.callLater(function () {
-                contextMenu.subIndex = subIndex
-                contextMenu.subOpen = true
-            })
+            Qt.callLater(function () { contextMenu.setCurrentRow(subIndex, true) })
         }
     }
 
