@@ -257,6 +257,44 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   全部 `seeking=no`、丢帧 0。对照：`vf_rife.c` 的同款分支在 `for(;;)` 预取循环里
   `continue`（不返回），所以不受影响；`vf_vsr` 的 seek 丢弃是 drop loop，同理。
 - 其他机制：场景切换直通（复制时间较近端点）；预取模型（vf_vapoursynth buffered-frames，每 process() 调用输出 1 帧）；EOF flush 最后帧；模式降级时丢弃预取帧防顺序倒挂；`syncVfOptions` 在 FILE_LOADED 后重放 vf 状态（链重建后 UI 修改不丢）。
+- **首帧输出格式必须与后续帧一致（2026-11-27 修）**：`emit_pair_output` 的 i==k
+  分支输出的是「cur 的 RGBA 副本」，但首帧分支原先直接 `mp_pin_in_write(源帧)`
+  （YUV）→ 每个**文件的第一帧**是 NV12、其余全是引擎输出的 RGBA：VO 每开一个文件
+  要按两种格式各配置一次。实测（编码模式）直接失败：A 的帧全是
+  `Converting rgba -> yuv444p`，B 首帧回落 `VO: [lavc] … nv12` → `[encode] Encoder
+  was reinitialized; this is not allowed`。修法：首帧也走 staging 副本（把它当 pair
+  起点，`emit_i = k` 调 `emit_pair_output`）。修后两次都是 rgba，首帧内容与修前
+  逐帧相同（同一帧 mean 72.84）。
+- **VFG 的输入尺寸不能热更新，必须 re-Load（2026-11-27 验证）**：与 VSR 不同，
+  VFG 的「输入」= 缩放后的画面尺寸（即 vsr 输出 / VO 尺寸），窗口 resize 就变。
+  官方包装把 `InputWidth/InputHeight` 标为 requires_reload，但 C API 是否真的禁止
+  「Load 后改」我们一直没验证（旧注释写着"未验证"）。2026-11-27 用纯 NvVFX 探针
+  实测（排查用的一次性程序，未入库）：
+  · 两个独立的新引擎喂同一对帧 → **逐字节一致**（0 字节不同，确定性成立）；
+  · 2560×1440 Load → `SetU32` 到 3840×2160 + `SetImage`（**不 Load**）→ Run：
+    `SetU32/SetImage` 都返回 **0（成功）**，但输出与"直接按 3840×2160 Load 的引擎"
+    **99.79% 字节不同、mean|d|=143、max=255** —— 引擎仍按旧尺寸工作，**热更新无效**；
+  · `SetU32` 后再 `Load()` 一次（官方包装路径）→ 与新建引擎**逐字节一致**。
+  → `ensure_vfg` 的 destroy+init+Load 是必需的，保留现状；**不要**照 VSR 的
+  `vsr_set_output()` 去写 VFG 的热更新（这条是"返回 0 但结果错"的静默失败，最坑）。
+- **引擎 (re)init 必须作废 pair 调度（2026-11-27 修，白灰/花屏帧的根因）**：
+  `ensure_vfg` 重建引擎后 `in_img[0/1]` 是**新的未初始化显存**，但 `have_prev` 仍为
+  true → 下一对把未初始化缓冲当 prev 参与插值 → 1–2 帧「结构对、颜色错」的花屏。
+  触发面：窗口 resize（链输出尺寸变）/ 位深变化 / 换片首帧格式不同。
+  实测（`VSR_LOG_BLACK=1` 每帧读 rtImage 中心 32×32 均值，全屏切换两次）：
+  修前每次 resize 后立刻出现单帧尖峰 `95.7→146.0→96.9` 与 `116.6→223.4→117.1`；
+  修后两次都消失（只剩内容自身的跳变）。修法：`ensure_vfg` 成功 init 后
+  `talloc_free(pending_cur)` + `have_prev = false`。
+- **开始播放有 ~0.45 s 黑屏：保持现状，不做"首帧门控"（2026-11-27 定）**。
+  实测：rtImage 建好并清黑 = mean 0.0 出现在 609–613 ms，首帧内容 1058–1101 ms ——
+  中间是 VSR/VFG 的 `Load()`（VFG 无法热更新，见上一条）。**不是管线问题**：
+  `player/playloop.c:1156 handle_playback_restart()` 要求 audio+video 都 `STATUS_READY`
+  才放行，且在同一处一起启动 → Load 期间音频也不跑，开播后 A-V 从 0 开始，
+  没有"丢帧追时钟"（`video.c:640` 的 first-frame delay 只用于中途起播）。
+  消掉这 0.45 s 只有两条路：把窗口显示推迟到首帧（窗口晚出现，无收益），
+  或给滤镜加 prepare 通道提前并行 Load（改动/风险大一档）。
+  ⚠ **不要再加"首帧前保持 opening 卡片"那套客户端门控**（用户 2026-11-27：
+  "这个之前加过，因为判断有问题后来拆掉了"）——纯显示层，收益不值那份状态机。
 - **无性能自动降级**（2026-10-15 移除旧的分级降级：曾是"cost 超预算先降档 60→48→40→30，全档超才直通"）。移除理由：判据是**节点内自测**，只能看到 RIFE 自身 GPU 耗时，而真实短缺通常在该节点下游——VSR 按**输出帧**计费（k=out/src 次/对），加上 VO/渲染通路；实测 1080p29.97 + `fps=60` + `scale=auto` 实际上屏 17.5fps、丢帧 +52/s，而判据报 `cost=16.0ms < budget=21.4ms` 全程沉默。目前 `fruc-status` 的 `cost=` 仅作观测保留。⚠️ 移除的代价：4K 纯 RIFE 过载场景失去唯一有效的回退（24fps → 7.3fps）。**完整记录（现象/根因/同族缺陷/vf 节点能力边界/统一方案的待定问题/复现方法）见 `docs/memory/fruc-auto-degrade-removal.md`**；统一的跨节点性能自适应方案（覆盖 rife/vsr/VFX 新版插帧，以实际达成率判定）**待设计，2026-10-15 搁置**。
 - 插帧历史决策：NVOFA 硬件光流降级备选（repeat 率太高，有运动对成功率 9.7% vs RIFE 96.3%）；Nano = 两帧平均器已否决（flow 恒零实证）。
 
@@ -432,6 +470,17 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **验证**：VSR 2× + 25/60 Hz 连发 2 s → 50/120 次请求里只执行 5 步、每步严格 +5 s（samples 51.1→56.1→61.2→66.2→71.2→76.3），此前同样条件为 1 帧、跳 30–40 s；无滤镜 25 Hz → ~27 步/2 s（≈ 重复率上限，与 mpv 的 29 帧一致）。间隔 100 ms 的两次点按只前进 5 s（第二次在途被丢弃，符合"过程中的 seek 抛弃"），间隔 900 ms 两次 = +10 s；暂停态步进、后退、恢复均实测正常。**回归**：进度条拖动 burst（10 次绝对 seek @15 ms，含重复值）后 +5 正常（修复前卡死）；绝对 seek 后 30 ms 内的 +5 仍被正确丢弃（不会提前放行）。
 - **注意**：这是**客户端门控**，不是 mpv 内置能力（mpv 自己的 0.3 s 合并窗口做不到"每步出帧"）。`currentTime_` 仍是乐观更新（发出即更新 UI），门控保证它和落点一致，因为精确 seek 落在目标时间戳上。
 - **seek 固定开销的构成（2026-10-21 实测 + 修复）**：1080p 29.97 素材、精确（HR）绝对 seek，**耗时与跳多远无关**（+2/+10/+30 s 同值）——mpv 的 hr-seek framedrop 在解码器层丢掉目标前的帧，滤镜不处理它们。分配置中位数：无滤镜/`set-vsr off` **35 ms**、仅 VFG(k=2) 42 ms、仅 VSR 330 ms、VSR+VFG 366 ms。日志每次 seek 都有 `vsr: reset (engine destroyed)` → 根因是 **`vf_vsr.c` 的 `f_reset` 每次 seek 都 `vsr_destroy`（销毁引擎）+ 下帧重建**；`vf_vfg.c`/`vf_rife.c` 的 `f_reset` 明确**保留引擎**（"重新 Load 代价高"）。修法 = vf_vsr 的 `f_reset` 同样保留引擎（只清 `frame_count`/`status_emit`），位深/尺寸变化仍由 `ensure_vsr` 触发重建、CUDA context 变化仍由 `ensure_cuda` 处理；顺带把 `vsr: init` 从 VERBOSE 提到 INFO（与 `vfg: init` 一致）。**效果：仅 VSR 330→180 ms、VSR+VFG 366→220 ms**。剩余 ~145 ms **不在 vf_vsr 内**（临时插桩实测：reset 后首帧 3–4 ms 到达、单帧处理 6 ms；而 VSR off 只要 35 ms）→ 在滤镜之后的 VO/渲染路径（VSR 输出 2560×1440 CUDA 帧）。
+- **passthrough 不再销毁 VSR 引擎（2026-11-27 修）**：passthrough 分支原本
+  `vsr_destroy(&p->vsr)`——从初始提交 `4b70753`（2026-08-04）起就没动过，而
+  2026-10-21 那次"保留引擎"只改在 `f_reset`（seek）这一处。于是 `scale=auto` 在
+  窗口缩小到 1:1 时进 passthrough（引擎被销毁）、窗口放大回来又要 **init + Load +
+  warmup**（4K ≈0.2 s 画面停顿，2026-11-27 用户实测报"缩放后明显停顿"）。
+  修法：passthrough 只标记状态、**保留引擎**；回来时 `ensure_vsr()` 的
+  `in_same && !out_same` 分支走 `vsr_set_output()`（`VSR: output … (engine kept)`，
+  与重建逐字节一致，PSNR 999 dB）。**软解帧（sw_input）例外**：context 可能已换/消失，
+  引擎缓冲在旧 context 里，仍需销毁。实测（30 s 素材 + 4 次全屏来回）：只有首次
+  创建引擎出现一次 `vsr: init`，之后每次都是 `VSR: output … (engine kept)`。
+  代价：passthrough 期间仍占显存（引擎 + in/out 图）。VFG 那边每次仍必须 `Load`（见上一条）。
 - **两个被实测否掉的"优化方向"（2026-10-21，用户提出）**：① **seek 期间暂停播放**——不符合 mpv 用法（mpv seek 时内部就是 seeking 状态：不显示新帧、清音频缓冲，但**不改 `pause` 属性**），而且实测**暂停态 seek 与播放态同值（~177 ms）**，无收益；副作用是 `pause` 观察器/播放图标/watch-later 状态抖动。② **seek 期间 VSR/VFG/TrueHDR 全直通**——省不掉那 145 ms（它不在滤镜里），且 VSR 直通=输出尺寸 1×（vs 1.33×/2×）→ 滤镜链 + `vo=libmpv` 共享图/合成纹理每步重建，还会显示未超分帧；引擎重载那部分已经用"保留引擎"从根上解决。
 - **seek 目标之前的帧被喂进滤镜链 → 已修（2026-10-21，把 seek 从 212 ms 降到 ~40 ms）**：A/B（1080p29.97、精确 seek、VSR+VFG）：VSR auto **212–216 ms**、`set-vsr off` **40–47 ms**、固定 `--scale 2` **265 ms**；无音频同样 207–227 ms（排除音频）。**不在 VO 侧**：`VSR_LOG_VIDEO=1` 逐帧日志显示 seek 期间只渲染 2 帧且 `rnd≈0.2 ms`（无新帧）。**根因**：`vf_vsr` 里临时打印 `mpi->pts` 看到——seek 到 45 s 后滤镜处理的是 **pts=40.04、40.11…**（demux 落到的关键帧、目标之前）的帧，每 6.2 ms 一帧连续进 VSR 直到越过目标；这些帧最终在 VO 被丢弃（画面正确）但 VSR 白跑。`hr_seek_framedrop` 只在解码器层按 packet 丢，对这条链不生效/不充分。**实现**：`vf_vsr` 加 `skip_before_pts`（`vf-command vsr seek-target <秒>`，0=清除）；`f_process` 在**同一次调用里循环拉取**丢弃 `pts < target-5ms` 的帧（早先每帧 `mark_progress`+return 绕图一圈，实测每帧框架开销 ~0.3 ms；改成 drop loop 后单帧只剩解码成本），首个 `pts >= target` 的帧照常处理，但**标记不在此清除**（见下一条）。⚠ 若不 `mark_progress`/不循环直接 return，下游取帧请求落空 → 整条链卡死在 `seeking`（踩过）。客户端 `seekAbsolute()` 在 seek 命令**之前**发该命令；**不要在 `notePlaybackRestart()` 里从事件线程补发清除**——跨线程的 async 命令顺序不保证，清除可能插到下一步的 marker 之后把那一步的跳过抹掉；滤镜侧只在 3 s 过期 / 下一次 seek-target 时清，直播流客户端不发 marker。**效果**：VSR 开启时精确 seek 典型 **40–130 ms**（原来 212 ms；按住 25 Hz 实测 ~9 步/3 s vs 修复前 ~2.5 步/3 s，VSR 直通上限 ~15 步/3 s）。
 - **marker 必须留到过期，否则"偶发特别慢"（2026-10-22 实测更正）**：一次 seek 里 mpv 会把目标之前的帧**喂两遍**——第一遍驱动到目标（marker 生效，drop loop 丢 297–450 帧），随后 `vsr: reset`（链 reset）之后再从更早的位置喂 60–130 帧（0.5–2 s 的量）。早先实现"首个 >= 目标的帧就清 marker"，这批迟到帧便逐帧进引擎（2.8 ms/帧）→ 单次 seek 多 **200–400 ms**，正是按住方向键时"连续几次快必有一次特别慢"。**修法**：marker 只在 3 s 过期或下一次 `seek-target` 时清除，正常播放零影响（每帧只多一次 pts 比较）。**实测（catlove_470s，60 fps，VSR auto 2×）**：单步中位 **53 ms**（p90 137 / max 167），按住 25 Hz 3 s → **29 步 / +148 s**（修前 12 步 / +64 s），与 `set-vsr off` 的 29 步 / +149 s 持平；60 Hz → 33 步 / +168 s（VSR off 46 步 / +234 s）。⚠ 之前"剩余慢步 = 精确 seek 固有解码成本（VSR off 同样慢）"的结论**作废**：那次 VSR off 的 324 ms 也是迟到帧 + 当时的系统负载所致，与 VSR 无关。
