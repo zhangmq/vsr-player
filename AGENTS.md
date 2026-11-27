@@ -334,7 +334,30 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 **位置**：链上恒在 `vf_vsr` 之后（`hwup → vsr → truehdr → vfg`；`--fruc-order pre` **不插** → 记日志）。链串恒带占位 `@truehdr:truehdr:enable=no`（⚠ 不能写 `enable=0`，`OPT_BOOL` 只认 yes/no，写错整条 vf 解析失败）。开关 = 内容 SDR ∧ opt-in（`VSR_UPHDR=on` 或 UI）∧ 策略≠off ∧ 链上有滤镜；过滤器另有按帧 transfer 自守卫。细节见 `docs/vfx-truehdr-investigation.md` §8。
 
 - **参数**（5 个，区间是硬约束且越界**静默失败** = SetU32 返 -7 但 Load/Run 仍 0，值不生效）：`Contrast` 100(0-200) / `Saturation` 100(0-200) / `MiddleGray` 50(**10-100**) / `Luminance` 650(**400-2000**，= 面板物理峰值) / `DebandingOff` 0（恒 0，抗色带常开）。三处区间夹取同步：`TrueHdrParams.h`、`vf_truehdr.c` 的 `M_RANGE`、`HdrOutput` 的 clamp。
-- **热更新**：参数走 `NvVFX_SetU32`（实测与 destroy+create 逐位相同）；仅帧尺寸变化 / `DebandingOff` 变化 / SetU32 失败才重建引擎（≈25ms）。
+- **热更新**：参数走 `NvVFX_SetU32`（实测与 destroy+create 逐位相同）；`DebandingOff` 变化 / SetU32 失败才重建引擎（≈25ms）。
+- **尺寸变化也走热换图，不再重建引擎（2026-11-27 修，同时也是 GB 级显存泄漏的根因）**：
+  TrueHDR 支持 Load 之后 `SetU32(InputWidth/InputHeight)` + `SetImage(SrcImage0/DstImage0)`
+  热换尺寸——实测 1707×960 加载后换到 2560×1440，输出与"直接按 2560×1440 新建引擎"
+  **逐字节相同（0.00% 差异）**，且省掉每次 ~13 ms 的 Load。`vf_truehdr.c` 的
+  `engine_resize()` 就是这条路径，SetImage 失败才退回 destroy+create。
+  为什么必须改：**播放中每次尺寸变化都重建引擎会持续吃显存、永不回落**——实测 720p
+  内容 + VSR auto，全屏来回 8 次共 **+752 MB**（每个来回 ~125 MB），文件切换（720p/1080p/4K
+  交替）每次 +85 MB 左右；用户的真实会话累计到 **13.2 GB**（16 GB 卡），最后 VFG/VSR
+  引擎 Load 失败（-1002）→ 静默直通。独立 NvVFX 探针（create+Load+Run+Destroy 循环，
+  含**交替尺寸**）**不泄漏**（空闲显存 13201→13246 MiB），泄漏只在"播放中重建"时出现。
+  修复后同一场景：8 次全屏来回窗口态 4258–4262（平）、10 次文件切换各尺寸稳态一致
+  （720p 4044–4099 / 1080p 4386–4400 / 4K 4668）、30 s 稳态 4032–4063。
+  ⚠ 该泄漏只在 TrueHDR 开启（SDR 内容）时出现；TrueHDR 关时同样折腾尺寸不漏。
+  ⚠ 热换图只解决尺寸；参数仍走 SetU32，`DebandingOff` 仍是 Load 期参数（必须重建）。
+- **seek 时也要保留引擎（2026-11-27 修，第二条泄漏路径）**：`f_reset` 原先在**每次 seek**
+  都 `engine_destroy`（下帧再 Load），这是"只是拖了几次进度条、显存就涨到 8.5 GB"的根因。
+  实测：720p + VSR auto + VFG，20 次精确 seek → 进程显存 **1221 → 3127 MiB（约 +95 MB/次）**；
+  同样 20 次 seek 但 TrueHDR 关掉 → **807 MiB 全程不变**。重复 `create+Load+Run+Destroy`
+  的独立探针**不漏**，所以漏点仍是"播放中重建引擎"这条。修法：`f_reset` 只清
+  `frame_count`，引擎保留（与 `vf_vsr`/`vf_vfg` 的 reset 同款理由：TrueHDR 是逐帧空间操作、
+  无跨 seek 状态；尺寸变化由 `engine_resize()` 处理，参数变化由 `engine_params_apply()`）。
+  修后同一场景：20 次 seek 1221→1205、6 次全屏来回 + 10 次 seek + 6 次来回 = 1359/1247/1359，
+  `engine ready` 只有 1 次、`resize` 12 次。
 - **输出**：`IMGFMT_X2BGR10` + `pl_color_space_hdr10` + `hdr.max_luma = Luminance`（对齐 mpv `vf_d3d11vpp.c`）；上变换生效时给合成器的内容峰值也用该 Luminance。成本 4K ≈ 4.9–5.8 ms/源帧。
 - **UI**：`QualityPopup` 只放开关 + Advanced（`mdi-tune`）→ `TrueHdrAdvancedPopup` 四条 slider + Reset、Debanding 两态；Reset = SDK 默认，Luminance 例外（回面板峰值）；Luminance 有 Auto/Manual 覆盖（Auto 跟面板）。持久化键 `upHdrEnabled/LumOverride/Luminance/Saturation/Contrast/MiddleGray/Debanding`。
 - ⚠ **同步 mpv API 死锁**：`mpv_set_property` 等 core dispatch lock，软解 + `vo=libmpv` 直渲时若 core 卡在等 DR 图像会循环死锁（gdb 实证）。已修：`setHdrTarget` 幂等 + 首帧 `reevaluate` 排队到 GUI 线程；**软解片源做 HDR 切换验收必须覆盖这一格**。
