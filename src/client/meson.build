@@ -5,6 +5,10 @@ qt6_dep = [
     dependency('Qt6Quick'),
     dependency('Qt6Gui'),
     dependency('Qt6Core'),
+    # 只为 QQuickStyle::setStyle()：把 Controls 的 style 钉死（见 main.cpp）。
+    # 不钉的话，KDE 会话里的 QT_QUICK_CONTROLS_STYLE=org.kde.desktop 会让
+    # 我们按 Basic 调的控件（播放列表滚动条等）换成另一套 metrics/外观。
+    dependency('Qt6QuickControls2'),
 ]
 
 # QtDBus：播放期防息屏走会话总线 org.freedesktop.ScreenSaver（SessionIdle.cpp）。

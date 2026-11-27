@@ -17,6 +17,7 @@
 #include <QCloseEvent>
 #include <QQuickWindow>
 #include <QQuickGraphicsDevice>
+#include <QQuickStyle>
 #include <QVulkanInstance>
 #include <QSurfaceFormat>
 #include <QTranslator>
@@ -189,6 +190,14 @@ private:
 // 一份偏移键映射；现在只剩这一条通路（见 Keymap.h 文件头）。
 
 int main(int argc, char *argv[]) {
+    // Qt Quick Controls 的 style 必须由应用自己钉死：默认会跟随会话环境
+    // （KDE Plasma 在会话里设 QT_QUICK_CONTROLS_STYLE=org.kde.desktop），同一份
+    // QML 在别的机器上就会换成另一套控件外观——实测播放列表滚动条在装了
+    // qqc2-desktop-style 的机器上变成"宽、带边线"的原生滚动条（2026-11-28）。
+    // 我们的 UI 是按 Basic 调的（配色/尺寸都在 QML 里写死），这里钉死 Basic，
+    // 行为与"从终端启动、没有该环境变量"的参照环境一致。优先级最高，压过环境变量。
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
+
     setbuf(stdout, nullptr); setbuf(stderr, nullptr);
     MLOG_INFO("=== vsr-player ===");
     // 一次性迁移：旧版本把片源格式（布局/全半）持久化过；现在改为"不跨会话
