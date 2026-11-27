@@ -201,7 +201,11 @@ endif
 # （build 树 libmpv）
 mpv_rpath = get_option('dist-rpath')
 if mpv_rpath == ''
-    mpv_rpath = mpv_build_dir
+    # 开发默认：构建树的 libmpv（绝对路径）。同时把发布布局的相对路径放在**前面**：
+    # 这样"源码安装"（install.sh --dev）装出来的副本优先解析 ~/.local/lib/vsr-player/
+    # 下的捆绑 libmpv，而不是构建机的绝对路径（否则换机器/删 build 树后直接起不来，
+    # 而且 ldd 会把"解析到构建树"误报成"用了系统 mpv"）。
+    mpv_rpath = '$ORIGIN:$ORIGIN/../lib/vsr-player:$ORIGIN/../lib:' + mpv_build_dir
 endif
 mpv_dep = declare_dependency(
     link_args: ['-L' + mpv_build_dir, '-lmpv', '-Wl,-rpath,' + mpv_rpath],

@@ -49,6 +49,22 @@ LIB_DIR="$HOME/.local/lib/vsr-player"
 VFX_SIBLING="$(dirname "$(dirname "$LIB_DIR")")/nvidia_vfx.libs"
 FONT_DIR="$HOME/.local/share/vsr-player/fonts"
 
+# dev：libmpv 只认这三个位置（VSR_MPV_BUILD 显式指定 > build/mpv > build/mpv-dist）。
+# build/mpv 自 2026-11-27 起是指向 mpv-dist 的软链；build/mpv-nortx 是
+# build_from_source.sh --no-rtx 的产物。⚠ 不回退 build/mpv042 之类旧基座目录：
+# 装上去的 libmpv 没有新滤镜/新补丁，而且**没有任何报错**。
+find_mpv_tree() {
+    local c
+    for c in "${VSR_MPV_BUILD:-}" "$SRC/build/mpv" "$SRC/build/mpv-dist"; do
+        [ -n "$c" ] || continue
+        if [ -f "$c/_build/libmpv.so.2" ] && [ -x "$c/_build/mpv" ]; then
+            printf '%s' "$c/_build"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # ── 源定位：tarball 场景（旁边有 vsr-player）优先，否则 dev 构建树 ──
 SRC="$HERE"
 if [ ! -x "$SRC/vsr-player" ] && [ ! -f "$SRC/lib/vsr-player/libmpv.so.2" ]; then
@@ -63,11 +79,17 @@ if [ ! -x "$SRC/vsr-player" ] && [ ! -f "$SRC/lib/vsr-player/libmpv.so.2" ]; the
         ENG_SRC="$SRC/build/release-staging/engines"
     elif [ -x "$SRC/build/src/client/vsr-player" ]; then
         GUI_BIN="$SRC/build/src/client/vsr-player"
-        CLI_BIN="$SRC/build/mpv/_build/mpv"
+        if ! MPV_BUILD="$(find_mpv_tree)"; then
+            echo "❌ 找不到 mpv 构建树（VSR_MPV_BUILD / build/mpv / build/mpv-dist 都没有 libmpv.so.2 + mpv）" >&2
+            echo "   常规：cp -a src/mpv/. build/mpv-dist/ && ninja -C build/mpv-dist/_build" >&2
+            echo "   no-rtx：NO_RTX=1 MPV_BUILD_DIR=build/mpv-nortx bash scripts/build_mpv.sh" >&2
+            exit 1
+        fi
+        CLI_BIN="$MPV_BUILD/mpv"
         LIB_SRC="$SRC/third_party/nvvfx/lib"     # dev：VFX 目录即库源
         # dev：libmpv 来自 mpv 构建树 —— 必须一起装，否则装出来的播放器用的
         # 还是旧 libmpv（新滤镜/补丁全部不生效，且没有任何报错）。
-        MPV_LIB_SRC="$SRC/build/mpv/_build"
+        MPV_LIB_SRC="$MPV_BUILD"
         ENG_SRC="$SRC/build/tests/fruc"          # dev：engine 构建目录
         DEV_VFX_COPY=1                            # dev：VFX 一并复制
     else
@@ -264,18 +286,31 @@ if [ -d "$LIB_SRC" ] && [ "$QT_FIX_ALLOW" = "0" ]; then
 fi
 # dev 模式：按 docs 把 wheel 的 nvidia_vfx.libs 放在 third_party/nvidia_vfx.libs，
 # 安装时必须落到上面 RPATH 期望的位置——否则装出来的库加载失败 → VSR 静默直通。
-if [ "$MODE" = dev ] && [ -d "$SRC/third_party/nvidia_vfx.libs" ]; then
+if [ "$MODE" = dev ] && [ "$NO_VFX" -eq 0 ] && [ -d "$SRC/third_party/nvidia_vfx.libs" ]; then
     mkdir -p "$VFX_SIBLING"
     cp -L "$SRC"/third_party/nvidia_vfx.libs/*.so* "$VFX_SIBLING/" 2>/dev/null || true
     echo "  ✅ VFX cudart sibling（third_party/nvidia_vfx.libs）→ $VFX_SIBLING/"
 fi
-# Wayland 空闲抑制模块（可选，主程序运行时 dlopen；缺失时回退 D-Bus）。
-# dev 树里在 build/src/client/；tarball 里已随 lib/vsr-player/ 一起拷过（LIB_SRC）。
-IDLE_MOD="$SRC/build/src/client/libvsr-idle-wayland.so"
-if [ -f "$IDLE_MOD" ]; then
-    cp "$IDLE_MOD" "$LIB_DIR/"
-    echo "  ✅ wayland idle-inhibit 模块 → $LIB_DIR/"
-fi
+# Wayland 伙伴模块（主程序运行时 dlopen，缺失只降级）：
+#   libvsr-idle-wayland.so    空闲抑制（缺失 → 回退 D-Bus ScreenSaver）
+#   libvsr-color-feedback.so  合成器给本窗口的表面色彩偏好（HDR 能力/峰值）；
+#                             缺失会让 HDR 自动上屏**静默**退 SDR（#31 修过一次），
+#                             tarball 里缺它属于打包缺陷 → 直接失败。
+for mod in libvsr-idle-wayland.so libvsr-color-feedback.so; do
+    src_mod=""
+    for cand in "$SRC/build/src/client/$mod" "$LIB_SRC/$mod" "$SRC/lib/vsr-player/$mod"; do
+        [ -f "$cand" ] && src_mod="$cand" && break
+    done
+    if [ -n "$src_mod" ]; then
+        copy_into "$LIB_DIR" "$src_mod"
+        echo "  ✅ $mod → $LIB_DIR/"
+    elif [ "$mod" = "libvsr-color-feedback.so" ] && [ "$MODE" = tarball ]; then
+        echo "  ❌ 包内缺 $mod —— HDR 自动上屏会静默失效（检查 build_release.sh 的暂存）" >&2
+        exit 1
+    else
+        echo "  ⚠ $mod 未构建（空闲抑制走 D-Bus / HDR 能力不可读 → SDR）"
+    fi
+done
 # 全依赖版：捆绑的 Qt（库在 lib/，插件/QML 在 lib/qt6/）——镜像发行版布局，
 # 使 Qt 插件自带的相对 RUNPATH（$ORIGIN/../../../）能解析到 <prefix>/lib。
 QT_SRC="$SRC/lib/qt6"
@@ -553,7 +588,9 @@ ldd_check "$BIN_DIR/mpv-vsr" "mpv-vsr" || LDD_OK=0
 # 加载器会静默回落到它——程序照样能启动，但跑的是没有 vf_vsr/vf_vfg/vf_rot 和
 # libmpv vo 互操作的原版 mpv（现象："能开但超分/插帧全没了"，且没有任何报错）。
 # 实测：把 $LIB_DIR/libmpv.so.2 挪走，ldd 解析到 /usr/lib/libmpv.so.2、不报缺失。
-MPV_SO="$(ldd "$BIN_DIR/vsr-player" 2>/dev/null | awk '$1=="libmpv.so.2"{print $3; exit}')"
+# ⚠ `|| true`：awk 的 `exit` 会给 ldd 一个 SIGPIPE，pipefail 下整条管道返回
+# 141 → set -e 静默中止安装（远端实测：[6/6] 之后一行都不打、exit=1）。
+MPV_SO="$(ldd "$BIN_DIR/vsr-player" 2>/dev/null | awk '$1=="libmpv.so.2"{print $3; exit}' || true)"
 case "$MPV_SO" in
     */lib/vsr-player/*)
         echo "  ✅ libmpv 来自本包（$MPV_SO）" ;;
@@ -588,7 +625,7 @@ fi
 FF_EXP_FILE="$LIB_DIR/VSR-FFMPEG-MAJOR"
 if [ -f "$FF_EXP_FILE" ]; then
     FF_WANT="$(tr -d '[:space:]' < "$FF_EXP_FILE")"
-    FF_SO="$(ldd "$BIN_DIR/vsr-player" 2>/dev/null | awk '$1=="libavcodec.so"{print $3; exit}')"
+    FF_SO="$(ldd "$BIN_DIR/vsr-player" 2>/dev/null | awk '$1=="libavcodec.so"{print $3; exit}' || true)"
     FF_HAVE=""
     [ -n "$FF_SO" ] && FF_HAVE="$(readelf -d "$FF_SO" 2>/dev/null \
         | sed -n 's/.*(SONAME).*\[libavcodec\.so\.\([0-9]*\)\].*/\1/p')"
