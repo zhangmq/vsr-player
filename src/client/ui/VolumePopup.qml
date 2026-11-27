@@ -11,6 +11,14 @@ PopupBase {
 
     width: 48; padding: 12
     onOpened: { volSlider.value = root.volume * 100 }
+    // 滑杆只显示 mpv 观察上来的 volume（唯一事实源）。静音 = 音量 0：
+    // 滑杆归零；取消静音由 toggleMute 恢复到静音前的值，滑杆随之回位。
+    // 拖动中不同步（否则会与用户的手互抢）；点静音那一下也不能再用旧值
+    // 覆盖——之前那样写就是"点静音滑杆不动、再点一次掉到 0"的根因。
+    onVolumeChanged: {
+        if (!volSlider.pressed)
+            volSlider.value = root.volume * 100
+    }
     // 拖动过程中不落盘（每次移动写配置会让 QSettings 重写整个文件 → 卡顿）；
     // 松手/关闭弹窗时才保存。
     onClosed: viewModel.persistVolume()
@@ -39,7 +47,7 @@ PopupBase {
             anchors.horizontalCenter: parent.horizontalCenter
             codepoint: root.muted ? "󰖁" : "󰕾"; size: 20
             tooltip: root.muted ? qsTr("Unmute") : qsTr("Mute")
-            onClicked: { root.muteToggled(); volSlider.value = root.volume * 100 }
+            onClicked: root.muteToggled()
         }
     }
 }
