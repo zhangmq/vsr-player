@@ -355,6 +355,24 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **无参数启动 = idle**：只恢复上次播放列表（`restorePlaylistIdle()` 全 `loadfile … append`，mpv 无 current 条目 → 不解码、不建滤镜链、不 Load 引擎、不做续播 seek），按播放才 `resumeLastPath()` → `playlist-play-index` 载入，mpv 用 watch_later 自动恢复上次进度。命令行给了文件、或显式 `-- --pause=yes` → 立即载入（mpv 语义）。
 - 起因：曾有"启动暂停"实现（`pause=yes` 选项 + 启动即载入），但 mpv 精确 seek 会把"关键帧→目标位置"的帧**过完滤镜链再丢掉**（实测 `start=12.302`/关键帧 6.25s → 142 源帧、VFG 570 输出帧白跑、海报晚 1.6s）；日志里那批 `vfg-status` 是丢弃帧不是播放。完整测量与被否方案：`docs/memory/startup-idle-policy.md`。
 - idle 时 mpv 的 `pause` 初值为 false → `pause` 观察器按 `updatePlaying(!p && fileLoaded_)` 判定，否则 UI 未载入就显示"播放中"。
+- **`--audio-wait-open` 自 mpv 0.33 起就是空操作（0.42 / master 仍如此，2026-11-27 复核）**：
+  选项 → `opts->audio_wait_open`，唯一消费者在 `player/audio.c:496` 把它写进
+  `ao_chain.ao_resume_time`（声明 `player/core.h:201`），**全树没有任何读取者**。
+  v0.32.0 里还有读点（`audio.c:833`：未到时间就 `mp_set_timeout()` + return，真的压住音频）；
+  2020-08-28 上游 `b74c09efb`（"audio: refactor how data is passed to AO"，随 v0.33.0 发布）
+  把 `fill_audio_out_buffers()` 拆成 `check_audio_start()`/`audio_start_ao()` 时**只搬了按
+  A/V pts 差延迟，没有搬 wait_open 语义**，字段和写入被遗留至今（`DOCS/man/options.rst:2497`
+  仍宣传这个等待效果 → 上游死选项 + 文档脱节）。想"等音频设备就绪再起播"不能靠它；
+  复核命令：`mpv --no-config --no-video --ao=null --audio-wait-open=30 --audio-stream-silence=yes tone.wav`
+  （2 s 素材：有效实现要压 30 s，0.42 实测 2.1 s 播完，与 `=0` 差 5 ms 噪声；`ao=null` 默认是
+  **timed**，所以这组有判别力——`ao=pcm` / encode 模式是 untimed，就算修好也按设计被忽略）。
+  **上游状态（2026-11-27 联网核实）**：0.42.0 tag = 2026-11-05（不含修复）；2026-11-22 有人提了
+  [PR #18890 "Fix --audio-wait-open with silent lead-in on open"](https://github.com/mpv-player/mpv/pull/18890)
+  （open、0 review、1 提交 +58/−22）：开 AO 即流静音（新增 `AO_INIT_WAIT_OPEN`），并在
+  `fill_audio_out_buffers()` 里用 `mp_set_timeout()` 压住 `STATUS_READY` 直到 `ao_resume_time`
+  （patch 里那句 `- if (ao_c->ao && mp_async_queue_is_full(...))` 正是 0.42 缺读点的位置）。
+  即上游也认定这是 bug、症状是「HDMI/eARC 接收机锁流时前 0.4–1.5 s 被吃掉」——与我们那个
+  「首 1–2 声静音」同属一类。想真要这个效果：等它合并后升 mpv，或本地移植该 patch。
 - **播放列表条目名 = 交给 mpv，不在客户端做名字表（2026-10-27）**：
   （0.42 起一张盘在播放列表里只有一条条目（ISO 的路径），盘上 title 改成
   「标题」面板里的 edition —— 见「光盘」一节；"名字一律来自 mpv" 这条原则不变。）
