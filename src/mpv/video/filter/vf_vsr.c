@@ -509,6 +509,14 @@ static bool ensure_vsr(struct mp_filter *f, struct priv *p,
                         int in_w, int in_h, int out_w, int out_h,
                         int quality, int bits)
 {
+    // The engine's QualityLevel carries both modes: 1-4 are upscale levels and
+    // 8-11 are the 1:1 denoise levels (the UI maps low/medium/high/ultra to
+    // 8/9/10/11). Mixing them is invalid - a denoise level on a scaling engine
+    // makes NvVFX_Run fail - so pick by geometry: 1:1 with denoise enabled uses
+    // the denoise level, everything else uses the upscale quality.
+    if (in_w == out_w && in_h == out_h && p->opts->denoise != -1)
+        quality = p->opts->denoise;
+
     if (p->vsr_configured && p->vsr.bits != bits) {
         // 位深变化（8↔10）必须重建：ImageEncodingMode + 图像格式都绑在
         // Load 上，不能热更新。
