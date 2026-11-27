@@ -101,12 +101,17 @@ Item {
         // 写回初始值；onChanged 只在翻转时触发），鼠标不在热区则初始
         // 隐藏。弹窗注册表化：新增弹窗只需在 Component.onCompleted 的
         // _popups 数组中登记一行。
-        // Hide the chrome while a disc menu is on screen: our control bar and seek bar
-        // would sit on top of the disc's menu picture (interaction model agreed
-        // 2026-11-26). Popups such as the context menu are not chrome and stay usable.
-        property bool showUi: !viewModel.discMenuActive
-                              && (bottomBar.mouseInRegion || topBar.mouseInRegion
-                                  || anyPopupOpen)
+        // Disc menus are the one case where the chrome must not sit on top of the
+        // picture: the menu *is* the content, its buttons live all over the frame and
+        // the bars would cover them (and eat their clicks). Compromise: while a menu
+        // is on screen and playback is running, keep the chrome out of the way
+        // entirely; as soon as playback is paused, behave like normal playback again
+        // (bars on hover, centre play button) so the user can drive the player.
+        // Pausing is reachable while the chrome is hidden -- Space is routed to the
+        // player, not to the disc.
+        property bool showUi: (bottomBar.mouseInRegion || topBar.mouseInRegion
+                               || anyPopupOpen)
+                              && !(viewModel.discMenuActive && viewModel.playing)
         onShowUiChanged: viewModel.overlaysVisible = showUi
         property var _popups: []
         readonly property bool anyPopupOpen: {
@@ -146,6 +151,31 @@ Item {
             }
         }
 
+        // ── Mouse forwarding for disc menus (Blu-ray HDMV / BD-J, DVD) ──
+        // The menu picture is an OSD bitmap mpv draws into the video frame
+        // (player/discnav.c -> OSDTYPE_DISC_MENU); the disc does its own hit testing and
+        // we only hand over the position. Coordinates are **picture-normalized**
+        // (0..1, 0,0 top-left): the video fills the window (letterboxing is baked into
+        // the frame by mpv), so normalized window coordinates are picture coordinates.
+        // Only present while a menu is on screen -- otherwise it would steal
+        // "click to play/pause". Declared *before* the bars so the chrome stays
+        // reachable on top of it (the disc menu keeps every other pixel).
+        MouseArea {
+            id: discNavArea
+            anchors.fill: parent
+            enabled: viewModel.discMenuActive
+            visible: enabled
+            acceptedButtons: Qt.LeftButton
+            hoverEnabled: true
+            onPositionChanged: {
+                if (!viewModel.discMenuActive) return
+                viewModel.discNavMouse("mouse-move", mouse.x / width, mouse.y / height)
+            }
+            onClicked: function(mouse) {
+                viewModel.discNavMouse("mouse-click", mouse.x / width, mouse.y / height)
+            }
+        }
+
         // ── Top Bar ────────────────────────────────────────────────
         TopBar {
             id: topBar
@@ -163,30 +193,6 @@ Item {
             // 同一个动作），否则两个东西会叠在一起。
             visible: viewModel.hasMedia
             onClicked: viewModel.togglePlayPause()
-        }
-
-        // ── Mouse forwarding for disc menus (Blu-ray HDMV / BD-J, DVD) ──
-        // The menu picture is an OSD bitmap mpv draws into the video frame
-        // (player/discnav.c -> OSDTYPE_DISC_MENU); the disc does its own hit testing and
-        // we only hand over the position. Coordinates are **picture-normalized**
-        // (0..1, 0,0 top-left): the video fills the window (letterboxing is baked into
-        // the frame by mpv), so normalized window coordinates are picture coordinates.
-        // Only present while a menu is on screen -- otherwise it would steal
-        // "click to play/pause".
-        MouseArea {
-            id: discNavArea
-            anchors.fill: parent
-            enabled: viewModel.discMenuActive
-            visible: enabled
-            acceptedButtons: Qt.LeftButton
-            hoverEnabled: true
-            onPositionChanged: {
-                if (!viewModel.discMenuActive) return
-                viewModel.discNavMouse("mouse-move", mouse.x / width, mouse.y / height)
-            }
-            onClicked: function(mouse) {
-                viewModel.discNavMouse("mouse-click", mouse.x / width, mouse.y / height)
-            }
         }
 
         // ── 无媒体：dropzone + 初始操作提示（用户 2026-11-15）────────
