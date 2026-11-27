@@ -1014,17 +1014,46 @@ slave 打开被我们那条"让 lavf 给 playlist 让路"的补丁拒掉 → **I
   （约 30 s）→ ~38.5 s 时 `disc-menu-active=1`、日志
   `current-edition 1->6 (menu_active=1)` + `overlay on`；`edition-list` = N 条 title +
   `Disc Menu`。`--disc-menu=no`（默认关时）直接进最长 title（1:18:30 / 1:48:26）。
-- **第三处偏离（2026-11-26）**：`stream_bluray.c` 在事件循环里给 `current_title` 加兜底解析。
-  根因（mpv 侧）：`current_title` 只由 `BD_EVENT_PLAYLIST` 解析，而"从盘菜单进正片/选章节"
-  是**同一 playlist 内换 playitem/mark**，不宣告 playlist；进菜单时它已被解析成 -1
-  （菜单 playlist 不在 title 列表里）→ `STREAM_CTRL_GET_CURRENT_TITLE` 报"无"
-  → `player/discnav.c:264 sync_current_edition()` 只能保持合成 `Disc menu` 条目
-  → 客户端「标题」行一直显示"光盘菜单"。修法：`current_title < 0` 时用
-  `bd_get_current_title()`（在读线程上调用，libbluray handle 归它所有）兜底，
-  只接受 `< num_titles`。单盘直开 + `--disc-menu=yes` 必现，`--disc-menu=no` 不复现
-  （那条路径 `play_title()` 直接写 `current_title`）。**与"播放列表里放几张盘"无关**。
-  上游查过：mpv 现有 issue/PR 里没有这条（#18423/#18824/#18481/#18718 都是别的症状），
-  是否上报由用户定。
+- **偏离清单（overlay vs 上游 v0.42.0，2026-11-27 核对）**：只剩两处
+  1. `stream_bluray.c`：`stream_info_bdmv_dir.stream_origin` 由 `UNSAFE` 改成
+     `STREAM_ORIGIN_FS`——否则"目录 / m3u 里的 ISO、BDMV 目录"被 `check_origin()` 拒掉
+     （现象：`Failed to recognize file format`、`[disc] probed stream 0 failed`、
+     `mp2: Header missing`；`bd://` 条目仍按上游被拒）。
+  2. `stream_bluray.c`：`BD_EVENT_PLAYLIST` 里一行 INFO 诊断
+     （`disc title: playlist N -> title M` / `... is not in the title list (no title)`，
+     只在 playlist 或 title 变化时打）。纯日志，无行为变化。
+  （`demux_playlist.c` 的补丁 2026-11-26 撤掉；`current_title` 兜底解析 2026-11-27 删除。）
+
+- **限制：BD-J 盘播"01xxx 副本 playlist"时 `current-edition` 只能是合成「Disc Menu」
+  ——那是上游设计，不是 bug**（2026-11-27 定，只写文档不改代码）
+  - 触发面：有的盘（含测试盘 2）给 Java 程序单独放一套 **01xxx 的 mpls 副本**：
+    `01000..01004` 与 `00000..00004` 内容相同（逐字节只差 1 字节 = playlist 号字段），
+    另有 `01100.mpls`（96 KB，菜单页）。`index.bdmv` 只登记 `00xxx`，所以这些副本
+    **在 title 列表里没有身份**。
+  - 链路（实测）：盘的菜单播 `01001.mpls` → libbluray 在 `_open_playlist()` 里写 PSR6
+    （`bd_psr_write(PSR_PLAYLIST, atoi(title->name))`，libbluray `bluray.c:410`）→
+    `BD_EVENT_PLAYLIST(1001)` → `bd_title_for_playlist()` 反查不到 → `current_title = -1`
+    → `STREAM_CTRL_GET_CURRENT_TITLE` 报"无" → 上游 `demux_disc.c:601 sync_initial_edition()`
+    就是为这个情形写的（注释原话："The disc is playing something the title list does not
+    contain, an intro or a menu. Point at the synthetic entry"），把 edition 指向合成条目，
+    并且 `menu_active` 期间**强制**为它。
+  - **mpv 自己不显示 edition**：`player/osd.c` 里没有任何 edition 引用，默认
+    `--term-status-msg` 也不含它；唯一通道是属性（`edition` / `current-edition` /
+    `edition-list`），可选的 stats 脚本才展示。所以"上游的显示行为"= 属性停在菜单项，
+    屏上不显示任何 title 信息。
+  - 用户可见后果（已接受）：盘菜单驱动的播放（含"从盘菜单选章节"）期间，客户端
+    「标题」行显示「光盘菜单」；「标题」面板仍能跳 title（`bd_select_title()` 不查
+    UO mask）；章节取自**正在播的 playlist**（`add_stream_chapters` 用当前 `title_info`），
+    菜单页 01100 上报 `duration=64868 s` / `chapter-list/count=999`（实测，上游同样）。
+  - ⚠ **不要再加 `current_title` 兜底解析**（2026-11-26 加过、2026-11-27 删掉）：
+    `bd_get_current_title()` 返回"上一次 *title* 选择"的索引，对这些只换 playlist 的播放
+    是陈旧值；`talloc_zero` 又让 `current_playlist` 初值为 0，首帧会与 title 0 "假匹配"
+    （旧日志里 `playing playlist 0, playlist matches this title` 就是这么来的）。
+    删除后 `current-edition` 全程 5，与发行版 mpv 0.42（`/usr/bin/mpv`，无 overlay）在同一
+    脚本、同一盘、`--disc-menu=yes` 下**逐项一致**。
+  - ⚠ 2026-11-26 当时的归因（"盘菜单进正片是同一 playlist 内换 playitem/mark、不宣告
+    playlist"）**是错的**：盘换的是另一条 playlist（01001），事件照常宣告，只是那条 playlist
+    不在 title 列表里。也**不要**按号段映射（`playlist - 1000`）：各盘号段不同，属于按盘猜。
 
 - 老快照/老列表里的 `bd://mpls/N//dev` 条目**仍能播**（走 `bluray_stream_open` 的
   `mpls/<n>` 解析），只是它们各算"一条盘流"，与新的"一张盘一条"混在同一个播放列表里。

@@ -18,7 +18,12 @@ Linux 桌面实时 AI 视频处理播放器，直接调用 **NVIDIA Video Effect
 - **10-bit / HDR 全链** — RGB10A2 贯通整条链；HDR 内容自动切 HDR10 上屏；SDR→HDR10 上变换为 opt-in（`vf_truehdr`）
 - **XR 眼镜 3D 播放**（核心能力）— 3D 视频（左右或上下并排）直接在眼镜的 3D 模式下全屏播放，桌面保留控制窗口
 - **2D 输出** — 只看 3D 片源的一只眼，按正常画幅满屏播放，且超分按单眼算（`vf_eye`）
-- **蓝光 ISO（仅 2D）** — `.iso` 当作文件夹/m3u 处理：列出各 title 的名字与时长，不自动播放；3D 蓝光（MVC）不在支持范围，需先离线转 SBS
+- **蓝光光盘** — `.iso`（或 BDMV 目录）在播放列表里是**一条条目**；盘上的 title 在右键菜单的
+  **「标题」**面板里（`Title 2 · 1:48:26`，另有合成的 `Disc menu`），默认直接进盘自己的菜单
+  （偏好 → 光盘 → 打开时进入菜单）。HDMV 与 BD-J 菜单都能用方向键、Enter/Esc、鼠标、`Ctrl+M`
+  （根菜单）、`Ctrl+Shift+M`（弹出菜单）操作。BD-J 菜单需要 Java 运行时 + libbluray 的 BD-J jar，
+  能做什么/不能做什么见 [wiki](https://github.com/zhangmq/vsr-player/wiki/Blu-ray-and-Playlists)。
+  3D 蓝光（MVC）不在支持范围，需先离线转 SBS
 - **进度条悬停缩略图** — 悬停进度条即预览该时间点的画面，带时间与章节名；本地文件与网络流都支持
 - **日常播放** — NVDEC 硬解、Vulkan 渲染、自动隐藏 QML UI、播放列表、轨道与延迟控制、循环、倍速、截图、JSON IPC、独立 `mpv-vsr` CLI
 
