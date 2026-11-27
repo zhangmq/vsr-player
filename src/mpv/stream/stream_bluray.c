@@ -741,6 +741,8 @@ static int bluray_stream_fill_buffer(stream_t *s, void *buf, int len)
             mp_mutex_unlock(&b->overlay_lock);
             BLURAY_TITLE_INFO *ti = bd_get_playlist_info(b->bd, playlist, cur_angle);
             mp_mutex_lock(&b->overlay_lock);
+            int prev_title = b->current_title;
+            int prev_playlist = b->current_playlist;
             if (b->title_info)
                 bd_free_title_info(b->title_info);
             b->title_info = ti;
@@ -752,6 +754,17 @@ static int bluray_stream_fill_buffer(stream_t *s, void *buf, int len)
             if (b->hdmv_mode)
                 b->discontinuity_id++;
             mp_mutex_unlock(&b->overlay_lock);
+            // Diagnostic for "the Title row shows the wrong title": a disc menu can
+            // also start a playlist that is not one of the disc's titles (BD-J plays
+            // any mpls), which has no title to report.
+            if (title != prev_title || playlist != prev_playlist) {
+                if (title < 0)
+                    MP_INFO(s, "disc title: playlist %u is not in the title list "
+                              "(no title)\n", playlist);
+                else
+                    MP_INFO(s, "disc title: playlist %u -> title %d\n",
+                            playlist, title);
+            }
             break;
         }
         case BD_EVENT_PLAYITEM:
@@ -821,22 +834,16 @@ static int bluray_stream_fill_buffer(stream_t *s, void *buf, int len)
             break;
         }
 
-        // BD_EVENT_PLAYLIST is what resolves current_title, but a disc menu can
-        // enter a title by switching play items inside a playlist (chapter
-        // selection) without announcing a new playlist. current_title then stays
-        // -1, STREAM_CTRL_GET_CURRENT_TITLE reports nothing, and mpv keeps
-        // reporting the synthetic "Disc Menu" edition even though a title is
-        // playing. Ask libbluray directly -- safe here, this is the thread that
-        // owns the handle -- and accept only a real title index.
-        if (b->current_title < 0) {
-            uint32_t cur = bd_get_current_title(b->bd);
-            if (cur < b->num_titles) {
-                mp_mutex_lock(&b->overlay_lock);
-                b->current_title = (int)cur;
-                mp_mutex_unlock(&b->overlay_lock);
-                MP_VERBOSE(s, "current title resolved from libbluray: %u\n", cur);
-            }
-        }
+        // current_title comes from BD_EVENT_PLAYLIST only, i.e. from the disc's own
+        // PSR6, and libbluray writes PSR6 inside every _open_playlist() -- so any
+        // jump that lands on a listed title is announced and no extra probing is
+        // needed. When the event's playlist is not in the title list, the disc is
+        // playing something that has no title (BD-J discs keep a duplicate playlist
+        // family for their Java app: 01001.mpls mirrors 00001.mpls), and reporting
+        // nothing is the correct answer: mpv keeps the edition it had. Do not
+        // "heal" that with bd_get_current_title(): it only returns the last title
+        // index selected by a *title* switch, which is stale for those playlists
+        // (measured 2026-11-27; see the disc section of AGENTS.md).
 
         mp_mutex_lock(&b->overlay_lock);
         int64_t scr = b->pending_scr;

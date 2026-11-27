@@ -25,7 +25,13 @@ mpv.
 - **10-bit / HDR end to end** — RGB10A2 through the whole chain, automatic HDR10 output for HDR content, opt-in SDR→HDR10 upconversion (`vf_truehdr`)
 - **3D on XR glasses** (headline feature) — play 3D videos (side-by-side or top-and-bottom) on XR glasses in 3D mode: fullscreen picture on the glasses, controls stay on the desktop
 - **2D output** — watch one eye of a 3D source as a normal full-frame picture, with VSR applied per eye (`vf_eye`)
-- **Blu-ray ISO (2D titles)** — `.iso` behaves like a folder or m3u: titles are listed with names and durations, nothing auto-plays. 3D Blu-ray (MVC) is out of scope: convert to SBS offline first
+- **Blu-ray discs** — an `.iso` (or a BDMV directory) is **one playlist entry**; the disc's titles live
+  in the right-click **Title** panel (`Title 2 · 1:48:26`, plus a synthetic `Disc menu` row), and the
+  disc boots into its own menu by default (Preferences → Disc → Boot into disc menu). HDMV and BD-J
+  menus are navigable with the arrow keys, Enter/Esc, the mouse, `Ctrl+M` (root) and `Ctrl+Shift+M`
+  (pop-up). BD-J menus need a Java VM plus libbluray's BD-J jar — see
+  [the wiki](https://github.com/zhangmq/vsr-player/wiki/Blu-ray-and-Playlists) for what does and does
+  not work. 3D Blu-ray (MVC) is out of scope: convert to SBS offline first
 - **Hover thumbnails** — the progress bar previews the frame under the pointer, with the time and the chapter name; works for local files and for network streams
 - **Everyday player** — NVDEC decode, Vulkan rendering, auto-hide QML UI, playlist, tracks and delay control, loop modes, speed, screenshots, JSON IPC, standalone `mpv-vsr` CLI
 

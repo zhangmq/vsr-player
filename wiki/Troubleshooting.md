@@ -125,6 +125,22 @@ engine load compiles kernels and can take 10-15 s (one-time; later loads ~0.15 s
   verified**.
 - This is a notice only — there is no pre-warm: the first frame still waits 10–15 s.
 
+## Blu-ray: no menu, or the Title panel stays on "Disc menu"
+
+Two different things, both expected on some discs — details in
+[Blu-ray and Playlists](Blu-ray-and-Playlists):
+
+- **No menu appears at all.** BD-J discs need a Java VM plus libbluray's BD-J jar
+  (`libbluray-j2se-<version>.jar`); the log says so and playback continues without menus.
+  Titles are still in the Title panel. Turn off Preferences → Disc → *Boot into disc menu*
+  to start the longest title directly instead.
+- **The Title panel keeps showing `Disc menu` while the feature plays.** A Java menu starts
+  playback from its own copy of a playlist (`01001.mpls` next to `00001.mpls`) that is not in
+  the disc's title list, so mpv has no title to report and points at the synthetic
+  `Disc menu` entry. The picture is correct and chapters still work.
+- **`Ctrl+M` / the `Disc menu` row does nothing.** The disc masks the menu-call operation;
+  mpv does not override the disc's own restriction.
+
 ## 3D / single-eye oddities
 
 - **Picture does not fill the glasses screen**: the OSD/log line `stereo map:` reports the
