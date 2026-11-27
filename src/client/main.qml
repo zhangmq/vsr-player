@@ -159,9 +159,11 @@ Item {
             anchors.fill: parent
             playing: viewModel.playing
             overlaysVisible: viewModel.overlaysVisible
-            // 无媒体时由 IdleScreen 接管中央区域（它的「继续上次播放」就是
-            // 同一个动作），否则两个东西会叠在一起。
-            visible: viewModel.hasMedia
+            // Without media the IdleScreen owns the centre (its "continue last
+            // playback" row is the same action), otherwise the two overlap. In a 3D
+            // session the video lives on the glasses screen and the control window
+            // puts the glasses hint in the centre, so the button would overlap that.
+            visible: viewModel.hasMedia && !controlMode
             onClicked: viewModel.togglePlayPause()
         }
 
@@ -197,7 +199,10 @@ Item {
             // 任何 popup（含右键菜单）打开时让位：它是"空状态引导"，
             // 菜单盖上来时还透出面板文字会显脏（菜单是半透明的）。
             // 播放态（mediaPhase 2）整体让位；1=正在打开、3=无法播放 也走这张卡
+            // In a 3D session the centre belongs to the glasses hint below: the card
+            // would be drawn under it and the two would overlap.
             visible: viewModel.mediaPhase !== 2 && !benchmarkMode && !uiLayer.anyPopupOpen
+                     && !controlMode
             dragActive: dropArea.containsDrag
             phase: viewModel.mediaPhase
             detail: viewModel.mediaPhaseDetail
