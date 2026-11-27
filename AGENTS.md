@@ -257,6 +257,22 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   全部 `seeking=no`、丢帧 0。对照：`vf_rife.c` 的同款分支在 `for(;;)` 预取循环里
   `continue`（不返回），所以不受影响；`vf_vsr` 的 seek 丢弃是 drop loop，同理。
 - 其他机制：场景切换直通（复制时间较近端点）；预取模型（vf_vapoursynth buffered-frames，每 process() 调用输出 1 帧）；EOF flush 最后帧；模式降级时丢弃预取帧防顺序倒挂；`syncVfOptions` 在 FILE_LOADED 后重放 vf 状态（链重建后 UI 修改不丢）。
+- **首帧输出格式必须与后续帧一致（2026-11-27 修）**：`emit_pair_output` 的 i==k
+  分支输出的是「cur 的 RGBA 副本」，但首帧分支原先直接 `mp_pin_in_write(源帧)`
+  （YUV）→ 每个**文件的第一帧**是 NV12、其余全是引擎输出的 RGBA：VO 每开一个文件
+  要按两种格式各配置一次。实测（编码模式）直接失败：A 的帧全是
+  `Converting rgba -> yuv444p`，B 首帧回落 `VO: [lavc] … nv12` → `[encode] Encoder
+  was reinitialized; this is not allowed`。修法：首帧也走 staging 副本（把它当 pair
+  起点，`emit_i = k` 调 `emit_pair_output`）。修后两次都是 rgba，首帧内容与修前
+  逐帧相同（同一帧 mean 72.84）。
+- **引擎 (re)init 必须作废 pair 调度（2026-11-27 修，白灰/花屏帧的根因）**：
+  `ensure_vfg` 重建引擎后 `in_img[0/1]` 是**新的未初始化显存**，但 `have_prev` 仍为
+  true → 下一对把未初始化缓冲当 prev 参与插值 → 1–2 帧「结构对、颜色错」的花屏。
+  触发面：窗口 resize（链输出尺寸变）/ 位深变化 / 换片首帧格式不同。
+  实测（`VSR_LOG_BLACK=1` 每帧读 rtImage 中心 32×32 均值，全屏切换两次）：
+  修前每次 resize 后立刻出现单帧尖峰 `95.7→146.0→96.9` 与 `116.6→223.4→117.1`；
+  修后两次都消失（只剩内容自身的跳变）。修法：`ensure_vfg` 成功 init 后
+  `talloc_free(pending_cur)` + `have_prev = false`。
 - **无性能自动降级**（2026-10-15 移除旧的分级降级：曾是"cost 超预算先降档 60→48→40→30，全档超才直通"）。移除理由：判据是**节点内自测**，只能看到 RIFE 自身 GPU 耗时，而真实短缺通常在该节点下游——VSR 按**输出帧**计费（k=out/src 次/对），加上 VO/渲染通路；实测 1080p29.97 + `fps=60` + `scale=auto` 实际上屏 17.5fps、丢帧 +52/s，而判据报 `cost=16.0ms < budget=21.4ms` 全程沉默。目前 `fruc-status` 的 `cost=` 仅作观测保留。⚠️ 移除的代价：4K 纯 RIFE 过载场景失去唯一有效的回退（24fps → 7.3fps）。**完整记录（现象/根因/同族缺陷/vf 节点能力边界/统一方案的待定问题/复现方法）见 `docs/memory/fruc-auto-degrade-removal.md`**；统一的跨节点性能自适应方案（覆盖 rife/vsr/VFX 新版插帧，以实际达成率判定）**待设计，2026-10-15 搁置**。
 - 插帧历史决策：NVOFA 硬件光流降级备选（repeat 率太高，有运动对成功率 9.7% vs RIFE 96.3%）；Nano = 两帧平均器已否决（flow 恒零实证）。
 

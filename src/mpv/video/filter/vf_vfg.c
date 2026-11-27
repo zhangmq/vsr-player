@@ -651,6 +651,18 @@ static bool ensure_vfg(struct mp_filter *f, struct priv *p, int in_w, int in_h,
     }
     p->vfg_mode = mode;
     p->vfg_configured = true;
+    // A fresh engine means fresh, uninitialised staging buffers: whatever the
+    // previous frame was is gone, so the pair schedule must be invalidated.
+    // Otherwise the next pair interpolates with an uninitialised in_img[1] as
+    // `prev` and emits one or two frames that have the right structure and the
+    // wrong colours (seen on size changes -- a window resize changes the chain
+    // output size -- and on a bit-depth change or a file switch with a
+    // different first-frame format).
+    if (p->pending_cur) {
+        talloc_free(p->pending_cur);
+        p->pending_cur = NULL;
+    }
+    p->have_prev = false;
     MP_VERBOSE(f, "vfg: engine ready mode=%s\n", vfg_mode_name(mode));
     return true;
 }
@@ -1044,30 +1056,35 @@ static void f_process(struct mp_filter *f)
     }
     p->video_w = in_w;
     p->video_h = in_h;
-    double out_fps = p->k * p->src_fps;
 
-    // ── 5. 首帧：直接输出（源帧保留语义的起点；内容即下一 pair 的 prev）─
+    // ── 5. First frame: start of a pair, emitted as a converted copy ────────
+    // This used to hand out the source frame itself (YUV, the decoder's format)
+    // while every later frame is the engine's RGBA output, so the first frame of
+    // each file had a different format from the rest. The VO then had to be
+    // configured twice per file, and the first frame took a different colour
+    // path than its successors (that showed up as wrong-coloured frames in the
+    // reconfig window; measured 2026-11-27 in encoding mode: file A was rgba
+    // throughout, file B's first frame fell back to nv12 and the encoder died
+    // with "resolution changes not supported"). Route it through the same
+    // staging copy as the i == k branch so the output format never changes.
     if (!p->have_prev) {
-        double t0 = vfg_now_ms();
         if (!stage_input(f, p, cur, 1)) {
             cuCtxPopCurrent(NULL);
             talloc_free(cur);
             mp_filter_internal_mark_failed(f);
             return;
         }
-        p->prev_pts = t_cur;
-        p->have_prev = true;
-        // 输出帧率 = K×源帧率（与后续输出帧同构；vf_rife 首帧同款）。
-        // src_fps 未知时保持源帧的值，绝不写 1.0/0 = inf。
-        if (out_fps > 0) {
-            cur->nominal_fps = out_fps;
-            cur->pkt_duration = 1.0 / out_fps;
-        }
-        MP_DBG(f, "vfg: first frame pts=%.4f kept (%dx%d k=%d mode=%s)\n",
-               t_cur, in_w, in_h, p->k, vfg_mode_name(p->vfg_mode));
-        vfg_account(f, p, t0);
+        p->pending_cur = cur;      // ownership moves off the pin frame
+        p->cur_pts = t_cur;
+        p->emit_i = p->k;          // emit a copy of cur, no interpolation
+        bool ok = emit_pair_output(f, p);
         cuCtxPopCurrent(NULL);
-        mp_pin_in_write(f->ppins[1], frame);
+        if (!ok) {
+            talloc_free(p->pending_cur);
+            p->pending_cur = NULL;
+            p->have_prev = false;
+            mp_filter_internal_mark_failed(f);
+        }
         return;
     }
 
