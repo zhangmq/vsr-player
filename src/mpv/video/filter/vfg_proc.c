@@ -68,6 +68,7 @@ bool vfg_init(struct vfg_context *c, int in_w, int in_h, int mode,
     if (ret != 0) {
         fprintf(stderr, "VFG: CreateEffect(VideoFrameGeneration) failed (%d)\n",
                 ret);
+        c->last_err = ret;
         return false;
     }
 
@@ -105,18 +106,21 @@ bool vfg_init(struct vfg_context *c, int in_w, int in_h, int mode,
     ret = pfn_NvVFX_SetImage(c->handle, VFG_INPUT0_IMAGE, &c->in_img[0]);
     if (ret != 0) {
         fprintf(stderr, "VFG: SetImage(SrcImage0) failed (%d)\n", ret);
+        c->last_err = ret;
         vfg_destroy(c);
         return false;
     }
     ret = pfn_NvVFX_SetImage(c->handle, VFG_INPUT1_IMAGE, &c->in_img[1]);
     if (ret != 0) {
         fprintf(stderr, "VFG: SetImage(SrcImage1) failed (%d)\n", ret);
+        c->last_err = ret;
         vfg_destroy(c);
         return false;
     }
     ret = pfn_NvVFX_SetImage(c->handle, VFG_OUTPUT_IMAGE, &c->out_img);
     if (ret != 0) {
         fprintf(stderr, "VFG: SetImage(DstImage0) failed (%d)\n", ret);
+        c->last_err = ret;
         vfg_destroy(c);
         return false;
     }
@@ -135,6 +139,7 @@ bool vfg_init(struct vfg_context *c, int in_w, int in_h, int mode,
     ret = pfn_NvVFX_Load(c->handle);
     if (ret != 0) {
         fprintf(stderr, "VFG: Load failed (%d)\n", ret);
+        c->last_err = ret;
         vfg_destroy(c);
         return false;
     }

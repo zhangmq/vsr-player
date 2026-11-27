@@ -85,6 +85,8 @@
 #include "mpv/client.h"   // struct mpv_node（自定义 option type 的 set/get）
 
 #include <cuda.h>
+
+#include "vfx_fatal.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -621,6 +623,13 @@ static bool ensure_vfg(struct mp_filter *f, struct priv *p, int in_w, int in_h,
     // 档位 = 用户显式选择（无 auto；废弃理由与实测见文件头），默认 medium。
     int mode = p->opts->mode;
 
+    // SDK load failure is a "keep playing, disable the VFX panel" condition —
+    // report it before an init failure is attributed to the engine.
+    if (!vfx_load_libraries()) {
+        vfx_report_error(f, "vfg", "sdk", 0, in_w, in_h);
+        return false;
+    }
+
     if (p->vfg_configured) {
         // 尺寸/Mode/stream 任一变化都要重建：SDK 对 Mode 与 InputWidth/
         // InputHeight 都要求重新 Load（官方 nvvfx 包装标 requires_reload；
@@ -647,6 +656,9 @@ static bool ensure_vfg(struct mp_filter *f, struct priv *p, int in_w, int in_h,
     if (!vfg_init(&p->vfg, in_w, in_h, mode, p->k, bits, p->cuda_stream)) {
         MP_ERR(f, "vfg: init failed (%dx%d mode=%s k=%d)\n",
                in_w, in_h, vfg_mode_name(mode), p->k);
+        vfx_report_error(f, "vfg",
+                         VFX_ERR_IS_CUDA(p->vfg.last_err) ? "resource" : "engine",
+                         p->vfg.last_err, in_w, in_h);
         return false;
     }
     p->vfg_mode = mode;
@@ -687,6 +699,7 @@ static bool ensure_out_buf(struct mp_filter *f, struct priv *p,
     CUresult cr = cuMemAlloc(&p->out_buf, needed);
     if (cr != CUDA_SUCCESS) {
         MP_ERR(f, "vfg: cuMemAlloc(out %zu) failed (%d)\n", needed, cr);
+        vfx_report_error(f, "vfg", "resource", (long)cr, out_w, out_h);
         return false;
     }
     p->out_buf_size = needed;
@@ -1027,6 +1040,7 @@ static void f_process(struct mp_filter *f)
 
     // ── 4. CUDA context + 引擎（懒初始化）───────────────────────────────
     if (!ensure_cuda(f, p, cur)) {
+        vfx_report_error(f, "vfg", "driver", 0, in_w, in_h);
         talloc_free(cur);
         mp_filter_internal_mark_failed(f);
         return;

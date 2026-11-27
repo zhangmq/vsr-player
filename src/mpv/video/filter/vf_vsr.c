@@ -41,6 +41,7 @@
 
 #include "vsr_internal.h"
 #include "cuda_shared.h"
+#include "vfx_fatal.h"
 
 #include <time.h>
 
@@ -221,6 +222,15 @@ struct priv {
 
     struct vsr_context vsr;
     bool      vsr_configured;
+
+    // Engine refused to start for this input configuration: pass frames through
+    // instead of retrying (and re-Loading) on every single frame. Cleared when
+    // the input size / bit depth changes, i.e. the next configuration gets a
+    // fresh attempt. A host policy decision (see vfx_fatal.h) may still stop
+    // playback when the reported reason says the GPU ran out of memory.
+    bool      engine_off;
+    int       off_in_w, off_in_h, off_out_w, off_out_h, off_bits;
+    char      off_reason[16];
 
     // yuv→rgba D2D
     struct yuv_to_rgba    yuv_conv;
@@ -509,6 +519,24 @@ static bool ensure_vsr(struct mp_filter *f, struct priv *p,
                         int in_w, int in_h, int out_w, int out_h,
                         int quality, int bits)
 {
+    // Same configuration already failed: do not retry (a Load is expensive and
+    // the input has not changed). Cleared by the caller on a size/format change.
+    if (p->engine_off && in_w == p->off_in_w && in_h == p->off_in_h &&
+        out_w == p->off_out_w && out_h == p->off_out_h && bits == p->off_bits)
+        return false;
+
+    // The SDK itself must be loadable before an init failure means anything:
+    // missing/incomplete VFX libraries are a "keep playing, disable the panel"
+    // condition, not a GPU problem. Idempotent, cheap after the first call.
+    if (!vfx_load_libraries()) {
+        p->engine_off = true;
+        p->off_in_w = in_w; p->off_in_h = in_h;
+        p->off_out_w = out_w; p->off_out_h = out_h;
+        p->off_bits = bits;
+        snprintf(p->off_reason, sizeof(p->off_reason), "sdk");
+        vfx_report_error(f, "vsr", "sdk", 0, in_w, in_h);
+        return false;
+    }
     // The engine's QualityLevel carries both modes: 1-4 are upscale levels and
     // 8-11 are the 1:1 denoise levels (the UI maps low/medium/high/ultra to
     // 8/9/10/11). Mixing them is invalid - a denoise level on a scaling engine
@@ -564,6 +592,15 @@ static bool ensure_vsr(struct mp_filter *f, struct priv *p,
     if (!vsr_init(&p->vsr, in_w, in_h, out_w, out_h, quality, bits,
                   p->cuda_stream)) {
         MP_ERR(f, "vsr_init failed\n");
+        p->engine_off = true;
+        p->off_in_w = in_w; p->off_in_h = in_h;
+        p->off_out_w = out_w; p->off_out_h = out_h;
+        p->off_bits = bits;
+        snprintf(p->off_reason, sizeof(p->off_reason),
+                 VFX_ERR_IS_CUDA(p->vsr.last_err) ? "resource" : "engine");
+        vfx_report_error(f, "vsr",
+                         VFX_ERR_IS_CUDA(p->vsr.last_err) ? "resource" : "engine",
+                         p->vsr.last_err, out_w, out_h);
         return false;
     }
     p->vsr_configured = true;
@@ -601,6 +638,7 @@ static bool ensure_out_buf(struct mp_filter *f, struct priv *p,
     CUresult cr = cuMemAlloc(&p->out_buf, needed);
     if (cr != CUDA_SUCCESS) {
         MP_ERR(f, "cuMemAlloc(out) failed (%d)\n", cr);
+        vfx_report_error(f, "vsr", "resource", (long)cr, out_w, out_h);
         return false;
     }
     p->out_buf_size = needed;
@@ -771,6 +809,7 @@ static void f_process(struct mp_filter *f)
         p->video_w = video_w;
         p->video_h = video_h;
         p->warmup_done = false;
+        p->engine_off = false;   // new configuration -> fresh attempt
     }
     float new_scale = resolve_scale(f, p, video_w, video_h);
     float eff = new_scale;
@@ -834,15 +873,25 @@ static void f_process(struct mp_filter *f)
         // 低频（每 30 帧），与激活路径同节奏。
         if (++p->status_emit >= 30) {
             p->status_emit = 0;
-            mp_msg(f->log, MSGL_STATUS,
-                   "vsr-status: mode=passthrough scale=%.2f\n",
-                   p->effective_scale);
+            if (p->engine_off)
+                mp_msg(f->log, MSGL_STATUS,
+                       "vsr-status: mode=passthrough scale=%.2f reason=%s\n",
+                       p->effective_scale, p->off_reason);
+            else
+                mp_msg(f->log, MSGL_STATUS,
+                       "vsr-status: mode=passthrough scale=%.2f\n",
+                       p->effective_scale);
         }
         mp_pin_in_write(f->ppins[1], frame);
         return;
     }
 
     if (!ensure_cuda(f, p, mpi)) {
+        // The CUDA context behind the decoder/hwup frames is unusable. This is
+        // a driver-level error: report it (the host stops playback and shows
+        // the error card) and keep the mark_failed so playback cannot silently
+        // continue on a broken context.
+        vfx_report_error(f, "vsr", "driver", 0, video_w, video_h);
         mp_frame_unref(&frame);
         mp_filter_internal_mark_failed(f);
         return;
@@ -859,9 +908,18 @@ static void f_process(struct mp_filter *f)
         }
         if (!ensure_vsr(f, p, video_w, video_h, out_w, out_h,
                         p->opts->quality, bits)) {
-            MP_ERR(f, "vsr: init failed after retry\n");
-            mp_frame_unref(&frame);
-            mp_filter_internal_mark_failed(f);
+            // The engine stays off for this configuration (see ensure_vsr).
+            // Degrading to passthrough is the documented behaviour for a SDK
+            // or configuration problem; the host turns a memory-related
+            // failure into "stop playback" from the vfx-error line.
+            MP_WARN(f, "vsr: init failed after retry — passthrough\n");
+            if (++p->status_emit >= 30) {
+                p->status_emit = 0;
+                mp_msg(f->log, MSGL_STATUS,
+                       "vsr-status: mode=passthrough scale=%.2f reason=%s\n",
+                       p->effective_scale, p->off_reason);
+            }
+            mp_pin_in_write(f->ppins[1], frame);
             cuCtxPopCurrent(NULL);
             return;
         }

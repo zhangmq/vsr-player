@@ -179,13 +179,14 @@ void MpvController::eventLoop() {
             // mpv 自己的播放进度状态行（AV: ...，每秒一行）转发无价值——
             // 客户端 stderr 只转发真正的日志（非 status 前缀）；状态行
             // 内容由 logCb_ 消费后进 OSD。
-            bool is_status = strcmp(lm->level, "status") == 0;
-            if (is_status) {
-                if (logCb_)
-                    logCb_(lm->text);
-            } else {
+            // The callback sees **every** forwarded message: not all of the
+            // structured channels are at "status" level (the filters' vfx-error
+            // line is MSGL_ERR). Status lines are consumed by logCb_ (OSD);
+            // everything else is forwarded to stderr exactly as before.
+            if (logCb_)
+                logCb_(lm->text);
+            if (strcmp(lm->level, "status") != 0)
                 fprintf(stderr, "[mpv %s] %s", lm->level, lm->text);
-            }
             continue;
         }
         if (ev->event_id == MPV_EVENT_SHUTDOWN)

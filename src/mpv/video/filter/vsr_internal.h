@@ -21,6 +21,10 @@ struct vsr_context {
     int     bits;         // 8 / 10（引擎 ImageEncodingMode = bits==10）
     // ── per-context 图像缓冲（引擎生命周期内随尺寸按需重建）
     struct NvCVImage in_img, out_img, tmp_img;
+    /// Last NvVFX/NvCV error code seen by vsr_init (0 = none). The filter uses
+    /// it to tell "the SDK says CUDA failed" (memory pressure, stop playback)
+    /// from "this configuration was rejected" (pass through) -- see vfx_fatal.h.
+    int     last_err;
 };
 
 bool vsr_init(struct vsr_context *c, int in_w, int in_h,

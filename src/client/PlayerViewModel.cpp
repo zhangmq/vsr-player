@@ -1418,6 +1418,9 @@ void PlayerViewModel::setFileLoaded(bool v) {
     // 载入成功 = 进入 playing。必须放在**去重之前**：切歌时 fileLoaded_ 一直是
     // true，去重会提前 return，于是上一条失败留下的 phase=3 永远清不掉
     //（"无法播放"卡片不消失的根因）。
+    if (v) {
+        vfxFatalStop_ = false;   // 新文件 = 新的失败额度（下次还能再报）
+    }
     if (v && mediaPhase_ != 2)
         setMediaPhase(2);
     if (fileLoaded_ == v) return;
@@ -3561,14 +3564,111 @@ QImage PlayerViewModel::previewImage() const {
 // 只服务 UI 的空状态区：opening = "正在打开…"、failed = "无法播放"。
 // 事件（FILE_LOADED / END_FILE）都在观察器/事件线程里，写入一律排队到 GUI 线程。
 void PlayerViewModel::setMediaPhase(int phase, const QString &detail,
-                                    bool isFolder) {
+                                    bool isFolder, const QString &title) {
     if (mediaPhase_ == phase && mediaPhaseDetail_ == detail &&
-        mediaPhaseIsFolder_ == isFolder)
+        mediaPhaseIsFolder_ == isFolder && mediaPhaseTitle_ == title)
         return;
     mediaPhase_ = phase;
     mediaPhaseDetail_ = detail;
     mediaPhaseIsFolder_ = isFolder;
+    mediaPhaseTitle_ = title;
     emit mediaPhaseChanged();
+}
+
+// ── VFX 节点的结构化失败（滤镜 `vfx-error:` 行，见 vfx_fatal.h）──────────
+// 策略（用户 2026-11-27 定）：明确的资源错误与驱动错误 → **停止播放并显示
+// 错误卡**；SDK 缺失 → 直通 + 禁用 VFX 面板；其它引擎失败 → 直通（OSD 状态
+// 行已带 reason）。不做预防性判定，也不静默降级。
+int PlayerViewModel::vfxNodeCostMiB(const QString &node) {
+    // 4K 输出时的上界（本机 1440p 实测：VSR +409、VFG +243、TrueHDR ~0 基线
+    // 噪声；输出按面积放大到 4K 约 ×2.25，再留一档余量）。只用于把
+    // "引擎 Load 失败" 归类成显存问题，宁高不低——偏高的后果是多停一次播放
+    // 并给出提示，偏低则是静默直通（用户明确不接受）。
+    if (node == QLatin1String("vsr")) return 900;
+    if (node == QLatin1String("vfg")) return 600;
+    return 400;   // truehdr
+}
+
+void PlayerViewModel::onVfxError(const QString &line) {
+    auto field = [&line](const char *key) {
+        const QString k = QString::fromLatin1(key) + QLatin1Char('=');
+        const int i = line.indexOf(k);
+        if (i < 0) return QString();
+        int j = line.indexOf(QLatin1Char(' '), i);
+        if (j < 0) j = line.size();
+        return line.mid(i + k.size(), j - i - k.size());
+    };
+    const QString node     = field("node");
+    const QString reason   = field("reason");
+    const QString dims     = field("dims");
+    const qint64 err       = field("err").toLongLong();
+    const qint64 freeMiB   = field("free").toLongLong() / (1024 * 1024);
+    const qint64 totalMiB  = field("total").toLongLong() / (1024 * 1024);
+
+    if (reason == QLatin1String("sdk")) {
+        MLOG_WARN("vfx: node=%s reason=sdk -> VFX controls disabled",
+                  node.toUtf8().constData());
+        if (!vfxUnavailable_) {
+            vfxUnavailable_ = true;
+            emit vfxUnavailableChanged();
+        }
+        return;
+    }
+
+    const char *why = nullptr;   // 归类后的停播原因；nullptr = 只直通
+    if (reason == QLatin1String("resource")) {
+        why = "gpu-memory";
+    } else if (reason == QLatin1String("driver")) {
+        why = "driver";
+    } else if (reason == QLatin1String("engine")) {
+        // 引擎自己拒绝：SDK 的 CUDA 失败码（-1000 及以下）就是显存/驱动层面的
+        // 失败（滤镜侧通常已归成 resource，这里兜一层）；其余码只有当刻空闲
+        // 显存低于该节点开销时才算"显存不足"。
+        if (err <= -1000) {
+            why = "gpu-memory";
+        } else if (freeMiB > 0 && freeMiB < vfxNodeCostMiB(node)) {
+            why = "gpu-memory";
+        }
+    }
+
+    MLOG_WARN("vfx: node=%s reason=%s free=%lldMiB total=%lldMiB err=%lld dims=%s%s%s",
+              node.toUtf8().constData(),
+              why ? why : "passthrough",
+              (long long)freeMiB, (long long)totalMiB, (long long)err,
+              dims.toUtf8().constData(),
+              why ? "" : " (kept playing, node disabled)",
+              "");
+    if (!why)
+        return;
+
+    // Host memory is not handled here on purpose: the system kills a process
+    // that runs out of RAM, so there is no playback left to stop (user 2026-11-28).
+    const QString title = qstrcmp(why, "gpu-memory") == 0
+        ? tr("Out of video memory, playback stopped")
+        : tr("Playback stopped: graphics driver error");
+
+    const QString name = QFileInfo(lastPath_).fileName();
+    const QString detail = name.isEmpty()
+        ? tr("See the log for details")
+        : name + QStringLiteral(" · ") + tr("See the log for details");
+    stopWithFatalError(title, detail);
+}
+
+void PlayerViewModel::stopWithFatalError(const QString &title,
+                                         const QString &detail) {
+    if (!mpv_)
+        return;
+    vfxFatalStop_ = true;
+    playing_ = false;
+    emit playingChanged();
+    setFileLoaded(false);
+    updatePreviewSource();
+    // 与用户按停止同一条 mpv 命令（保留播放列表；END_FILE reason=stop 不会再
+    // 触发"无法播放"卡）。渲染层置黑由 playlistEmptied 承担。
+    mpv_->commandAsync({"stop", "keep-playlist", nullptr});
+    emit playlistEmptied();
+    setMediaPhase(3, detail, false, title);
+    MLOG_WARN("vfx: playback stopped (%s)", title.toUtf8().constData());
 }
 
 
@@ -3635,6 +3735,12 @@ QString PlayerViewModel::loadErrorText(int code) const {
 }
 
 void PlayerViewModel::noteLoadFailed(qint64 entryId, int error) {
+    // 由 vfx-error 触发的停播已经给出更准确的卡片（显存/内存/驱动）——
+    // mark_failed/END_FILE 随后的通用"无法播放"不得覆盖它。
+    if (vfxFatalStop_) {
+        MLOG_INFO("noteLoadFailed ignored (playback already stopped by a VFX error)");
+        return;
+    }
     // mpv 的事实：这个条目载入失败（end-file reason=error，错误码见 error）。
     // 客户端只做两件事——把错误码挂到该条目上；单条目时把它显示出来。
     const QString path = entryPathById_.value(entryId);

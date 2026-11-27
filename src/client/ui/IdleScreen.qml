@@ -18,6 +18,9 @@ Item {
     property int phase: 0
     /// failed = 失败原因（idle 不用）
     property string detail: ""
+    /// failed 的标题：空 = 本组件自己的默认文案（"无法播放"/"空文件夹"）；
+    /// 资源/驱动导致的中途停播由宿主给出具体原因。
+    property string title: ""
     /// failed 的条目是目录 → 标题显示"空文件夹"而不是"无法播放"
     property bool failedIsFolder: false
     /// failed 时是否给"重试"（只有网络源给；本地源没有可重试的意义）
@@ -100,7 +103,9 @@ Item {
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: root.failed
-                      ? (root.failedIsFolder ? qsTr("Empty folder") : qsTr("Cannot play"))
+                      ? (root.title.length > 0 ? root.title
+                         : (root.failedIsFolder ? qsTr("Empty folder")
+                                                : qsTr("Cannot play")))
                       : qsTr("Drop files here")
                 color: "#e0e0e0"; font.pixelSize: 14
             }

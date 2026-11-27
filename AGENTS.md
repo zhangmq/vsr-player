@@ -298,6 +298,36 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **无性能自动降级**（2026-10-15 移除旧的分级降级：曾是"cost 超预算先降档 60→48→40→30，全档超才直通"）。移除理由：判据是**节点内自测**，只能看到 RIFE 自身 GPU 耗时，而真实短缺通常在该节点下游——VSR 按**输出帧**计费（k=out/src 次/对），加上 VO/渲染通路；实测 1080p29.97 + `fps=60` + `scale=auto` 实际上屏 17.5fps、丢帧 +52/s，而判据报 `cost=16.0ms < budget=21.4ms` 全程沉默。目前 `fruc-status` 的 `cost=` 仅作观测保留。⚠️ 移除的代价：4K 纯 RIFE 过载场景失去唯一有效的回退（24fps → 7.3fps）。**完整记录（现象/根因/同族缺陷/vf 节点能力边界/统一方案的待定问题/复现方法）见 `docs/memory/fruc-auto-degrade-removal.md`**；统一的跨节点性能自适应方案（覆盖 rife/vsr/VFX 新版插帧，以实际达成率判定）**待设计，2026-10-15 搁置**。
 - 插帧历史决策：NVOFA 硬件光流降级备选（repeat 率太高，有运动对成功率 9.7% vs RIFE 96.3%）；Nano = 两帧平均器已否决（flow 恒零实证）。
 
+### 失败兜底（显存 / 驱动 / SDK，2026-11-28 落地）
+
+**原则**（用户 2026-11-27 定，勿改）：出现显存不足或驱动错误 **直接停止播放并提示**（复用
+`IdleScreen` 的空状态卡，`mediaPhase=3`）；**不做预防性检查、不静默降级**；SDK 缺失才允许降级
+（直通 + 面板禁用）。主机内存不设兜底——系统会直接杀进程，没有"停止播放"可言（2026-11-28 用户明确）。
+
+**链路**：滤镜 `src/mpv/video/filter/vfx_fatal.h` 的 `vfx_report_error()` 打一行结构化日志
+`vfx-error: node=<vsr|vfg|truehdr> reason=<sdk|engine|resource|driver> err=<码> dims=WxH free=<字节> total=<字节>`
+（free/total 是**失败当刻**在滤镜自己的 CUDA context 上 cuMemGetInfo 读的）→ 客户端
+`PlayerViewModel::onVfxError()` 决策：
+
+| reason | 处理 |
+|---|---|
+| `sdk` | 直通 + VFX 面板整体禁用（`vfxUnavailable`；Quality 按钮 tooltip 显示 "VFX unavailable"） |
+| `resource` / `driver` / `engine` 且 `err <= -1000`（SDK 的 CUDA 失败码） | 停止播放 + 显存/驱动错误卡 |
+| `engine` 其它码 | 当刻 free < 节点开销（vsr 900 / vfg 600 / truehdr 400 MiB，4K 上界）→ 停；否则直通（状态行带 `reason=`） |
+
+- 卡片文案：`显存不足，播放已停止` / `播放已停止：图形驱动错误` + `文件名 · 详见日志`（`mediaPhaseTitle`
+  由 C++ 给，IdleScreen 只负责显示；`vfxFatalStop_` 抑制随后的通用"无法播放"卡覆盖它）。
+- VSR 引擎启动失败**不再 mark_failed**（旧实现会把整条链搞挂）：改为当次输入配置直通 + 一次
+  `vfx-error`，输入尺寸/位深变化时重试；VFG/TrueHDR 原有的一次性直通（`engine_failed`/`failed`）保留。
+- ⚠ **坑**：`MpvController` 事件循环原先只把 `level == "status"` 的消息交给 `logCb_`，ERR 级的
+  `vfx-error` 根本到不了客户端（现象：真实的 -1002 失败只在 stderr 里，卡片不弹）。已改为所有
+  转发消息都过 `logCb_`，stderr 转发行为不变。
+- 验证（2026-11-28，dev 构建）：① 真实显存饥饿（`build/scratch/gpu_hog` 压到 free≈640 MiB，
+  再 `set-vsr scale 4` 使 5120×2880 引擎分配失败）→ 日志 `node=truehdr reason=gpu-memory
+  free=31MiB`、播放停止、卡片显示；释放后 `play` 恢复 phase=2。② 压到 free≈230 MiB 时会先在
+  hwup 的 cuCtxCreate 拿到 700（CUDA illegal address）并在 mpv 自己的 `gpu_tex` 断言崩溃——
+  极端饥饿下上游 Vulkan 路径先挂，不是本兜底能覆盖的（测试用例别再往 300 MiB 以下压）。
+
 ### VSR（超分）
 
 - YUV→RGB 用自研 NVRTC CUDA 内核（`yuv_to_rgba.c`，NV12/P010/P016→RGBA U8 或打包 RGB10A2，D2D 全 GPU）——旧 CPU filter graph 方案已被取代（不可再回退）。10-bit 通路见下面的「10-bit（HDR）通路」。

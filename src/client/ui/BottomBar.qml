@@ -10,6 +10,7 @@ Item {
     property bool hwDecodeAvailable: true    // 当前能否硬解（false → 按钮禁用）
     property int hwDecodeReason: 0           // 0=可切换 1=设备无 CUDA 2=codec 限制
     property bool aiAvailable: true          // 当前设备能否跑 AI（false → Quality 提示）
+    property bool vfxUnavailable: false      // VFX SDK 载入失败（滤镜报 reason=sdk）
     property bool muted: false
     property real currentTime: 0
     property real duration: 0
@@ -129,8 +130,9 @@ Item {
                 highlighted: root.volumePopupOpen
                 onClicked: root.volumeClicked() }
             IconButton { id: qualBtn; codepoint: "󰐵"; size: 22
-                tooltip: root.aiAvailable ? qsTr("Quality")
-                                          : qsTr("Quality (AI unavailable on this GPU)")
+                tooltip: !root.aiAvailable ? qsTr("Quality (AI unavailable on this GPU)")
+                         : (root.vfxUnavailable ? qsTr("Quality (VFX unavailable)")
+                                                : qsTr("Quality"))
                 highlighted: root.qualityPopupOpen
                 onClicked: root.qualityClicked() }
             // 解码切换：显示**实际**状态（HW/SW）。当前文件只能软解时禁用

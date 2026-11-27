@@ -893,6 +893,13 @@ int main(int argc, char *argv[]) {
                 // SDR→HDR10 上变换状态行（诊断/验尸用：mode + cost/fps + 输出
                 // PQ 采样 nit）。OSD 的 HDR 行已带 upconvert 标记，不另设状态段。
                 fprintf(stderr, "[mpv status] %s", text);
+            } else if (strncmp(text, "vfx-error:", 10) == 0) {
+                // Structured failure from a VFX node (see vfx_fatal.h). The GUI
+                // thread decides whether it stops playback (GPU/host memory,
+                // driver) or only disables the node/panel — see onVfxError.
+                const QString line = QString::fromUtf8(text).trimmed();
+                QMetaObject::invokeMethod(&viewModel, "onVfxError",
+                                          Qt::QueuedConnection, Q_ARG(QString, line));
             } else if (strstr(text, "Cannot seek")) {
                 // 直播/线性流：mpv 拿上次保存的位置去 seek 广播流的滑动窗口
                 //（stream.c "Cannot seek backward in linear streams!" /

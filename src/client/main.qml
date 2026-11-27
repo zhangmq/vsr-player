@@ -212,6 +212,7 @@ Item {
             dragActive: dropArea.containsDrag
             phase: viewModel.mediaPhase
             detail: viewModel.mediaPhaseDetail
+            title: viewModel.mediaPhaseTitle
             failedIsFolder: viewModel.mediaPhaseIsFolder
             canRetry: viewModel.canRetryOpen
             canContinue: viewModel.playlistModel.count > 0
@@ -232,6 +233,7 @@ Item {
             hwDecodeAvailable: viewModel.hwDecodeAvailable
             hwDecodeReason: viewModel.hwDecodeReason
             aiAvailable: viewModel.aiAvailable
+            vfxUnavailable: viewModel.vfxUnavailable
             muted: viewModel.muted
             currentTime: viewModel.currentTime
             duration: viewModel.duration
@@ -279,6 +281,7 @@ Item {
             id: qualityPopup
             anchorTarget: bottomBar.qualityBtn
             aiAvailable: viewModel.aiAvailable
+            vfxUnavailable: viewModel.vfxUnavailable
             scal: viewModel.scale
             quality: viewModel.quality
             denoiseQuality: viewModel.denoiseQuality

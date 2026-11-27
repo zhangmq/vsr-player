@@ -222,6 +222,11 @@ class PlayerViewModel : public QObject {
     //              网络源给"重试"，本地源不给）
     Q_PROPERTY(int mediaPhase READ mediaPhase NOTIFY mediaPhaseChanged)
     Q_PROPERTY(QString mediaPhaseDetail READ mediaPhaseDetail NOTIFY mediaPhaseChanged)
+    /// failed 卡的标题。空 = IdleScreen 用自己的默认文案（"无法播放"/"空文件夹"）；
+    /// 显存/内存/驱动导致的中途停播由这里给出具体原因（用户 2026-11-27 定）。
+    Q_PROPERTY(QString mediaPhaseTitle READ mediaPhaseTitle NOTIFY mediaPhaseChanged)
+    /// VFX SDK 不可用（滤镜报 reason=sdk）：VFX 面板整体禁用并显示提示。
+    Q_PROPERTY(bool vfxUnavailable READ vfxUnavailable NOTIFY vfxUnavailableChanged)
     Q_PROPERTY(bool canRetryOpen READ canRetryOpen NOTIFY mediaPhaseChanged)
     /// failed 时该条目在磁盘上是目录 → UI 用 "空文件夹" 而不是 "无法播放"
     Q_PROPERTY(bool mediaPhaseIsFolder READ mediaPhaseIsFolder NOTIFY mediaPhaseChanged)
@@ -287,6 +292,9 @@ public:
     /// 主线程同步 playing = !pause——每次加载完成重新对齐 UI 状态
     ///（曲目切换的 path 清空窗口会让状态短暂错位，此回调兜底收敛）。
     void onFileLoadedFromEventThread();
+    /// 滤镜的结构化失败行（`vfx-error: …`，见 vfx_fatal.h）→ 停播/禁用面板。
+    /// 事件线程的日志回调经 QueuedConnection 调到 GUI 线程。
+    Q_INVOKABLE void onVfxError(const QString &line);
 
     /// 事件线程：MPV_EVENT_PLAYBACK_RESTART（一次 seek / 加载完成、目标帧已
     /// 显示）后调用。连续快进/快退门控的完成信号——**必须用这个事件，不能用
@@ -509,6 +517,8 @@ public:
     bool previewAvailable() const { return previewActive_; }
     int mediaPhase() const { return mediaPhase_; }
     QString mediaPhaseDetail() const { return mediaPhaseDetail_; }
+    QString mediaPhaseTitle() const { return mediaPhaseTitle_; }
+    bool vfxUnavailable() const { return vfxUnavailable_; }
     bool canRetryOpen() const;
     bool mediaPhaseIsFolder() const { return mediaPhaseIsFolder_; }
     /// 重新打开上一次失败的目标（仅网络源；本地不提供重试）。
@@ -729,6 +739,7 @@ signals:
     void previewImageChanged();
     void previewStateChanged();
     void mediaPhaseChanged();
+    void vfxUnavailableChanged();
     void previewThumbWidthChanged();
     void previewThumbnailsChanged();
     void menuHideInvalidChanged();
@@ -928,7 +939,13 @@ private:
     bool startPaused_ = false;   ///< `--pause=yes` 启动：打开源后保持暂停
     void applyObservedVolume(double v);
     void setMediaPhase(int phase, const QString &detail = QString(),
-                       bool isFolder = false);
+                       bool isFolder = false, const QString &title = QString());
+    /// 资源类失败（显存/内存/驱动）→ 停止播放并显示错误卡：保留播放列表，
+    /// 卸载当前媒体（与用户按停止同一条 mpv 命令），**不**静默降级。
+    void stopWithFatalError(const QString &title, const QString &detail);
+    /// 该节点一份引擎/缓冲的大致开销（MiB，4K 输出实测上界），用于区分
+    /// "显存不够导致 Load 失败" 与 "配置/格式被引擎拒绝"。
+    static int vfxNodeCostMiB(const QString &node);
     /// mpv 错误码 → 本地化文案。**不要**直接显示 mpv_error_string()：
     /// 那是 mpv 的英文串，进不了我们的 .ts（i18n 会漏）。
     QString loadErrorText(int code) const;
@@ -939,6 +956,9 @@ private:
     QHash<QString, int> entryErrors_;   ///< 条目路径 → mpv 错误码（0/缺省 = 无）
     QHash<qint64, QString> entryPathById_;  ///< mpv playlist entry id → 路径
     QString mediaPhaseDetail_;       ///< opening = 源名；failed = 失败原因
+    QString mediaPhaseTitle_;        ///< failed 的标题（空 = UI 默认文案）
+    bool vfxUnavailable_ = false;    ///< VFX SDK 载入失败（reason=sdk）
+    bool vfxFatalStop_ = false;      ///< 已因资源/驱动错误停播（压制通用错误卡）
     QString pendingOpenPath_;        ///< 最近一次"打开"的目标（重试用）
     bool pendingOpenIsNetwork_ = false;
     QVariantList chapters_;

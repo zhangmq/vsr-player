@@ -30,6 +30,8 @@
 #include "common/common.h"
 
 #include <cuda.h>
+
+#include "vfx_fatal.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -298,6 +300,7 @@ static bool engine_create(struct mp_filter *f, struct priv *p, int w, int h)
                                  NVCV_CHUNKY, NVCV_GPU, 32);
     if (ra != 0 || rb != 0) {
         MP_ERR(f, "truehdr: NvCVImage_Alloc failed (%d/%d) %dx%d\n", ra, rb, w, h);
+        vfx_report_error(f, "truehdr", "resource", (long)(ra ? ra : rb), w, h);
         if (ra == 0) pfn_NvCVImage_Dealloc(&p->in_img);
         if (rb == 0) pfn_NvCVImage_Dealloc(&p->out_img);
         return false;
@@ -307,6 +310,7 @@ static bool engine_create(struct mp_filter *f, struct priv *p, int w, int h)
     int cr = pfn_NvVFX_CreateEffect("TrueHDR", &p->effect);
     if (cr != 0 || !p->effect) {
         MP_ERR(f, "truehdr: NvVFX_CreateEffect(TrueHDR) failed (%d)\n", cr);
+        vfx_report_error(f, "truehdr", "engine", cr, w, h);
         engine_destroy(p);
         return false;
     }
@@ -326,6 +330,7 @@ static bool engine_create(struct mp_filter *f, struct priv *p, int w, int h)
     int lr = pfn_NvVFX_Load(p->effect);
     if (lr != 0) {
         MP_ERR(f, "truehdr: NvVFX_Load failed (%d) -- upconversion unavailable, passthrough\n", lr);
+        vfx_report_error(f, "truehdr", VFX_ERR_IS_CUDA(lr) ? "resource" : "engine", lr, w, h);
         engine_destroy(p);
         return false;
     }
@@ -456,6 +461,7 @@ static bool ensure_out_buf(struct mp_filter *f, struct priv *p, int pitch, int h
     }
     if (cuMemAlloc(&p->out_buf, needed) != CUDA_SUCCESS) {
         MP_ERR(f, "truehdr: cuMemAlloc(out) failed (%zu bytes)\n", needed);
+        vfx_report_error(f, "truehdr", "resource", 0, pitch, (int)(needed / (pitch ? pitch : 1)));
         return false;
     }
     p->out_buf_size = needed;
@@ -682,6 +688,7 @@ static void f_process(struct mp_filter *f)
     p->video_h = h;
 
     if (!ensure_cuda(f, p, mpi)) {
+        vfx_report_error(f, "truehdr", "driver", 0, w, h);
         mp_frame_unref(&frame);
         mp_filter_internal_mark_failed(f);
         return;
@@ -792,8 +799,11 @@ static void f_process(struct mp_filter *f)
     }
 
     // ── 上变换 ──────────────────────────────────────────────────────────
-    if (pfn_NvVFX_Run(p->effect, 0) != 0) {
+    int rr = pfn_NvVFX_Run(p->effect, 0);
+    if (rr != 0) {
         MP_ERR(f, "truehdr: NvVFX_Run failed -- passthrough and disabled\n");
+        vfx_report_error(f, "truehdr", VFX_ERR_IS_CUDA(rr) ? "resource" : "engine",
+                         rr, w, h);
         p->failed = true;
         cuCtxPopCurrent(NULL);
         mp_pin_in_write(f->ppins[1], frame);
@@ -1020,6 +1030,7 @@ static struct mp_filter *vf_truehdr_create(struct mp_filter *parent, void *optio
 
     if (!vfx_load_libraries()) {
         MP_ERR(f, "truehdr: failed to load the VFX libraries -- passthrough\n");
+        vfx_report_error(f, "truehdr", "sdk", 0, 0, 0);
         p->failed = true;
         p->failed_warned = true;
     }
