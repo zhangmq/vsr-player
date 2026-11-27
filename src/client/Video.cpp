@@ -63,7 +63,19 @@ public:
     VkImage srcImage = VK_NULL_HANDLE;
     int w = 0, h = 0;
 
-    StateFlags changedStates() const override { return BlendState | StencilState; }
+    // This node issues **raw Vulkan** commands (vkCmdBindPipeline /
+    // vkCmdBindDescriptorSets / vkCmdSetViewport / vkCmdSetScissor / vkCmdDraw)
+    // into Qt's command buffer. Qt's RHI caches its own pipeline/state, so the
+    // node must declare every state it touches, otherwise the renderer believes
+    // its state is still current and draws the following Qt items (the whole
+    // UI!) with our pipeline: on some drivers (RADV) that shows up as
+    // "window shows only the video/black quad, no UI, popups invisible".
+    // Declaring all flags makes Qt re-apply its own state for subsequent nodes.
+    StateFlags changedStates() const override
+    {
+        return DepthState | StencilState | ScissorState | ColorState |
+               BlendState | CullState | ViewportState | RenderTargetState;
+    }
 
     void render(const RenderState *) override {
         if (!srcImage || !win) return;
