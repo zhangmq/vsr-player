@@ -794,17 +794,33 @@ static void f_process(struct mp_filter *f)
         MP_WARN(f, "vsr: software frames — passthrough (prepend @hwup for VSR)\n");
         p->sw_warned = true;
     }
+    bool was_passthrough = p->passthrough;
     p->passthrough = sw_input
                   || (fabsf(p->effective_scale - 1.0f) < 0.001f && p->opts->denoise == -1);
     if (p->passthrough) {
-        if (p->vsr_configured) {
+        // Engine is **kept** (2026-11-27). `scale=auto` enters this branch whenever
+        // the window is small enough for 1:1 and leaves it when the window grows
+        // again; destroying the engine here made every such round trip a full
+        // init + Load + warmup on the way back (~0.2 s stall, measured). An
+        // output-size change alone is hot-swappable through vsr_set_output()
+        // (byte-identical to a rebuild, PSNR 999 dB). Same rule as f_reset
+        // (engine kept since 2026-10-21): only an input-size / bit-depth / CUDA
+        // context change may rebuild.
+        // Exception: non-CUDA (software) frames. Unreachable in this player --
+        // vfOption() always puts @hwup first and vf_hwup always outputs
+        // IMGFMT_CUDA -- it only exists when the filter is used on its own
+        // (`--vf=vsr` without hwup). There the CUDA context behind the engine is
+        // unknown, so keep the old destroy behaviour instead of risking buffers
+        // from a dead context.
+        if (sw_input && p->vsr_configured) {
             cuCtxPushCurrent(p->cuda_ref->ctx);
             vsr_destroy(&p->vsr);
             cuCtxPopCurrent(NULL);
             p->vsr_configured = false;
-            MP_INFO(f, "vsr: switching to passthrough (scale=%.2f, denoise=off)\n",
-                    p->effective_scale);
         }
+        if (!was_passthrough && p->vsr_configured)
+            MP_INFO(f, "vsr: passthrough now (scale=%.2f, denoise=off; engine kept)\n",
+                    p->effective_scale);
         // passthrough 也输出状态行（mode=passthrough）——OSD 的 VSR-ST
         // 行由 vsr-status 驱动，不输出会残留激活时的 cost（陈旧显示）。
         // 低频（每 30 帧），与激活路径同节奏。
