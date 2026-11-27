@@ -265,6 +265,18 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   was reinitialized; this is not allowed`。修法：首帧也走 staging 副本（把它当 pair
   起点，`emit_i = k` 调 `emit_pair_output`）。修后两次都是 rgba，首帧内容与修前
   逐帧相同（同一帧 mean 72.84）。
+- **VFG 的输入尺寸不能热更新，必须 re-Load（2026-11-27 验证）**：与 VSR 不同，
+  VFG 的「输入」= 缩放后的画面尺寸（即 vsr 输出 / VO 尺寸），窗口 resize 就变。
+  官方包装把 `InputWidth/InputHeight` 标为 requires_reload，但 C API 是否真的禁止
+  「Load 后改」我们一直没验证（旧注释写着"未验证"）。2026-11-27 用纯 NvVFX 探针
+  实测（排查用的一次性程序，未入库）：
+  · 两个独立的新引擎喂同一对帧 → **逐字节一致**（0 字节不同，确定性成立）；
+  · 2560×1440 Load → `SetU32` 到 3840×2160 + `SetImage`（**不 Load**）→ Run：
+    `SetU32/SetImage` 都返回 **0（成功）**，但输出与"直接按 3840×2160 Load 的引擎"
+    **99.79% 字节不同、mean|d|=143、max=255** —— 引擎仍按旧尺寸工作，**热更新无效**；
+  · `SetU32` 后再 `Load()` 一次（官方包装路径）→ 与新建引擎**逐字节一致**。
+  → `ensure_vfg` 的 destroy+init+Load 是必需的，保留现状；**不要**照 VSR 的
+  `vsr_set_output()` 去写 VFG 的热更新（这条是"返回 0 但结果错"的静默失败，最坑）。
 - **引擎 (re)init 必须作废 pair 调度（2026-11-27 修，白灰/花屏帧的根因）**：
   `ensure_vfg` 重建引擎后 `in_img[0/1]` 是**新的未初始化显存**，但 `have_prev` 仍为
   true → 下一对把未初始化缓冲当 prev 参与插值 → 1–2 帧「结构对、颜色错」的花屏。
@@ -273,6 +285,16 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   修前每次 resize 后立刻出现单帧尖峰 `95.7→146.0→96.9` 与 `116.6→223.4→117.1`；
   修后两次都消失（只剩内容自身的跳变）。修法：`ensure_vfg` 成功 init 后
   `talloc_free(pending_cur)` + `have_prev = false`。
+- **开始播放有 ~0.45 s 黑屏：保持现状，不做"首帧门控"（2026-11-27 定）**。
+  实测：rtImage 建好并清黑 = mean 0.0 出现在 609–613 ms，首帧内容 1058–1101 ms ——
+  中间是 VSR/VFG 的 `Load()`（VFG 无法热更新，见上一条）。**不是管线问题**：
+  `player/playloop.c:1156 handle_playback_restart()` 要求 audio+video 都 `STATUS_READY`
+  才放行，且在同一处一起启动 → Load 期间音频也不跑，开播后 A-V 从 0 开始，
+  没有"丢帧追时钟"（`video.c:640` 的 first-frame delay 只用于中途起播）。
+  消掉这 0.45 s 只有两条路：把窗口显示推迟到首帧（窗口晚出现，无收益），
+  或给滤镜加 prepare 通道提前并行 Load（改动/风险大一档）。
+  ⚠ **不要再加"首帧前保持 opening 卡片"那套客户端门控**（用户 2026-11-27：
+  "这个之前加过，因为判断有问题后来拆掉了"）——纯显示层，收益不值那份状态机。
 - **无性能自动降级**（2026-10-15 移除旧的分级降级：曾是"cost 超预算先降档 60→48→40→30，全档超才直通"）。移除理由：判据是**节点内自测**，只能看到 RIFE 自身 GPU 耗时，而真实短缺通常在该节点下游——VSR 按**输出帧**计费（k=out/src 次/对），加上 VO/渲染通路；实测 1080p29.97 + `fps=60` + `scale=auto` 实际上屏 17.5fps、丢帧 +52/s，而判据报 `cost=16.0ms < budget=21.4ms` 全程沉默。目前 `fruc-status` 的 `cost=` 仅作观测保留。⚠️ 移除的代价：4K 纯 RIFE 过载场景失去唯一有效的回退（24fps → 7.3fps）。**完整记录（现象/根因/同族缺陷/vf 节点能力边界/统一方案的待定问题/复现方法）见 `docs/memory/fruc-auto-degrade-removal.md`**；统一的跨节点性能自适应方案（覆盖 rife/vsr/VFX 新版插帧，以实际达成率判定）**待设计，2026-10-15 搁置**。
 - 插帧历史决策：NVOFA 硬件光流降级备选（repeat 率太高，有运动对成功率 9.7% vs RIFE 96.3%）；Nano = 两帧平均器已否决（flow 恒零实证）。
 
