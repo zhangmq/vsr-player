@@ -361,8 +361,10 @@ void MpvController::render(VkImage img, VkFormat fmt, int w, int h) {
     vi.hdr      = hdrTarget_ ? 1 : 0;
     vi.min_luma = hdrMinLuma_;
     vi.max_luma = hdrMaxLuma_;
+    int block = 0;
     mpv_render_param rp[] = {
         {MPV_RENDER_PARAM_VULKAN_IMAGE, &vi},
+        {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block},
         {MPV_RENDER_PARAM_INVALID, nullptr}
     };
     mpv_render_context_render(mctx_, rp);
