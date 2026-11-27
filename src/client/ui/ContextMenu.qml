@@ -1090,6 +1090,16 @@ PopupBase {
     }
 
     background: Item {
+        // With a submenu open the popup is as wide as both panels and as tall as
+        // the main one, so the area right of the main panel is mostly empty
+        // (the submenu only covers the current row's vertical span). A click
+        // there is still *inside* the popup, so CloseOnPressOutside never fires
+        // and the menu stayed open. Close on any click the panels and rows did
+        // not consume; the rows' own MouseAreas are above this handler.
+        TapHandler {
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            onTapped: root.close()
+        }
         // 主菜单底（高度 = 主菜单自身，不随 popup 长高拉伸）
         Rectangle {
             width: root.menuWidth
