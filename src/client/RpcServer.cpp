@@ -14,6 +14,8 @@
 #include <QMetaObject>
 #include <QQuickWindow>
 #include <QCursor>
+#include <QCoreApplication>
+#include <QMouseEvent>
 #include <QGuiApplication>
 #include <QWindow>
 #include <QVariant>
@@ -1019,6 +1021,30 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             QQuickWindow *w = win_;
             QMetaObject::invokeMethod(w, [w, x, y]() {
                 QCursor::setPos(w->mapToGlobal(QPoint(x, y)));
+            }, Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "click") {
+        // 测试用：在窗口内 (x,y) 注入一次左键按下 + 松开。
+        // 为什么需要：Wayland 下测试进程无法驱动输入（QCursor::setPos 无效、
+        // 也没有 xdotool），而"点空白处关弹窗/点条目执行动作"这类验收只能靠
+        // 真人点。弹窗的关闭判定是 Qt 侧逻辑（overlay 的事件分发），把鼠标事件
+        // 直接投递给窗口就能走同一条路径——click 用于自动化核对，不用截图。
+        if (!win_) {
+            response = formatResponse("no window");
+        } else if (args.size() < 2) {
+            response = formatResponse("usage: click <x> <y>");
+        } else {
+            const QPoint pos(atoi(args[0].c_str()), atoi(args[1].c_str()));
+            QQuickWindow *w = win_;
+            QMetaObject::invokeMethod(w, [w, pos]() {
+                const QPointF global = w->mapToGlobal(pos);
+                QMouseEvent press(QEvent::MouseButtonPress, QPointF(pos), global,
+                                  Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(w, &press);
+                QMouseEvent release(QEvent::MouseButtonRelease, QPointF(pos), global,
+                                    Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(w, &release);
             }, Qt::QueuedConnection);
             response = formatResponse("success");
         }
