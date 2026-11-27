@@ -19,6 +19,7 @@
 // （meson.build 的 _qt6_priv_inc 已处理；QRhiSwapChain::format() 是内联、
 // isFormatSupported 是纯虚，只有头文件依赖，没有私有符号链接）。
 
+#include <QImage>
 #include <QString>
 #include <functional>
 #include <vulkan/vulkan.h>
@@ -208,6 +209,19 @@ void setUpconvertLuminanceOverride(bool on, int nits);
 /// 只读探测：不改变任何窗口/swapchain 状态。必须在场景图就绪后调用
 /// （afterRendering 第一帧），否则 swapchain 还没绑定窗口 → probed=false。
 Capabilities probeSwapchain(QQuickWindow *window);
+
+/// 该窗口的交换链是否按 **PQ（HDR10）** 解释（= 写进 buffer 的码值必须是 PQ，
+/// 不是 sRGB）。Qt Quick 自己不转换（见 docs/hdr-pipeline-investigation.md §23），
+/// 所以由 SDR 内容自己编码的调用方用它判断要不要转。
+bool windowIsPqOutput(QQuickWindow *window);
+
+/// SDR（sRGB 8-bit）图像 → PQ 码值，供上面那种窗口使用。
+/// 白点 = 我们声明给合成器的参考白 **203 nit**（与 mpv/libplacebo 的
+/// PL_COLOR_SDR_WHITE 同口径；Qt 自己假设的是 200，差 1.5% 可忽略）。
+/// 8-bit 量化误差实测 mean 0.13 码值 / p99 0.6（同一张图往返对比），可忽略。
+/// ⚠ 只用于"不该走 Qt 色彩管理"的图像（当前 = 进度条缩略图）；
+/// 文字/图标等 Qt 直接画的内容仍然是 sRGB 码值（已知限制）。
+QImage encodeSdrImageToPq(const QImage &sdr);
 
 /// 接线：首帧探测一次并打日志；窗口换屏时重新探测（per-surface 能力）。
 /// 零行为变更（只读 + 日志）——HDR 格式的选择/应用是后续步骤。

@@ -23,6 +23,9 @@
 #include <QSGRendererInterface>
 #include <rhi/qrhi.h>
 
+#include <algorithm>
+#include <cmath>
+
 #include <cstring>
 
 namespace hdr {
@@ -770,6 +773,55 @@ QString outputText() {
     const PolicyState &st = policyState();
     // 探测到的真实格式优先；还没探测过（首帧前）退策略已应用的模式。
     return QString::fromLatin1(modeName(st.haveActual ? st.actualSwapchain : st.applied));
+}
+
+bool windowIsPqOutput(QQuickWindow *window) {
+    if (!window)
+        return false;
+    QRhiSwapChain *sc = window->swapChain();
+    return sc && modeForRhiFormat(sc->format()) == Mode::Hdr10;
+}
+
+namespace {
+
+/// sRGB 8-bit 码值 → PQ 码值（白点 203 nit）。查表：每个输入码值只有一种结果。
+struct PqLut {
+    quint8 v[256];
+    PqLut() {
+        constexpr double kSdrWhite = 203.0;   // 与声明给合成器的参考白一致
+        constexpr double m1 = 0.1593017578125, m2 = 78.84375;
+        constexpr double c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875;
+        for (int i = 0; i < 256; ++i) {
+            const double c = i / 255.0;
+            const double lin = c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+            const double y = std::clamp(lin * kSdrWhite / 10000.0, 0.0, 1.0);
+            const double p = std::pow(y, m1);
+            const double n = std::pow((c1 + c2 * p) / (1.0 + c3 * p), m2);
+            v[i] = quint8(std::lround(std::clamp(n, 0.0, 1.0) * 255.0));
+        }
+    }
+};
+
+const PqLut &pqLut() {
+    static const PqLut lut;
+    return lut;
+}
+
+}  // namespace
+
+QImage encodeSdrImageToPq(const QImage &sdr) {
+    if (sdr.isNull())
+        return sdr;
+    QImage out = sdr.convertToFormat(QImage::Format_ARGB32);
+    const PqLut &lut = pqLut();
+    for (int y = 0; y < out.height(); ++y) {
+        auto *line = reinterpret_cast<QRgb *>(out.scanLine(y));
+        for (int x = 0; x < out.width(); ++x) {
+            const QRgb p = line[x];
+            line[x] = qRgba(lut.v[qRed(p)], lut.v[qGreen(p)], lut.v[qBlue(p)], qAlpha(p));
+        }
+    }
+    return out;
 }
 
 /// 上变换生效时 OSD 的**内容标记**：内容本身是 SDR，信号被 TrueHDR 变成 HDR10

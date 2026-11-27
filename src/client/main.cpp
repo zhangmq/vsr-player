@@ -174,15 +174,25 @@ protected:
 class PreviewImageProvider : public QQuickImageProvider
 {
 public:
-    explicit PreviewImageProvider(PlayerViewModel *vm)
-        : QQuickImageProvider(QQuickImageProvider::Image), vm_(vm) {}
+    /// win = 显示缩略图的那个窗口。窗口切到 HDR10 交换链时，Qt 会把图像里的
+    /// sRGB 码值直接当 PQ 写进缓冲（Qt Quick 不做色彩管理，见
+    /// docs/hdr-pipeline-investigation.md §23）→ 缩略图发亮发灰；视频由合成节点
+    /// 直接写 PQ 所以正常。这里按**该窗口当前的真实格式**把缩略图预编码成 PQ，
+    /// 让缩略图和画面一致（其余 Qt 绘制的 UI 仍是 sRGB 码值，属 Qt 侧限制）。
+    PreviewImageProvider(PlayerViewModel *vm, QQuickWindow *win)
+        : QQuickImageProvider(QQuickImageProvider::Image), vm_(vm), win_(win) {}
     QImage requestImage(const QString &, QSize *size, const QSize &) override {
-        const QImage img = vm_->previewImage();
+        QImage img = vm_->previewImage();
+        if (!img.isNull() && hdr::windowIsPqOutput(win_)) {
+            img = hdr::encodeSdrImageToPq(img);
+            MLOG_VERBOSE("thumb: pq-encode %dx%d (window output is PQ)", img.width(), img.height());
+        }
         if (size) *size = img.size();
         return img;
     }
 private:
     PlayerViewModel *vm_;
+    QQuickWindow *win_;
 };
 
 // 按键派发：键位表在 Keymap.cpp，执行在 KeyRouter（应用级事件过滤器）。
@@ -587,7 +597,7 @@ int main(int argc, char *argv[]) {
                                                QString::fromLatin1(VSR_VERSION));
         // 两个窗口各自一个 engine → 各注册一份（provider 共享同一个 viewModel）。
         view.engine()->addImageProvider(QStringLiteral("vthumb"),
-                                        new PreviewImageProvider(&viewModel));
+                                        new PreviewImageProvider(&viewModel, &view));
 
         // 桌面 control 窗口：同一份 main.qml，但 controlMode=true → 不创建
         // Video，只保留 UI。3D 时主窗口（Video/VO）去眼镜屏，control 窗口
@@ -609,7 +619,7 @@ int main(int argc, char *argv[]) {
         controlView.rootContext()->setContextProperty("appVersion",
                                                       QString::fromLatin1(VSR_VERSION));
         controlView.engine()->addImageProvider(QStringLiteral("vthumb"),
-                                              new PreviewImageProvider(&viewModel));
+                                              new PreviewImageProvider(&viewModel, &controlView));
         controlView.setSource(QUrl("qrc:/main.qml"));
         if (controlView.status() != QQuickView::Ready) {
             for (const auto &e : controlView.errors())
