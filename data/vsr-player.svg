@@ -8,7 +8,13 @@
        2. 右半：锐利实心三角（AI 输出），与瓦片区之间同样留 20px 间距；
        3. 第二列最上/最下两格只探出几个像素（碎角），直接不画（其余瓦片保持 2 列 × 5 行）；
        3. 无底板容器、无后层三角：图形自己铺满画布（Papirus 风格；加底板会让图形显小）。
-     注意：瓦片与实心三角都裁在同一个三角形里，改动几何时三处数量要一起对。 -->
+     注意：瓦片与实心三角都裁在同一个三角形里，改动几何时三处数量要一起对。
+
+     ⚠ **几何是"预裁"过的：SVG 里没有 clip-path**（2026-11-28）。Qt 的 SVG 渲染器
+     （QtSvg，KDE 图标主题用它）不处理 <g clip-path> → 右半锐利三角铺满画布、把瓦片盖掉，
+     桌面/任务栏图标就变成"一个大三角形"（rsvg 渲染正确，所以只核对 PNG 发现不了）。
+     现在每个瓦片都是「矩形 ∩ 图标三角」、锐利三角是「三角形 ∩ x≥264」，都直接写成
+     <path>。改几何后重新预裁（见 scripts/render-icon.sh 头注释），再跑它生成 PNG。 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <defs>
     <linearGradient id="sharp" x1="264" y1="120" x2="452" y2="400" gradientUnits="userSpaceOnUse">
@@ -16,23 +22,14 @@
       <stop offset="0.5" stop-color="#8bcb18"/>
       <stop offset="1" stop-color="#6fa80c"/>
     </linearGradient>
-    <clipPath id="tri"><path d="M60 26 L60 486 L452 256 Z"/></clipPath>
-    <clipPath id="tileZone"><rect x="0" y="0" width="244" height="512"/></clipPath>
-    <clipPath id="sharpZone"><rect x="264" y="0" width="248" height="512"/></clipPath>
   </defs>
-  <g clip-path="url(#tri)">
-    <g clip-path="url(#tileZone)">
-    <rect x="60" y="10" width="82" height="82" fill="#c4ef4c"/>
-    <rect x="60" y="112" width="82" height="82" fill="#9dda22"/>
-    <rect x="60" y="214" width="82" height="82" fill="#86c515"/>
-    <rect x="60" y="316" width="82" height="82" fill="#b0e43a"/>
-    <rect x="60" y="418" width="82" height="82" fill="#5f9a07"/>
-    <rect x="162" y="112" width="82" height="82" fill="#aae231"/>
-    <rect x="162" y="214" width="82" height="82" fill="#8acb19"/>
-    <rect x="162" y="316" width="82" height="82" fill="#c0ed47"/>
-    </g>
-    <g clip-path="url(#sharpZone)">
-      <path d="M60 26 L60 486 L452 256 Z" fill="url(#sharp)"/>
-    </g>
-  </g>
+  <path d="M60.000 26.000 L142.000 74.112 L142.000 92.000 L60.000 92.000 Z" fill="#c4ef4c"/>
+  <path d="M60.000 112.000 L142.000 112.000 L142.000 194.000 L60.000 194.000 Z" fill="#9dda22"/>
+  <path d="M60.000 214.000 L142.000 214.000 L142.000 296.000 L60.000 296.000 Z" fill="#86c515"/>
+  <path d="M60.000 316.000 L142.000 316.000 L142.000 398.000 L60.000 398.000 Z" fill="#b0e43a"/>
+  <path d="M60.000 486.000 L60.000 418.000 L142.000 418.000 L142.000 437.888 Z" fill="#5f9a07"/>
+  <path d="M162.000 112.000 L206.574 112.000 L244.000 133.959 L244.000 194.000 L162.000 194.000 Z" fill="#aae231"/>
+  <path d="M162.000 214.000 L244.000 214.000 L244.000 296.000 L162.000 296.000 Z" fill="#8acb19"/>
+  <path d="M162.000 316.000 L244.000 316.000 L244.000 378.041 L209.983 398.000 L162.000 398.000 Z" fill="#c0ed47"/>
+  <path d="M264.000 145.694 L452.000 256.000 L264.000 366.306 Z" fill="url(#sharp)"/>
 </svg>
