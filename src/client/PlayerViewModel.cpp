@@ -792,7 +792,14 @@ void PlayerViewModel::attach(MpvController *mpv) {
                                          MPV_FORMAT_INT64, &v) >= 0;
         post([this, ok, v] {
             const int e = ok ? int(v) : -1;
-            if (currentEdition_ != e) { currentEdition_ = e; emit currentEditionChanged(); }
+            if (currentEdition_ != e) {
+                // State change, INFO: this is what the Title row shows, and it is the
+                // only client-side evidence for "did a disc-driven jump resolve a
+                // title?" (rare, once per switch -- no per-frame noise).
+                MLOG_INFO("edition: current %d -> %d", currentEdition_, e);
+                currentEdition_ = e;
+                emit currentEditionChanged();
+            }
         });
     });
 }
@@ -2225,18 +2232,23 @@ void PlayerViewModel::flushDelayWrites() {
 
 void PlayerViewModel::setEdition(int id) {
     if (!mpv_ || id < 0) return;
-    // mpv 会就地换轨（ytdl_hook 的 EDL 是 edition_is_track_mapping），
-    // 位置由 mpv 自己维持；UI 的勾选由 current-edition 观察器回填。
-    if (currentEdition_ != id) { currentEdition_ = id; emit currentEditionChanged(); }
+    // mpv performs the switch (in place for ytdl_hook's edition_is_track_mapping EDLs)
+    // and `current-edition` is the single source of truth for what is really playing.
+    // Deliberately no optimistic update here: a disc can refuse the switch -- it can
+    // mask the "menu call" user operation, e.g. a BD-J applet that keeps the root menu
+    // on screen -- and mpv then sends no current-edition notification, so an optimistic
+    // write would leave the UI claiming a title that was never entered (menu hint and
+    // checkmark both wrong, silently). See the disc section of AGENTS.md.
+    MLOG_INFO("edition: request %d (disc=%d)", id, discSource_ ? 1 : 0);
     mpv_->setPropertyInt64Async("edition", id);
     // On a disc, setting the property jumps the disc VM *and* pins mpv's `edition`
     // option (command.c writes opts->edition_id). That pin is an absolute title index
     // and is applied to whatever disc is opened next, where it may not exist: picking
     // "Disc menu" (index 6) on a 6-title disc made the next, 5-title disc fail with
-    // "Couldn't start title '6'". Clear the pin once it has done its job -- an option
-    // change has no side effects here (no option-change callback for `edition`), so
-    // the current disc keeps the title it jumped to and the next open falls back to
-    // the configured default (disc menu / longest title).
+    // "Couldn't start title '6'". Clear the pin once it has done its job. The reset is
+    // inert for the running disc: the option-change callback forwards it as
+    // STREAM_CTRL_SET_CURRENT_TITLE((unsigned)-1), which stream_bluray rejects
+    // (title >= num_titles), so the title we just jumped to keeps playing.
     // Network streams are the opposite case: there the option *is* the selection, so
     // only reset it for disc sources.
     if (discSource_)
