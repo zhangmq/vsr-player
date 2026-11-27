@@ -322,6 +322,17 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - ⚠ **坑**：`MpvController` 事件循环原先只把 `level == "status"` 的消息交给 `logCb_`，ERR 级的
   `vfx-error` 根本到不了客户端（现象：真实的 -1002 失败只在 stderr 里，卡片不弹）。已改为所有
   转发消息都过 `logCb_`，stderr 转发行为不变。
+- **标准包在无 NVIDIA 驱动的机器上起不来（2026-11-28 实测，`error while loading shared libraries:
+  libcuda.so.1`）**：`libmpv.so.2` 的 NEEDED 里只有 `libcuda.so.1` / `libnvrtc.so.13` 是我们自己的
+  VFX 滤镜带进来的（系统 FFmpeg 的 libavutil/libavcodec **不** NEED libcuda，mpv 的 cuda hwdec 走
+  FFmpeg 的运行时加载；VFX SDK 库本来就是 `vfx_loader.c` dlopen 的）。所以**把滤镜里的 cu*/nvrtc*
+  调用改成运行时 dlopen（照 `CudaProbe` / `vfx_loader` 的函数表模式）可以彻底去掉这两个 NEEDED**，
+  一个包就能在所有机器上启动（无驱动时 `cuda_load_libraries()` 失败 → 按 `reason=sdk` 直通 + 禁用
+  面板）。工作量 = 一张函数表 + 约 30 个调用点机械替换，风险集中在错误路径。
+  **暂缓**：目前没有对无 N 卡机器公开发布的打算（用户 2026-11-28），只为测试保留了
+  `-Dno_rtx=true` 构建路径（见下条）。
+- 无 N 卡机器的测试构建：`NO_RTX=1 MPV_BUILD_DIR=build/mpv-nortx bash scripts/build_mpv.sh` +
+  `VSR_MPV_BUILD=build/mpv-nortx bash scripts/install.sh --dev --no-rtx`（详见脚本头注释）。
 - 验证（2026-11-28，dev 构建）：① 真实显存饥饿（`build/scratch/gpu_hog` 压到 free≈640 MiB，
   再 `set-vsr scale 4` 使 5120×2880 引擎分配失败）→ 日志 `node=truehdr reason=gpu-memory
   free=31MiB`、播放停止、卡片显示；释放后 `play` 恢复 phase=2。② 压到 free≈230 MiB 时会先在
@@ -358,6 +369,20 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **`VSR_HDR_DECLARE=0`（不自己声明）在本机画面发灰**，默认 1；`VSR_HDR=off|auto|hdr10` 默认 auto，`hdr10` 仅用于诊断/逃生舱（SDR 内容会更暗），不暴露 UI。
 - **OSD**：`HDR` 行 = 内容侧（`SDR · content SDR` / `... · content 758nit` / `SDR · content HDR not displayed (<原因>)`），`Output` 行 = 真实 swapchain 格式（`· HDR10` / `· SDR`，取自探测而非策略意图）。
 - **⚠ 运行期切换的已知坑**：`applyMode` 里模式未变也要 `syncTargets()`（幂等），否则漏设 `target-trc`；`CompositeRenderNode` 必须在渲染阶段从 Video 读 pipeline（缓存句柄会绑定已销毁对象）；SDR↔HDR10 切换仍是同步属性写，软解 + DR 等帧时理论上仍可能死锁（彻底修法 = 异步写）。
+- **⚠ HDR10 输出下 Qt 自己的 UI 没有色彩编码（2026-11-28 实测，未修）**：Qt Quick 只把
+  `_qt_sg_hdr_format` 用来选交换链格式（`QSGRhiSupport::applySwapChainFormat`），**不做
+  任何 sRGB→PQ 转换**（`src/quick/` 全树无相关代码；QRhi 文档明确"HDR10 = ST2084 缓冲"，
+  写 PQ 码值是应用的责任）。结果：UI 的 sRGB 码值被当 PQ 解释 → 中间调抬起（#808080
+  128→≈170）、高光削顶（#e0e0e0 224→255）、暗部压黑；缩略图最显眼。视频侧
+  （`CompositeRenderNode` 直接写 PQ）不受影响。换 scRGB 也不解决（实测同样写 sRGB 码值）。
+  判定过程/数据/修法选项见 `docs/hdr-pipeline-investigation.md` §23；复跑脚本
+  `build/scratch/ui_hdr_capture.sh`、`build/scratch/scRGB-probe/`。
+  进度条缩略图**已单独修**：`PreviewImageProvider` 按该窗口真实格式把 QImage 预编码成
+  PQ（`hdr::encodeSdrImageToPq()`，白点 203 nit；8-bit 量化误差 mean 0.13/p99 0.6 码值），
+  其余 Qt 绘制的 UI 仍是 sRGB 码值（Qt 侧限制）。
+  ⚠ **抓图陷阱**：`grab-window` 的离屏回读在 HDR10 窗口上是**花的**（10-bit 缓冲被当
+  8-bit 读，整窗噪声；屏幕本身正常）→ 验 HDR 窗口一律用 `spectacle -b -n -a -o x.png`
+  抓屏；定位缩略图面板靠"有/无 `debug-hover` 两张抓屏的差"。
 
 ### SDR→HDR10 上变换（VFX TrueHDR，2026-10-18 落地，**默认关**）
 
@@ -828,9 +853,9 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   不影响渲染路径，是前向占位（将来接 3D 电视需 SBS-half 拉伸几何、VR 头显需 OpenXR）。
   ⚠ **分组分隔线只在两组之间**（用户 2026-10-26 定）：第一个 header 上方不画线
   （`visible: isHeader && index > 0`），否则面板顶部会多一条贴边线。
-  ⚠ **面板不能超出主菜单高度**：popup 高度 = 主菜单高度，二级面板是自绘子项，
-  超出会被裁掉 → `subY` 按 `mainPanelH - subPanelH` 做底部钳制并整体上移；
-  `subPanelH` 按实际行高累加（header 行矮 4px）。
+  ⚠ **面板仍保持在主菜单的竖直范围内**：面板现在是独立 popup（不会被裁），
+  `subY` 依旧按 `mainPanelH - subPanelH` 做底部钳制并整体上移——这是**排版选择**
+  （与旧版逐像素一致），不是裁切约束；`subPanelH` 按实际行高累加（header 行矮 4px）。
 - **进度提示（2026-10-26）**：`ui/StereoProgress.qml`，与音量提示同一套机制
   （底部居中面板 300×56、1.5s 自动隐藏、3D 左右眼各一份 ±12 logical px 视差、
   `#cc111111` 面板 + `#44ffffff` 轨道 + `#e0e0e0` 填充），显示"当前 / 总时长"+进度条。
@@ -1062,11 +1087,31 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
 - UI：右键菜单 `ContextMenu` 的"Deinterlace"条目 → 右侧二级面板（Off/Auto/Force，
   当前项打勾 ▸ 用 `mdi-check`，条目**不配图标**——用户 2026-10-22 定）。菜单条目
   支持 `submenu: [{label, value}]` 的一般机制见 `ContextMenu.qml`。
-- **二级面板画在同一个 Popup 里**（打开时 popup 加宽、面板占右半边：
-  `width: menuWidth + (subOpen ? gap + subMenuWidth : 0)`，背景用两条 Rectangle
-  分别画主菜单/面板）。⚠ 不要改成嵌套 Popup：两个 popup 各自抢 grab，点面板会被
-  外层判成"点击 outside"→ 菜单自己关掉。`showAt()` 的横向钳制按**展开后的宽度**
-  算，否则面板会顶到屏幕外。
+- **二级面板是独立的子 Popup（2026-11-28 方案 A，取代"画在同一个 Popup 里"）**：
+  `ContextMenu.qml` 的 `subMenu`（`parent: contentRoot`、`focus: false`、
+  `closePolicy: CloseOnPressOutsideParent | CloseMultiple`），开关只有
+  `subVisible` 一个来源（`onSubVisibleChanged` 里 open/close；主菜单关时
+  `onAboutToHide` 必须显式关它——两个 popup 各自注册在窗口 overlay 上，
+  父 popup 关闭只解绑自己的 popupItem，**不会**替子面板收尾）。
+  - **为什么改**：共用 popup 时为了让面板不被裁，popup 要加宽到
+    `主菜单 + 面板`，于是面板上方/下方的空白落在 **popup 内部** →
+    `CloseOnPressOutside` 不触发、也没有行接住按压 → 点空白处菜单不关
+    （用户报的"偶发"其实是"取决于面板行数和从哪一行展开"，PR #79 的
+    TapHandler 补丁是错误的绕法）。
+  - ⚠ **`CloseMultiple` 不能省**：Qt 默认"只有最上层 popup 吃这次点外部"
+    （`QQuickOverlay::childMouseEventFilter` 的 close cascade），少了它
+    子面板关掉后主菜单会留在原地。
+  - ⚠ 子面板的 `parent` 必须是主菜单的 `contentItem`：`CloseOnPressOutsideParent`
+    的"parent"就是它，否则"点主菜单换行"会把面板先闪掉。
+  - `showAt()` 的横向钳制仍按**展开后的宽度**算（面板固定开在右侧）。
+  - 验收（RPC：`open-menu <x> <y> <item-index>` + 新增 `click <x> <y>` +
+    `get-menu-state` 的 `subPopup=`/`subGeom=`）：面板打开时点主菜单行不关菜单、
+    点面板里的 toggle 行菜单保持打开且生效、点面板上方/下方空白（旧实现里
+    落在 popup 内部的那块）整条菜单关闭、Esc 仍是"先收面板再关菜单"。
+    ⚠ Wayland 下测试进程无法驱动真实输入（`QCursor::setPos` 无效、没有
+    xdotool）→ `click` 把 QMouseEvent 直接投递给窗口，走 Qt 同一条分发路径；
+    点面板的响应会晚一帧（popupItem 尺寸在开面板当帧还是旧值），测试里
+    等 0.15–0.2 s 再断言。
 - 时机：`loadSettings()` 读 `deintMode`（夹 0..2）→ `applyPlaybackSettings()` 下发 →
   **`FILE_LOADED` 里再下发一次**（mpv 把 `deinterlace` 记进 watch_later，换片时会
   用该文件上次的值复位，全局开关必须盖回去）。`-- --deinterlace=no|yes|auto`

@@ -1225,3 +1225,77 @@ swapchain 格式需要它）；colorSpace 与描述都在**首帧之后**由 `sy
   且内容 HDR 而元数据未到时显示 `content HDR`（不再显示 `?`）。实测序列：
   `… · content HDR` → `… · content 758nit`（毫秒级）。
   （命令行给文件那次只是碰巧元数据先到，所以没暴露这个 bug。）
+
+## 23. HDR10 交换链上 **Qt 自己的 UI 没有做色彩编码**（2026-11-28 实测，未修）
+
+**用户报告**：HDR 下进度条缩略图"颜色不对（过亮/过饱和）"。
+
+**判定结论（先写）**：不是缩略图的 tonemap 问题，**是整块 Qt Quick UI 在 PQ 缓冲里被当成
+PQ 码值**。缩略图只是最显眼（照片有中间调和高光），文字/底板/图标同样偏。
+
+### 23.1 排除 ①：缩略图的 tonemap 是生效的
+
+- 日志确认链已下发：`thumb: vf='lavfi=[zscale=t=linear:npl=100,format=gbrpf32le,
+  zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv]'`
+  （`PreviewThumbnailer::applyChain()`，`p.hdr = videoHdr_`，HDR 片源 → `hdr=1`）。
+- 同一帧（`input/Fallout …HDR….mkv` @60/300/900 s）用 ffmpeg 三种链渲染后比均值：
+  我们 hable@npl=100 = `116/99.7/80.7`（300 s），libplacebo bt.2390 = `125/108/85.6`
+  —— 同量级（±10%），**不是"没做 tonemap"那种黑成一片**。
+- `preview <png> <秒>` 落盘的缩略图本身正常（384×160，中间调齐全）。
+
+### 23.2 复现 ②：同一份 UI 在 SDR / HDR10 两种输出下的**屏幕取值**
+
+做法（可复跑）：同一段 idle UI，`VSR_HDR=off` 与 `VSR_HDR=hdr10` 各起一次，
+`spectacle -b -n -a -o x.png` 抓当前窗口，逐像素比对（两张图几何一致）：
+
+| UI 颜色 | SDR 抓屏 | 强制 HDR10 抓屏 |
+|---|---|---|
+| `#e0e0e0`（主文字/图标） | 224 | **255（削顶）** |
+| `#808080`（次要文字） | 128 | **≈170** |
+| `#202020` 附近（卡片底板） | 32 | **≈7** |
+
+即：中间调被抬起、暗部被压黑、高光削顶 —— 正是"把 sRGB 码值写进 PQ 缓冲"的特征
+（PQ(0.5)=92 nit、PQ(0.878)≈3186 nit、PQ(0.125)=0.44 nit）。
+
+### 23.3 用最小探针定位到 Qt 侧（不是我们的声明/合成器）
+
+`build/scratch/scRGB-probe/`（Qt Quick + 三块已知色 #808080 / #e0e0e0 / #202020，
+`_qt_sg_hdr_format` 分别 off / hdr10 / scrgb），抓屏取同一像素：
+
+| 模式 | #808080 | #e0e0e0 | #202020 |
+|---|---|---|---|
+| off（SDR） | 128 | 224 | 32 |
+| hdr10（声明 PQ/BT.2020） | 151 | 249 | 18 |
+| scrgb（声明 linear/sRGB prim） | 186 | 240 | 99 |
+
+三种模式下 Qt 写进 buffer 的**都是同一个 sRGB 码值**（0.5 / 0.878 / 0.125）：
+hdr10 下 151/249/18 与"PQ(0.5)/PQ(0.878)/PQ(0.125) 再经合成器 tonemap"逐项吻合；
+scrgb 下 186 = sRGB_encode(0.5)、240 = sRGB_encode(0.878)、99 ≈ sRGB_encode(0.125)。
+→ **Qt Quick 对 HDR 交换链不做任何色彩转换，两种 HDR 缓冲都是错的**（PQ 更糟）。
+
+源码依据（Qt 6.12.1）：`_qt_sg_hdr_format` 只在
+`src/quick/scenegraph/qsgrhisupport.cpp: applySwapChainFormat()` 里被读，作用仅
+`sc->setFormat(QRhiSwapChain::HDR10/scRGB/P3)`；`src/quick/` 全树没有 PQ/HLG/sdrWhite
+相关代码；QRhi 的文档（`qrhi.cpp`）明确 HDR10 = "ST2084 PQ 缓冲"、scRGB = "线性、
+转换由窗口系统做"——即 **写 PQ/线性码值是应用的责任**。Qt Quick 的 UI 没有这条路径
+（`QQuickWindow` 也没有 colorSpace 之类的 API），所以它是给"自己画 HDR 内容的渲染器"
+（Quick3D / Multimedia 视频节点）用的，**普通 QML UI 在 HDR 交换链上必然偏亮**。
+
+### 23.4 影响面与修法选项（**未实施，等用户定**）
+
+- 影响面：HDR10 输出下**所有 Qt 画的东西**（文字、图标、弹窗、缩略图）；视频本身
+  由 `CompositeRenderNode` 直接写 PQ，是对的。SDR 输出不受影响。
+- 修法 A（正解、改动大）：Qt 场景先渲到 SDR 离屏纹理，再由我们自己的 pass 做
+  sRGB→PQ 后与视频一起呈现。要自建交换链/呈现（Qt 的 `setRenderTarget()` 之后
+  Qt 不 present），涉及 Wayland surface 与 3D 双窗口，风险高。
+- 修法 B（QML 层）：把 UI 子树 `layer.enabled` + 一个 sRGB→PQ 的 `ShaderEffect`。
+  但 popup 由 Qt 挂到窗口 overlay（不在我们的子树里），只能覆盖一部分 UI；且
+  多一趟全屏 FBO。
+- 修法 C（局部）：只在 HDR 下把缩略图 QImage 预编码成 PQ（用户看到的那一处会正常，
+  其它 UI 仍偏亮 → 不一致）。
+- 修法 D（不修）：HDR 输出下接受 UI 偏亮，文档标注已知限制。
+- 参考数据：HDR10 swapchain 是本项目唯一可用的 10-bit 路（`A2B10G10R10_UNORM`），
+  换成 scRGB 并不解决问题（见 23.3），且会把视频通路改成线性 16F。
+
+**验证脚本**（一次性，留在 `build/`）：`build/scratch/ui_hdr_capture.sh <out.png> off|hdr10`
+（起播放器 → spectacle 抓当前窗口 → 退出）；`build/scratch/scRGB-probe/{main.cpp,probe.qml}`。
