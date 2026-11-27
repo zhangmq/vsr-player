@@ -46,7 +46,10 @@ def t3_window_keys(p: Player) -> None:
     rpc = p.rpc
 
     # 音量：↓/↑ 各 5%
-    rpc.call("set_property", "volume", "100")
+    # ⚠ 必须走 app 的音量入口（nudge-volume）：4852c89 起 volume 是"观察器回读 +
+    # requestedVolume_ 为唯一事实源"，mpv 层的 set_property volume 不会改 app 的
+    # 基准值 → ↓/↑ 会从上一次的持久化音量（例如 80）开始走，断言 >99 永不成立。
+    rpc.call("nudge-volume", "1")          # +100% → 夹到 1.0
     wait_until(lambda: abs(rpc.prop("volume") - 100) < 0.6, "音量置 100")
     rpc.key("Down")
     wait_until(lambda: rpc.prop("volume") < 96, "↓ 降低音量")
@@ -447,9 +450,13 @@ def t6_failure_ui(p: Player) -> None:
     expect_eq(st.get("canRetry"), False, "本地源不给重试")
 
     # 网络不可达
-    prev = (phase() or {}).get("detail")
+    # ⚠ 不能用 wait_failed()（它要求 detail **变化**）：本地缺失文件与网络不可达
+    # 的 detail 都是 mpv 的同一句 "Could not load the file" → 永远等不到。
+    # 用 canRetry 区分：只有网络源给出重试。
     rpc.call("open", "http://127.0.0.1:1/none.mp4")
-    st = wait_failed(prev, "网络失败进入 failed")
+    st = wait_until(
+        lambda: (lambda d: d if d.get("phase") == 3 and d.get("canRetry") else None)(phase()),
+        "网络失败进入 failed", timeout=20)
     expect_eq(st.get("phase"), 3, "网络打开失败 → failed")
     check(bool(st.get("detail")), "网络失败原因非空", st.get("detail"))
     expect_eq(st.get("canRetry"), True, "网络源给重试")
