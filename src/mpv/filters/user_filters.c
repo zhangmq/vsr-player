@@ -107,12 +107,14 @@ const struct mp_user_filter_entry *vf_list[] = {
 #if (HAVE_GL && HAVE_EGL) || HAVE_VULKAN
     &vf_gpu,
 #endif
+#if HAVE_VSR
     &vf_hwup,
     &vf_rot,
     &vf_eye,
     &vf_vsr,
     &vf_vfg,
     &vf_truehdr,
+#endif
 #if HAVE_FRUC_RIFE
     &vf_rife,
 #endif

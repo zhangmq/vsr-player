@@ -134,5 +134,10 @@ option('dist-rpath', type: 'string', value: '',
        description: 'Distribution RPATH for bundled libs ($ORIGIN-relative; empty = dev default)')
 
 # vsr-player: FRUC 后端选择（默认 vfg；rife 需 TensorRT，见 meson.build）
+# 无 NVIDIA GPU 的构建（A 卡/纯软解测试）：不编 VFX/CUDA 滤镜，libmpv 也就不
+# 再 NEEDED libcuda/libnvrtc。渲染层（Vulkan render API）照旧，客户端可正常跑，
+# AI 节点在链上不存在 = 恒直通。见 scripts/build_mpv.sh（NO_RTX=1）。
+option('no_rtx', type: 'boolean', value: false, description: 'build without the VFX/CUDA filters (no NVIDIA GPU: AI unavailable, passthrough only)')
+
 option('fruc_backend', type: 'combo', choices: ['vfg', 'rife'], value: 'vfg',
        description: 'FRUC backend: vfg (VFX VideoFrameGeneration) or rife (TensorRT)')

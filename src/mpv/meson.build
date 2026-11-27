@@ -227,7 +227,9 @@ sources = files(
     'video/filter/refqueue.c',
     'video/filter/vf_format.c',
     'video/filter/vf_sub.c',
-    'video/filter/vf_vsr.c',
+    # vf_vsr.c 不在这里：它和 VFX/CUDA 那批滤镜一起被下面的 -Dno_rtx 开关门控
+    # （之前重复列在无条件清单里，no-rtx 构建仍会把它编进来 → 链接报 cuMemAlloc
+    # 等未定义符号。正常构建由 features['vsr'] 那段加入，行为不变）。
     'video/out/vulkan/libmpv_vk.c',
     'video/fmt-conversion.c',
     'video/hwdec.c',
@@ -1877,7 +1879,10 @@ cuda_h = cc.has_header('cuda.h', args: '-I' + cuda_inc)
 nvrtc_h = cc.has_header('nvrtc.h', args: '-I' + cuda_inc)
 cuda_lib = cuda_h ? cc.find_library('cuda', required: false) : dependency('', required: false)
 nvrtc_lib = nvrtc_h ? cc.find_library('nvrtc', dirs: cuda_lib_dir, required: false) : dependency('', required: false)
-has_cuda = cuda_h and nvrtc_h and cuda_lib.found() and nvrtc_lib.found()
+# -Dno_rtx=true：显式关掉整块 VFX/CUDA（无 N 卡机器用）。没有 CUDA toolkit 的
+# 机器上本来就会因为 cuda_h/nvrtc_h 缺失走到 disabled，这个开关是为了"在有 CUDA
+# 的开发机上也能构建同一个无 CUDA 产物"（发布/测试两种机器都能复现）。
+has_cuda = not get_option('no_rtx') and cuda_h and nvrtc_h and cuda_lib.found() and nvrtc_lib.found()
 features += {'vsr': has_cuda}
 if features['vsr']
     dependencies += [cuda_lib, nvrtc_lib]
@@ -1901,7 +1906,11 @@ if features['vsr']
     )
     message('VSR filter: enabled')
 else
-    message('VSR filter: disabled (CUDA toolkit not found)')
+    if get_option('no_rtx')
+        message('VSR filter: disabled (-Dno_rtx=true, no CUDA dependency)')
+    else
+        message('VSR filter: disabled (CUDA toolkit not found)')
+    endif
 endif
 
 # FRUC backend（默认 vfg）：vfx_loader 是 VSR/VFG 共用的 VFX 库加载层，无条件编入；

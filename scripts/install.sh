@@ -9,6 +9,12 @@
 #     （VFX 缺失 = VSR 静默直通，静默成功会让人以为装好了；显式 `--no-vfx` 才允许缺）
 #   - PATH 只提示，不修改 shell 配置
 #
+# 无 NVIDIA 机器（测试/开发用，不做发布包）：
+#   NO_RTX=1 构建 + ./scripts/install.sh --dev --no-rtx
+#   --no-rtx 只做两件事：不因缺 libcuda 中止；不自动下载 VFX（等价 --no-vfx）。
+#   **前提是 libmpv 本身不带 CUDA**（scripts/build_mpv.sh 的 NO_RTX=1 会打
+#   -Dno_rtx=true，滤镜不编、无 libcuda/libnvrtc NEEDED），否则装完起不来。
+#
 # 双场景：
 #   - tarball 内（分发）：源 = 脚本所在目录（vsr-player + lib/vsr-player/）
 #   - 仓库内（dev）：源 = build 树（build/src/client + build/mpv-dist）
@@ -23,10 +29,12 @@
 set -euo pipefail
 
 NO_VFX=0
+NO_RTX=0
 FORCE_DEV=0
 for arg in "$@"; do
     case "$arg" in
         --no-vfx) NO_VFX=1 ;;
+        --no-rtx) NO_RTX=1; NO_VFX=1 ;;   # 无 NVIDIA 显卡的测试安装（libmpv 必须也是 no-rtx 构建）
         --dev)    FORCE_DEV=1 ;;   # 强制用 build/ dev 树（忽略可能过期的 dist 树）
         *) echo "未知参数: $arg" >&2; exit 2 ;;
     esac
@@ -81,8 +89,11 @@ OK=1
 if ldconfig -p 2>/dev/null | grep -q "libcuda\.so\.1" || \
    find /usr/lib* -name "libcuda.so.1" 2>/dev/null | grep -q .; then
     echo "  ✅ NVIDIA driver (libcuda.so.1)"
+elif [ "$NO_RTX" -eq 1 ]; then
+    echo "  ⚠ 无 libcuda.so.1 —— --no-rtx：不检查（要求 libmpv 是 no-rtx 构建）"
 else
     echo "  ❌ libcuda.so.1 — NVIDIA 驱动缺失（必需，无法安装）"
+    echo "     无 N 卡机器：NO_RTX=1 构建 libmpv，再用 install.sh --dev --no-rtx"
     OK=0
 fi
 # 注意：`set -e` + `pipefail` 下，探测类命令失败必须显式兜底（`|| true`），
@@ -504,6 +515,9 @@ manifest_check() {  # 依赖清单逐项校验（standard 契约："不符合就
     while read -r soname needed_by buildpath; do
         case "$soname" in ''|\#*) continue;; esac
         [ -e "$LIB_DIR/$soname" ] && continue          # bundled by the package
+        if [ "$NO_RTX" -eq 1 ]; then
+            case "$soname" in libcuda.so.*|libnvrtc.so.*) continue ;; esac
+        fi
         if printf '%s\n' "$cache" \
            | awk -v s="$soname" '$1==s{found=1} END{exit !found}'; then
             continue
@@ -611,6 +625,7 @@ if [ -f "$LIB_DIR/rife_full_fp16.engine" ]; then
     LIBS_DESC="捆绑依赖 + VFX + RIFE engine"
 fi
 echo "  库:   $LIB_DIR/（$LIBS_DESC）"
+[ "$NO_RTX" -eq 1 ] && echo "  测试安装（--no-rtx）：AI（超分/插帧/上变换）不可用，全部直通"
 echo "  入口: 应用菜单/启动器 → VSR Player"
 echo "运行: vsr-player <视频或目录>"
 echo "（若 PATH 无 $BIN_DIR：export PATH=\"\$PATH:$BIN_DIR\"）"

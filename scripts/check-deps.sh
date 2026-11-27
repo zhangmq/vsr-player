@@ -73,7 +73,9 @@ else
     echo "  ❌ lrelease — MISSING"
     MISSING=1
 fi
-if [ -d /opt/cuda/include ]; then
+if [ "${NO_RTX:-0}" = 1 ]; then
+    echo "  ⚠ /opt/cuda/include 跳过（--no-rtx：不编 VFX/CUDA 滤镜，AI 不可用）"
+elif [ -d /opt/cuda/include ]; then
     echo "  ✅ /opt/cuda/include (CUDA headers)"
 else
     echo "  ❌ /opt/cuda/include — MISSING (CUDA Toolkit)"

@@ -11,6 +11,9 @@
 #   ./scripts/build-from-source.sh --no-vfx     # 安装时跳过 VFX 自动下载（已在别处备好）
 #   ./scripts/build-from-source.sh --jobs 8     # 指定并行度
 #   ./scripts/build-from-source.sh --fruc-backend=rife   # 插帧后端改用 RIFE（默认 vfg）
+#   ./scripts/build-from-source.sh --no-rtx   # 无 NVIDIA GPU：libmpv 不编 VFX/CUDA
+#                                             # 滤镜（产物到 build/mpv-nortx，安装
+#                                             # 时用 --no-rtx；AI 恒直通）
 #
 # 插帧后端（--fruc-backend=vfg|rife，默认 vfg）：
 #   vfg ：NVIDIA VFX SDK 1.3 VideoFrameGeneration（AI 插帧）——不需要 TensorRT。
@@ -29,11 +32,13 @@ JOBS="$(nproc 2>/dev/null || echo 4)"
 DO_INSTALL=1
 # 插帧后端（默认 vfg）：传给 mpv 侧（build_mpv.sh 经环境变量）与客户端 meson。
 FRUC_BACKEND=vfg
+NO_RTX=0
 INSTALL_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-install) DO_INSTALL=0 ;;
         --no-vfx) INSTALL_ARGS+=(--no-vfx) ;;
+        --no-rtx) NO_RTX=1; INSTALL_ARGS+=(--no-rtx) ;;
         --jobs) JOBS="${2:?--jobs 需要参数}"; shift ;;
         --jobs=*) JOBS="${1#--jobs=}" ;;
         --fruc-backend=vfg)  FRUC_BACKEND=vfg ;;
@@ -50,6 +55,18 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# --no-rtx：libmpv 不编 VFX/CUDA 滤镜，因此不需要 CUDA Toolkit；单独的构建树
+# （build/mpv-nortx）避免把常规构建产物覆盖掉。rife 后端需要 TRT/CUDA，互斥。
+if [ "$NO_RTX" -eq 1 ]; then
+    if [ "$FRUC_BACKEND" = rife ]; then
+        echo "❌ --no-rtx 不能和 --fruc-backend=rife 一起用（rife 需要 CUDA/TensorRT）" >&2
+        exit 2
+    fi
+    export NO_RTX=1
+    export MPV_BUILD_DIR="${MPV_BUILD_DIR:-$ROOT/build/mpv-nortx}"
+    export VSR_MPV_BUILD="${MPV_BUILD_DIR}"
+fi
+
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 fail() { printf '\n❌ %s\n' "$*" >&2; exit 1; }
 elapsed() { echo "$(( $(date +%s) - START ))s"; }
@@ -62,12 +79,13 @@ if ! FRUC_BACKEND="$FRUC_BACKEND" bash scripts/check-deps.sh; then
     fail "依赖自检未通过。修掉上方 ❌ 后重跑；系统库升级导致的漂移会在 [5/5] 自动记录。"
 fi
 
-step "[2/5] 构建 libmpv（纯净 mpv 0.41 基座 + src/mpv 覆盖层合并，fruc_backend=$FRUC_BACKEND）"
+step "[2/5] 构建 libmpv（mpv 0.42 基座 + src/mpv 覆盖层合并，fruc_backend=$FRUC_BACKEND$([ "$NO_RTX" -eq 1 ] && echo ', no-rtx'))"
 if ! FRUC_BACKEND="$FRUC_BACKEND" bash scripts/build_mpv.sh; then
     fail "libmpv 构建失败（build_mpv.sh 输出经 grep 过滤，失败信息可能被吞——可手动重跑看完整输出）"
 fi
-LIBMPV="build/mpv/_build/libmpv.so.2"
-[ -f "$LIBMPV" ] || LIBMPV="build/mpv/_build/libmpv.so"
+MPV_TREE="${MPV_BUILD_DIR:-$ROOT/build/mpv}"
+LIBMPV="$MPV_TREE/_build/libmpv.so.2"
+[ -f "$LIBMPV" ] || LIBMPV="$MPV_TREE/_build/libmpv.so"
 [ -f "$LIBMPV" ] || fail "libmpv 未生成（$LIBMPV 不存在）"
 echo "  ✅ $LIBMPV"
 

@@ -40,14 +40,24 @@ BUILDTYPE="${BUILDTYPE:-debug}"
 # 与 DIST_RPATH 同款条件注入：显式置空时不传，交给 mpv 侧默认值。
 # build_release.sh / build-from-source.sh 经环境变量传值。
 FRUC_BACKEND="${FRUC_BACKEND:-vfg}"
+# NO_RTX=1：不编 VFX/CUDA 滤镜（vf_hwup/vf_rot/vf_eye/vf_vsr/vf_vfg/vf_truehdr），
+# libmpv 不再 NEEDED libcuda/libnvrtc —— 给没有 NVIDIA 驱动的机器用（客户端照常
+# 跑，AI 节点不在链上 = 恒直通）。渲染层（Vulkan render API）仍然编入，否则
+# 客户端连窗口都画不出来（见 src/mpv/include/mpv/render_vk.h）。
+NO_RTX="${NO_RTX:-0}"
+if [ "$NO_RTX" = 1 ]; then
+    CUDA_ARGS=(-Dno_rtx=true -Dcuda-hwaccel=disabled -Dcuda-interop=disabled)
+    echo "=== no-rtx: VFX/CUDA filters disabled (AI unavailable, passthrough only) ==="
+else
+    CUDA_ARGS=(-Dcuda-hwaccel=enabled -Dcuda-interop=enabled)
+fi
 meson setup _build \
     -Dlibmpv=true \
     -Dcplayer=true \
     -Dvulkan=enabled \
     -Dwayland=enabled \
     -Dgpl=true \
-    -Dcuda-hwaccel=enabled \
-    -Dcuda-interop=enabled \
+    "${CUDA_ARGS[@]}" \
     --buildtype="$BUILDTYPE" \
     ${DIST_RPATH:+-Ddist-rpath="$DIST_RPATH"} \
     ${FRUC_BACKEND:+-Dfruc_backend="$FRUC_BACKEND"} \
