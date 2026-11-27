@@ -210,8 +210,13 @@ mpv_dep = declare_dependency(
 # very defect the release fixes -- easy to misread as a regression.
 # Release builds do not use this path: build_release.sh installs the same two
 # libraries next to the binary and they are found via $ORIGIN/../lib/vsr-player.
+#
+# ⚠ Gated on the host Qt version: those libraries are built from 6.12.0 sources
+# and 6.12.1 already carries both fixes, so on 6.12.1 they fail at load time
+# with "undefined symbol: _ZN14QObjectPrivateC2E16QtPrivate_6_12_0, version
+# Qt_6_PRIVATE_API" (Qt's versioned private API). Only 6.12.0 hosts need them.
 dev_qt_fix_args = []
-if get_option('dist-rpath') == ''
+if get_option('dist-rpath') == '' and qt6_dep[0].version().version_compare('< 6.12.1')
     foreach d : ['build/qt-fix', 'build/qt-fix/lib']
         dir = meson.project_source_root() / d
         if _fs.is_dir(dir)

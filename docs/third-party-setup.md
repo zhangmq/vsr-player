@@ -125,7 +125,7 @@ done
 
 ```bash
 git clone https://github.com/mpv-player/mpv.git third_party/mpv
-git -C third_party/mpv checkout a3d4b5919771a0ae351b80eb266c79681ee529b2   # 2026-07-02
+git -C third_party/mpv checkout b0841e8c4d156b8403dc1876c4cbd9011eb583f3   # v0.42.0, 2026-11-05
 ```
 
 **必须 checkout 到上面这个固定提交**——`src/mpv/` overlay 是**整文件副本**，不是
@@ -134,10 +134,29 @@ git -C third_party/mpv checkout a3d4b5919771a0ae351b80eb266c79681ee529b2   # 202
 `struct MPOpts has no member named 'playlist_inherit_options'`、
 `undefined reference to stream_info_env` / `stream_bstr_open2`）。
 
-- `a3d4b591…` 是 overlay 的**实际出处**：overlay 里的 `options.c` / `options.h` 与该
-  提交逐字节相同，`meson.build` 相对它只多出项目自身的改动；本仓库的合并构建
-  （`scripts/build_mpv.sh` + `src/mpv/`）就是在它之上验证通过的。
-- 版本对应关系是**固定提交**，不是"上游 master 开发线"。
+- `b0841e8c…` = **v0.42.0 release tag**（上一个基座是 0.41 之后 2026-07-02 的 master
+  快照 `a3d4b591`；0.42 与我们之间隔了 605 个提交）。选 tag 而不是 master：0.42 之后
+  master 有一套仍在进行的 vo/present_sync 展示时序重构（`vo.c`、`wayland_common.c`），
+  正压在我们 `report_swap` 集成点上。
+- overlay 按 0.42.0 重做过，与旧基座相比有三处结构性差异：
+  1. **`video/out/placebo/ra_pl.c` 已从 overlay 移除**——我们的 `rgb10a2 →
+     IMGFMT_X2BGR10` 补丁被上游采纳（0.42 还额外把 `bgr10a2` 映射到 `IMGFMT_X2RGB10`）。
+  2. **私有 Vulkan 渲染参数改为 `23/24`**（`MPV_RENDER_PARAM_VULKAN_INIT_PARAMS`
+     / `_VULKAN_IMAGE`）：0.42 新增的 D3D11 libmpv 后端占用了原来的 `21/22`。
+     `include/mpv/render.h` 里的编号与 `src/client` 必须一致（同一份 overlay 头）。
+  3. **光盘不再由我们自己展开**：0.42 让 `stream_info_bdmv_dir`（注册 `file`/`""`
+     协议）在 stream 层就认领 `.iso`，交给 libbluray 当**一条盘流**打开，盘上的
+     title 变成 `demux_disc` 的 editions（含合成的 `Disc Menu` edition），
+     盘内菜单（HDMV/BD-J）也走这条路径。我们原来的 `parse_bluray`（把 ISO 拆成
+     每 title 一条 `bd://mpls/N//dev`）和它冲突——`disc` 自己的 lavf slave 打开
+     会被我们那条"让路"补丁拒掉，ISO 直接打不开。**2026-11-26 决定贴上游**：
+     `parse_bluray` / `bluray_image.h` / `demux_lavf` 让路 / `demux_playlist` 的
+     "本地 `bd://` 条目提升 DIRECT" 四处补丁全部撤掉——`demux_playlist.c` 现在与
+     上游 v0.42.0 逐字节相同，已从 overlay 删除。本地 m3u 里的 `bd://mpls/N//dev`
+     条目因此按 mpv 默认行为被拒（UNSAFE origin），这是期望现状（用户 2026-11-26 定）。
+     `playlist_exts` 里的 `iso` 保留，但只为目录展开能列出盘镜像。
+     客户端对应改动见 `AGENTS.md` 的「光盘」一节。
+- 版本对应关系是**固定提交/tag**，不是"上游 master 开发线"。
 - 自行推导别的基座时，候选提交需同时满足：① 其 `meson.build` 的源文件清单是
   overlay 版的子集（`meson.build` 变动频繁，锚点比 `options.h` 紧）②
   `options.h` / `options.c` 与 overlay 一致 ③ 能独立编译通过。

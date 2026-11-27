@@ -366,17 +366,17 @@ int mpv_render_context_render(mpv_render_context *ctx, mpv_render_param *params)
 
             struct mp_rect src, dst;
             struct mp_osd_res osd;
-            // 软件渲染器（MPV_RENDER_API_TYPE_SW）不做旋转：libmpv_sw 只会
-            // 把帧缩放/裁剪到目标。若把带 rotate 的 img_params 交给
-            // mp_get_src_dst_rects，它会按"VO 已旋转"的语义算出旋转后的
-            // src 矩形（如 1080x1920），而 SW 拿到的帧仍是 1920x1080 →
-            // mp_image_crop 断言崩溃（2026-11-15 实测：video-rotate=90 必崩）。
-            // 这里只对 SW 后端把 rotate 清零：帧原样交给调用方，旋转由调用方
-            // 自己完成（PreviewThumbnailer 渲完在 CPU 上转 QImage）。
+            // The software renderer (MPV_RENDER_API_TYPE_SW) does not rotate:
+            // libmpv_sw only scales/crops the frame into the target. Handing
+            // rotated img_params to mp_get_src_dst_rects makes it compute a
+            // rotated src rect (e.g. 1080x1920) while the SW backend still
+            // gets the 1920x1080 frame -> mp_image_crop() assertion. Clear
+            // rotate for the SW backend only; the caller rotates the frame
+            // itself (PreviewThumbnailer rotates the QImage on the CPU).
             struct mp_image_params sw_params = ctx->img_params;
             if (ctx->renderer->fns == &render_backend_sw)
                 sw_params.rotate = 0;
-            mp_get_src_dst_rects(ctx->log, ctx->vo_opts, ctx->vo->driver->caps,
+            mp_get_src_dst_rects(ctx->log, ctx->vo_opts, ctx->renderer->driver_caps,
                                 &sw_params, vp_w, abs(vp_h),
                                 1.0, &src, &dst, &osd);
 

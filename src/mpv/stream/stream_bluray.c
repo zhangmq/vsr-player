@@ -1,0 +1,1877 @@
+/*
+ * Copyright (C) 2010 Benjamin Zores <ben@geexbox.org>
+ *
+ * This file is part of mpv.
+ *
+ * mpv is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * mpv is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Blu-ray parser/reader using libbluray
+ *  Use 'git clone git://git.videolan.org/libbluray' to get it.
+ */
+
+#include <string.h>
+#include <assert.h>
+
+#include <libbluray/bluray.h>
+#include <libbluray/meta_data.h>
+#include <libbluray/overlay.h>
+#include <libbluray/keys.h>
+#include <libbluray/bluray-version.h>
+#include <libbluray/log_control.h>
+#include <libavutil/common.h>
+
+#include "config.h"
+#include "mpv_talloc.h"
+#include "common/common.h"
+#include "common/msg.h"
+#include "misc/thread_tools.h"
+#include "options/m_config.h"
+#include "misc/language.h"
+#include "options/options.h"
+#include "options/path.h"
+#include "osdep/threads.h"
+#include "stream.h"
+#include "osdep/io.h"
+#include "sub/osd.h"
+#include "sub/img_convert.h"
+#include "video/csputils.h"
+#include "video/mp_image.h"
+
+#define BLURAY_SECTOR_SIZE     6144
+
+#define BLURAY_DEFAULT_ANGLE      0
+#define BLURAY_DEFAULT_CHAPTER    0
+#define BLURAY_PLAYLIST_TITLE    -3
+#define BLURAY_DEFAULT_TITLE     -2
+#define BLURAY_MENU_TITLE        -1
+
+// 90khz ticks
+#define BD_TIMEBASE (90000)
+#define BD_TIME_TO_S(x) ((x) / (double)(BD_TIMEBASE))
+#define BD_TIME_FROM_S(x) ((uint64_t)((x) * BD_TIMEBASE))
+
+// Interval between read retries while navigation is idle
+#define BLURAY_POLL_TIME_S   0.010
+// In menu mode, tolerate this many consecutive idle reads at the end of playlist
+#define BLURAY_NAV_EOF_POLLS 100
+
+// copied from aacs.h in libaacs
+#define AACS_ERROR_CORRUPTED_DISC -1 /* opening or reading of AACS files failed */
+#define AACS_ERROR_NO_CONFIG      -2 /* missing config file */
+#define AACS_ERROR_NO_PK          -3 /* no matching processing key */
+#define AACS_ERROR_NO_CERT        -4 /* no valid certificate */
+#define AACS_ERROR_CERT_REVOKED   -5 /* certificate has been revoked */
+#define AACS_ERROR_MMC_OPEN       -6 /* MMC open failed (no MMC drive ?) */
+#define AACS_ERROR_MMC_FAILURE    -7 /* MMC failed */
+#define AACS_ERROR_NO_DK          -8 /* no matching device key */
+
+
+#define OPT_BASE_STRUCT struct mp_bluray_opts
+const struct m_sub_options stream_bluray_conf = {
+    .opts = (const struct m_option[]) {
+        {"device", OPT_STRING(bluray_device), .flags = M_OPT_FILE},
+        {"key-file", OPT_STRING(keyfile), .flags = M_OPT_FILE},
+        {"angle", OPT_INT(angle), M_RANGE(1, 999)},
+        {"min-title-length", OPT_INT(min_title_length), M_RANGE(0, 86400)},
+        {"region", OPT_CHOICE(region, {"auto", 0}, {"a", 1}, {"b", 2}, {"c", 4})},
+        {"uo-restriction", OPT_CHOICE(uo_restriction, {"auto", -1},
+            {"disabled", 0}, {"relaxed", 5}, {"safe", 10}, {"compliant", 20})},
+        {0},
+    },
+    .size = sizeof(struct mp_bluray_opts),
+    .defaults = &(const struct mp_bluray_opts){
+        .angle = 1,
+        .uo_restriction = -1,
+    },
+};
+
+// libbluray's support only global debug callback, without per-instance info.
+static mp_static_mutex bluray_log_lock = MP_STATIC_MUTEX_INITIALIZER;
+static struct mp_log *bluray_log;
+
+static void bluray_logger(const char *msg)
+{
+    mp_mutex_lock(&bluray_log_lock);
+    if (bluray_log)
+        mp_msg(bluray_log, MSGL_DEBUG, "%s", msg);
+    mp_mutex_unlock(&bluray_log_lock);
+}
+
+// One overlay plane (BGRA, premultiplied alpha).
+struct bd_overlay_plane {
+    uint32_t *work;
+    uint32_t *publish;
+    int w, h;           // current allocation size (0 if unallocated)
+    int disp_w, disp_h; // plane size announced by BD_OVERLAY_INIT
+    bool visible;       // publish has any non-zero alpha pixel
+};
+
+struct bluray_priv_s {
+    BLURAY *bd;
+    struct mp_log *bluray_log;
+    bool probing;               // open is an .iso auto-detection probe
+    BLURAY_TITLE_INFO *title_info;
+    int num_titles;
+    int current_angle;
+    int current_title;
+    int current_playlist;
+    int current_playitem;
+
+    // Cached map from filtered title index (0..num_titles-1) to mpls_id.
+    uint32_t *title_to_playlist;
+
+    int cfg_title;
+    int cfg_playlist;
+    char *cfg_device;
+
+    struct mp_bluray_opts *opts;
+    struct m_config_cache *opts_cache;
+
+    // Disc-menu support (enabled when cfg_title == BLURAY_MENU_TITLE).
+    // The HDMV graphics controller emits IG-plane primitives through
+    // bd_register_overlay_proc (YUV+RLE). BD-J titles bypass it entirely
+    // and emit fully-rendered ARGB on both PG and IG planes through
+    // bd_register_argb_overlay_proc. Discs that mix HDMV first-play with
+    // BD-J menus (or vice versa) need both callbacks registered.
+    bool hdmv_mode;
+    struct bd_overlay_plane ig;
+    struct bd_overlay_plane pg;
+    // What demux_disc maps the data by, see STREAM_CTRL_GET_SEGMENTS.
+    struct stream_segment *segs;     // runs started, not collected yet
+    int num_segs;
+    bool seg_pending;                // the next data read starts a run
+
+    mp_mutex overlay_lock;
+
+    uint32_t nav_change_id;          // bumped on overlay FLUSH/HIDE events
+    uint32_t discontinuity_id;       // bumped on actions that may hop (SELECT...)
+    bool data_delivered;             // any byte returned from fill_buffer yet
+    bool still_active;               // holding an indefinite still.
+    uint64_t next_read_pos;          // expected bd_tell() of the next read
+    bool read_pos_known;             // next_read_pos is valid
+    bool resync_owed;                // jump settled, resync seek not acked yet
+    bool clip_open;                  // libbluray still has a clip to act on
+    int64_t pending_scr;             // clip time the player presents, -1 when none
+    double pending_rate;             // rate the player asked for, not applied yet
+    bool pending_rate_set;
+    int pending_angle;               // 1-based, 0 when no angle change is owed
+
+    // Disc-driven audio/sub selection, mirrored from BD_EVENT_AUDIO_STREAM
+    // and BD_EVENT_PG_TEXTST{,_STREAM}. The numbers are 1-based libbluray
+    // stream indices.
+    int audio_stream_num;
+    int sub_stream_num;
+    bool sub_visible;
+};
+
+// Lazy (re-)allocation for an overlay plane's working+publish buffer pair.
+static bool bd_overlay_ensure(struct bluray_priv_s *priv,
+                              struct bd_overlay_plane *p, int w, int h)
+{
+    if (w <= 0 || h <= 0)
+        return false;
+    if (p->work && w <= p->w && h <= p->h)
+        return true;
+    int nw = MPMAX(w, p->w);
+    int nh = MPMAX(h, p->h);
+    size_t bytes = (size_t)nw * nh * 4;
+    uint32_t *work = talloc_realloc(priv, p->work,    uint32_t, nw * nh);
+    uint32_t *pub  = talloc_realloc(priv, p->publish, uint32_t, nw * nh);
+    if (!work || !pub)
+        return false;
+    memset(work, 0, bytes);
+    memset(pub,  0, bytes);
+    p->work    = work;
+    p->publish = pub;
+    p->w = nw;
+    p->h = nh;
+    return true;
+}
+
+static void bd_overlay_clear(struct bd_overlay_plane *p)
+{
+    if (p->work)
+        memset(p->work, 0, (size_t)p->w * p->h * 4);
+}
+
+static void bd_overlay_hide(struct bluray_priv_s *priv, struct bd_overlay_plane *p)
+{
+    p->visible = false;
+    priv->nav_change_id++;
+}
+
+static void bd_overlay_flush(struct bluray_priv_s *priv, struct bd_overlay_plane *p)
+{
+    if (!p->work)
+        return;
+    size_t n = (size_t)p->w * p->h;
+    memcpy(p->publish, p->work, n * 4);
+    bool any = false;
+    for (size_t i = 0; i < n; i++) {
+        if (p->publish[i] & 0xFF000000) {
+            any = true;
+            break;
+        }
+    }
+    p->visible = any;
+    priv->nav_change_id++;
+}
+
+static const BLURAY_CLIP_INFO *bd_current_clip(const struct bluray_priv_s *priv)
+{
+    const BLURAY_TITLE_INFO *ti = priv->title_info;
+    if (!ti || !ti->clip_count)
+        return NULL;
+    int n = priv->current_playitem >= 0 ? priv->current_playitem : 0;
+    if (n >= ti->clip_count)
+        n = 0;
+    return &ti->clips[n];
+}
+
+static int bd_title_for_playlist(const struct bluray_priv_s *priv, uint32_t playlist)
+{
+    if (!priv->title_to_playlist)
+        return -1;
+    for (int i = 0; i < priv->num_titles; i++) {
+        if (priv->title_to_playlist[i] == playlist)
+            return i;
+    }
+    return -1;
+}
+
+static bool bd_clip_lang(const BLURAY_CLIP_INFO *ci, struct stream_track_req *req)
+{
+    if (!ci)
+        return false;
+    const BLURAY_STREAM_INFO *si = NULL;
+    int count = 0;
+    switch (req->type) {
+    case STREAM_AUDIO:
+        count = ci->audio_stream_count;
+        si = ci->audio_streams;
+        break;
+    case STREAM_SUB:
+        count = ci->pg_stream_count;
+        si = ci->pg_streams;
+        break;
+    default:
+        return false;
+    }
+    for (int n = 0; n < count; n++) {
+        if (si[n].pid == req->id) {
+            snprintf(req->name, sizeof(req->name), "%.4s", si[n].lang);
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char *bd_codec_name(uint8_t coding_type)
+{
+    switch (coding_type) {
+    case BLURAY_STREAM_TYPE_VIDEO_MPEG1:    return "mpeg1video";
+    case BLURAY_STREAM_TYPE_VIDEO_MPEG2:    return "mpeg2video";
+    case BLURAY_STREAM_TYPE_VIDEO_VC1:      return "vc1";
+    case BLURAY_STREAM_TYPE_VIDEO_H264:     return "h264";
+    case BLURAY_STREAM_TYPE_VIDEO_HEVC:     return "hevc";
+    case BLURAY_STREAM_TYPE_AUDIO_MPEG1:
+    case BLURAY_STREAM_TYPE_AUDIO_MPEG2:    return "mp3";
+    case BLURAY_STREAM_TYPE_AUDIO_LPCM:     return "pcm_bluray";
+    case BLURAY_STREAM_TYPE_AUDIO_AC3:      return "ac3";
+    case BLURAY_STREAM_TYPE_AUDIO_DTS:
+    case BLURAY_STREAM_TYPE_AUDIO_DTSHD:
+    case BLURAY_STREAM_TYPE_AUDIO_DTSHD_MASTER:
+    case BLURAY_STREAM_TYPE_AUDIO_DTSHD_SECONDARY: return "dts";
+    case BLURAY_STREAM_TYPE_AUDIO_TRUHD:    return "truehd";
+    case BLURAY_STREAM_TYPE_AUDIO_AC3PLUS:
+    case BLURAY_STREAM_TYPE_AUDIO_AC3PLUS_SECONDARY: return "eac3";
+    case BLURAY_STREAM_TYPE_SUB_PG:         return "hdmv_pgs_subtitle";
+    case BLURAY_STREAM_TYPE_SUB_TEXT:       return "hdmv_text_subtitle";
+    }
+    return NULL;
+}
+
+// Appends the presentation streams of the clip being played to the list.
+// Runs with overlay_lock held.
+static void bd_list_streams(const struct bluray_priv_s *priv, void *ta,
+                            struct stream_decl_stream **list, int *num)
+{
+    const BLURAY_CLIP_INFO *ci = bd_current_clip(priv);
+    if (!ci)
+        return;
+    const struct {
+        int type;
+        const BLURAY_STREAM_INFO *si;
+        int count;
+    } lists[] = {
+        {STREAM_VIDEO, ci->video_streams,     ci->video_stream_count},
+        {STREAM_AUDIO, ci->audio_streams,     ci->audio_stream_count},
+        {STREAM_SUB,   ci->pg_streams,        ci->pg_stream_count},
+        {STREAM_VIDEO, ci->sec_video_streams, ci->sec_video_stream_count},
+        {STREAM_AUDIO, ci->sec_audio_streams, ci->sec_audio_stream_count},
+    };
+    for (int l = 0; l < MP_ARRAY_SIZE(lists); l++) {
+        for (int i = 0; i < lists[l].count; i++) {
+            const BLURAY_STREAM_INFO *si = &lists[l].si[i];
+            MP_TARRAY_APPEND(ta, *list, *num, ((struct stream_decl_stream){
+                lists[l].type, si->pid, bd_codec_name(si->coding_type)}));
+        }
+    }
+}
+
+// Note a run of data starting at stream position `pos` (a clip change, a
+// seek, a jump) for demux_disc. Every stream of the clip has data in it.
+// Runs with overlay_lock held.
+static void bd_record_segment(struct bluray_priv_s *b, int64_t pos)
+{
+    const BLURAY_CLIP_INFO *ci = bd_current_clip(b);
+    struct stream_segment seg = {
+        .pos = pos,
+        .raw_base = ci ? BD_TIME_TO_S(ci->in_time) : MP_NOPTS_VALUE,
+        .time = ci ? BD_TIME_TO_S(ci->start_time)
+                   : BD_TIME_TO_S(bd_tell_time(b->bd)),
+    };
+    MP_TARRAY_APPEND(b, b->segs, b->num_segs, seg);
+}
+
+static enum pl_color_system bd_overlay_csp(struct bluray_priv_s *priv)
+{
+    const BLURAY_CLIP_INFO *ci = bd_current_clip(priv);
+    if (!ci || !ci->video_stream_count)
+        return PL_COLOR_SYSTEM_BT_709;
+    const BLURAY_STREAM_INFO *vs = &ci->video_streams[0];
+
+#if BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 5, 0)
+    // HEVC on UHD BD (2160p or 1080p) can be either 2020 or 709
+    if (vs->coding_type == BLURAY_STREAM_TYPE_VIDEO_HEVC || vs->format == BLURAY_VIDEO_FORMAT_2160P)
+        return vs->color_space == BLURAY_COLOR_SPACE_BT2020 ? PL_COLOR_SYSTEM_BT_2020_NC : PL_COLOR_SYSTEM_BT_709;
+#endif
+
+    switch (vs->format) {
+#if BLURAY_VERSION <= BLURAY_VERSION_CODE(1, 4, 1)
+    case BLURAY_VIDEO_FORMAT_2160P:
+        return PL_COLOR_SYSTEM_BT_2020_NC;
+#endif
+    case BLURAY_VIDEO_FORMAT_480I:  // ITU-R BT.601
+    case BLURAY_VIDEO_FORMAT_576I:
+    case BLURAY_VIDEO_FORMAT_480P:
+    case BLURAY_VIDEO_FORMAT_576P:
+        return PL_COLOR_SYSTEM_BT_601;
+    default:
+        return PL_COLOR_SYSTEM_BT_709;
+    }
+}
+
+static void bd_palette_to_bgra(const BD_PG_PALETTE_ENTRY *pg, uint32_t out[256],
+                               enum pl_color_system csp)
+{
+    struct mp_csp_params params = MP_CSP_PARAMS_DEFAULTS;
+    params.repr.sys = csp;
+    params.repr.levels = PL_COLOR_LEVELS_LIMITED;
+    params.levels_out = PL_COLOR_LEVELS_FULL;
+    struct pl_transform3x3 yuv2rgb;
+    mp_get_csp_matrix(&params, &yuv2rgb);
+
+    for (int i = 0; i < 256; i++) {
+        int yuv[3] = { pg[i].Y, pg[i].Cb, pg[i].Cr };
+        int rgb[3];
+        mp_map_fixp_color(&yuv2rgb, 8, yuv, 8, rgb);
+        int T = pg[i].T;
+        // Pre-multiply RGB by alpha so the OSD layer can composite directly.
+        int r = rgb[0] * T / 255;
+        int g = rgb[1] * T / 255;
+        int b = rgb[2] * T / 255;
+        out[i] = ((uint32_t)T << 24) | ((uint32_t)r << 16) |
+                 ((uint32_t)g << 8)  |  (uint32_t)b;
+    }
+    // palette index 0xFF is always transparent.
+    out[0xFF] = 0;
+}
+
+// Composite one RLE-encoded sub-bitmap into the IG plane at (ov->x, ov->y).
+static void bd_overlay_draw_rle(struct bd_overlay_plane *p, const BD_OVERLAY *ov,
+                                enum pl_color_system csp)
+{
+    if (!ov->img || !ov->palette || ov->w <= 0 || ov->h <= 0)
+        return;
+    uint32_t pal[256];
+    bd_palette_to_bgra(ov->palette, pal, csp);
+
+    const BD_PG_RLE_ELEM *rle = ov->img;
+    for (int y = 0; y < ov->h; y++) {
+        int dst_y = ov->y + y;
+        bool in_plane = dst_y >= 0 && dst_y < p->h;
+        uint32_t *dst_row = in_plane ? p->work + (size_t)dst_y * p->w : NULL;
+        int x = 0;
+        int cols = ov->w;
+        while (x < ov->w && cols-- >= 0) {
+            int len = rle->len;
+            int color = rle->color;
+            rle++;
+            if (len == 0)
+                continue; // stray EOL, skip
+            int dst_x = ov->x + x;
+            int run = len;
+            if (dst_x < 0) {
+                int skip = MPMIN(-dst_x, run);
+                run -= skip;
+                dst_x += skip;
+            }
+            if (dst_x + run > p->w)
+                run = p->w - dst_x;
+            if (dst_row && run > 0) {
+                uint32_t c = pal[color & 0xFF];
+                for (int i = 0; i < run; i++)
+                    dst_row[dst_x + i] = c;
+            }
+            x += len;
+        }
+        if (rle->len == 0)
+            rle++;
+    }
+}
+
+// Called by libbluray's HDMV graphics controller for every overlay primitive
+// on either plane. We only render the IG (menu) plane; PG (subtitles) flows
+// through the regular demuxer/sd_lavc pipeline.
+static void bd_yuv_overlay_cb(void *handle, const struct bd_overlay_s *ov)
+{
+    struct bluray_priv_s *priv = handle;
+    if (!ov)
+        return;
+    if (ov->plane != BD_OVERLAY_IG)
+        return;
+
+    struct bd_overlay_plane *p = &priv->ig;
+    mp_mutex_lock(&priv->overlay_lock);
+    switch (ov->cmd) {
+    case BD_OVERLAY_INIT:
+        if (bd_overlay_ensure(priv, p, ov->w, ov->h)) {
+            // The allocation only ever grows, but the announced size is the
+            // coordinate space of the current menu.
+            p->disp_w = ov->w;
+            p->disp_h = ov->h;
+        }
+        bd_overlay_clear(p);
+        bd_overlay_hide(priv, p);
+        break;
+    case BD_OVERLAY_CLOSE:
+    case BD_OVERLAY_HIDE:
+        bd_overlay_hide(priv, p);
+        break;
+    case BD_OVERLAY_CLEAR:
+        bd_overlay_clear(p);
+        break;
+    case BD_OVERLAY_WIPE:
+        if (p->work) {
+            for (int y = 0; y < ov->h; y++) {
+                int dy = ov->y + y;
+                if (dy < 0 || dy >= p->h)
+                    continue;
+                int dx = MPMAX(ov->x, 0);
+                int run = MPMIN(ov->w, p->w - dx);
+                if (run > 0)
+                    memset(p->work + (size_t)dy * p->w + dx, 0, run * 4);
+            }
+        }
+        break;
+    case BD_OVERLAY_DRAW:
+        if (p->work)
+            bd_overlay_draw_rle(p, ov, bd_overlay_csp(priv));
+        break;
+    case BD_OVERLAY_FLUSH:
+        bd_overlay_flush(priv, p);
+        break;
+    default:
+        break;
+    }
+    mp_mutex_unlock(&priv->overlay_lock);
+}
+
+static inline uint32_t bd_argb_premul(uint32_t src)
+{
+    uint32_t a = (src >> 24) & 0xFF;
+    if (a == 0)
+        return 0;
+    if (a == 255)
+        return src;
+    uint32_t r = (src >> 16) & 0xFF;
+    uint32_t g = (src >>  8) & 0xFF;
+    uint32_t b =  src        & 0xFF;
+    r = (r * a + 127) / 255;
+    g = (g * a + 127) / 255;
+    b = (b * a + 127) / 255;
+    return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+static void bd_overlay_draw_argb(struct bd_overlay_plane *p,
+                                 const BD_ARGB_OVERLAY *ov)
+{
+    if (!ov->argb || ov->w <= 0 || ov->h <= 0)
+        return;
+    int sx = 0, sy = 0;
+    int dx = ov->x, dy = ov->y;
+    int w = ov->w, h = ov->h;
+    if (dx < 0) { sx -= dx; w += dx; dx = 0; }
+    if (dy < 0) { sy -= dy; h += dy; dy = 0; }
+    if (dx + w > p->w) w = p->w - dx;
+    if (dy + h > p->h) h = p->h - dy;
+    if (w <= 0 || h <= 0)
+        return;
+    for (int y = 0; y < h; y++) {
+        const uint32_t *src = ov->argb + (size_t)(sy + y) * ov->stride + sx;
+        uint32_t *dst = p->work + (size_t)(dy + y) * p->w + dx;
+        for (int x = 0; x < w; x++)
+            dst[x] = bd_argb_premul(src[x]);
+    }
+}
+
+// Called by libbluray when a BD-J title paints into either the PG or IG plane.
+static void bd_argb_overlay_cb(void *handle, const BD_ARGB_OVERLAY *ov)
+{
+    struct bluray_priv_s *priv = handle;
+    if (!ov)
+        return;
+    if (ov->plane != BD_OVERLAY_PG && ov->plane != BD_OVERLAY_IG)
+        return;
+
+    struct bd_overlay_plane *p = ov->plane == BD_OVERLAY_IG ? &priv->ig
+                                                            : &priv->pg;
+    mp_mutex_lock(&priv->overlay_lock);
+    switch (ov->cmd) {
+    case BD_ARGB_OVERLAY_INIT:
+        if (bd_overlay_ensure(priv, p, ov->w, ov->h)) {
+            // The allocation only ever grows, but the announced size is the
+            // coordinate space of the current menu.
+            p->disp_w = ov->w;
+            p->disp_h = ov->h;
+        }
+        bd_overlay_clear(p);
+        bd_overlay_hide(priv, p);
+        break;
+    case BD_ARGB_OVERLAY_CLOSE:
+        bd_overlay_hide(priv, p);
+        break;
+    case BD_ARGB_OVERLAY_DRAW:
+        if (p->work)
+            bd_overlay_draw_argb(p, ov);
+        break;
+    case BD_ARGB_OVERLAY_FLUSH:
+        bd_overlay_flush(priv, p);
+        break;
+    default:
+        break;
+    }
+    mp_mutex_unlock(&priv->overlay_lock);
+}
+
+// libbluray compares the player setting to the stream table byte for byte, and
+// both ISO 639-2 forms are in use, so the disc's own spelling has to go back in.
+struct bd_lang_pick {
+    char code[4];
+    int score;
+};
+
+static void bd_pick_lang(struct bd_lang_pick *pick, char **langs,
+                         const BLURAY_STREAM_INFO *si, int count)
+{
+    for (int i = 0; i < count; i++) {
+        const char *c = (const char *)si[i].lang;
+        int score = mp_match_lang(langs, c);
+        if (score > pick->score) {
+            pick->score = score;
+            snprintf(pick->code, sizeof(pick->code), "%.3s", c);
+        }
+    }
+}
+
+inline static int play_playlist(struct bluray_priv_s *priv, int playlist)
+{
+    return bd_select_playlist(priv->bd, playlist);
+}
+
+inline static int play_title(struct bluray_priv_s *priv, int title)
+{
+    return bd_select_title(priv->bd, title);
+}
+
+static void bluray_stream_close(stream_t *s)
+{
+    struct bluray_priv_s *priv = s->priv;
+    if (!priv)
+        return;
+
+    if (priv->title_info)
+        bd_free_title_info(priv->title_info);
+    if (priv->bd) {
+        if (priv->hdmv_mode) {
+            bd_register_overlay_proc(priv->bd, NULL, NULL);
+            bd_register_argb_overlay_proc(priv->bd, NULL, NULL, NULL);
+        }
+        bd_close(priv->bd);
+    }
+    mp_mutex_lock(&bluray_log_lock);
+    // If we created the global log, unset it.
+    if (bluray_log == priv->bluray_log)
+        bluray_log = NULL;
+    mp_mutex_unlock(&bluray_log_lock);
+    mp_mutex_destroy(&priv->overlay_lock);
+}
+
+static const char *bd_event_str(uint32_t event)
+{
+#if BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 3, 0)
+    const char *name = bd_event_name(event);
+    if (name)
+        return name;
+#endif
+    return "?";
+}
+
+static int bluray_stream_fill_buffer(stream_t *s, void *buf, int len)
+{
+    struct bluray_priv_s *b = s->priv;
+
+    mp_mutex_lock(&b->overlay_lock);
+    uint32_t disc_id = b->discontinuity_id;
+    bool resync_owed = b->resync_owed;
+    mp_mutex_unlock(&b->overlay_lock);
+
+    // Resync pending, skip the read.
+    if (resync_owed)
+        return 0;
+
+    int idle_reads = 0;
+    bool hopped = false;
+    while (!mp_cancel_test(s->cancel)) {
+        BD_EVENT ev;
+        // BD-J applets reposition the stream, sometimes with no event.
+        // Detect it before reading so the new position's head survives.
+        if (!hopped && b->read_pos_known && bd_tell(b->bd) != b->next_read_pos) {
+            MP_VERBOSE(s, "position warped (%"PRIu64" -> %"PRIu64"), "
+                       "treating as a jump\n", b->next_read_pos, bd_tell(b->bd));
+            b->read_pos_known = false;
+            mp_mutex_lock(&b->overlay_lock);
+            if (b->discontinuity_id == disc_id)
+                b->discontinuity_id++;
+            mp_mutex_unlock(&b->overlay_lock);
+            hopped = true;
+        }
+        // Once a jump was detected, stop consuming data (it belongs to the
+        // new position and the slave demuxer must be reopened first); a
+        // zero-length read only polls the remaining events.
+        int n = bd_read_ext(b->bd, buf, hopped ? 0 : len, &ev);
+        if (n < 0) {
+            // A failed read can still have queued the event that explains it,
+            // and that event does not come back with the failure, so ask.
+            if (bd_get_event(b->bd, &ev) && ev.event == BD_EVENT_ENCRYPTED) {
+                MP_ERR(s, "Blu-ray clip is encrypted and cannot be decrypted, "
+                          "%s support is missing or the disc is not "
+                          "supported.\n",
+                       ev.param == BD_ERROR_BDPLUS ? "BD+" : "AACS");
+            } else {
+                MP_VERBOSE(s, "bd_read_ext() failed.\n");
+            }
+            return -1;
+        }
+
+        if (ev.event != BD_EVENT_NONE)
+            MP_DBG(s, "event %s(%u) param %u\n", bd_event_str(ev.event), ev.event, ev.param);
+
+        bool stalled = false;  // EOF unless the VM continues
+        bool bdj_idle = false; // BD-J title alive with no playlist playing
+
+        switch (ev.event) {
+        case BD_EVENT_NONE:
+            stalled = n == 0;
+            break;
+        case BD_EVENT_ERROR:
+            MP_ERR(s, "Blu-ray navigation error (%u).\n", ev.param);
+            return -1;
+        case BD_EVENT_READ_ERROR:
+            MP_WARN(s, "Blu-ray read error, skipping unit.\n");
+            break;
+        case BD_EVENT_END_OF_TITLE:
+            mp_mutex_lock(&b->overlay_lock);
+            b->still_active = false;
+            b->clip_open = false;
+            mp_mutex_unlock(&b->overlay_lock);
+            stalled = true;
+            break;
+        case BD_EVENT_IDLE:
+            bdj_idle = true;
+            break;
+        case BD_EVENT_STILL:
+            mp_mutex_lock(&b->overlay_lock);
+            b->still_active = ev.param != 0;
+            mp_mutex_unlock(&b->overlay_lock);
+            break;
+        case BD_EVENT_STILL_TIME:
+            // TODO: consider timed stills support
+            // param == 0 is an indefinite still
+            if (ev.param == 0) {
+                mp_mutex_lock(&b->overlay_lock);
+                b->still_active = true;
+                mp_mutex_unlock(&b->overlay_lock);
+            } else if (!bd_read_skip_still(b->bd)) {
+                // No next clip, so libbluray has nothing left to act on.
+                mp_mutex_lock(&b->overlay_lock);
+                b->clip_open = false;
+                mp_mutex_unlock(&b->overlay_lock);
+            }
+            break;
+        case BD_EVENT_PLAYLIST: {
+            int playlist = ev.param;
+            int title = bd_title_for_playlist(b, ev.param);
+            mp_mutex_lock(&b->overlay_lock);
+            int cur_angle = b->current_angle;
+            mp_mutex_unlock(&b->overlay_lock);
+            BLURAY_TITLE_INFO *ti = bd_get_playlist_info(b->bd, playlist, cur_angle);
+            mp_mutex_lock(&b->overlay_lock);
+            if (b->title_info)
+                bd_free_title_info(b->title_info);
+            b->title_info = ti;
+            b->current_playlist = playlist;
+            b->current_title = title;
+            b->current_playitem = 0;
+            b->seg_pending = true;
+            b->clip_open = true;
+            if (b->hdmv_mode)
+                b->discontinuity_id++;
+            mp_mutex_unlock(&b->overlay_lock);
+            break;
+        }
+        case BD_EVENT_PLAYITEM:
+            mp_mutex_lock(&b->overlay_lock);
+            if (b->current_playitem != ev.param) {
+                b->current_playitem = ev.param;
+                b->seg_pending = true;
+                b->nav_change_id++;
+            }
+            mp_mutex_unlock(&b->overlay_lock);
+            break;
+        case BD_EVENT_TITLE: {
+            MP_VERBOSE(s, "title number %u\n", ev.param);
+            mp_mutex_lock(&b->overlay_lock);
+            if (b->title_info) {
+                bd_free_title_info(b->title_info);
+                b->title_info = NULL;
+            }
+            b->clip_open = false;
+            if (b->hdmv_mode)
+                b->discontinuity_id++;
+            mp_mutex_unlock(&b->overlay_lock);
+            break;
+        }
+        case BD_EVENT_ANGLE: {
+            // The event value is 1-based, current_angle is 0-based.
+            int angle = MPMAX(0, (int)ev.param - 1);
+            BLURAY_TITLE_INFO *ti = b->title_info ? bd_get_playlist_info(b->bd, b->current_playlist, angle)
+                                                  : NULL;
+            mp_mutex_lock(&b->overlay_lock);
+            b->current_angle = angle;
+            if (ti) {
+                bd_free_title_info(b->title_info);
+                b->title_info = ti;
+            }
+            if (b->hdmv_mode)
+                b->nav_change_id++;
+            mp_mutex_unlock(&b->overlay_lock);
+            break;
+        }
+        case BD_EVENT_AUDIO_STREAM:
+            mp_mutex_lock(&b->overlay_lock);
+            b->audio_stream_num = ev.param;
+            if (b->hdmv_mode)
+                b->nav_change_id++;
+            mp_mutex_unlock(&b->overlay_lock);
+            break;
+        case BD_EVENT_PG_TEXTST_STREAM:
+            mp_mutex_lock(&b->overlay_lock);
+            b->sub_stream_num = ev.param;
+            if (b->hdmv_mode)
+                b->nav_change_id++;
+            mp_mutex_unlock(&b->overlay_lock);
+            break;
+        case BD_EVENT_PG_TEXTST:
+            mp_mutex_lock(&b->overlay_lock);
+            b->sub_visible = ev.param != 0;
+            if (b->hdmv_mode)
+                b->nav_change_id++;
+            mp_mutex_unlock(&b->overlay_lock);
+            break;
+        case BD_EVENT_DISCONTINUITY:
+            break;
+        default:
+            MP_TRACE(s, "Unhandled event: %s(%u) %u\n",
+                     bd_event_str(ev.event), ev.event, ev.param);
+            break;
+        }
+
+        // BD_EVENT_PLAYLIST is what resolves current_title, but a disc menu can
+        // enter a title by switching play items inside a playlist (chapter
+        // selection) without announcing a new playlist. current_title then stays
+        // -1, STREAM_CTRL_GET_CURRENT_TITLE reports nothing, and mpv keeps
+        // reporting the synthetic "Disc Menu" edition even though a title is
+        // playing. Ask libbluray directly -- safe here, this is the thread that
+        // owns the handle -- and accept only a real title index.
+        if (b->current_title < 0) {
+            uint32_t cur = bd_get_current_title(b->bd);
+            if (cur < b->num_titles) {
+                mp_mutex_lock(&b->overlay_lock);
+                b->current_title = (int)cur;
+                mp_mutex_unlock(&b->overlay_lock);
+                MP_VERBOSE(s, "current title resolved from libbluray: %u\n", cur);
+            }
+        }
+
+        mp_mutex_lock(&b->overlay_lock);
+        int64_t scr = b->pending_scr;
+        b->pending_scr = -1;
+        bool pending_rate = b->pending_rate_set && b->clip_open;
+        double rate = b->pending_rate;
+        if (pending_rate)
+            b->pending_rate_set = false;
+        int pending_angle = b->clip_open ? b->pending_angle : 0;
+        if (pending_angle)
+            b->pending_angle = 0;
+        mp_mutex_unlock(&b->overlay_lock);
+        if (scr >= 0)
+            bd_set_scr(b->bd, scr);
+        if (pending_rate)
+            bd_set_rate(b->bd, BD_TIME_FROM_S(rate));
+        if (pending_angle)
+            bd_seamless_angle_change(b->bd, pending_angle - 1);
+
+        if (n > 0) {
+            // A jump event popped by this read can mean the data already
+            // belongs to the new position. Drop non-contiguous reads and
+            // drain like any other jump.
+            uint64_t pos = bd_tell(b->bd);
+            if (b->read_pos_known && pos - n != b->next_read_pos) {
+                MP_VERBOSE(s, "read not contiguous (expected %"PRIu64", "
+                           "got %"PRIu64"), treating as a jump\n",
+                           b->next_read_pos, pos - n);
+                b->read_pos_known = false;
+                mp_mutex_lock(&b->overlay_lock);
+                if (b->discontinuity_id == disc_id)
+                    b->discontinuity_id++;
+                mp_mutex_unlock(&b->overlay_lock);
+                hopped = true;
+                continue;
+            }
+            if (!b->read_pos_known)
+                MP_DBG(s, "reads resume at %"PRIu64"\n", pos - n);
+            if (!b->read_pos_known || b->seg_pending) {
+                mp_mutex_lock(&b->overlay_lock);
+                bd_record_segment(b, s->pos);
+                b->seg_pending = false;
+                mp_mutex_unlock(&b->overlay_lock);
+            }
+            b->next_read_pos = pos;
+            b->read_pos_known = true;
+            if (b->still_active) {
+                mp_mutex_lock(&b->overlay_lock);
+                b->still_active = false;
+                mp_mutex_unlock(&b->overlay_lock);
+            }
+            b->data_delivered = true;
+            return n;
+        }
+
+        mp_mutex_lock(&b->overlay_lock);
+        bool still_active = b->still_active;
+        if (!hopped && b->data_delivered && b->discontinuity_id != disc_id) {
+            MP_VERBOSE(s, "disc jumped (id %u -> %u), draining events\n",
+                       disc_id, b->discontinuity_id);
+            hopped = true;
+        }
+        mp_mutex_unlock(&b->overlay_lock);
+
+        // The play position jumped to another title/playlist after data was
+        // already delivered: report EOF so demux_disc reopens the slave
+        // demuxer before it parses data from the new position. A single jump
+        // queues a burst of events (TITLE, PLAYLIST, ...) of which more than
+        // one can bump discontinuity_id, so hold the EOF until the burst is
+        // fully drained: with a bump still queued, the slave demuxer
+        // reopened for this jump would hit that bump's EOF right away while
+        // probing the new position, and fail to open.
+        if (hopped) {
+            if (ev.event != BD_EVENT_NONE)
+                continue;
+            b->read_pos_known = false;
+            mp_mutex_lock(&b->overlay_lock);
+            b->resync_owed = true;
+            TA_FREEP(&b->segs);
+            b->num_segs = 0;
+            MP_VERBOSE(s, "jump settled (id %u), EOF for demuxer resync\n",
+                       b->discontinuity_id);
+            mp_mutex_unlock(&b->overlay_lock);
+            return 0;
+        }
+
+        // Holding an indefinite still frame: report EOF. The player keeps
+        // showing the last frame; user interaction releases the still and
+        // resumes reading through a discontinuity_id bump.
+        if (still_active) {
+            // Drain queued events first, the still may already be released.
+            // libbluray re-emits STILL_TIME on every read while holding, it
+            // is not progress.
+            if (ev.event != BD_EVENT_NONE && ev.event != BD_EVENT_STILL_TIME)
+                continue;
+            MP_VERBOSE(s, "holding still frame, EOF\n");
+            return 0;
+        }
+
+        if (bdj_idle) {
+            idle_reads = 0;
+            mp_cancel_wait(s->cancel, BLURAY_POLL_TIME_S);
+        } else if (stalled) {
+            // Without menus there is nothing that could continue: plain EOF.
+            if (!b->hdmv_mode)
+                return 0;
+            // Retry for a while before concluding that playback ended. The
+            // first retry is immediate: a just-resumed VM progresses at once.
+            if (++idle_reads > BLURAY_NAV_EOF_POLLS) {
+                MP_VERBOSE(s, "Navigation stopped, EOF.\n");
+                return 0;
+            }
+            if (idle_reads > 1)
+                mp_cancel_wait(s->cancel, BLURAY_POLL_TIME_S);
+        } else {
+            // The VM/title made progress; read again immediately.
+            idle_reads = 0;
+        }
+    }
+    return 0;
+}
+
+static int bluray_stream_control(stream_t *s, int cmd, void *arg)
+{
+    struct bluray_priv_s *b = s->priv;
+
+    switch (cmd) {
+    case STREAM_CTRL_GET_NUM_CHAPTERS: {
+        mp_mutex_lock(&b->overlay_lock);
+        const BLURAY_TITLE_INFO *ti = b->title_info;
+        if (ti)
+            *((unsigned int *) arg) = ti->chapter_count;
+        mp_mutex_unlock(&b->overlay_lock);
+        return ti ? STREAM_OK : STREAM_UNSUPPORTED;
+    }
+    case STREAM_CTRL_GET_CHAPTER_NAME: {
+#if BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 5, 0)
+        struct stream_name_req *req = arg;
+        int rc = STREAM_UNSUPPORTED;
+        mp_mutex_lock(&b->overlay_lock);
+        const BLURAY_TITLE_INFO *ti = b->title_info;
+        if (ti && req->index >= 0 && req->index < ti->chapter_count) {
+            const char *name = ti->chapters[req->index].chapter_name;
+            if (name && name[0]) {
+                req->name = talloc_strdup(NULL, name);
+                rc = STREAM_OK;
+            }
+        }
+        mp_mutex_unlock(&b->overlay_lock);
+        return rc;
+#else
+        break;
+#endif
+    }
+    case STREAM_CTRL_GET_CHAPTER_TIME: {
+        int chapter = *(double *)arg;
+        mp_mutex_lock(&b->overlay_lock);
+        const BLURAY_TITLE_INFO *ti = b->title_info;
+        int rc = STREAM_UNSUPPORTED;
+        if (ti) {
+            double time = MP_NOPTS_VALUE;
+            if (chapter >= 0 && chapter < ti->chapter_count)
+                time = BD_TIME_TO_S(ti->chapters[chapter].start);
+            if (time != MP_NOPTS_VALUE) {
+                *(double *)arg = time;
+                rc = STREAM_OK;
+            } else {
+                rc = STREAM_ERROR;
+            }
+        }
+        mp_mutex_unlock(&b->overlay_lock);
+        return rc;
+    }
+    case STREAM_CTRL_SET_CURRENT_TITLE: {
+        const uint32_t title = *((unsigned int*)arg);
+        // demux_disc appends a synthetic "Disc Menu" edition at index num_titles.
+        if (title == b->num_titles) {
+            if (!b->hdmv_mode || !bd_menu_call(b->bd, -1))
+                return STREAM_UNSUPPORTED;
+            return STREAM_OK;
+        }
+        if (title >= b->num_titles || !play_title(b, title))
+            return STREAM_UNSUPPORTED;
+        mp_mutex_lock(&b->overlay_lock);
+        b->current_title = title;
+        mp_mutex_unlock(&b->overlay_lock);
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_SET_PLAYBACK_TIME: {
+        if (!b->hdmv_mode)
+            break;
+        // libbluray wants the clip's own presentation timestamp. Playback
+        // time is playlist time, the clip table maps it back.
+        int64_t pl = BD_TIME_FROM_S(*(double *)arg);
+        int64_t raw = -1;
+        mp_mutex_lock(&b->overlay_lock);
+        const BLURAY_TITLE_INFO *ti = b->title_info;
+        for (unsigned n = 0; ti && n < ti->clip_count; n++) {
+            const BLURAY_CLIP_INFO *ci = &ti->clips[n];
+            int64_t start = ci->start_time;
+            int64_t end = start + (ci->out_time - ci->in_time);
+            if (pl >= start && pl <= end) {
+                raw = ci->in_time + (pl - start);
+                break;
+            }
+        }
+        if (raw >= 0)
+            b->pending_scr = raw;
+        mp_mutex_unlock(&b->overlay_lock);
+        if (raw < 0)
+            break;
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_SET_PLAYBACK_RATE: {
+        if (!b->hdmv_mode)
+            break;
+        double rate = *(double *)arg;
+        if (rate == 0) {
+            // This blocks until a disc read in progress finishes. Might cause
+            // buffering issues. Fix this, if real issue arises. The read()
+            // itself is not called after pause, so we cannot call it from there.
+            bd_set_rate(b->bd, BD_TIME_FROM_S(rate));
+        } else {
+            mp_mutex_lock(&b->overlay_lock);
+            b->pending_rate = rate;
+            b->pending_rate_set = true;
+            mp_mutex_unlock(&b->overlay_lock);
+        }
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_GET_CURRENT_TITLE: {
+        mp_mutex_lock(&b->overlay_lock);
+        int title = b->current_title;
+        mp_mutex_unlock(&b->overlay_lock);
+        // The disc can play something that is not in the title list, a menu
+        // playlist for one. Report nothing rather than a wrong index.
+        if (title < 0)
+            break;
+        *((unsigned int *) arg) = title;
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_GET_NUM_TITLES: {
+        *((unsigned int *)arg) = b->num_titles;
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_GET_TIME_LENGTH: {
+        mp_mutex_lock(&b->overlay_lock);
+        const BLURAY_TITLE_INFO *ti = b->title_info;
+        if (ti)
+            *((double *) arg) = BD_TIME_TO_S(ti->duration);
+        mp_mutex_unlock(&b->overlay_lock);
+        return ti ? STREAM_OK : STREAM_UNSUPPORTED;
+    }
+    case STREAM_CTRL_GET_CURRENT_TIME: {
+        *((double *) arg) = BD_TIME_TO_S(bd_tell_time(b->bd));
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_SEEK_TO_TIME: {
+        struct stream_seek_req *req = arg;
+        req->skip_until = MP_NOPTS_VALUE;
+        bd_seek_time(b->bd, BD_TIME_FROM_S(req->target));
+        stream_drop_buffers(s);
+        b->read_pos_known = false;
+        mp_mutex_lock(&b->overlay_lock);
+        TA_FREEP(&b->segs);
+        b->num_segs = 0;
+        b->pending_scr = -1;
+        mp_mutex_unlock(&b->overlay_lock);
+        // API makes it hard to determine seeking success
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_NAV_DRAIN_ACK:
+        mp_mutex_lock(&b->overlay_lock);
+        b->resync_owed = false;
+        mp_mutex_unlock(&b->overlay_lock);
+        return STREAM_OK;
+    case STREAM_CTRL_GET_NUM_ANGLES: {
+        mp_mutex_lock(&b->overlay_lock);
+        const BLURAY_TITLE_INFO *ti = b->title_info;
+        if (ti)
+            *((int *) arg) = ti->angle_count;
+        mp_mutex_unlock(&b->overlay_lock);
+        return ti ? STREAM_OK : STREAM_UNSUPPORTED;
+    }
+    case STREAM_CTRL_GET_ANGLE: {
+        mp_mutex_lock(&b->overlay_lock);
+        *((int *) arg) = b->current_angle + 1;
+        mp_mutex_unlock(&b->overlay_lock);
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_SET_ANGLE: {
+        int angle = *((int *) arg);
+        mp_mutex_lock(&b->overlay_lock);
+        const BLURAY_TITLE_INFO *ti = b->title_info;
+        bool ok = ti && angle >= 1 && angle <= ti->angle_count;
+        if (ok) {
+            b->current_angle = angle - 1;
+            // Deferred to the read thread to do the seamless angle change.
+            b->pending_angle = angle;
+        }
+        mp_mutex_unlock(&b->overlay_lock);
+        if (!ok)
+            return STREAM_UNSUPPORTED;
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_GET_TITLE_LENGTH: {
+        int title = *(double *)arg;
+        if (!b->bd || title < 0 || title >= b->num_titles)
+            return STREAM_UNSUPPORTED;
+        BLURAY_TITLE_INFO *ti = bd_get_title_info(b->bd, title, 0);
+        if (!ti)
+            return STREAM_UNSUPPORTED;
+        *(double *)arg = BD_TIME_TO_S(ti->duration);
+        bd_free_title_info(ti);
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_GET_TITLE_PLAYLIST: {
+        int title = *(double *)arg;
+        if (!b->bd || title < 0 || title >= b->num_titles)
+            return STREAM_UNSUPPORTED;
+        BLURAY_TITLE_INFO *ti = bd_get_title_info(b->bd, title, 0);
+        if (!ti)
+            return STREAM_UNSUPPORTED;
+        *(double *)arg = ti->playlist;
+        bd_free_title_info(ti);
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_GET_STREAMS: {
+        struct stream_streams_req *req = arg;
+        req->streams = NULL;
+        req->num = 0;
+        mp_mutex_lock(&b->overlay_lock);
+        bd_list_streams(b, NULL, &req->streams, &req->num);
+        mp_mutex_unlock(&b->overlay_lock);
+        return req->num ? STREAM_OK : STREAM_UNSUPPORTED;
+    }
+    case STREAM_CTRL_GET_SEGMENTS: {
+        struct stream_segments_req *req = arg;
+        mp_mutex_lock(&b->overlay_lock);
+        req->segs = talloc_steal(NULL, b->segs);
+        req->num = b->num_segs;
+        b->segs = NULL;
+        b->num_segs = 0;
+        mp_mutex_unlock(&b->overlay_lock);
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_GET_TRACK_INFO: {
+        int rc = STREAM_ERROR;
+        mp_mutex_lock(&b->overlay_lock);
+        const BLURAY_TITLE_INFO *ti = b->title_info;
+        if (ti && ti->clip_count) {
+            struct stream_track_req *req = arg;
+            const BLURAY_CLIP_INFO *cur = bd_current_clip(b);
+            if (bd_clip_lang(cur, req)) {
+                rc = STREAM_OK;
+            } else {
+                for (unsigned c = 0; c < ti->clip_count && rc != STREAM_OK; c++) {
+                    if (&ti->clips[c] != cur && bd_clip_lang(&ti->clips[c], req))
+                        rc = STREAM_OK;
+                }
+            }
+        }
+        mp_mutex_unlock(&b->overlay_lock);
+        return rc;
+    }
+    case STREAM_CTRL_GET_DISC_NAME: {
+        const struct meta_dl *meta = bd_get_meta(b->bd);
+        const char *name = meta ? meta->di_name : NULL;
+        if (!name || !name[0])
+            name = bd_get_disc_info(b->bd)->udf_volume_id;
+        if (!name || !name[0])
+            break;
+        *(char **)arg = talloc_strdup(NULL, name);
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_NAV_CMD: {
+        if (!b->hdmv_mode)
+            return STREAM_UNSUPPORTED;
+        struct stream_nav_cmd *nav = arg;
+        uint32_t key = BD_VK_NONE;
+        switch (nav->action) {
+        case STREAM_NAV_UP:
+            key = BD_VK_UP;
+            break;
+        case STREAM_NAV_DOWN:
+            key = BD_VK_DOWN;
+            break;
+        case STREAM_NAV_LEFT:
+            key = BD_VK_LEFT;
+            break;
+        case STREAM_NAV_RIGHT:
+            key = BD_VK_RIGHT;
+            break;
+        case STREAM_NAV_SELECT:
+            key = BD_VK_ENTER;
+            break;
+        case STREAM_NAV_MENU_ROOT:
+        case STREAM_NAV_MENU_TITLE:
+            // BD doesn't distinguish "title menu", both map to disc root.
+            bd_menu_call(b->bd, -1);
+            break;
+        case STREAM_NAV_MENU_POPUP:
+            key = BD_VK_POPUP;
+            break;
+        case STREAM_NAV_KEY_RED:
+            key = BD_VK_RED;
+            break;
+        case STREAM_NAV_KEY_GREEN:
+            key = BD_VK_GREEN;
+            break;
+        case STREAM_NAV_KEY_YELLOW:
+            key = BD_VL_YELLOW; // libbluray typo
+            break;
+        case STREAM_NAV_KEY_BLUE:
+            key = BD_VK_BLUE;
+            break;
+        case STREAM_NAV_MENU_AUDIO:
+        case STREAM_NAV_MENU_SUBTITLE:
+        case STREAM_NAV_MENU_ANGLE:
+        case STREAM_NAV_GO_UP:
+            return STREAM_UNSUPPORTED;
+        case STREAM_NAV_PREV_MENU:
+            // No dedicated "previous menu" key; popup-toggle is the closest
+            // equivalent and behaves like "dismiss current menu" on most
+            // discs when already in popup.
+            key = BD_VK_POPUP;
+            break;
+        case STREAM_NAV_MOUSE_MOVE:
+            bd_mouse_select(b->bd, -1, nav->x, nav->y);
+            break;
+        case STREAM_NAV_MOUSE_CLICK:
+            bd_mouse_select(b->bd, -1, nav->x, nav->y);
+            key = BD_VK_MOUSE_ACTIVATE;
+            break;
+        }
+        if (key != BD_VK_NONE)
+            bd_user_input(b->bd, -1, key);
+        // If an activation just ran a button command, it may have released a
+        // held still, bump discontinuity_id.
+        if (stream_nav_action_activates(nav->action)) {
+            mp_mutex_lock(&b->overlay_lock);
+            if (b->still_active)
+                b->discontinuity_id++;
+            mp_mutex_unlock(&b->overlay_lock);
+        }
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_GET_NAV_STATE: {
+        struct stream_nav_state *st = arg;
+        int audio_pid = -1;
+        int sub_pid = -1;
+        bool no_audio = false;
+        mp_mutex_lock(&b->overlay_lock);
+        const BLURAY_TITLE_INFO *ti = b->title_info;
+        const BLURAY_CLIP_INFO *ci = bd_current_clip(b);
+        if (ci) {
+            no_audio = ci->audio_stream_count == 0;
+            if (b->audio_stream_num >= 1 &&
+                b->audio_stream_num <= ci->audio_stream_count)
+            {
+                audio_pid = ci->audio_streams[b->audio_stream_num - 1].pid;
+            }
+            if (b->sub_stream_num >= 1 &&
+                b->sub_stream_num <= ci->pg_stream_count)
+            {
+                sub_pid = ci->pg_streams[b->sub_stream_num - 1].pid;
+            }
+        }
+        *st = (struct stream_nav_state){
+            .discontinuity_id = b->discontinuity_id,
+            .drain_pending = b->resync_owed,
+            .no_audio = no_audio,
+            .active_audio_id = audio_pid,
+            .active_sub_id = sub_pid,
+            .sub_visible = b->sub_visible,
+            .angle = b->current_angle + 1,
+            .num_angles = ti ? ti->angle_count : 0,
+        };
+        if (b->hdmv_mode) {
+            // There is no reliable "menu on screen" signal that covers both
+            // HDMV and BD-J (BD_EVENT_MENU is HDMV-only). Any visible overlay
+            // plane is treated as an active menu.
+            st->nav_active = true;
+            st->menu_active = b->ig.visible || b->pg.visible;
+            st->still_active = b->still_active;
+            st->src_w = MPMAX(b->ig.disp_w, b->pg.disp_w);
+            st->src_h = MPMAX(b->ig.disp_h, b->pg.disp_h);
+            st->change_id = b->nav_change_id;
+        }
+        mp_mutex_unlock(&b->overlay_lock);
+        return STREAM_OK;
+    }
+    case STREAM_CTRL_GET_NAV_OVERLAY: {
+        if (!b->hdmv_mode)
+            return STREAM_UNSUPPORTED;
+        struct stream_nav_overlay_req *req = arg;
+        if (!req->dst || req->w <= 0 || req->h <= 0)
+            return STREAM_ERROR;
+        mp_mutex_lock(&b->overlay_lock);
+        int copy_w = MPMIN(req->w, MPMAX(b->ig.disp_w, b->pg.disp_w));
+        int copy_h = MPMIN(req->h, MPMAX(b->ig.disp_h, b->pg.disp_h));
+        const uint32_t *ig_src = b->ig.visible ? b->ig.publish : NULL;
+        const uint32_t *pg_src = b->pg.visible ? b->pg.publish : NULL;
+        for (int y = 0; y < copy_h; y++) {
+            uint32_t *dst = (uint32_t *)(req->dst + y * req->stride);
+            const uint32_t *ig_row = (ig_src && y < b->ig.h)
+                ? ig_src + (size_t)y * b->ig.w : NULL;
+            const uint32_t *pg_row = (pg_src && y < b->pg.h)
+                ? pg_src + (size_t)y * b->pg.w : NULL;
+            int ig_lim = ig_row ? b->ig.w : 0;
+            int pg_lim = pg_row ? b->pg.w : 0;
+            for (int x = 0; x < copy_w; x++) {
+                uint32_t ig = (x < ig_lim) ? ig_row[x] : 0;
+                uint32_t pg = (x < pg_lim) ? pg_row[x] : 0;
+                uint32_t ia = (ig >> 24) & 0xFF;
+                if (ia == 0) {
+                    dst[x] = pg;
+                } else if (ia == 0xFF || !pg) {
+                    dst[x] = ig;
+                } else {
+                    // out = ig + pg * (1 - ig.a)
+                    uint32_t inv = 255 - ia;
+                    uint32_t na = ia                  + ((pg >> 24) & 0xFF) * inv / 255;
+                    uint32_t nr = ((ig >> 16) & 0xFF) + ((pg >> 16) & 0xFF) * inv / 255;
+                    uint32_t ng = ((ig >>  8) & 0xFF) + ((pg >>  8) & 0xFF) * inv / 255;
+                    uint32_t nb = ( ig        & 0xFF) + ( pg        & 0xFF) * inv / 255;
+                    dst[x] = (MPMIN(na, 255u) << 24) | (MPMIN(nr, 255u) << 16) |
+                             (MPMIN(ng, 255u) <<  8) |  MPMIN(nb, 255u);
+                }
+            }
+        }
+        req->change_id = b->nav_change_id;
+        req->w = copy_w;
+        req->h = copy_h;
+        mp_mutex_unlock(&b->overlay_lock);
+        return STREAM_OK;
+    }
+    default:
+        break;
+    }
+
+    return STREAM_UNSUPPORTED;
+}
+
+static const char *aacs_strerr(int err)
+{
+    switch (err) {
+    case AACS_ERROR_CORRUPTED_DISC: return "opening or reading of AACS files failed";
+    case AACS_ERROR_NO_CONFIG:      return "missing config file";
+    case AACS_ERROR_NO_PK:          return "no matching processing key";
+    case AACS_ERROR_NO_CERT:        return "no valid certificate";
+    case AACS_ERROR_CERT_REVOKED:   return "certificate has been revoked";
+    case AACS_ERROR_MMC_OPEN:       return "MMC open failed (maybe no MMC drive?)";
+    case AACS_ERROR_MMC_FAILURE:    return "MMC failed";
+    case AACS_ERROR_NO_DK:          return "no matching device key";
+    default:                        return "unknown error";
+    }
+}
+
+static bool check_disc_info(stream_t *s)
+{
+    struct bluray_priv_s *b = s->priv;
+    const BLURAY_DISC_INFO *info = bd_get_disc_info(b->bd);
+
+    // check Blu-ray
+    if (!info->bluray_detected) {
+        if (!b->probing)
+            MP_ERR(s, "Given stream is not a Blu-ray.\n");
+        return false;
+    }
+    b->probing = false;
+
+    // check AACS
+    if (info->aacs_detected) {
+        if (!info->libaacs_detected) {
+            MP_ERR(s, "AACS encryption detected but cannot find libaacs.\n");
+            return false;
+        }
+        if (!info->aacs_handled) {
+            MP_ERR(s, "AACS error: %s\n", aacs_strerr(info->aacs_error_code));
+            return false;
+        }
+    }
+
+    // check BD+
+    if (info->bdplus_detected) {
+        if (!info->libbdplus_detected) {
+            MP_ERR(s, "BD+ encryption detected but cannot find libbdplus.\n");
+            return false;
+        }
+        if (!info->bdplus_handled) {
+            MP_ERR(s, "Cannot decrypt BD+ encryption.\n");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool select_initial_title(stream_t *s, int title_guess) {
+    struct bluray_priv_s *b = s->priv;
+
+    if (b->cfg_title == BLURAY_PLAYLIST_TITLE) {
+        if (!play_playlist(b, b->cfg_playlist)) {
+            MP_ERR(s, "Couldn't start playlist '%05d'.\n", b->cfg_playlist);
+            return false;
+        }
+        b->current_title = bd_title_for_playlist(b, b->cfg_playlist);
+    } else {
+        int title = -1;
+        if (b->cfg_title != BLURAY_DEFAULT_TITLE )
+            title = b->cfg_title;
+        else
+            title = title_guess;
+        if (title < 0)
+            return false;
+
+        if (play_title(b, title))
+            b->current_title = title;
+        else {
+            MP_ERR(s, "Couldn't start title '%d'.\n", title);
+            b->current_title = -1;
+            return false;
+        }
+    }
+    return true;
+}
+
+static int bluray_stream_open_internal(stream_t *s)
+{
+    struct bluray_priv_s *b = s->priv;
+
+    struct m_config_cache *opts_cache =
+        m_config_cache_alloc(s, s->global, &stream_bluray_conf);
+
+    b->opts_cache = opts_cache;
+    b->opts = opts_cache->opts;
+
+    mp_mutex_init(&b->overlay_lock);
+
+    int ret = 0;
+    char *device = NULL;
+    /* find the requested device */
+    if (b->cfg_device && b->cfg_device[0]) {
+        device = b->cfg_device;
+    } else if (b->opts->bluray_device && b->opts->bluray_device[0]) {
+        device = b->opts->bluray_device;
+    } else {
+        device = DEFAULT_OPTICAL_DEVICE;
+    }
+
+    if (!device || !device[0]) {
+        MP_ERR(s, "No Blu-ray device/location was specified ...\n");
+        ret = STREAM_UNSUPPORTED;
+        goto err;
+    }
+
+    mp_mutex_lock(&bluray_log_lock);
+    // libbluray log callback is global and there is no way to separate it per
+    // instance, just replace with a new one if already present. The previous
+    // log stays alive (it is freed with the stream owning it), so a logging
+    // callback racing this replacement never sees a dangling pointer.
+    if (bluray_log) {
+        MP_WARN(s, "Replacing logger from previous instance.\n");
+        bluray_log = NULL;
+    }
+    uint32_t mask = 0;
+    if (mp_msg_test(s->log, MSGL_DEBUG))
+        mask |= DBG_CRIT | DBG_BLURAY | DBG_HDMV;
+    // When all bits are set (-1) libbluray inits to DBG_CRIT, set all bits,
+    // except one, so we avoid this default fallback.
+    if (mp_msg_test(s->log, MSGL_TRACE))
+        mask |= UINT32_MAX >> 1;
+    bd_set_debug_mask(mask);
+    if (mask)
+        b->bluray_log = bluray_log = mp_log_new(s, s->log, "/libbluray");
+    bd_set_debug_handler(bluray_logger);
+    mp_mutex_unlock(&bluray_log_lock);
+
+    /* open device */
+    BLURAY *bd = bd_init();
+    if (!bd) {
+        MP_ERR(s, "Couldn't create a libbluray instance.\n");
+        ret = STREAM_ERROR;
+        goto err;
+    }
+    b->bd = bd;
+
+    if (b->opts->region) {
+        // libbluray defaults this to region B.
+        if (!bd_set_player_setting(bd, BLURAY_PLAYER_SETTING_REGION_CODE,
+                                   b->opts->region))
+            MP_WARN(s, "Couldn't set the player region.\n");
+    }
+    if (b->opts->uo_restriction >= 0) {
+#if BLURAY_VERSION >= BLURAY_VERSION_CODE(1, 4, 1)
+        if (!bd_set_player_setting(bd, BLURAY_PLAYER_SETTING_UO_RESTRICTION_LEVEL,
+                                   b->opts->uo_restriction))
+            MP_WARN(s, "Couldn't set the user operation restriction level.\n");
+#else
+        MP_WARN(s, "--bluray-uo-restriction requires libbluray 1.4.1 or newer.\n");
+#endif
+    }
+
+    char *device_tmp = mp_get_user_path(NULL, s->global, device);
+    char *keyfile = NULL;
+    if (b->opts->keyfile && b->opts->keyfile[0])
+        keyfile = mp_get_user_path(NULL, s->global, b->opts->keyfile);
+    int opened = bd_open_disc(bd, device_tmp, keyfile);
+    talloc_free(keyfile);
+    talloc_free(device_tmp);
+    if (!opened) {
+        if (!b->probing)
+            MP_ERR(s, "Couldn't open Blu-ray device: %s\n", device);
+        ret = STREAM_UNSUPPORTED;
+        goto err;
+    }
+
+    if (!check_disc_info(s)) {
+        ret = STREAM_UNSUPPORTED;
+        goto err;
+    }
+
+    /* check for available titles on disc */
+    b->num_titles = bd_get_titles(bd, TITLES_RELEVANT, b->opts->min_title_length);
+    if (!b->num_titles && b->opts->min_title_length) {
+        MP_WARN(s, "No title is at least %d seconds long, listing all of them.\n",
+                b->opts->min_title_length);
+        b->num_titles = bd_get_titles(bd, TITLES_RELEVANT, 0);
+    }
+    if (!b->num_titles) {
+        MP_ERR(s, "Can't find any Blu-ray-compatible title here.\n");
+        ret = STREAM_ERROR;
+        goto err;
+    }
+
+    MP_INFO(s, "List of available titles:\n");
+
+    /* parse titles information */
+    struct MPOpts *mpopts = mp_get_config_group(NULL, s->global, &mp_opt_root);
+    char **alang = mpopts->stream_lang[STREAM_AUDIO];
+    char **slang = mpopts->stream_lang[STREAM_SUB];
+    struct bd_lang_pick audio_pick = {0}, pg_pick = {0};
+    b->title_to_playlist = talloc_array(b, uint32_t, b->num_titles);
+    for (int i = 0; i < b->num_titles; i++) {
+        b->title_to_playlist[i] = (uint32_t)-1;
+        /* the information we're accessing (duration, playlist, angle count)
+         * doesn't depend on the angle */
+        BLURAY_TITLE_INFO *ti = bd_get_title_info(bd, i, 0);
+        if (!ti)
+            continue;
+
+        b->title_to_playlist[i] = ti->playlist;
+
+        for (uint32_t c = 0; c < ti->clip_count; c++) {
+            bd_pick_lang(&audio_pick, alang, ti->clips[c].audio_streams,
+                         ti->clips[c].audio_stream_count);
+            bd_pick_lang(&pg_pick, slang, ti->clips[c].pg_streams,
+                         ti->clips[c].pg_stream_count);
+        }
+
+        char *time = mp_format_time(ti->duration / 90000, false);
+        MP_INFO(s, "idx: %3d duration: %s angles: %2d (playlist: %05d.mpls)\n",
+                    i, time, ti->angle_count, ti->playlist);
+        talloc_free(time);
+
+        bd_free_title_info(ti);
+    }
+
+    if (audio_pick.score && bd_set_player_setting_str(bd, BLURAY_PLAYER_SETTING_AUDIO_LANG, audio_pick.code))
+        MP_VERBOSE(s, "audio language set to '%s'\n", audio_pick.code);
+    if (pg_pick.score && bd_set_player_setting_str(bd, BLURAY_PLAYER_SETTING_PG_LANG, pg_pick.code))
+        MP_VERBOSE(s, "subtitle language set to '%s'\n", pg_pick.code);
+    talloc_free(mpopts);
+
+    // these should be set before any callback
+    b->current_angle = -1;
+    b->current_title = -1;
+    b->pending_scr = -1;
+
+    // initialize libbluray event queue
+    bd_get_event(bd, NULL);
+
+    const BLURAY_DISC_INFO *info = bd_get_disc_info(bd);
+    MP_VERBOSE(s, "First play: %i, Top menu: %i, "
+                  "HDMV Titles: %i, BD-J Titles: %i, Other: %i\n",
+               info->first_play_supported, info->top_menu_supported,
+               info->num_hdmv_titles, info->num_bdj_titles,
+               info->num_unsupported_titles);
+
+    // demux_disc appends a synthetic "Disc Menu" edition at index num_titles
+    if (b->cfg_title == b->num_titles)
+        b->cfg_title = BLURAY_MENU_TITLE;
+
+    b->hdmv_mode = b->cfg_title == BLURAY_MENU_TITLE;
+
+    // BD-J menus require a usable Java VM and libbluray's BD-J jar.
+    if (b->hdmv_mode && info->bdj_detected && !info->bdj_handled) {
+        if (!info->libjvm_detected) {
+            MP_WARN(s, "This disc uses BD-J menus, but no Java VM was found. "
+                       "Playing without menus. Install a JRE, and set JAVA_HOME "
+                       "if it is not auto-detected.\n");
+        } else {
+            MP_WARN(s, "This disc uses BD-J menus and a Java VM was found, but "
+                       "libbluray's BD-J support is unusable. Playing without "
+                       "menus. Its BD-J jar (libbluray-j2se-<version>.jar) is "
+                       "most likely missing, set LIBBLURAY_CP to its path.\n");
+        }
+        b->hdmv_mode = false;
+        b->cfg_title = BLURAY_DEFAULT_TITLE;
+    }
+
+    if (b->hdmv_mode && info->no_menu_support) {
+        MP_WARN(s, "This disc's index is missing or unreadable, playing "
+                   "without menus.\n");
+        b->hdmv_mode = false;
+        b->cfg_title = BLURAY_DEFAULT_TITLE;
+    }
+
+    MP_VERBOSE(s, "bdnav: cfg_title=%d hdmv_mode=%d\n", b->cfg_title, b->hdmv_mode);
+    if (b->hdmv_mode) {
+        bd_register_overlay_proc(bd, b, bd_yuv_overlay_cb);
+        if (info->bdj_detected)
+            bd_register_argb_overlay_proc(bd, b, bd_argb_overlay_cb, NULL);
+        if (!bd_play(bd)) {
+            MP_ERR(s, "Couldn't start Blu-ray HDMV playback.\n");
+            ret = STREAM_ERROR;
+            goto err;
+        }
+        // BD_EVENT_PLAYLIST fills current_title in once the disc picks one.
+        MP_VERBOSE(s, "bdnav: HDMV entered\n");
+    } else if (!select_initial_title(s, bd_get_main_title(bd))) {
+        ret = STREAM_ERROR;
+        goto err;
+    }
+
+    // Angle selection is only valid once a playlist has been picked.
+    if (!b->hdmv_mode) {
+        if (!bd_select_angle(bd, b->opts->angle - 1))
+            MP_WARN(s, "Couldn't select angle '%d'.\n", b->opts->angle - 1);
+    }
+
+    b->current_angle = bd_get_current_angle(bd);
+
+    s->fill_buffer = bluray_stream_fill_buffer;
+    s->close       = bluray_stream_close;
+    s->control     = bluray_stream_control;
+    s->priv        = b;
+    s->demuxer     = "+disc";
+
+    MP_VERBOSE(s, "Blu-ray successfully opened.\n");
+
+    return STREAM_OK;
+
+err:
+    bluray_stream_close(s);
+    return ret;
+}
+
+static int bluray_stream_open(stream_t *s)
+{
+    struct bluray_priv_s *b = talloc_zero(s, struct bluray_priv_s);
+    s->priv = b;
+
+    bstr title, bdevice, rest = { .len = 0 };
+    bstr_split_tok(bstr0(s->path), "/", &title, &bdevice);
+
+    b->cfg_title = BLURAY_DEFAULT_TITLE;
+
+    struct MPOpts *opts = mp_get_config_group(s, s->global, &mp_opt_root);
+    int edition_id = opts->edition_id;
+    bool disc_menu = opts->disc_menu;
+    talloc_free(opts);
+
+    if (edition_id >= 0) {
+        b->cfg_title = edition_id;
+    } else if (title.len == 0 || bstr_equals0(title, "longest") ||
+               bstr_equals0(title, "first"))
+    {
+        b->cfg_title = disc_menu ? BLURAY_MENU_TITLE : BLURAY_DEFAULT_TITLE;
+    } else if (bstr_equals0(title, "menu")) {
+        b->cfg_title = BLURAY_MENU_TITLE;
+    } else if (bstr_equals0(title, "mpls")) {
+        bstr_split_tok(bdevice, "/", &title, &bdevice);
+        long long pl = bstrtoll(title, &rest, 10);
+        if (rest.len) {
+            MP_ERR(s, "number expected: '%.*s'\n", BSTR_P(rest));
+            return STREAM_ERROR;
+        } else if (pl < 0 || 99999 < pl) {
+            MP_ERR(s, "invalid playlist: '%.*s', must be in the range 0-99999\n",
+                            BSTR_P(title));
+            return STREAM_ERROR;
+        }
+        b->cfg_playlist = pl;
+        b->cfg_title    = BLURAY_PLAYLIST_TITLE;
+    } else if (title.len) {
+        long long t = bstrtoll(title, &rest, 10);
+        if (rest.len) {
+            MP_ERR(s, "number expected: '%.*s'\n", BSTR_P(rest));
+            return STREAM_ERROR;
+        } else if (t < 0 || 99999 < t) {
+            MP_ERR(s, "invalid title: '%.*s', must be in the range 0-99999\n",
+                            BSTR_P(title));
+            return STREAM_ERROR;
+        }
+        b->cfg_title = t;
+    }
+
+    b->cfg_device = bstrto0(b, bdevice);
+
+    return bluray_stream_open_internal(s);
+}
+
+const stream_info_t stream_info_bluray = {
+    .name = "bd",
+    .open = bluray_stream_open,
+    .protocols = (const char*const[]){ "bd", "br", "bluray", NULL },
+    .stream_origin = STREAM_ORIGIN_UNSAFE,
+};
+
+static bool check_bdmv(const char *path)
+{
+    if (strcasecmp(mp_basename(path), "MovieObject.bdmv"))
+        return false;
+
+    FILE *temp = fopen(path, "rb");
+    if (!temp)
+        return false;
+
+    char data[50];
+    bool ret = false;
+
+    if (fread(data, 50, 1, temp) == 1) {
+        bstr bdata = {data, 50};
+        ret = bstr_startswith0(bdata, "MOBJ0100") || // AVCHD
+              bstr_startswith0(bdata, "MOBJ0200") || // Blu-ray
+              bstr_startswith0(bdata, "MOBJ0300");   // UHD BD
+    }
+
+    fclose(temp);
+    return ret;
+}
+
+// Destructively remove the current trailing path component.
+static void remove_prefix(char *path)
+{
+    size_t len = strlen(path);
+#if HAVE_DOS_PATHS
+    const char *seps = "/\\";
+#else
+    const char *seps = "/";
+#endif
+    while (len > 0 && !strchr(seps, path[len - 1]))
+        len--;
+    while (len > 0 && strchr(seps, path[len - 1]))
+        len--;
+    path[len] = '\0';
+}
+
+static int bdmv_dir_stream_open(stream_t *stream)
+{
+    struct bluray_priv_s *priv = talloc_ptrtype(stream, priv);
+    stream->priv = priv;
+    struct MPOpts *opts = mp_get_config_group(NULL, stream->global, &mp_opt_root);
+    int default_title = opts->edition_id >= 0 ? opts->edition_id
+                                              : opts->disc_menu ? BLURAY_MENU_TITLE
+                                                                : BLURAY_DEFAULT_TITLE;
+    *priv = (struct bluray_priv_s){
+        .cfg_title = default_title,
+    };
+    talloc_free(opts);
+
+    if (!stream->access_references)
+        goto unsupported;
+
+    char *path = mp_file_get_path(priv, bstr0(stream->url));
+    if (!path)
+        goto unsupported;
+
+    // Hand the .iso to libbluray as the device. Opening validates the disc
+    // info, so it doubles as the probe (see priv->probing).
+    if (bstr_case_endswith(bstr0(path), bstr0(".iso"))) {
+        priv->cfg_device = talloc_strdup(priv, path);
+        priv->probing = stream->autoprobed;
+        int r = bluray_stream_open_internal(stream);
+        if (r != STREAM_OK) {
+            if (priv->probing)
+                goto unsupported;
+            return r;
+        }
+        MP_INFO(stream, "Blu-ray ISO image detected. Redirecting to bluray://\n");
+        return r;
+    }
+
+    // We allow the path to point to a directory containing BDMV/, a
+    // directory containing MovieObject.bdmv, or that file itself.
+    if (!check_bdmv(path)) {
+        // On UNIX, just assume the filename has always this case.
+        char *npath = mp_path_join(priv, path, "MovieObject.bdmv");
+        if (!check_bdmv(npath)) {
+            npath = mp_path_join(priv, path, "BDMV/MovieObject.bdmv");
+            if (!check_bdmv(npath))
+                goto unsupported;
+        }
+        path = npath;
+    }
+
+    // Go up by 2 levels.
+    remove_prefix(path);
+    remove_prefix(path);
+    priv->cfg_device = path;
+    if (strlen(priv->cfg_device) <= 1)
+        goto unsupported;
+
+    MP_INFO(stream, "BDMV detected. Redirecting to bluray://\n");
+    return bluray_stream_open_internal(stream);
+
+unsupported:
+    talloc_free(priv);
+    stream->priv = NULL;
+    return STREAM_UNSUPPORTED;
+}
+
+const stream_info_t stream_info_bdmv_dir = {
+    .name = "bdmv/bluray",
+    .open = bdmv_dir_stream_open,
+    .protocols = (const char*const[]){ "file", "", NULL },
+    // A disc image (or BDMV directory) reached through a playlist is a plain local
+    // path, so it is as trusted as any other local file a playlist may reference.
+    // Upstream marks this handler UNSAFE, and check_origin() then rejects it from
+    // FS-origin playlists ("From unix FS, allow all but unsafe"), so an ISO listed in
+    // a folder or an .m3u can never be opened: the candidate is skipped, the plain
+    // file stream wins and ffmpeg parses the image as garbage mpeg.
+    // FS keeps the guard that matters: a playlist loaded over the network
+    // (STREAM_ORIGIN_NET) still cannot pull in local disc images. The bd:// handler
+    // above stays UNSAFE on purpose (its device string can point anywhere).
+    .stream_origin = STREAM_ORIGIN_FS,
+};

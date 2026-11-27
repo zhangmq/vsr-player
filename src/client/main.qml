@@ -101,7 +101,12 @@ Item {
         // 写回初始值；onChanged 只在翻转时触发），鼠标不在热区则初始
         // 隐藏。弹窗注册表化：新增弹窗只需在 Component.onCompleted 的
         // _popups 数组中登记一行。
-        property bool showUi: bottomBar.mouseInRegion || topBar.mouseInRegion || anyPopupOpen
+        // Hide the chrome while a disc menu is on screen: our control bar and seek bar
+        // would sit on top of the disc's menu picture (interaction model agreed
+        // 2026-11-26). Popups such as the context menu are not chrome and stay usable.
+        property bool showUi: !viewModel.discMenuActive
+                              && (bottomBar.mouseInRegion || topBar.mouseInRegion
+                                  || anyPopupOpen)
         onShowUiChanged: viewModel.overlaysVisible = showUi
         property var _popups: []
         readonly property bool anyPopupOpen: {
@@ -158,6 +163,30 @@ Item {
             // 同一个动作），否则两个东西会叠在一起。
             visible: viewModel.hasMedia
             onClicked: viewModel.togglePlayPause()
+        }
+
+        // ── Mouse forwarding for disc menus (Blu-ray HDMV / BD-J, DVD) ──
+        // The menu picture is an OSD bitmap mpv draws into the video frame
+        // (player/discnav.c -> OSDTYPE_DISC_MENU); the disc does its own hit testing and
+        // we only hand over the position. Coordinates are **picture-normalized**
+        // (0..1, 0,0 top-left): the video fills the window (letterboxing is baked into
+        // the frame by mpv), so normalized window coordinates are picture coordinates.
+        // Only present while a menu is on screen -- otherwise it would steal
+        // "click to play/pause".
+        MouseArea {
+            id: discNavArea
+            anchors.fill: parent
+            enabled: viewModel.discMenuActive
+            visible: enabled
+            acceptedButtons: Qt.LeftButton
+            hoverEnabled: true
+            onPositionChanged: {
+                if (!viewModel.discMenuActive) return
+                viewModel.discNavMouse("mouse-move", mouse.x / width, mouse.y / height)
+            }
+            onClicked: function(mouse) {
+                viewModel.discNavMouse("mouse-click", mouse.x / width, mouse.y / height)
+            }
         }
 
         // ── 无媒体：dropzone + 初始操作提示（用户 2026-11-15）────────
@@ -341,6 +370,18 @@ Item {
             onExternalSubtitleRemoveRequested: function(id) { viewModel.removeTrack("sub", id) }
             onNearbySubtitlePicked: function(path) { viewModel.loadExternalSubtitle(path) }
             onEditionPicked: function(id) { viewModel.setEdition(id) }
+            // "Title" submenu: a disc title = mpv edition (in-place jump, no reload)
+            onTitlePicked: function(id) { viewModel.setEdition(id) }
+            // "Chapter" submenu: exact seek to the chapter start (same entry point as
+            // the seek bar, so the vf seek-target marker is applied and VSR does not
+            // burn frames)
+            onChapterPicked: function(index) {
+                var ch = viewModel.chapters
+                if (index >= 0 && index < ch.length)
+                    viewModel.seekAbsolute(Math.round(ch[index].time * 1000))
+            }
+            // Preferences -> Disc: flip "boot into disc menu"
+            onDiscMenuBootToggled: viewModel.discMenuBoot = !viewModel.discMenuBoot
             // 延迟：UI 立即乐观更新，PlayerViewModel 内 500ms debounce 后写 mpv
             onSubDelayNudged: function(d) { viewModel.adjustSubDelay(d) }
             onSubDelayResetRequested: { viewModel.resetSubDelay() }

@@ -75,7 +75,7 @@ struct mp_user_filter {
 
     bool last_is_active;
 
-    int64_t last_in_pts, last_out_pts;
+    double last_in_pts, last_out_pts;
 
     bool failed;
     bool error_eof_sent;
@@ -297,6 +297,9 @@ static void relink_filter_list(struct chain *p)
             mp_pin_connect(f->pins[0], p->filters_out);
         p->filters_out = f->pins[1];
     }
+
+    mp_pin_set_manual_connection_for(p->filters_in, p->f);
+    mp_pin_set_manual_connection_for(p->filters_out, p->f);
 }
 
 static void output_chain_process(struct mp_filter *f)

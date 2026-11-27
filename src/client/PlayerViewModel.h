@@ -147,6 +147,25 @@ class PlayerViewModel : public QObject {
     /// 右键菜单"网络流"只对网络源显示——本地 MKV 的 edition 是"章节版本"，
     /// 不该挂"网络流"这个名字。
     Q_PROPERTY(bool networkSource READ networkSource NOTIFY networkSourceChanged)
+    /// The current source is disc content (mpv `file-format == "disc"`: Blu-ray ISO,
+    /// BDMV directory, `bd://mpls/...` entry, DVD). A disc's edition-list is its
+    /// **title list**, not a set of selectable streams, so the context menu must not
+    /// present it as "Network stream" (reported 2026-11-26).
+    /// Classify with file-format: for an ISO opened natively by v0.42 the path is a
+    /// plain filename without a scheme, so "://" cannot tell them apart, while a
+    /// `bd://` entry would be mistaken for a network source.
+    Q_PROPERTY(bool discSource READ discSource NOTIFY discSourceChanged)
+    /// A disc menu is on screen (mpv `disc-menu-active`). The menu itself is drawn by
+    /// mpv into the video frame as an OSD bitmap (OSDTYPE_DISC_MENU); the client draws
+    /// nothing and only forwards arrows/Enter/mouse to `discnav` while it is active,
+    /// hiding its own chrome at the same time.
+    Q_PROPERTY(bool discMenuActive READ discMenuActive NOTIFY discMenuActiveChanged)
+    /// Boot a disc into its own menu (default true, decided 2026-11-26).
+    /// Off = play the longest title directly; upstream only has in-disc navigation when
+    /// playback starts in menu mode, so a disc opened this way has no menu to enter
+    /// (the escape hatch is the Disc menu row in the Title panel).
+    Q_PROPERTY(bool discMenuBoot READ discMenuBoot WRITE setDiscMenuBoot
+               NOTIFY discMenuBootChanged)
     Q_PROPERTY(QString videoInfo READ videoInfo NOTIFY videoInfoChanged)
     // OSD 数据源（观察器填充，主线程持有）
     Q_PROPERTY(int videoWidth READ videoWidth NOTIFY osdDataChanged)
@@ -322,6 +341,9 @@ public:
     void loadSettings();
     /// mpv init 后应用持久化的音量/倍速/循环（观察器随后回填 viewModel）。
     void applyPlaybackSettings();
+    /// Push the disc-related mpv option (`disc-menu`). Must run **before** loadfile:
+    /// it is read when the stream is opened.
+    void applyDiscOptions();
     /// 恢复上次播放列表（无 CLI 文件时调用）：首条 replace 开始播放，
     /// 其余 append，最后定位上次条目。
     void restorePlaylist();
@@ -418,6 +440,10 @@ public:
     /// 移除/删除文件"两项在播放中仍不可见，就是因为 FILE_LOADED 只赋值不发信号）。
     void setFileLoaded(bool v);
     bool networkSource() const { return networkSource_; }
+    bool discSource() const { return discSource_; }
+    bool discMenuActive() const { return discMenuActive_; }
+    bool discMenuBoot() const { return discMenuBoot_; }
+    void setDiscMenuBoot(bool on);
     QString videoInfo() const   { return videoInfo_; }
     int videoWidth() const { return videoWidth_.load(); }
     int videoHeight() const { return videoHeight_.load(); }
@@ -671,6 +697,10 @@ public slots:
     Q_INVOKABLE void resetAudioDelay();
     /// 切换网络流（edition id，来自 editions 列表）
     Q_INVOKABLE void setEdition(int id);
+    /// In-disc navigation (mpv `discnav`): up/down/left/right/select/prev/menu/popup.
+    Q_INVOKABLE void discNav(const QString &action);
+    /// Forward the mouse; nx/ny are picture-normalized coordinates (0..1, 0,0 top-left).
+    Q_INVOKABLE void discNavMouse(const QString &action, double nx, double ny);
     /// 移除某条轨道（字幕轨用 sub-remove；音视频轨不支持移除）
     Q_INVOKABLE void removeTrack(const QString &type, qlonglong id);
     /// 轨道回到自动（vid/aid = auto）
@@ -754,6 +784,9 @@ signals:
     void canDeleteCurrentFileChanged();
     void hasMediaChanged();
     void networkSourceChanged();
+    void discSourceChanged();
+    void discMenuActiveChanged();
+    void discMenuBootChanged();
     void videoInfoChanged();
     void osdDataChanged();
     void videoHdrChanged();
@@ -937,6 +970,10 @@ private:
     QString aspect_ = QStringLiteral("no");    // no=容器比例（mpv 0.41 -1 已弃用，no 等价无警告）
     std::atomic<bool> hwDecoding_{false};      // 实际（hwdec-current != no）
     bool networkSource_ = false;   // 当前路径带 "://"（右键菜单"网络流"的显示条件之一）
+    bool discSource_ = false;      // file-format == "disc"（光盘内容：title 不是码流）
+    bool discMenuActive_ = false;  // disc-menu-active（盘内菜单在屏上）
+    bool discMenuBoot_ = true;     // boot a disc into its menu (decided 2026-11-26)
+    qint64 lastDiscMouseMs_ = 0;   // throttle for disc-menu mouse moves (40 ms)
     bool hwdecKnown_ = false;                  // hwdec-current 读到过真实值（false = 解码器未建立/属性不可用）
     std::atomic<bool> hwDecodeEnabled_{true};  // 用户偏好（我们下发的 hwdec 开关）
     std::atomic<bool> hwDecodeAvailable_{true};// 当前文件能否硬解（UI 禁用依据）

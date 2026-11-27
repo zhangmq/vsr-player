@@ -46,6 +46,31 @@ bool KeyRouter::eventFilter(QObject *watched, QEvent *event)
         return false;
 
     auto *ke = static_cast<QKeyEvent *>(event);
+
+    // A disc menu is on screen: arrows/Enter/Esc go to the disc's virtual machine
+    // (mpv's `discnav` command, the same mapping as upstream's {discnav} input
+    // section), other keys behave normally. Not taken over in 3D: the menu is one
+    // whole picture and would be split across the two eyes (same as mpv's OSD).
+    if (vm_ && vm_->discMenuActive() && !mode3d()) {
+        const char *nav = nullptr;
+        switch (ke->key()) {
+        case Qt::Key_Up:        nav = "up"; break;
+        case Qt::Key_Down:      nav = "down"; break;
+        case Qt::Key_Left:      nav = "left"; break;
+        case Qt::Key_Right:     nav = "right"; break;
+        case Qt::Key_Return:
+        case Qt::Key_Enter:     nav = "select"; break;
+        case Qt::Key_Escape:
+        case Qt::Key_Backspace: nav = "prev"; break;
+        default: break;
+        }
+        if (nav) {
+            vm_->discNav(QString::fromLatin1(nav));
+            MLOG_VERBOSE("key: discnav %s", nav);
+            return true;
+        }
+    }
+
     const int idx = keymap::find(ke->key(), ke->modifiers(), mode3d());
     if (idx < 0)
         return false;
@@ -118,6 +143,15 @@ bool KeyRouter::exec(const QString &id)
     if (id == "playlist-prev") { vm_->playlistPrev(); return true; }
     if (id == "playlist-next") { vm_->playlistNext(); return true; }
     if (id == "toggle-osd") { vm_->toggleOsd(); return true; }
+    // ── Disc menu (Ctrl+M / Ctrl+Shift+M) ───────────────────────────
+    if (id == "disc-menu-root" || id == "disc-menu-popup") {
+        if (!vm_->discSource()) {
+            MLOG_VERBOSE("key: %s ignored (not a disc source)", qUtf8Printable(id));
+            return true;
+        }
+        vm_->discNav(id == "disc-menu-root" ? "menu" : "popup");
+        return true;
+    }
     if (id == "toggle-subtitles") { vm_->toggleSubtitles(); return true; }
     if (id == "toggle-fullscreen") { vm_->toggleFullscreen(); return true; }
     if (id == "remove-from-playlist") { vm_->removeCurrentFromPlaylist(); return true; }

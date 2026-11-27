@@ -71,6 +71,9 @@ PopupBase {
     signal stereoSelected(int value, int group)
     /// 右键菜单「界面」二级项：翻转某个界面元素（0 = 缩略图）。
     signal uiElementToggled(int id)
+    signal titlePicked(int id)               // disc title (mpv edition, not a track)
+    signal chapterPicked(int index)          // chapter index, 0-based
+    signal discMenuBootToggled()             // Preferences -> Disc: flip boot-into-menu
     /// 「关于」弹窗（图标 / 名称 / 版本 / 许可 / 仓库）。
     signal aboutRequested()
     signal quitRequested()
@@ -121,6 +124,8 @@ PopupBase {
         {header: qsTr("Preferences")},
         {icon: "󰨇", text: qsTr("Interface"),
          submenu: function() { return root.interfaceMenu() }},
+        {icon: "󰥠", text: qsTr("Disc"),
+         submenu: function() { return root.discPrefsMenu() }},
 
         // ── 轨道 / 流（按文件；无媒体时整块隐藏）──────────────────────
         {sep: true},
@@ -135,6 +140,27 @@ PopupBase {
         {icon: "󰕧", text: qsTr("Video"),
          submenu: function() { return root.videoMenu() },
          enabledWhen: function() { return root.hasVideoMenu() }},
+        // A disc's titles are mpv editions: neither streams (the "Network stream"
+        // section above) nor video tracks. A disc has a single playlist entry, so this
+        // is the only place to pick a title (model decided 2026-11-26; upstream 0.42's
+        // edition *is* "a title on the disc"). Rows read `Title 6 · 1:18:30`, plus a
+        // `Disc menu` entry when the disc supports navigation.
+        {icon: "󰿎", text: qsTr("Title"),
+         hint: function() { return root.currentDiscTitleLabel() },
+         subSig: "titlePicked",
+         current: function() { return viewModel.currentEdition },
+         submenu: function() { return root.discTitlesMenu() },
+         enabledWhen: function() { return root.hasDiscTitles() }},
+        // Chapters: a mirror of mpv's chapter-list (= upstream menu.conf's $chapters).
+        // A disc title often has a dozen or more of them (the test disc's main title has
+        // 16), and without a list the only way in is the seek bar. Row labels use the
+        // chapter name when the disc/container provides one, otherwise index + start.
+        {icon: "󰉻", text: qsTr("Chapter"),
+         hint: function() { return root.currentChapterLabel() },
+         subSig: "chapterPicked",
+         current: function() { return root.currentChapterIndex() },
+         submenu: function() { return root.chaptersMenu() },
+         enabledWhen: function() { return viewModel.chapters.length > 0 }},
         {icon: "󰝚", text: qsTr("Audio"),
          subSig: "audioTrackPicked",
          current: function() { return root.selectedTrackId("audio") },
@@ -272,12 +298,109 @@ PopupBase {
         ]
     }
 
+    /// Preferences -> Disc: a single boolean, so one toggle row (same shape as the
+    /// thumbnail switch under Interface: a click flips it and the menu stays open).
+    function discPrefsMenu() {
+        return [
+            {label: qsTr("Boot into disc menu"),
+             toggle: viewModel.discMenuBoot,
+             subSig: "discMenuBootToggled"}
+        ]
+    }
+
+    /// 本片是不是"盘"：edition-list 代表盘上的 title，而不是网络码流。
+    function hasDiscTitles() {
+        return viewModel.discSource && viewModel.editions.length > 1
+    }
+
+    /// mpv labels disc titles as `title: 6 (01:18:30.539) (00003.mpls)`; when the disc
+    /// supports navigation demux_disc also appends a synthetic `Disc Menu` (no duration
+    /// and no playlist).
+    function discTitleLabel(title) {
+        var t = String(title || "")
+        if (t === "Disc Menu") return qsTr("Disc menu")
+        var m = t.match(/^title:\s*(\d+)\s*\((\d+):(\d+):(\d+)/)
+        // 小时去掉前导零（mpv 的标签是 "01:18:30"），分钟/秒保持两位
+        if (m) return qsTr("Title %1 · %2:%3:%4").arg(m[1])
+                    .arg(String(parseInt(m[2], 10))).arg(m[3]).arg(m[4])
+        return t
+    }
+
+    /// Current title shown as the hint of the Title row (no mpls number)
+    function currentDiscTitleLabel() {
+        var eds = viewModel.editions
+        for (var i = 0; i < eds.length; i++)
+            if (eds[i].id === viewModel.currentEdition)
+                return root.discTitleLabel(eds[i].title)
+        return qsTr("Auto")
+    }
+
+    /// 「Title」二级面板：盘上的 title 列表（= mpv 的 edition-list）
+    function discTitlesMenu() {
+        var out = []
+        var eds = viewModel.editions
+        for (var i = 0; i < eds.length; i++)
+            out.push({label: root.discTitleLabel(eds[i].title),
+                      value: eds[i].id,
+                      subSig: "titlePicked",
+                      current: eds[i].id === viewModel.currentEdition,
+                      section: "titles", sectionRows: root.trackSectionRows})
+        return out
+    }
+
+    /// 当前章节序号（按 currentTime 落在哪个章节起点之后；无章节 → -1）
+    function currentChapterIndex() {
+        var ch = viewModel.chapters
+        if (!ch || ch.length === 0) return -1
+        var t = viewModel.currentTime / 1000
+        var idx = 0
+        for (var i = 0; i < ch.length; i++) {
+            if (ch[i].time <= t + 0.05) idx = i
+            else break
+        }
+        return idx
+    }
+
+    function chapterTimeLabel(sec) {
+        var s = Math.max(0, Math.floor(sec))
+        var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60
+        var p2 = function(v) { return (v < 10 ? "0" : "") + v }
+        return h > 0 ? h + ":" + p2(m) + ":" + p2(ss) : m + ":" + p2(ss)
+    }
+
+    /// Chapter row label: the container/disc name when there is one, else
+    /// "Chapter N" + start time
+    function chapterLabel(index) {
+        var ch = viewModel.chapters
+        if (!ch || index < 0 || index >= ch.length) return ""
+        var name = String(ch[index].title || "")
+        if (name.length === 0) name = qsTr("Chapter %1").arg(index + 1)
+        return name + " · " + root.chapterTimeLabel(ch[index].time)
+    }
+
+    function currentChapterLabel() {
+        var i = root.currentChapterIndex()
+        return i < 0 ? "" : root.chapterLabel(i)
+    }
+
+    /// 「章节」二级面板（固定高度滚动区；长片几十章也只在区内滚）
+    function chaptersMenu() {
+        var out = []
+        var ch = viewModel.chapters
+        var cur = root.currentChapterIndex()
+        for (var i = 0; i < ch.length; i++)
+            out.push({label: root.chapterLabel(i), value: i, subSig: "chapterPicked",
+                      current: i === cur,
+                      section: "chapters", sectionRows: root.trackSectionRows})
+        return out
+    }
+
     /// 「视频」二级面板：网络流 + 视频轨道两段（各自固定高度滚动区）。
     /// 行自带 `current`（勾选）与 `subSig`（点它调哪个信号）——两段语义不同，
     /// 不能再共用父条目的 subSig。
     function videoMenu() {
         var out = []
-        if (root.hasEditions()) {
+        if (root.hasStreamChoices()) {
             out.push({header: qsTr("Network stream")})
             var eds = viewModel.editions
             for (var i = 0; i < eds.length; i++)
@@ -302,9 +425,10 @@ PopupBase {
         return out
     }
 
-    /// 「视频」入口是否显示：有网络流可选，或本片有多条视频轨
+    /// Whether the Video entry is shown: there are streams to pick (network source) or
+    /// this file has more than one video track
     function hasVideoMenu() {
-        return (viewModel.networkSource && root.hasEditions()) || root.tracksOf("video").length > 1
+        return root.hasStreamChoices() || root.tracksOf("video").length > 1
     }
 
     function audioTracksMenu() {
@@ -397,6 +521,15 @@ PopupBase {
 
     // ── 网络流（mpv edition）──────────────────────────────────────────
     function hasEditions() { return viewModel.editions.length > 1 }
+
+    /// Real **selectable streams** (one edition per ytdl format).
+    /// ⚠ A disc's edition-list is its title list, not streams: those used to be listed
+    /// under "Network stream" in the Video panel (reported 2026-11-26: disc titles
+    /// showed up in the video-track panel with a "Network stream" heading). Same for
+    /// local files with several editions (mpv has no edition menu of its own either).
+    function hasStreamChoices() {
+        return !viewModel.discSource && viewModel.networkSource && root.hasEditions()
+    }
 
     /// mpv 给的标题形如 "1080P 高清 (av1 1920x1080 29 fps 1922 kbps)"：
     /// 整理成 "1080P 高清 · AV1 · 1.9M"（跳过 null 编码），解析失败就原样显示。
@@ -871,7 +1004,12 @@ PopupBase {
         if (row.toggle !== undefined) {
             // toggle 型：翻转后**保持打开**（还要能连点其它界面元素）；
             // 勾选态由 row.toggle 的绑定（viewModel 属性）刷新。
-            if (row.subSig) root[row.subSig](row.value, row.group || 0)
+            // 没有 value 的 toggle 行（如 Preferences → Disc）是零参信号，不能硬塞
+            // (value, group)：QML 会报 "Too many arguments, ignoring 1"。
+            if (row.subSig) {
+                if (row.value !== undefined) root[row.subSig](row.value, row.group || 0)
+                else root[row.subSig]()
+            }
             return
         }
         if (row.sig !== undefined) {

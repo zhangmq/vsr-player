@@ -209,6 +209,22 @@ beginFrame 入口挂一个 `qScopeGuard` 调 `endFrame`，成功路径 `dismiss(
 **修复产物**：`build/qt-fix/lib/libQt6Gui.so.6`（= qtbase 6.12.0 + c68e1fc1 + Arch 的
 md4c 0.6 适配），与 `libQt6Quick` 一样放到播放器私有库目录即可生效（同一个版本闸门）。
 
+**✅ 已收尾（2026-11-26）**：本机 `qt6-base` / `qt6-declarative` 升到 **6.12.1**（Arch，
+两个缺陷都在其中），补丁库不再需要：
+
+- 安装包侧：`install.sh` 的闸门本来就按 host 版本判断——`< 6.12.1` 才装补丁库，
+  `>= 6.12.1` 跳过并**删除**已有的两个 `libQt6*.so.6`。
+- 开发构建侧：`src/client/meson.build` 的 `dev_qt_fix_args` 现在也加了版本闸门
+  （只在 host Qt `< 6.12.1` 时才注入 `build/qt-fix` 的 rpath）。没有闸门时，6.12.0 的
+  补丁库在 6.12.1 上会在**加载期**失败：
+  `undefined symbol: _ZN14QObjectPrivateC2E16QtPrivate_6_12_0, version Qt_6_PRIVATE_API`
+  ——Qt 私有 API 带版本化符号，6.12.0 的库不能配 6.12.1 的其它 Qt 库。
+- ⚠ **Qt 大版本更新后必须 `meson setup --wipe <builddir>`**，不能只 `--reconfigure`：
+  meson 会**缓存 pkg-config 查到的依赖版本**，`--reconfigure` 不重新查询。实测：升级到
+  6.12.1 后 `--reconfigure` 仍按 6.12.0（甚至 6.11.1）解析依赖 → 要么编不过
+  （私有头路径 `/usr/include/qt6/QtGui/6.12.0/...` 不存在），要么链接进旧 rpath。
+```
+
 ## 5. 相关文件
 
 - `src/client/Video.{h,cpp}`：渲染循环、`updatePaintNode`、诊断计数、nudge/force

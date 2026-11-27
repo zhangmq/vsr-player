@@ -57,7 +57,6 @@ static void print_version(struct mp_log *log)
     mp_print_version(log, true);
 }
 
-extern const struct m_sub_options tv_params_conf;
 extern const struct m_sub_options stream_bluray_conf;
 extern const struct m_sub_options stream_cdda_conf;
 extern const struct m_sub_options stream_dvb_conf;
@@ -94,6 +93,7 @@ extern const struct m_obj_list vo_obj_list;
 extern const struct m_sub_options ao_conf;
 
 extern const struct m_sub_options dvd_conf;
+extern const struct m_sub_options dvda_conf;
 extern const struct m_sub_options clipboard_conf;
 extern const struct m_sub_options curl_conf;
 
@@ -316,7 +316,6 @@ const struct m_sub_options mp_subtitle_sub_opts = {
         {"sub-gauss", OPT_FLOAT(sub_gauss), M_RANGE(0.0, 3.0)},
         {"sub-gray", OPT_BOOL(sub_gray)},
         {"sub-ass", OPT_BOOL(ass_enabled), .flags = UPDATE_SUB_HARD},
-        {"sub-scale", OPT_FLOAT(sub_scale), M_RANGE(0, 100)},
         {"sub-scale-signs", OPT_BOOL(sub_scale_signs)},
         {"sub-line-spacing", OPT_FLOAT(sub_line_spacing), M_RANGE(-1000, 1000)},
         {"sub-ass-line-spacing", OPT_REPLACED("sub-line-spacing")},
@@ -366,7 +365,6 @@ const struct m_sub_options mp_subtitle_sub_opts = {
         .sub_scale_with_window = true,
         .ass_prune_delay = -1.0,
         .teletext_page = 0,
-        .sub_scale = 1,
         .ass_vsfilter_color_compat = 1,
         .ass_use_video_data = 2,
         .ass_video_aspect = 0,
@@ -381,10 +379,12 @@ const struct m_sub_options mp_subtitle_sub_opts = {
 
 const struct m_sub_options mp_subtitle_shared_sub_opts = {
     .opts = (const struct m_option[]){
-        {"sub-delay", OPT_FLOAT(sub_delay[0])},
-        {"secondary-sub-delay", OPT_FLOAT(sub_delay[1])},
+        {"sub-delay", OPT_DOUBLE(sub_delay[0])},
+        {"secondary-sub-delay", OPT_DOUBLE(sub_delay[1])},
         {"sub-pos", OPT_FLOAT(sub_pos[0]), M_RANGE(0.0, 150.0)},
         {"secondary-sub-pos", OPT_FLOAT(sub_pos[1]), M_RANGE(0.0, 150.0)},
+        {"sub-scale", OPT_FLOAT(sub_scale[0]), M_RANGE(0, 100)},
+        {"secondary-sub-scale", OPT_FLOAT(sub_scale[1]), M_RANGE(0, 100)},
         {"sub-visibility", OPT_BOOL(sub_visibility[0])},
         {"secondary-sub-visibility", OPT_BOOL(sub_visibility[1])},
         {"sub-ass-override", OPT_CHOICE(ass_style_override[0],
@@ -408,6 +408,8 @@ const struct m_sub_options mp_subtitle_shared_sub_opts = {
         .sub_visibility[0] = true,
         .sub_visibility[1] = true,
         .sub_pos[0] = 100,
+        .sub_scale[0] = 1,
+        .sub_scale[1] = 1,
         .ass_style_override[0] = ASS_STYLE_OVERRIDE_SCALE,
         .ass_style_override[1] = ASS_STYLE_OVERRIDE_STRIP,
     },
@@ -588,8 +590,12 @@ static const m_option_t mp_opts[] = {
 #if HAVE_DVDNAV
     {"dvd", OPT_SUBSTRUCT(dvd_opts, dvd_conf)},
 #endif
+#if HAVE_DVDA
+    {"dvda", OPT_SUBSTRUCT(dvda_opts, dvda_conf)},
+#endif
     {"edition", OPT_CHOICE(edition_id, {"auto", -1}), M_RANGE(0, 8190)},
     {"flatten-editions", OPT_BOOL(flatten_editions)},
+    {"disc-menu", OPT_BOOL(disc_menu)},
     {"show-dependent-tracks", OPT_BOOL(show_dependent_tracks)},
 #if HAVE_LIBBLURAY
     {"bluray", OPT_SUBSTRUCT(stream_bluray_opts, stream_bluray_conf)},
@@ -615,6 +621,8 @@ static const m_option_t mp_opts[] = {
 
     {"playlist-start", OPT_CHOICE(playlist_pos, {"auto", -1}, {"no", -1}),
         M_RANGE(0, INT_MAX)},
+    {"playlist-inherit-options", OPT_CHOICE(playlist_inherit_options,
+        {"no", 0}, {"yes", 1}, {"current", 2})},
 
     {"pause", OPT_BOOL(pause)},
     {"keep-open", OPT_CHOICE(keep_open,
@@ -692,7 +700,7 @@ static const m_option_t mp_opts[] = {
     {"audio-pitch-correction", OPT_BOOL(pitch_correction)},
 
     // set a-v distance
-    {"audio-delay", OPT_FLOAT(audio_delay)},
+    {"audio-delay", OPT_DOUBLE(audio_delay)},
 
 // ------------------------- codec/vfilter options --------------------
 
@@ -910,8 +918,10 @@ static const m_option_t mp_opts[] = {
 #endif
     {"input-terminal", OPT_BOOL(consolecontrols), .flags = UPDATE_TERM},
 
+#ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
     {"input-ipc-server", OPT_STRING(ipc_path), .flags = M_OPT_FILE},
     {"input-ipc-client", OPT_STRING(ipc_client)},
+#endif
 
     {"screenshot", OPT_SUBSTRUCT(screenshot_image_opts, screenshot_conf)},
     {"screenshot-template", OPT_STRING(screenshot_template)},
@@ -1091,9 +1101,9 @@ static const struct MPOpts mp_default_opts = {
         NULL
     },
     .audio_exts = (char *[]){
-        "aac", "ac3", "aiff", "ape", "au", "dts", "eac3", "flac", "m4a", "mka",
-        "mp1", "mp2", "mp3", "mpc", "oga", "ogg", "ogm", "opus", "tak", "thd",
-        "tta", "wav", "wma", "wv", NULL
+        "aac", "ac3", "aiff", "ape", "au", "dff", "dsf", "dts", "eac3", "flac",
+        "m4a", "mka", "mp1", "mp2", "mp3", "mpc", "oga", "ogg", "ogm", "opus",
+        "tak", "thd", "tta", "wav", "wma", "wv", NULL
     },
     .image_exts = (char *[]){
         "avif", "bmp", "gif", "heic", "heif", "j2k", "jp2", "jpeg", "jpg",
@@ -1103,10 +1113,13 @@ static const struct MPOpts mp_default_opts = {
         "zip", "rar", "7z", "cbz", "cbr", NULL
     },
     .playlist_exts = (char *[]){
-        // "iso"：蓝光镜像按"容器"处理（见 demux/demux_playlist.c 的 parse_bluray）。
-        // 加在这里，是因为目录展开（parse_dir → test_path）只按扩展名表挑选——
-        // 不加的话"打开一个只装了 .iso 的文件夹"会得到 0 条目，随即报
-        // "Failed to recognize file format"（实测）。
+        // "iso": disc images are detected by the stream layer (stream_bluray.c's
+        // bdmv_dir_stream_open claims .iso, demux_disc expands it into one disc
+        // stream). Listing the extension here only makes **directory expansion**
+        // (parse_dir -> test_path, which selects entries by extension) show .iso files
+        // as entries -- without it, "open a folder that only contains a .iso" yields
+        // zero entries and then "Failed to recognize file format" (measured). It does
+        // not mean "treat an ISO as a playlist".
         "cue", "edl", "m3u", "m3u8", "pls", "strm", "iso", NULL
     },
 
@@ -1194,6 +1207,7 @@ static const struct MPOpts mp_default_opts = {
         "secondary-sid",
         "secondary-sub-delay",
         "secondary-sub-pos",
+        "secondary-sub-scale",
         "secondary-sub-ass-override",
         "secondary-sub-visibility",
         "ab-loop-a",
