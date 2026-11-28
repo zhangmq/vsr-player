@@ -836,7 +836,17 @@ PopupBase {
     }
 
     /// 鼠标移动到主菜单某一行（仅指针真的移动时生效）
+    /// 打开后的**第一次**悬停只记位置、不选行：主菜单放进 Flickable 后，
+    /// 内容布局/裁剪会让 hover 重新投递，刚打开就把指针底下那行设成当前行
+    ///（旧行为是"打开时无当前行"，T2 用例守着这条）。
+    property bool hoverPrimed: false
+
     function hoverMain(i, pos) {
+        if (!root.hoverPrimed) {
+            root.hoverPrimed = true
+            root.lastPointerPos = pos
+            return
+        }
         if (!root.pointerMoved(pos)) return
         root.focusSub = false
         root.setCurrentRow(root.rowFocusable(i) ? i : -1, true)
@@ -1121,7 +1131,12 @@ PopupBase {
     }
 
     /// 打开后让内容项拿到键盘焦点（否则 ↑↓/Enter 收不到）
-    onOpened: if (contentRoot) contentRoot.forceActiveFocus()
+    onOpened: {
+        if (contentRoot) contentRoot.forceActiveFocus()
+        // 打开后的第一次悬停只记位置（Flickable 内容布局/裁剪会重新投递
+        // hover，刚打开就把指针底下那行设成当前行）；见 hoverMain
+        root.hoverPrimed = false
+    }
     /// 二级面板是独立 popup：subVisible 是唯一开关，子 popup 跟着它开合。
     onSubVisibleChanged: {
         if (subVisible) subMenu.open()

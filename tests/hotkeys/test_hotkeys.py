@@ -74,8 +74,9 @@ def t3_window_keys(p: Player) -> None:
     before2, back = nudge(p, "Left", -1)
     check(4.0 <= before2 - back <= 7.5, "← 后退约 5 秒", f"{before2:.1f}→{back:.1f}")
 
-    # 字幕延迟：z / Shift+Z / Ctrl+0（分开放置，不要一起归零）
-    rpc.key("Ctrl+0")
+    # 字幕延迟：z / Shift+Z / Ctrl+Alt+Z（分开放置，不要一起归零）
+    # ⚠ Ctrl+0 自 2026-11-28 起是 VSR auto，字幕归零挪到 Ctrl+Alt+Z
+    rpc.key("Ctrl+Alt+Z")
     wait_until(lambda: p.menu()["subDelay"] == 0, "字幕延迟归零")
     rpc.key("z")
     wait_until(lambda: p.menu()["subDelay"] == -50, "z → -50ms", timeout=4)
@@ -83,9 +84,9 @@ def t3_window_keys(p: Player) -> None:
     wait_until(lambda: p.menu()["subDelay"] == -100, "z 再按 → -100ms", timeout=4)
     rpc.key("Shift+Z")
     wait_until(lambda: p.menu()["subDelay"] == -50, "Shift+Z → -50ms", timeout=4)
-    rpc.key("Ctrl+0")
-    wait_until(lambda: p.menu()["subDelay"] == 0, "Ctrl+0 → 0", timeout=4)
-    check(True, "字幕延迟 z / Shift+Z / Ctrl+0")
+    rpc.key("Ctrl+Alt+Z")
+    wait_until(lambda: p.menu()["subDelay"] == 0, "Ctrl+Alt+Z → 0", timeout=4)
+    check(True, "字幕延迟 z / Shift+Z / Ctrl+Alt+Z")
 
     # 音频延迟：Ctrl++ / Ctrl+= / Ctrl+- / Ctrl+Alt+0
     rpc.key("Ctrl++")
@@ -102,7 +103,7 @@ def t3_window_keys(p: Player) -> None:
     rpc.key("z")
     wait_until(lambda: p.menu()["subDelay"] == -50, "z 只改字幕", timeout=4)
     expect_eq(p.menu()["audioDelay"], 0, "调字幕不动音频延迟")
-    rpc.key("Ctrl+0")
+    rpc.key("Ctrl+Alt+Z")
     wait_until(lambda: p.menu()["subDelay"] == 0, "字幕归零", timeout=4)
 
     # 播放/暂停
@@ -158,13 +159,13 @@ def t3_popup_gating(p: Player) -> None:
     expect_eq(p.menu()["playlist"], 0, "菜单开着时 P 不开播放列表")
 
     # 但延迟动作照旧可用（popupOk）
-    rpc.key("Ctrl+0")
-    wait_until(lambda: p.menu()["subDelay"] == 0, "菜单内 Ctrl+0 归零", timeout=4)
+    rpc.key("Ctrl+Alt+Z")
+    wait_until(lambda: p.menu()["subDelay"] == 0, "菜单内 Ctrl+Alt+Z 归零", timeout=4)
     rpc.key("z")
     wait_until(lambda: p.menu()["subDelay"] == -50, "菜单内 z → -50ms", timeout=4)
     check("popup=1" in p.last_dispatch(), "延迟键记录为弹窗内派发",
           p.last_dispatch())
-    rpc.key("Ctrl+0")
+    rpc.key("Ctrl+Alt+Z")
     wait_until(lambda: p.menu()["subDelay"] == 0, "菜单内归零", timeout=4)
     p.close_menu()
     expect_eq(p.menu()["popups"], 0, "关菜单后弹窗计数归零")
@@ -242,7 +243,7 @@ def t2_menu_state_machine(p: Player) -> None:
         rpc.key("Down")
     check(landed, "导航到 Subtitle delay 行", p.menu()["currentRow"])
 
-    rpc.key("Ctrl+0")
+    rpc.key("Ctrl+Alt+Z")   # 字幕归零（Ctrl+0 已给 VSR auto）
     wait_until(lambda: p.menu()["msSub"] == 0, "先归零", timeout=4)
     rpc.key("Enter")
     st = settle(p)
@@ -256,8 +257,8 @@ def t2_menu_state_machine(p: Player) -> None:
     rpc.key("Enter")
     st = settle(p)
     expect_eq(st["ctl"], 0, "Enter 退出控件态")
-    rpc.key("Ctrl+0")
-    wait_until(lambda: p.menu()["msSub"] == 0, "Ctrl+0 归零", timeout=4)
+    rpc.key("Ctrl+Alt+Z")
+    wait_until(lambda: p.menu()["msSub"] == 0, "Ctrl+Alt+Z 归零", timeout=4)
     check(True, "延迟行：Enter 控件态 + ←/→ ±50ms")
 
     # 方向键只导航不执行：在延迟行按 ←/→（非控件态）不调值
