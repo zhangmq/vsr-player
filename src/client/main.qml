@@ -212,6 +212,7 @@ Item {
             dragActive: dropArea.containsDrag
             phase: viewModel.mediaPhase
             detail: viewModel.mediaPhaseDetail
+            title: viewModel.mediaPhaseTitle
             failedIsFolder: viewModel.mediaPhaseIsFolder
             canRetry: viewModel.canRetryOpen
             canContinue: viewModel.playlistModel.count > 0
@@ -232,6 +233,7 @@ Item {
             hwDecodeAvailable: viewModel.hwDecodeAvailable
             hwDecodeReason: viewModel.hwDecodeReason
             aiAvailable: viewModel.aiAvailable
+            vfxUnavailable: viewModel.vfxUnavailable
             muted: viewModel.muted
             currentTime: viewModel.currentTime
             duration: viewModel.duration
@@ -279,6 +281,7 @@ Item {
             id: qualityPopup
             anchorTarget: bottomBar.qualityBtn
             aiAvailable: viewModel.aiAvailable
+            vfxUnavailable: viewModel.vfxUnavailable
             scal: viewModel.scale
             quality: viewModel.quality
             denoiseQuality: viewModel.denoiseQuality
@@ -672,6 +675,16 @@ Item {
                      "winActive=" + (window ? (window.active ? 1 : 0) : -1),
                      "ctlWin=" + (controlMode ? 1 : 0),
                      "subOpen=" + (c.subVisible ? 1 : 0),
+                     "subPopup=" + (c.subPopupOpened ? 1 : 0),
+                     "pos=" + Math.round(c.x) + "," + Math.round(c.y),
+                     // 钳位输入（首次打开"没按窗口适配"要能看到这些值）：
+                     // layer = 宿主 uiLayer 尺寸，h = 菜单实际高度，
+                     // estH = 行模型估算高度（首次布局前用它钳位）
+                     "layer=" + Math.round(uiLayer.width) + "x" + Math.round(uiLayer.height),
+                     "h=" + Math.round(c.height) + " estH=" + Math.round(c.estimatedPanelH())
+                            + " size=" + Math.round(c.width) + "x" + Math.round(c.height),
+                     "subGeom=" + (c.subGeom ? c.subGeom.x + "," + c.subGeom.y
+                                             + "," + c.subGeom.w + "x" + c.subGeom.h : "-"),
                      "subIdx=" + c.currentIndex,
                      "contentH=" + Math.round(c.subContentH),
                      c.navState]
@@ -702,13 +715,10 @@ Item {
     function openMenuAt(x, y, subIndex) {
         contextMenu.showAt(uiLayer, x, y)
         // 可选：直接展开第 subIndex 个条目的二级面板（截图核对分组排版用）。
-        // 必须 callLater：ContextMenu.onAboutToShow 会重置 subOpen/subIndex，
+        // 必须 callLater：ContextMenu.onAboutToShow 会把当前行/面板收起，
         // 而它在 open() 期间（异步）才触发 → 立刻赋值会被覆盖掉。
         if (typeof subIndex === "number" && subIndex >= 0) {
-            Qt.callLater(function () {
-                contextMenu.subIndex = subIndex
-                contextMenu.subOpen = true
-            })
+            Qt.callLater(function () { contextMenu.setCurrentRow(subIndex, true) })
         }
     }
 
@@ -791,11 +801,36 @@ Item {
         anchors.fill: parent
         z: 98
         active: !controlMode && !stereo.active
+        perEye: false
     }
     Connections {
         target: viewModel
         function onMessageFlashed(value) {
             if (!stereo.active) messageOsd2d.flash(value)
+        }
+    }
+
+    // 画质档位提示（VSR / FRUC / SDR→HDR10 开关）：与 StereoMessage 同款
+    // 底部小面板。2D 一份、3D 每眼一份（`眼睛屏`上也要看得到）。
+    Toast {
+        id: toastOsd2d
+        anchors.fill: parent
+        z: 99
+        active: !controlMode && !stereo.active
+        perEye: false
+    }
+    Toast {
+        id: toastOsd3d
+        anchors.fill: parent
+        z: 99
+        active: !controlMode && stereo.active
+        perEye: true
+    }
+    Connections {
+        target: viewModel
+        function onToastFlashed(text) {
+            if (stereo.active) toastOsd3d.flash(text)
+            else toastOsd2d.flash(text)
         }
     }
 
@@ -815,6 +850,7 @@ Item {
         anchors.fill: parent
         z: 99
         active: !controlMode && stereo.active
+        perEye: true
     }
     Connections {
         target: viewModel

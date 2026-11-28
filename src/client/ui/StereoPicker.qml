@@ -5,7 +5,10 @@
 //
 // 键盘（用户 2026-11-03 要求）：↑/↓ 选屏（循环）、Enter 开始、Esc 取消。
 // 弹窗打开时键位表整体让位（KeyRouter 的 popup 门控），所以这里自己接 Keys
-// ——与右键菜单同一套做法（contentItem 拿焦点 + Keys.onPressed）。
+// ——与右键菜单同一套做法：**物理键 → 键位表（menu-* 导航项）→ 动作**，
+// 不在 QML 里写 `Qt.Key_*`（2026-11-28 用户要求与右键菜单统一）。
+// Esc 不需要在这里处理：Popup 的 closePolicy 带 CloseOnEscape，Qt 自己关
+//（实测：去掉分支后 Esc 仍关闭，`get-control-state` 的 popups 归零）。
 import QtQuick
 import QtQuick.Controls
 
@@ -64,15 +67,16 @@ PopupBase {
         implicitWidth: col.implicitWidth
         implicitHeight: col.implicitHeight
 
+        // 导航键走键位表的菜单上下文（menu-up / menu-down / menu-enter），
+        // 与右键菜单同一个事实源；Esc 交给 Popup 的 CloseOnEscape。
         Keys.onPressed: function(ev) {
-            if (ev.key === Qt.Key_Up) {
+            const id = keys.menuAction(ev.key, ev.modifiers)
+            if (id === "menu-up") {
                 root.moveSelection(-1); ev.accepted = true
-            } else if (ev.key === Qt.Key_Down) {
+            } else if (id === "menu-down") {
                 root.moveSelection(1); ev.accepted = true
-            } else if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter) {
+            } else if (id === "menu-enter") {
                 root.startSelected(); ev.accepted = true
-            } else if (ev.key === Qt.Key_Escape) {
-                root.close(); ev.accepted = true
             }
         }
 

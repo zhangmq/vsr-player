@@ -222,6 +222,11 @@ class PlayerViewModel : public QObject {
     //              网络源给"重试"，本地源不给）
     Q_PROPERTY(int mediaPhase READ mediaPhase NOTIFY mediaPhaseChanged)
     Q_PROPERTY(QString mediaPhaseDetail READ mediaPhaseDetail NOTIFY mediaPhaseChanged)
+    /// failed 卡的标题。空 = IdleScreen 用自己的默认文案（"无法播放"/"空文件夹"）；
+    /// 显存/内存/驱动导致的中途停播由这里给出具体原因（用户 2026-11-27 定）。
+    Q_PROPERTY(QString mediaPhaseTitle READ mediaPhaseTitle NOTIFY mediaPhaseChanged)
+    /// VFX SDK 不可用（滤镜报 reason=sdk）：VFX 面板整体禁用并显示提示。
+    Q_PROPERTY(bool vfxUnavailable READ vfxUnavailable NOTIFY vfxUnavailableChanged)
     Q_PROPERTY(bool canRetryOpen READ canRetryOpen NOTIFY mediaPhaseChanged)
     /// failed 时该条目在磁盘上是目录 → UI 用 "空文件夹" 而不是 "无法播放"
     Q_PROPERTY(bool mediaPhaseIsFolder READ mediaPhaseIsFolder NOTIFY mediaPhaseChanged)
@@ -246,6 +251,11 @@ class PlayerViewModel : public QObject {
     /// （UI 术语里多指窗口/焦点）。
     Q_PROPERTY(bool menuHideInvalid READ menuHideInvalid WRITE setMenuHideInvalid
                NOTIFY menuHideInvalidChanged)
+    /// 右键菜单里要不要显示「3D」那一块（Preferences → Interface 的第三个
+    /// toggle，用户 2026-11-28："右键菜单有些臃肿"）。关掉只影响主菜单的一级
+    /// 条目，3D 的内部状态/按键（J/K/L/H）不受影响，重新打开即恢复。
+    Q_PROPERTY(bool show3dMenu READ show3dMenu WRITE setShow3dMenu
+               NOTIFY show3dMenuChanged)
     /// 缩略图**渲染**宽（物理像素）= 逻辑宽 × DPR；WRITE 只给 RPC/测试的显式
     /// 覆盖用（跳过后面的换算），**不开放 UI、不落盘**（用户 2026-11-15）。
     Q_PROPERTY(int previewThumbWidth READ previewThumbWidth WRITE setPreviewThumbWidth
@@ -262,8 +272,8 @@ class PlayerViewModel : public QObject {
                WRITE setPreviewDebugHoverMs NOTIFY previewDebugHoverMsChanged)
 
     // ── TrueHDR 参数（getter；setter 见 public slots）──────────────────
-    bool upHdrEnabled() const { return upHdrEnabled_; }
-    bool upHdrEffective() const { return upconvertOn_; }
+    bool upHdrEnabled() const { return upHdrEnabled_.load(); }
+    bool upHdrEffective() const { return upconvertOn_.load(); }
     int  upHdrAutoLuminance() const { return (int)lroundf(upHdrAutoNits_); }
     bool upHdrLuminanceOverride() const { return upHdrLumOverride_; }
     int  upHdrLuminance() const { return upHdrLuminance_; }
@@ -287,6 +297,9 @@ public:
     /// 主线程同步 playing = !pause——每次加载完成重新对齐 UI 状态
     ///（曲目切换的 path 清空窗口会让状态短暂错位，此回调兜底收敛）。
     void onFileLoadedFromEventThread();
+    /// 滤镜的结构化失败行（`vfx-error: …`，见 vfx_fatal.h）→ 停播/禁用面板。
+    /// 事件线程的日志回调经 QueuedConnection 调到 GUI 线程。
+    Q_INVOKABLE void onVfxError(const QString &line);
 
     /// 事件线程：MPV_EVENT_PLAYBACK_RESTART（一次 seek / 加载完成、目标帧已
     /// 显示）后调用。连续快进/快退门控的完成信号——**必须用这个事件，不能用
@@ -509,6 +522,8 @@ public:
     bool previewAvailable() const { return previewActive_; }
     int mediaPhase() const { return mediaPhase_; }
     QString mediaPhaseDetail() const { return mediaPhaseDetail_; }
+    QString mediaPhaseTitle() const { return mediaPhaseTitle_; }
+    bool vfxUnavailable() const { return vfxUnavailable_; }
     bool canRetryOpen() const;
     bool mediaPhaseIsFolder() const { return mediaPhaseIsFolder_; }
     /// 重新打开上一次失败的目标（仅网络源；本地不提供重试）。
@@ -531,8 +546,15 @@ public:
     void setPreviewThumbnails(bool on);
     bool menuHideInvalid() const { return menuHideInvalid_; }
     void setMenuHideInvalid(bool on);
-    /// 右键菜单「界面」二级项：按 id 翻转界面元素（0 = 缩略图）。
+    bool show3dMenu() const { return show3dMenu_; }
+    void setShow3dMenu(bool on);
+    /// 快捷键用：翻转 SDR→HDR10 总开关，返回**新**状态（提示文案要用）。
+    bool toggleUpHdr();
+    /// 右键菜单「界面」二级项：按 id 翻转界面元素
+    ///（0 = 缩略图，1 = 隐藏无效项，2 = 显示 3D 菜单）。
     Q_INVOKABLE void toggleUiElement(int id);
+    /// 弹出瞬态提示（键位反馈；测试也可用 RPC 触发）。
+    Q_INVOKABLE void flashToast(const QString &text) { emit toastFlashed(text); }
     /// 缩略图的**渲染**宽（物理像素）：逻辑宽 × DPR，不随窗口尺寸变化
     /// （用户 2026-11-15 取消了"按窗口比例 + 上下限"）。
     int previewThumbWidth() const { return previewThumbWidth_; }
@@ -651,9 +673,14 @@ public slots:
     /// VFG "vfg-status:" / RIFE "fruc-status:"，见 FrucBackend.h）
     void setFrucStatus(const std::string &s);
     void setVsrStatus(const std::string &s);
+    void setTruehdrStatus(const std::string &s);
     /// HDR 上屏状态行（`hdr::statusText()`，OSD 显示）。
     /// 由 GUI 线程在 hdr 策略钩子里设置；osdTextString 在事件线程读 → 加锁。
     void setHdrStatus(const std::string &s);
+    void setHdrContent(const std::string &s);
+    /// OSD 文本快照（RPC `get-osd` / 诊断用）。⚠ 只在 GUI 线程有状态一致性：
+    /// 调用方应投递到 GUI 线程（RPC 侧用 BlockingQueuedConnection）。
+    std::string osdTextSnapshot() { return osdTextString(); }
     /// **实际输出**模式（`hdr::outputText()` = HDR10/SDR，OSD 的"输出"行用）。
     /// 同 `setHdrStatus`：GUI 线程写、事件线程读 → 加锁。
     void setHdrOutput(const std::string &s);
@@ -729,9 +756,15 @@ signals:
     void previewImageChanged();
     void previewStateChanged();
     void mediaPhaseChanged();
+    void vfxUnavailableChanged();
     void previewThumbWidthChanged();
     void previewThumbnailsChanged();
     void menuHideInvalidChanged();
+    void show3dMenuChanged();
+    /// 键位操作的瞬态提示（VSR/FRUC/SDR→HDR 档位切换）：QML 底部小面板，
+    /// 1.5 s 自动隐藏，2D 与 3D（每眼各一份）都显示。文本不翻译（与 OSD 状态
+    /// 行同口径：`VSR ×2` / `FRUC off` / `SDR→HDR10 on`）。
+    void toastFlashed(const QString &text);
     void chaptersChanged();
     void previewDebugHoverMsChanged();
     void playingChanged();
@@ -865,7 +898,7 @@ private:
     /// 检测 / denoise→passthrough 判定）。参数调用时同步复制，无需保活。
     void pushVf(const char *filter, const char *param, const std::string &value);
 
-    bool upconvertOn() const { return upconvertOn_; }
+    bool upconvertOn() const { return upconvertOn_.load(); }
     /// FRUC 滤镜名（编译期分支的单一出口：vf 串 label、vf-command 目标）。
     /// 定义见 FrucBackend.h（VFG "vfg" / RIFE "rife"）。
     const char *frucFilterName() const;
@@ -898,6 +931,7 @@ private:
     PreviewThumbnailer *preview_ = nullptr;   ///< 懒创建；benchmark 下不创建
     bool previewThumbnails_ = true;
     bool menuHideInvalid_ = false;
+    bool show3dMenu_ = true;
     QString openFilename_;   ///< mpv stream-open-filename（yt-dlp 解析后的真实流）
     /// 主实例当前的 HTTP 头（ytdl_hook 设的文件级选项）→ 传给预览实例
     QString previewUserAgent_;
@@ -928,7 +962,13 @@ private:
     bool startPaused_ = false;   ///< `--pause=yes` 启动：打开源后保持暂停
     void applyObservedVolume(double v);
     void setMediaPhase(int phase, const QString &detail = QString(),
-                       bool isFolder = false);
+                       bool isFolder = false, const QString &title = QString());
+    /// 资源类失败（显存/内存/驱动）→ 停止播放并显示错误卡：保留播放列表，
+    /// 卸载当前媒体（与用户按停止同一条 mpv 命令），**不**静默降级。
+    void stopWithFatalError(const QString &title, const QString &detail);
+    /// 该节点一份引擎/缓冲的大致开销（MiB，4K 输出实测上界），用于区分
+    /// "显存不够导致 Load 失败" 与 "配置/格式被引擎拒绝"。
+    static int vfxNodeCostMiB(const QString &node);
     /// mpv 错误码 → 本地化文案。**不要**直接显示 mpv_error_string()：
     /// 那是 mpv 的英文串，进不了我们的 .ts（i18n 会漏）。
     QString loadErrorText(int code) const;
@@ -939,6 +979,9 @@ private:
     QHash<QString, int> entryErrors_;   ///< 条目路径 → mpv 错误码（0/缺省 = 无）
     QHash<qint64, QString> entryPathById_;  ///< mpv playlist entry id → 路径
     QString mediaPhaseDetail_;       ///< opening = 源名；failed = 失败原因
+    QString mediaPhaseTitle_;        ///< failed 的标题（空 = UI 默认文案）
+    bool vfxUnavailable_ = false;    ///< VFX SDK 载入失败（reason=sdk）
+    bool vfxFatalStop_ = false;      ///< 已因资源/驱动错误停播（压制通用错误卡）
     QString pendingOpenPath_;        ///< 最近一次"打开"的目标（重试用）
     bool pendingOpenIsNetwork_ = false;
     QVariantList chapters_;
@@ -1008,8 +1051,8 @@ private:
     //  · upconvertOn_ = HDR 策略**实际**判定（Hdr10 ∧ 内容 SDR ∧ 总开关）→ enable
     //  · upHdrAutoNits_ = 面板物理峰值（策略经 setUpconvert 传入，运行期量，不持久化）
     //  · 其余 = 用户在 UI 里设定的参数（持久化；syncVfOptions/vfOption 重放）
-    bool  upconvertOn_ = false;
-    bool  upHdrEnabled_ = false;
+    std::atomic<bool> upconvertOn_{false};   // 读方含事件线程（osdTextString）
+    std::atomic<bool> upHdrEnabled_{false};   // 读方含事件线程（osdTextString）
     bool  upHdrLumOverride_ = false;
     int   upHdrLuminance_ = 650;
     int   upHdrSaturation_ = 100;
@@ -1079,6 +1122,10 @@ private:
     std::string frucStatus_;            // 最新 FRUC 状态行（OSD 显示；前缀随后端）
     std::string vsrStatus_;             // 最新 vsr 状态行（OSD 显示）
     std::mutex  vsrStatusMtx_;
+    std::string hdrContent_;            // 内容(片源)侧 HDR 状态（OSD "源"行末尾）
+    std::mutex  hdrContentMtx_;
+    std::string truehdrStatus_;         // 最新 truehdr 状态行（OSD HDR 行；仅上变换启用时显示）
+    std::mutex  truehdrStatusMtx_;
     std::string hdrStatus_;             // HDR 上屏状态行（OSD 显示）
     std::mutex  hdrStatusMtx_;
     std::string hdrOutput_;             // 实际输出模式 HDR10/SDR（OSD"输出"行）

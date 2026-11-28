@@ -11,19 +11,37 @@ import "components"
 /// `submenu` 可以是数组，也可以是**函数**（返回数组）——轨道/网络流是动态的，
 /// 用函数可以让面板每次展开时取最新值，而不必重建整个 items。
 ///
-/// ⚠ 二级面板画在**同一个 Popup 里**（打开子菜单时 popup 加宽、面板占右半边），
-/// 不用嵌套 Popup：两个 popup 会各自抢 grab，点面板会被外层判成"点击外部"
-/// → 菜单自己关掉。代价是 popup 几何在子菜单打开时变化，所以背景用两条独立的
-/// Rectangle 分别画"主菜单"和"二级面板"（PopupBase 的默认背景是整块）。
+/// ⚠ 二级面板是**独立的子 Popup**（2026-11-28 方案 A），不再和主菜单共用
+/// 一个 popup。共用时为了让面板不被裁掉，popup 要加宽到 `主菜单 + 面板`，
+/// 于是面板上方/下方的空白区域落在 **popup 内部**：`CloseOnPressOutside`
+/// 不触发、也没有行接住这次按压 → 点空白处菜单不关（用户报的 bug；是否复现
+/// 取决于二级菜单的行数和从哪一行展开，看起来像"偶发"）。
+/// 拆成两个 popup 后主菜单的几何就是它自己，面板外的空白天然是"popup 之外"。
+/// ⚠ 子面板的 closePolicy 必须带 `CloseMultiple`：Qt 默认只让**最上层**的
+/// popup 吃到"点击外部"，没有它时子面板关掉后主菜单会留在原处
+///（Qt 6.12 `QQuickOverlay::childMouseEventFilter` 的 close cascade）。
+/// 子面板 `focus: false`：键盘仍归主菜单的 contentItem（方向键/Enter/Esc）。
+/// 子面板的 `parent` 是主菜单的 contentItem，`CloseOnPressOutsideParent` 因此
+/// 表示"按在主菜单里不关面板"——点主菜单换行时面板不会先闪掉。
 PopupBase {
     id: root
 
     padding: 0
-    width: menuWidth + (subVisible ? subMenuGap + subMenuWidth : 0)
-    // 主菜单自身高度（popup 高度 = 它；二级面板必须在这个范围内排布，
-    // 否则会被 popup 裁掉 —— popup 是固定大小的自绘 Item，不随子项长高）。
+    /// 主菜单宽度：二级面板是独立 popup，不再算进这里（见文件头）
+    width: menuWidth
+    /// 主菜单自身高度（= popup 高度）。二级面板的高度按它钳制（subY），
+    /// 于是面板永远落在主菜单竖直范围内 —— 与"面板画在同一个 popup 里"时
+    /// 的排版完全一致，不引入新的视觉变化。
     readonly property real mainPanelH: mainColumn
         ? mainColumn.implicitHeight + 2 * padY : 0
+    /// 主菜单内容总高：布局还没完成（首次打开）时用行模型估算，二者取大。
+    readonly property real mainContentH: Math.max(root.estimatedPanelH(), root.mainPanelH)
+    /// 主菜单可视高度上限 = 窗口内留 4px 边距；超过就**滚动**而不是被窗口裁掉
+    ///（用户 2026-11-28：二级面板已经"超出可滚"，一级菜单也要能全部看到）。
+    readonly property real mainMaxH: parent ? Math.max(root.rowH * 3, parent.height - 8) : 0
+    readonly property bool mainScrolls: root.mainMaxH > 0 && root.mainContentH > root.mainMaxH
+    /// popup 高度 = 滚动后的可视高度（不再等于内容高度）
+    readonly property real mainViewH: root.mainScrolls ? root.mainMaxH : root.mainContentH
 
     /// 英文界面下 "Add folder to playlist" + "Ctrl+Shift+O"、
     /// "Subtitle delay" + 延迟控件 会顶到一起 → 230 不够（2026-11-02 实测重叠）
@@ -39,7 +57,9 @@ PopupBase {
     property int currentIndex: -1
     /// 二级面板当前行（面板可见时才有意义）
     property int subCurrentIndex: -1
-    /// 二级面板是否展开：当前行有二级菜单就展开，移到没有的行/标题/分隔线就收起
+    /// 二级面板是否展开：当前行有二级菜单就展开，移到没有的行/标题/分隔线就收起。
+    /// 这是面板唯一的开关状态（鼠标/键盘/Esc 都只改它，子 popup 由下面的
+    /// onSubVisibleChanged 跟着开合）。
     property bool subVisible: false
     /// Esc 由 handleKey 两段式处理（先收面板、再关菜单），不让 Popup 直接关
     closePolicy: Popup.CloseOnPressOutside
@@ -200,11 +220,15 @@ PopupBase {
              {label: qsTr("270°"), value: 270}
          ]},
         // ── 立体（3D 分组 = 一级菜单里的小块，三条入口）──────────────────
-        {sep: true},
-        {header: qsTr("3D")},
+        // 整块受 Preferences → Interface →「Show 3D menu」控制（默认开）；
+        // 关掉时 5 行（含首尾分隔线）都不占高度，相邻两组的分隔线由
+        // sepShown() 收敛成一条。
+        {sep: true, visibleWhen: function() { return viewModel.show3dMenu }},
+        {header: qsTr("3D"), visibleWhen: function() { return viewModel.show3dMenu }},
         {icon: "", text: qsTr("Output mode"),
          hint: function() { return root.stereoModeLabel() },
          subSig: "stereoSelected",
+         visibleWhen: function() { return viewModel.show3dMenu },
          current: function(g) { return g === 0 ? root.stereoOutputMode() : -1 },
          submenu: [
              {label: qsTr("Off"),        value: 0, group: 0},
@@ -214,6 +238,7 @@ PopupBase {
         {icon: "", text: qsTr("Source layout"),
          hint: function() { return root.layoutLabel() },
          subSig: "stereoSelected",
+         visibleWhen: function() { return viewModel.show3dMenu },
          current: function(g) { return g === 1 ? root.layoutIndex() : -1 },
          submenu: [
              {label: qsTr("Side by side · full"), value: 0, group: 1},
@@ -224,12 +249,13 @@ PopupBase {
         {icon: "", text: qsTr("Output option"),
          hint: function() { return root.eyeLabel() },
          subSig: "stereoSelected",
+         visibleWhen: function() { return viewModel.show3dMenu },
          current: function(g) { return g === 2 ? viewModel.eyePref : -1 },
          submenu: [
              {label: qsTr("Left eye"),  value: 0, group: 2},
              {label: qsTr("Right eye"), value: 1, group: 2}
          ]},
-        {sep: true},
+        {sep: true, visibleWhen: function() { return viewModel.show3dMenu }},
         {icon: "󰋽", text: qsTr("About"),              sig: "aboutRequested"},
         {icon: "󰐥", text: qsTr("Quit"),               hint: "Ctrl+Q", sig: "quitRequested"}
     ]
@@ -294,7 +320,12 @@ PopupBase {
              subSig: "uiElementToggled", value: 0},
             {label: qsTr("Hide unavailable menu items"),
              toggle: viewModel.menuHideInvalid,
-             subSig: "uiElementToggled", value: 1}
+             subSig: "uiElementToggled", value: 1},
+            // 一级菜单里的「3D」块（输出方式 / 片源格式 / 输出选项）在不用 3D
+            // 时是纯噪音（用户 2026-11-28："右键菜单有些臃肿"）→ 可关。
+            {label: qsTr("Show 3D menu"),
+             toggle: viewModel.show3dMenu,
+             subSig: "uiElementToggled", value: 2}
         ]
     }
 
@@ -805,7 +836,17 @@ PopupBase {
     }
 
     /// 鼠标移动到主菜单某一行（仅指针真的移动时生效）
+    /// 打开后的**第一次**悬停只记位置、不选行：主菜单放进 Flickable 后，
+    /// 内容布局/裁剪会让 hover 重新投递，刚打开就把指针底下那行设成当前行
+    ///（旧行为是"打开时无当前行"，T2 用例守着这条）。
+    property bool hoverPrimed: false
+
     function hoverMain(i, pos) {
+        if (!root.hoverPrimed) {
+            root.hoverPrimed = true
+            root.lastPointerPos = pos
+            return
+        }
         if (!root.pointerMoved(pos)) return
         root.focusSub = false
         root.setCurrentRow(root.rowFocusable(i) ? i : -1, true)
@@ -851,6 +892,25 @@ PopupBase {
     }
 
     /// 菜单导航（鼠标/键盘共用同一套"当前行"状态）
+    /// 键盘把当前行移出可视区时滚动过去（主菜单超出窗口时才有意义）
+    function ensureMainRowVisible() {
+        if (!root.mainScrolls || !mainFlick || !mainColumn)
+            return
+        if (root.currentIndex < 0)
+            return
+        for (var i = 0; i < mainColumn.children.length; i++) {
+            var c = mainColumn.children[i]
+            if (c.itemIndex !== root.currentIndex)
+                continue
+            if (c.y < mainFlick.contentY)
+                mainFlick.contentY = c.y
+            else if (c.y + c.height > mainFlick.contentY + mainFlick.height)
+                mainFlick.contentY = c.y + c.height - mainFlick.height
+            return
+        }
+    }
+    onCurrentIndexChanged: Qt.callLater(root.ensureMainRowVisible)
+
     function navAction(nav) {
         switch (nav) {
         case "up":
@@ -911,23 +971,24 @@ PopupBase {
     readonly property real subY: {
         // popup 的 contentItem 是懒创建的：首次打开前 mainColumn 还不存在。
         // 读 mainColumn.height 同时登记"布局变化"依赖（行显示/隐藏时重算）。
-        if (!mainColumn)
+        if (!mainColumn || !mainFlick)
             return root.padY
+        // 主菜单可视区里"第 0 行"的 popup 坐标：滚动后要减掉 contentY
+        var top = root.padY + mainUpTri.height - mainFlick.contentY
         var mh = mainColumn.height
         if (!root.subVisible)
-            return mainColumn.y + mh
-        var y = mainColumn.y + mh
+            return top + mh
+        var y = top + mh
         for (var i = 0; i < mainColumn.children.length; i++) {
             var c = mainColumn.children[i]
             if (c.itemIndex === root.currentIndex) {
-                y = mainColumn.y + c.y
+                y = top + c.y
                 break
             }
         }
-        // 底部钳制：面板不能超出**主菜单自身**的下边缘（popup 高度 = 主菜单
-        // 高度，超出部分会被裁掉）。分组后 3D 面板有 6 行，条目靠下时整块
-        // 跑出可视区 → 整体上移到刚好放得下。
-        var maxY = root.mainPanelH - root.subViewH - root.padY
+        // 底部钳制：面板保持在**主菜单可视范围**内（子 popup 本身不会被裁，
+        // 这里沿用原排版：面板不跑到菜单下边缘之外）。
+        var maxY = root.mainViewH - root.subViewH - root.padY
         if (y > maxY)
             y = Math.max(root.padY, maxY)
         return y
@@ -1070,43 +1131,89 @@ PopupBase {
     }
 
     /// 打开后让内容项拿到键盘焦点（否则 ↑↓/Enter 收不到）
-    onOpened: if (contentRoot) contentRoot.forceActiveFocus()
-    /// 展开二级面板时 panel 可能比主菜单高：把整个菜单往上推，避免面板出屏。
+    onOpened: {
+        if (contentRoot) contentRoot.forceActiveFocus()
+        // 打开后的第一次悬停只记位置（Flickable 内容布局/裁剪会重新投递
+        // hover，刚打开就把指针底下那行设成当前行）；见 hoverMain
+        root.hoverPrimed = false
+    }
+    /// 二级面板是独立 popup：subVisible 是唯一开关，子 popup 跟着它开合。
     onSubVisibleChanged: {
-        if (subVisible && parent)
-            root.y = Math.max(4, Math.min(root.y, parent.height - root.height - 4))
+        if (subVisible) subMenu.open()
+        else subMenu.close()
+    }
+    /// 主菜单关掉时子面板必须一起关：两个 popup 各自注册在窗口 overlay 上，
+    /// 父 popup 关闭只解绑自己的 popupItem，不替子面板收尾
+    ///（QQuickPopupPrivate::setWindow 只 setParentItem(nullptr)，不 close）。
+    onAboutToHide: subMenu.close()
+    /// 子面板的 opened 状态（RPC get-menu-state 断言用：两个 popup 是否真的都关了）
+    readonly property bool subPopupOpened: subMenu ? subMenu.opened : false
+    /// 子面板的场景几何（RPC get-menu-state 用：测试要点面板中央/空白处时
+    /// 不用自己按 subY/menuWidth 推算）
+    readonly property var subGeom: {
+        if (!contentRoot) return ({ x: 0, y: 0, w: 0, h: 0 })
+        var p = contentRoot.mapToItem(null, subMenu.x, subMenu.y)
+        return ({ x: Math.round(p.x), y: Math.round(p.y),
+                  w: Math.round(subMenu.width), h: Math.round(subMenu.height) })
     }
 
     /// 在 item 坐标系 (x,y)（即鼠标位置）弹出，屏幕边缘钳制。
     /// 横向按**展开二级菜单后的宽度**钳制：面板只在悬停时出现，但这时 popup
     /// 已经加宽，若不预留空间会把面板顶到屏幕外。
-    function showAt(item, x, y) {
-        if (!item || !parent) return
-        var p = item.mapToItem(parent, x, y)
-        var fullW = root.menuWidth + root.subMenuGap + root.subMenuWidth
-        root.x = Math.min(Math.max(p.x, 4), Math.max(4, parent.width - fullW - 4))
-        root.y = Math.min(Math.max(p.y, 4), Math.max(4, parent.height - root.height - 4))
-        open()
+    /// 这一次要开在哪（窗口坐标）；钳位可重入，靠它重算。
+    property point pendingPos: Qt.point(-1, -1)
+
+    /// 主菜单高度估算（不依赖布局）。首次打开时 Popup 的内容/布局可能还没
+    /// 成型，`root.height` 会是 0 —— 用 0 钳位等于没钳，菜单会跑到窗口外被裁
+    /// （用户 2026-11-28 报"第一次用鼠标打开不按窗口适配，后续弹出正常"）。
+    /// 行高规则与委托一致：分隔线 1、分组标题 rowH-4、其余 rowH；隐藏行不计。
+    function estimatedPanelH() {
+        var h = 2 * root.padY
+        var items = root.items || []
+        for (var i = 0; i < items.length; ++i) {
+            var it = items[i]
+            if (!root.itemShown(it)) continue
+            if (it.sep === true) h += 1
+            else if (it.header !== undefined) h += root.rowH - 4
+            else h += root.rowH
+        }
+        return h
     }
 
-    background: Item {
-        // 主菜单底（高度 = 主菜单自身，不随 popup 长高拉伸）
-        Rectangle {
-            width: root.menuWidth
-            height: root.mainPanelH
-            color: "#d9111111"; radius: 8
-            border { width: 1; color: "#22ffffff" }
-        }
-        // 二级面板底（比条目行上下各多 6px；高度 = 可视高度，内部可滚动）
-        Rectangle {
-            visible: root.subVisible
-            x: root.menuWidth + root.subMenuGap
-            y: root.subY - 6
-            width: root.subMenuWidth
-            height: root.subViewH + 12
-            color: "#d9111111"; radius: 8
-            border { width: 1; color: "#22ffffff" }
-        }
+    /// 把 pendingPos 钳进窗口（"尽可能在窗口内"：菜单比窗口还高时贴顶）。
+    function clampedPos() {
+        var fullW = root.menuWidth + root.subMenuGap + root.subMenuWidth
+        var h = root.height > 0 ? root.height : root.estimatedPanelH()
+        return Qt.point(
+            Math.min(Math.max(pendingPos.x, 4), Math.max(4, parent.width - fullW - 4)),
+            Math.min(Math.max(pendingPos.y, 4), Math.max(4, parent.height - h - 4)))
+    }
+
+    /// 首次打开后真实高度才可用时再钳一次（高度没变则不动，避免抖动）。
+    function reclamp() {
+        if (!root.visible || pendingPos.x < 0 || !parent) return
+        var c = root.clampedPos()
+        if (Math.abs(c.x - root.x) > 0.5) root.x = c.x
+        if (Math.abs(c.y - root.y) > 0.5) root.y = c.y
+    }
+
+    function showAt(item, x, y) {
+        if (!item || !parent) return
+        pendingPos = item.mapToItem(parent, x, y)
+        var c = clampedPos()
+        root.x = c.x
+        root.y = c.y
+        open()
+        // 内容晚一帧布局时（首次打开）高度才准 → 下一轮事件循环再钳一次
+        Qt.callLater(root.reclamp)
+    }
+
+    /// 高度变化（首次测量完成 / 行数变化）时重新钳位
+    onHeightChanged: root.reclamp()
+
+    background: Rectangle {
+        color: "#d9111111"; radius: 8
+        border { width: 1; color: "#22ffffff" }
     }
 
     // ── 二级面板的一行（分组标题 / 分隔线 / 普通项 / 动作项）──────────────
@@ -1182,292 +1289,331 @@ PopupBase {
                 ev.accepted = true
         }
         implicitWidth: root.menuWidth
-        // 二级面板比主菜单高时，popup 也要跟着长高，否则面板被裁
-        implicitHeight: Math.max(mainColumn.implicitHeight + 2 * root.padY,
-                                 root.subVisible ? root.subY + root.subViewH + root.padY : 0)
+        // 主菜单高度 = **可视高度**（内容超出窗口时滚动，见 mainScrolls）。
+        implicitHeight: root.mainViewH
 
-        Column {
-            id: mainColumn
+        // 可视窗口：内容超出时上下滚动（与二级面板同一套小三角提示）
+        Item {
+            id: mainView
             x: 0; y: root.padY
             width: root.menuWidth
-            Repeater {
-                model: root.items
-                delegate: Item {
-                    // modelData 字段缺失时为 undefined——显式 bool/默认值
-                    //（undefined 赋 bool/QString 报 "Unable to assign"）
-                    property bool isSep: modelData.sep === true
-                    property bool isHeader: modelData.header !== undefined
-                    property bool isControl: modelData.control === "delay"
-                    property bool hasSub: modelData.submenu !== undefined
-                    property var hintSrc: modelData.hint
-                    property string hintText: typeof hintSrc === "function" ? hintSrc() : (hintSrc || "")
-                    property bool shown: isSep ? root.sepShown(index) : root.itemShown(modelData)
-                    property bool usable: !isSep && !isHeader && root.itemEnabled(modelData)
-                    // 禁用行整体不接输入（enabled 会传播到 HoverHandler/MouseArea/
-                    // 延迟控件的 ±/↺），视觉上只置灰、不隐藏
-                    enabled: usable
-                    // 供 subY 用实际委托位置对齐二级面板（见 subY 注释）
-                    readonly property int itemIndex: index
-                    width: parent.width
-                    height: !shown ? 0 : (isSep ? 1 : (isHeader ? root.rowH - 4 : root.rowH))
-                    visible: shown
+            height: root.mainViewH - 2 * root.padY
 
-                    Rectangle {
-                        anchors.fill: parent
-                        color: !isSep && !isHeader && usable
-                               && index === root.currentIndex && root.currentIndex >= 0
-                               ? "#33ffffff" : "transparent"
-                        visible: !isSep
-                    }
-                    // 分隔线（sep 行）
-                    Rectangle {
-                        anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 10 }
-                        height: 1; color: "#22ffffff"; visible: isSep
-                    }
-                    // 一级分组标题（与二级面板的分组标题同款：灰字、不可点）
-                    Text {
-                        anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter }
-                        visible: isHeader
-                        text: modelData.header || ""
-                        color: "#808080"
-                        font.pixelSize: 13
-                    }
-                    // 左侧标签：右边界锚到右侧控件（hint / 延迟控件）的左缘，
-                    // 并按剩余宽度省略——英文文本更长，单靠 menuWidth 兜不住
-                    // （2026-11-02 用户报英文界面文本重叠）。
-                    Row {
-                        id: labelRow
-                        anchors {
-                            left: parent.left; leftMargin: 10
-                            right: isControl ? delayCtl.left
-                                             : (hintRow.visible ? hintRow.left : parent.right)
-                            rightMargin: 8
-                            verticalCenter: parent.verticalCenter
-                        }
-                        spacing: 8
-                        visible: !isSep && !isHeader
-                        Text {
-                            id: iconText
-                            font.family: iconFont; font.pixelSize: 16
-                            text: modelData.icon || ""
-                            color: usable ? "#e0e0e0" : "#5a5a5a"; visible: text !== ""
-                            renderType: Text.NativeRendering
-                        }
-                        Text {
-                            text: modelData.text || ""
-                            color: usable ? "#e0e0e0" : "#5a5a5a"; font.pixelSize: 13
-                            width: Math.max(0, labelRow.width -
-                                            (iconText.visible ? iconText.width + labelRow.spacing : 0))
-                            elide: Text.ElideRight
-                        }
-                    }
-                    // ── 延迟控件行：[−] 值 [+] │ 重置 ─────────────────────
-                    // 点按钮**不关菜单**（可连点）；写入在 PlayerViewModel 里
-                    // 按 500ms debounce 合并，避免音频反复重同步。
-                    // 控件态外框（Enter 进入后才有；用项目强调色，不新增样式语言）
-                    Rectangle {
-                        visible: isControl && root.focusControl && index === root.currentIndex
-                        anchors.fill: delayCtl
-                        anchors.margins: -4
-                        radius: 6
-                        color: "transparent"
-                        border { width: 1; color: "#ffcc00" }
-                    }
-                    Row {
-                        id: delayCtl
-                        visible: isControl
-                        anchors { right: parent.right; rightMargin: 10
-                                  verticalCenter: parent.verticalCenter }
-                        spacing: 2
-                        Item {   // −
-                            width: 22; height: 22
+            // ▲ 上滚一行（到底/到顶时灰显，与二级面板一致）
+            Item {
+                id: mainUpTri
+                visible: root.mainScrolls        // 高度 0 时 Text 仍会画出来 → 显式隐藏
+                width: parent.width
+                height: root.mainScrolls ? root.triH : 0
+                Text {
+                    anchors.centerIn: parent
+                    font.family: iconFont; font.pixelSize: 12
+                    text: "󱨊"; renderType: Text.NativeRendering
+                    color: mainFlick.contentY > 0
+                           ? (upMain.containsMouse ? "#e0e0e0" : "#b0b0b0") : "#505050"
+                }
+                MouseArea {
+                    id: upMain
+                    anchors.fill: parent; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: mainFlick.contentY = Math.max(0, mainFlick.contentY - root.rowH)
+                }
+            }
+
+            Flickable {
+                id: mainFlick
+                y: mainUpTri.height
+                width: parent.width
+                height: mainView.height - mainUpTri.height - mainDownTri.height
+                contentWidth: width
+                contentHeight: mainColumn.height
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                interactive: true
+
+                Column {
+                    id: mainColumn
+                    x: 0; y: 0
+                    width: mainFlick.width
+                    Repeater {
+                        model: root.items
+                        delegate: Item {
+                            // modelData 字段缺失时为 undefined——显式 bool/默认值
+                            //（undefined 赋 bool/QString 报 "Unable to assign"）
+                            property bool isSep: modelData.sep === true
+                            property bool isHeader: modelData.header !== undefined
+                            property bool isControl: modelData.control === "delay"
+                            property bool hasSub: modelData.submenu !== undefined
+                            property var hintSrc: modelData.hint
+                            property string hintText: typeof hintSrc === "function" ? hintSrc() : (hintSrc || "")
+                            property bool shown: isSep ? root.sepShown(index) : root.itemShown(modelData)
+                            property bool usable: !isSep && !isHeader && root.itemEnabled(modelData)
+                            // 禁用行整体不接输入（enabled 会传播到 HoverHandler/MouseArea/
+                            // 延迟控件的 ±/↺），视觉上只置灰、不隐藏
+                            enabled: usable
+                            // 供 subY 用实际委托位置对齐二级面板（见 subY 注释）
+                            readonly property int itemIndex: index
+                            width: parent.width
+                            height: !shown ? 0 : (isSep ? 1 : (isHeader ? root.rowH - 4 : root.rowH))
+                            visible: shown
+
+                            Rectangle {
+                                anchors.fill: parent
+                                color: !isSep && !isHeader && usable
+                                       && index === root.currentIndex && root.currentIndex >= 0
+                                       ? "#33ffffff" : "transparent"
+                                visible: !isSep
+                            }
+                            // 分隔线（sep 行）
+                            Rectangle {
+                                anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 10 }
+                                height: 1; color: "#22ffffff"; visible: isSep
+                            }
+                            // 一级分组标题（与二级面板的分组标题同款：灰字、不可点）
                             Text {
-                                anchors.centerIn: parent
-                                font.family: iconFont; font.pixelSize: 14; text: "󰍴"
-                                color: "#e0e0e0"; renderType: Text.NativeRendering
+                                anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter }
+                                visible: isHeader
+                                text: modelData.header || ""
+                                color: "#808080"
+                                font.pixelSize: 13
                             }
-                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                onClicked: root.delayNudge(modelData.kind, -0.05) }
-                        }
-                        Text {
-                            width: 64; horizontalAlignment: Text.AlignHCenter
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: root.delayText(root.delayValue(modelData.kind))
-                            color: root.delayMs(modelData.kind) !== 0 ? "#ffcc00" : "#e0e0e0"
-                            font.pixelSize: 13
-                        }
-                        Item {   // +
-                            width: 22; height: 22
-                            Text {
-                                anchors.centerIn: parent
-                                font.family: iconFont; font.pixelSize: 14; text: "󰐕"
-                                color: "#e0e0e0"; renderType: Text.NativeRendering
+                            // 左侧标签：右边界锚到右侧控件（hint / 延迟控件）的左缘，
+                            // 并按剩余宽度省略——英文文本更长，单靠 menuWidth 兜不住
+                            // （2026-11-02 用户报英文界面文本重叠）。
+                            Row {
+                                id: labelRow
+                                anchors {
+                                    left: parent.left; leftMargin: 10
+                                    right: isControl ? delayCtl.left
+                                                     : (hintRow.visible ? hintRow.left : parent.right)
+                                    rightMargin: 8
+                                    verticalCenter: parent.verticalCenter
+                                }
+                                spacing: 8
+                                visible: !isSep && !isHeader
+                                Text {
+                                    id: iconText
+                                    font.family: iconFont; font.pixelSize: 16
+                                    text: modelData.icon || ""
+                                    color: usable ? "#e0e0e0" : "#5a5a5a"; visible: text !== ""
+                                    renderType: Text.NativeRendering
+                                }
+                                Text {
+                                    text: modelData.text || ""
+                                    color: usable ? "#e0e0e0" : "#5a5a5a"; font.pixelSize: 13
+                                    width: Math.max(0, labelRow.width -
+                                                    (iconText.visible ? iconText.width + labelRow.spacing : 0))
+                                    elide: Text.ElideRight
+                                }
                             }
-                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                onClicked: root.delayNudge(modelData.kind, 0.05) }
-                        }
-                        Rectangle {   // 分隔线
-                            width: 1; height: 16; color: "#0fffffff"
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        Item {   // 重置（为 0 时置灰不可点）
-                            width: 22; height: 22
-                            readonly property bool canReset: root.delayMs(modelData.kind) !== 0
-                            Text {
-                                anchors.centerIn: parent
-                                font.family: iconFont; font.pixelSize: 14; text: "󰦛"
-                                color: parent.canReset ? "#e0e0e0" : "#808080"
-                                renderType: Text.NativeRendering
+                            // ── 延迟控件行：[−] 值 [+] │ 重置 ─────────────────────
+                            // 点按钮**不关菜单**（可连点）；写入在 PlayerViewModel 里
+                            // 按 500ms debounce 合并，避免音频反复重同步。
+                            // 控件态外框（Enter 进入后才有；用项目强调色，不新增样式语言）
+                            Rectangle {
+                                visible: isControl && root.focusControl && index === root.currentIndex
+                                anchors.fill: delayCtl
+                                anchors.margins: -4
+                                radius: 6
+                                color: "transparent"
+                                border { width: 1; color: "#ffcc00" }
                             }
-                            MouseArea { anchors.fill: parent
-                                cursorShape: parent.canReset ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: if (parent.canReset) root.delayReset(modelData.kind) }
+                            Row {
+                                id: delayCtl
+                                visible: isControl
+                                anchors { right: parent.right; rightMargin: 10
+                                          verticalCenter: parent.verticalCenter }
+                                spacing: 2
+                                Item {   // −
+                                    width: 22; height: 22
+                                    Text {
+                                        anchors.centerIn: parent
+                                        font.family: iconFont; font.pixelSize: 14; text: "󰍴"
+                                        color: "#e0e0e0"; renderType: Text.NativeRendering
+                                    }
+                                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.delayNudge(modelData.kind, -0.05) }
+                                }
+                                Text {
+                                    width: 64; horizontalAlignment: Text.AlignHCenter
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: root.delayText(root.delayValue(modelData.kind))
+                                    color: root.delayMs(modelData.kind) !== 0 ? "#ffcc00" : "#e0e0e0"
+                                    font.pixelSize: 13
+                                }
+                                Item {   // +
+                                    width: 22; height: 22
+                                    Text {
+                                        anchors.centerIn: parent
+                                        font.family: iconFont; font.pixelSize: 14; text: "󰐕"
+                                        color: "#e0e0e0"; renderType: Text.NativeRendering
+                                    }
+                                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.delayNudge(modelData.kind, 0.05) }
+                                }
+                                Rectangle {   // 分隔线
+                                    width: 1; height: 16; color: "#0fffffff"
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Item {   // 重置（为 0 时置灰不可点）
+                                    width: 22; height: 22
+                                    readonly property bool canReset: root.delayMs(modelData.kind) !== 0
+                                    Text {
+                                        anchors.centerIn: parent
+                                        font.family: iconFont; font.pixelSize: 14; text: "󰦛"
+                                        color: parent.canReset ? "#e0e0e0" : "#808080"
+                                        renderType: Text.NativeRendering
+                                    }
+                                    MouseArea { anchors.fill: parent
+                                        cursorShape: parent.canReset ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                        onClicked: if (parent.canReset) root.delayReset(modelData.kind) }
+                                }
+                            }
+                            // 右侧：hint（键位/当前档位）+ 二级菜单箭头
+                            Row {
+                                id: hintRow
+                                anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+                                spacing: 4
+                                visible: !isSep && !isHeader && !isControl
+                                Text {
+                                    text: hintText; color: usable ? "#808080" : "#464646"; font.pixelSize: 13
+                                    visible: hintText !== ""
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    // 上限 = 菜单宽度一半，超出省略（防长值撑出菜单边界）
+                                    width: Math.min(implicitWidth, root.menuWidth * 0.5)
+                                    elide: Text.ElideRight
+                                    horizontalAlignment: Text.AlignRight
+                                }
+                                Text { font.family: iconFont; font.pixelSize: 14; text: "󰅂"
+                                    color: usable ? "#808080" : "#464646"; visible: hasSub
+                                    renderType: Text.NativeRendering
+                                    anchors.verticalCenter: parent.verticalCenter }
+                            }
+                            HoverHandler {
+                                // 被动观察：只改当前行，不参与点击；指针真的移动才生效
+                                onPointChanged: root.hoverMain(index, point.scenePosition)
+                            }
+                            MouseArea {
+                                id: miHover
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                enabled: !isHeader && !isControl
+                                visible: !isSep
+                                cursorShape: usable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                // 悬停/点击都只是"把当前行设成我"——面板开合由当前行派生
+                                //（所以移到「字幕延迟」「音频延迟」上时面板会自然收起）
+                                onClicked: {
+                                    if (isControl) return
+                                    root.setCurrentRow(index)
+                                    if (hasSub) {
+                                        root.subVisible = true
+                                        root.focusSub = true
+                                        root.subCurrentIndex = root.initialSubRow()
+                                    } else {
+                                        var it = root.items[index]
+                                        root.close()
+                                        if (it && it.sig) root[it.sig]()
+                                    }
+                                }
+                            }
                         }
                     }
-                    // 右侧：hint（键位/当前档位）+ 二级菜单箭头
-                    Row {
-                        id: hintRow
-                        anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
-                        spacing: 4
-                        visible: !isSep && !isHeader && !isControl
-                        Text {
-                            text: hintText; color: usable ? "#808080" : "#464646"; font.pixelSize: 13
-                            visible: hintText !== ""
-                            anchors.verticalCenter: parent.verticalCenter
-                            // 上限 = 菜单宽度一半，超出省略（防长值撑出菜单边界）
-                            width: Math.min(implicitWidth, root.menuWidth * 0.5)
-                            elide: Text.ElideRight
-                            horizontalAlignment: Text.AlignRight
-                        }
-                        Text { font.family: iconFont; font.pixelSize: 14; text: "󰅂"
-                            color: usable ? "#808080" : "#464646"; visible: hasSub
-                            renderType: Text.NativeRendering
-                            anchors.verticalCenter: parent.verticalCenter }
-                    }
-                    HoverHandler {
-                        // 被动观察：只改当前行，不参与点击；指针真的移动才生效
-                        onPointChanged: root.hoverMain(index, point.scenePosition)
-                    }
-                    MouseArea {
-                        id: miHover
-                        anchors.fill: parent
-                        hoverEnabled: false
-                        enabled: !isHeader && !isControl
-                        visible: !isSep
-                        cursorShape: usable ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        // 悬停/点击都只是"把当前行设成我"——面板开合由当前行派生
-                        //（所以移到「字幕延迟」「音频延迟」上时面板会自然收起）
-                        onClicked: {
-                            if (isControl) return
-                            root.setCurrentRow(index)
-                            if (hasSub) {
-                                root.subVisible = true
-                                root.focusSub = true
-                                root.subCurrentIndex = root.initialSubRow()
-                            } else {
-                                var it = root.items[index]
-                                root.close()
-                                if (it && it.sig) root[it.sig]()
-                            }
-                        }
-                    }
+                }            }
+
+            // ▼ 下滚一行
+            Item {
+                id: mainDownTri
+                visible: root.mainScrolls
+                y: mainFlick.y + mainFlick.height
+                width: parent.width
+                height: root.mainScrolls ? root.triH : 0
+                Text {
+                    anchors.centerIn: parent
+                    font.family: iconFont; font.pixelSize: 12
+                    text: "󱨉"; renderType: Text.NativeRendering
+                    color: mainFlick.contentY < mainFlick.contentHeight - mainFlick.height - 1
+                           ? (downMain.containsMouse ? "#e0e0e0" : "#b0b0b0") : "#505050"
+                }
+                MouseArea {
+                    id: downMain
+                    anchors.fill: parent; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: mainFlick.contentY =
+                        Math.min(Math.max(0, mainFlick.contentHeight - mainFlick.height),
+                                 mainFlick.contentY + root.rowH)
                 }
             }
         }
 
-        // ── 二级菜单面板 ────────────────────────────────────────────────
+        // ── 二级菜单面板（独立 popup，见文件头）───────────────────────────
+        // ── 二级菜单面板（独立 popup，见文件头）───────────────────────────
         // 「附近字幕」「字幕轨道」是**固定高度的滚动区**（用户 2026-11-02 要求）：
         // 内容超出时在区顶/区底显示上下小三角（可点，翻一行；灰=已到头）。
         // 区内的滚轮由 Flickable 自己处理；面板本身不再整体滚动。
-        Item {
-            id: subPanel
-            visible: root.subVisible
+        Popup {
+            id: subMenu
+            parent: contentRoot
+            /// 面板贴在主菜单右侧、与所属条目行对齐（subY 见上）
             x: root.menuWidth + root.subMenuGap
-            y: root.subY
+            y: root.subY - 6
             width: root.subMenuWidth
-            height: root.subViewH
+            height: root.subViewH + 12
+            padding: 0
+            /// 键盘始终归主菜单：方向键/Enter/Esc 在 contentRoot 的 Keys 上
+            focus: false
+            /// 主菜单外按下才关（点主菜单换行时面板不闪）；CloseMultiple 让同一次
+            /// 按压继续传给它下面的主菜单（见文件头）
+            closePolicy: Popup.CloseOnPressOutsideParent | Popup.CloseMultiple
+            background: Rectangle {
+                color: "#d9111111"; radius: 8
+                border { width: 1; color: "#22ffffff" }
+            }
+            contentItem: Item {
+                Item {
+                    id: subPanel
+                    // 背景上下各比内容多 6px（子 popup 的 y 已经减掉上面的 6px）
+                    x: 0
+                    y: 6
+                    width: root.subMenuWidth
+                    height: root.subViewH
 
-            Column {
-                id: subColumn
-                width: parent.width
-                Repeater {
-                    model: root.subGroups
-                    delegate: Item {
-                        id: groupItem
-                        width: subColumn.width
-                        height: root.groupHeight(modelData)
-                        readonly property var gitems: modelData.items
-                        readonly property bool scrolls: root.groupScrolls(modelData)
-                        readonly property int maxRows: modelData.maxRows
-                        readonly property int gstart: modelData.start !== undefined ? modelData.start : 0
+                    Column {
+                        id: subColumn
+                        width: parent.width
+                        Repeater {
+                            model: root.subGroups
+                            delegate: Item {
+                                id: groupItem
+                                width: subColumn.width
+                                height: root.groupHeight(modelData)
+                                readonly property var gitems: modelData.items
+                                readonly property bool scrolls: root.groupScrolls(modelData)
+                                readonly property int maxRows: modelData.maxRows
+                                readonly property int gstart: modelData.start !== undefined ? modelData.start : 0
 
-                        /// 当前行落到本组时把它滚进可视区（键盘 ↓ 到第 9 行以后
-                        /// 只改下标不动滚动，看起来"没反应"）
-                        function ensureRowVisible(j) {
-                            if (!scrolls || j < gstart || j >= gstart + gitems.length)
-                                return
-                            var rowTop = (j - gstart) * root.rowH
-                            if (rowTop < gFlick.contentY)
-                                gFlick.contentY = rowTop
-                            else if (rowTop + root.rowH > gFlick.contentY + gFlick.height)
-                                gFlick.contentY = rowTop + root.rowH - gFlick.height
-                        }
-                        readonly property real scrollPos: gFlick ? gFlick.contentY : -1
-                        Connections {
-                            target: root
-                            function onSubCurrentIndexChanged() {
-                                groupItem.ensureRowVisible(root.subCurrentIndex)
-                            }
-                        }
-
-                        // ── 非滚动组：逐行（分隔线/标题/普通项）──────────────
-                        Column {
-                            visible: !groupItem.scrolls
-                            width: parent.width
-                            Repeater {
-                                model: groupItem.gitems
-                                delegate: SubRow {
-                                    row: modelData
-                                    rowIndex: groupItem.gstart + index
-                                    onActivated: root.activateSubRow(row)
+                                /// 当前行落到本组时把它滚进可视区（键盘 ↓ 到第 9 行以后
+                                /// 只改下标不动滚动，看起来"没反应"）
+                                function ensureRowVisible(j) {
+                                    if (!scrolls || j < gstart || j >= gstart + gitems.length)
+                                        return
+                                    var rowTop = (j - gstart) * root.rowH
+                                    if (rowTop < gFlick.contentY)
+                                        gFlick.contentY = rowTop
+                                    else if (rowTop + root.rowH > gFlick.contentY + gFlick.height)
+                                        gFlick.contentY = rowTop + root.rowH - gFlick.height
                                 }
-                            }
-                        }
+                                readonly property real scrollPos: gFlick ? gFlick.contentY : -1
+                                Connections {
+                                    target: root
+                                    function onSubCurrentIndexChanged() {
+                                        groupItem.ensureRowVisible(root.subCurrentIndex)
+                                    }
+                                }
 
-                        // ── 滚动组：▲ + 固定高度 Flickable + ▼ ────────────────
-                        Column {
-                            visible: groupItem.scrolls
-                            width: parent.width
-                            spacing: 0
-                            Item {   // 上小三角
-                                width: parent.width; height: root.triH
-                                Text {
-                                    anchors.centerIn: parent
-                                    font.family: iconFont; font.pixelSize: 12
-                                    text: "󱨊"; renderType: Text.NativeRendering
-                                    color: gFlick.contentY > 0
-                                           ? (upTri.containsMouse ? "#e0e0e0" : "#b0b0b0")
-                                           : "#505050"
-                                }
-                                MouseArea {
-                                    id: upTri
-                                    anchors.fill: parent; hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: gFlick.contentY = Math.max(0, gFlick.contentY - root.rowH)
-                                }
-                            }
-                            Flickable {
-                                id: gFlick
-                                width: parent.width
-                                height: groupItem.maxRows * root.rowH
-                                contentWidth: width
-                                contentHeight: rowsCol.height
-                                clip: true
-                                boundsBehavior: Flickable.StopAtBounds
-                                interactive: true
+                                // ── 非滚动组：逐行（分隔线/标题/普通项）──────────────
                                 Column {
-                                    id: rowsCol
-                                    width: gFlick.width
+                                    visible: !groupItem.scrolls
+                                    width: parent.width
                                     Repeater {
                                         model: groupItem.gitems
                                         delegate: SubRow {
@@ -1477,24 +1623,70 @@ PopupBase {
                                         }
                                     }
                                 }
-                            }
-                            Item {   // 下小三角
-                                width: parent.width; height: root.triH
-                                Text {
-                                    anchors.centerIn: parent
-                                    font.family: iconFont; font.pixelSize: 12
-                                    text: "󱨉"; renderType: Text.NativeRendering
-                                    color: gFlick.contentY < gFlick.contentHeight - gFlick.height - 1
-                                           ? (downTri.containsMouse ? "#e0e0e0" : "#b0b0b0")
-                                           : "#505050"
-                                }
-                                MouseArea {
-                                    id: downTri
-                                    anchors.fill: parent; hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: gFlick.contentY =
-                                        Math.min(gFlick.contentHeight - gFlick.height,
-                                                 gFlick.contentY + root.rowH)
+
+                                // ── 滚动组：▲ + 固定高度 Flickable + ▼ ────────────────
+                                Column {
+                                    visible: groupItem.scrolls
+                                    width: parent.width
+                                    spacing: 0
+                                    Item {   // 上小三角
+                                        width: parent.width; height: root.triH
+                                        Text {
+                                            anchors.centerIn: parent
+                                            font.family: iconFont; font.pixelSize: 12
+                                            text: "󱨊"; renderType: Text.NativeRendering
+                                            color: gFlick.contentY > 0
+                                                   ? (upTri.containsMouse ? "#e0e0e0" : "#b0b0b0")
+                                                   : "#505050"
+                                        }
+                                        MouseArea {
+                                            id: upTri
+                                            anchors.fill: parent; hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: gFlick.contentY = Math.max(0, gFlick.contentY - root.rowH)
+                                        }
+                                    }
+                                    Flickable {
+                                        id: gFlick
+                                        width: parent.width
+                                        height: groupItem.maxRows * root.rowH
+                                        contentWidth: width
+                                        contentHeight: rowsCol.height
+                                        clip: true
+                                        boundsBehavior: Flickable.StopAtBounds
+                                        interactive: true
+                                        Column {
+                                            id: rowsCol
+                                            width: gFlick.width
+                                            Repeater {
+                                                model: groupItem.gitems
+                                                delegate: SubRow {
+                                                    row: modelData
+                                                    rowIndex: groupItem.gstart + index
+                                                    onActivated: root.activateSubRow(row)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Item {   // 下小三角
+                                        width: parent.width; height: root.triH
+                                        Text {
+                                            anchors.centerIn: parent
+                                            font.family: iconFont; font.pixelSize: 12
+                                            text: "󱨉"; renderType: Text.NativeRendering
+                                            color: gFlick.contentY < gFlick.contentHeight - gFlick.height - 1
+                                                   ? (downTri.containsMouse ? "#e0e0e0" : "#b0b0b0")
+                                                   : "#505050"
+                                        }
+                                        MouseArea {
+                                            id: downTri
+                                            anchors.fill: parent; hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: gFlick.contentY =
+                                                Math.min(gFlick.contentHeight - gFlick.height,
+                                                         gFlick.contentY + root.rowH)
+                                        }
+                                    }
                                 }
                             }
                         }

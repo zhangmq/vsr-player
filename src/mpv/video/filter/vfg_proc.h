@@ -43,6 +43,8 @@ struct vfg_context {
     int     mode;          // enum vfg_mode
     int     multiplier;    // FrameMultiplier（每次 Run 前 SetU32）
     int     bits;          // 8 = RGBA U8，10 = 打包 RGB10A2（三张图必须一致）
+    /// Last NvVFX error code seen by vfg_init (0 = none); see vfx_fatal.h.
+    int     last_err;
 };
 
 // 创建 effect、绑定缓冲与流、Load。失败返回 false（并清理已建状态）。

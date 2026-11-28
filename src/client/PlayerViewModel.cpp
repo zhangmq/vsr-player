@@ -1039,6 +1039,7 @@ void PlayerViewModel::loadSettings() {
     previewThumbWidth_ = thumbRenderWidth();
     previewThumbnails_ = settings_.value("previewThumbnails", true).toBool();
     menuHideInvalid_ = settings_.value("menuHideInvalid", false).toBool();
+    show3dMenu_ = settings_.value("show3dMenu", true).toBool();
 }
 
 void PlayerViewModel::applyDiscOptions() {
@@ -1418,6 +1419,9 @@ void PlayerViewModel::setFileLoaded(bool v) {
     // 载入成功 = 进入 playing。必须放在**去重之前**：切歌时 fileLoaded_ 一直是
     // true，去重会提前 return，于是上一条失败留下的 phase=3 永远清不掉
     //（"无法播放"卡片不消失的根因）。
+    if (v) {
+        vfxFatalStop_ = false;   // 新文件 = 新的失败额度（下次还能再报）
+    }
     if (v && mediaPhase_ != 2)
         setMediaPhase(2);
     if (fileLoaded_ == v) return;
@@ -1827,6 +1831,18 @@ void PlayerViewModel::setVsrStatus(const std::string &s) {
     std::lock_guard<std::mutex> lk(vsrStatusMtx_);
     vsrStatus_ = s;
     stripEol(vsrStatus_);
+}
+
+void PlayerViewModel::setHdrContent(const std::string &s) {
+    std::lock_guard<std::mutex> lk(hdrContentMtx_);
+    hdrContent_ = s;
+    stripEol(hdrContent_);
+}
+
+void PlayerViewModel::setTruehdrStatus(const std::string &s) {
+    std::lock_guard<std::mutex> lk(truehdrStatusMtx_);
+    truehdrStatus_ = s;
+    stripEol(truehdrStatus_);
 }
 
 void PlayerViewModel::setHdrStatus(const std::string &s) {
@@ -2853,7 +2869,7 @@ void PlayerViewModel::setUpconvert(bool on, float autoNit, float effectiveNit) {
         effectiveNit = autoNit;
 
     bool changed = false;
-    if (on != upconvertOn_) {
+    if (on != upconvertOn_.load()) {
         upconvertOn_ = on;
         changed = true;
         emit upHdrEffectiveChanged();
@@ -2926,10 +2942,10 @@ void PlayerViewModel::initTrueHdr() {
     // 上变换不可能发生，OSD 的内容标记必须跟着关掉（否则声称 SDR → HDR10 却
     // 没有帧被处理）。frucOrderPre 只由 CLI 决定，此刻已是终值。
     hdr::setUpconvertInChain(!frucOrderPre());
-    hdr::setUpconvertOptIn(upHdrEnabled_);
+    hdr::setUpconvertOptIn(upHdrEnabled_.load());
     hdr::setUpconvertLuminanceOverride(upHdrLumOverride_, upHdrLuminance_);
     MLOG_INFO("truehdr: params = %s, saturation=%d contrast=%d middle-gray=%d "
-              "debanding=%s, peak=%s", upHdrEnabled_ ? "on" : "off",
+              "debanding=%s, peak=%s", upHdrEnabled_.load() ? "on" : "off",
               upHdrSaturation_, upHdrContrast_, upHdrMiddleGray_,
               upHdrDebanding_ ? "on" : "off(diagnostic)",
               upHdrLumOverride_ ? "user override" : "auto (panel)");
@@ -2944,7 +2960,7 @@ void PlayerViewModel::persistUpHdrParams() {
 
 void PlayerViewModel::setUpHdrEnabled(bool on) {
     if (on && !aiAllowed("truehdr")) return;
-    if (upHdrEnabled_ == on) return;
+    if (upHdrEnabled_.load() == on) return;
     upHdrEnabled_ = on;
     emit upHdrEnabledChanged();
     saveSettings("upHdrEnabled", on);
@@ -3109,7 +3125,7 @@ void PlayerViewModel::syncVfOptions() {
     // SDR→HDR10 上变换（VFX TrueHDR）：vf-command 只改 filter 实例 opts，
     // 链重建（stop/换片）后回到链串默认 enable=no → 必须重放策略状态，
     // 否则"上变换开了但重播就没了"。
-    pushVf("truehdr", "enable", upconvertOn_ ? "1" : "0");
+    pushVf("truehdr", "enable", upconvertOn_.load() ? "1" : "0");
     pushTrueHdrParams();   // 5 个参数全量重放（链重建后回到链串默认值）
     // 旋转：链重建后回到链串里的 angle（初始值 = 持久化值，正常情况
     // 无需重放；这里仍推一次，保证运行期改过角度后换片不丢）。
@@ -3124,7 +3140,7 @@ void PlayerViewModel::syncVfOptions() {
                      + (eyeHalf_.load() ? "half" : "full"));
     }
     MLOG_INFO("syncVfOptions: truehdr enable=%d lum=%d sat=%d contrast=%d mg=%d deband=%d",
-              int(upconvertOn_), effectiveUpHdrLuminance(), upHdrSaturation_,
+              int(upconvertOn_.load()), effectiveUpHdrLuminance(), upHdrSaturation_,
               upHdrContrast_, upHdrMiddleGray_, int(upHdrDebanding_));
 }
 
@@ -3362,9 +3378,18 @@ std::string PlayerViewModel::osdTextString() {
         int bd = videoBitDepth_.load();
         QString bdStr = bd > 0 ? QStringLiteral("%1bit").arg(bd)
                                : QStringLiteral("–");
-        lines << tag(tr("Source")) + QStringLiteral("%1×%2 %3 %4 %5fps · %6f")
+        QString srcLine = tag(tr("Source")) + QStringLiteral("%1×%2 %3 %4 %5fps · %6f")
             .arg(videoWidth_.load()).arg(videoHeight_.load())
             .arg(videoCodec_).arg(bdStr).arg(fpsStr).arg(decodedFrames_.load());
+        // 内容(片源)侧的 HDR 状态（峰值 / 上变换标记 / 未上屏原因）——归"源"行
+        //（用户 2026-11-28；HDR 行只留输出/显示侧）。
+        {
+            std::lock_guard<std::mutex> lk(hdrContentMtx_);
+            if (!hdrContent_.empty())
+                srcLine += QStringLiteral(" · content ")
+                         + QString::fromStdString(hdrContent_);
+        }
+        lines << srcLine;
     }
 
     // Output：视频视口物理尺寸 + 实际渲染视频帧率（Δt 实测差值）
@@ -3381,21 +3406,20 @@ std::string PlayerViewModel::osdTextString() {
         QString out = QStringLiteral("%1×%2 %3fps")
             .arg(viewportWidth_.load()).arg(viewportHeight_.load())
             .arg(renderFps_.load(), 0, 'f', 1);
-        // 实际输出模式（HDR10/SDR，来自 hdr::outputText() = 真实 swapchain 格式）
-        // 并入本行——语义 = "输出到显示的是什么"（HDR 行讲的是内容侧状态）。
+        // 实际输出模式 + 显示能力（`HDR10 · BT.2020/PQ · display 380nit` / `SDR`）：
+        // 语义 = "输出到显示的是什么"。HDR 行现在讲 TrueHDR 开关/状态（用户
+        // 2026-11-28），显示侧信息全部归本行。
         {
-            std::lock_guard<std::mutex> lk(hdrOutputMtx_);
-            if (!hdrOutput_.empty())
-                out += QStringLiteral(" · ") + QString::fromStdString(hdrOutput_);
+            std::lock_guard<std::mutex> lk(hdrStatusMtx_);
+            if (!hdrStatus_.empty())
+                out += QStringLiteral(" · ") + QString::fromStdString(hdrStatus_);
+            else {
+                std::lock_guard<std::mutex> lk2(hdrOutputMtx_);
+                if (!hdrOutput_.empty())
+                    out += QStringLiteral(" · ") + QString::fromStdString(hdrOutput_);
+            }
         }
         lines << tag(tr("Output")) + out;
-    }
-
-    // HDR：上屏状态（SDR / HDR10 + 显示峰值 + 内容峰值/未上屏原因）。
-    // 文本由 hdr::statusText() 给出（英文，不翻译），平台无关地反映实际状态。
-    {
-        std::lock_guard<std::mutex> lk(hdrStatusMtx_);
-        lines << tag(tr("HDR")) + QString::fromStdString(hdrStatus_);
     }
 
     // VSR：设定 | 状态（原 Render 行合并：输出帧尺寸——倍率由设定段
@@ -3412,13 +3436,17 @@ std::string PlayerViewModel::osdTextString() {
             parts << QStringLiteral("auto %1").arg(qualityName(quality));
         if (denoise != -1)
             parts << QStringLiteral("Denoise %1").arg(denoiseName(denoise));
+        // **off 就是 off**（用户 2026-11-28）：关着时整行只有 `off`，不再带
+        // 输出尺寸 / `mode=passthrough scale=1.00` 这类噪音。开着时状态段 =
+        // 输出尺寸 + 滤镜报告（active 带 cost/fps；passthrough 才说明"为什么
+        // 没干活"，如 auto 判定 1:1）。denoise 档 scale 也是 -1，但它真的在
+        // 跑 → 不算 off。
+        const bool vsrOff = (scale_ < -0.5 && denoise_.load() == -1);
         QStringList st;   // 状态段：输出尺寸 + vsr-status
-        int renderW = renderWidth_.load();
-        if (renderW > 0)
-            st << QStringLiteral("%1×%2").arg(renderW).arg(renderHeight_.load());
-        // vsr 关闭（scale=-1）时不并入 vsr-status——filter 在链中但无
-        // 处理，status 是切换瞬间的旧值残留（cost/fps 无意义）
-        if (scale > -0.5) {
+        if (!vsrOff) {
+            int renderW = renderWidth_.load();
+            if (renderW > 0)
+                st << QStringLiteral("%1×%2").arg(renderW).arg(renderHeight_.load());
             std::lock_guard<std::mutex> lk(vsrStatusMtx_);
             if (!vsrStatus_.empty())
                 st << QString::fromStdString(vsrStatus_);
@@ -3431,6 +3459,31 @@ std::string PlayerViewModel::osdTextString() {
             line += QStringLiteral(" | AI unavailable");
         else if (!st.isEmpty())
             line += " | " + st.join(" ");
+        lines << line;
+    }
+
+    // TrueHDR：设定（开关 + 峰值）| 实际状态（滤镜状态行，同 vsr/vfg 的约定：
+    // HDR 内容 → mode=passthrough；真正在上变换 → mode=active cost=…）。
+    // 开关关着时不显示状态段（与 VSR off / FRUC off 同口径）。
+    {
+        const bool on = upHdrEnabled_.load();
+        QString setting = on ? QStringLiteral("on") : QStringLiteral("off");
+        if (on) {
+            const float nits = effectiveUpHdrLuminance();
+            if (nits > 0)
+                setting += QStringLiteral(" %1nit").arg(nits, 0, 'f', 0);
+        }
+        QString line = tag(tr("TrueHDR")) + setting;
+        if (!on) {
+            // off 就是 off：不再补 `mode=passthrough`（用户 2026-11-28）。
+        } else if (!aiAvailable_.load()) {
+            line += QStringLiteral(" | AI unavailable");
+        } else {
+            // 开着时原样并入滤镜报告（HDR 内容 → mode=passthrough）。
+            std::lock_guard<std::mutex> lk(truehdrStatusMtx_);
+            if (!truehdrStatus_.empty())
+                line += " | " + QString::fromStdString(truehdrStatus_);
+        }
         lines << line;
     }
 
@@ -3448,10 +3501,27 @@ std::string PlayerViewModel::osdTextString() {
             target = QStringLiteral("%1×").arg(fruc);
         else if (fruc > 0)
             target = QStringLiteral("%1 fps").arg(fruc);
+        // 设定段与 VSR 对齐：倍率后面带质量档（VFG mode = Low/Medium/High）。
+        // ⚠ 与 VSR 一样**不翻译**（VSR 用 qualityName() 的原样英文；OSD 除
+        // label 外统一不翻译——见 osdTextString 头注释）。RIFE 分支没有这个
+        // 参数（kModeSelectable=false）→ 不显示。
+        if (fruc != -1 && fruc::kModeSelectable) {
+            const int q = frucQuality_.load();
+            for (std::size_t i = 0; i < fruc::kModePresetCount; ++i) {
+                if (fruc::kModePresets[i].value == q) {
+                    target += QLatin1Char(' ')
+                            + QLatin1String(fruc::kModePresets[i].label);
+                    break;
+                }
+            }
+        }
         QString line = tag(tr("FRUC")) + target;
-        if (!aiAvailable_.load() && fruc != -1) {
+        if (fruc == -1) {
+            // off 就是 off：不补 `mode=passthrough reason=off`（用户 2026-11-28）。
+        } else if (!aiAvailable_.load()) {
             line += QStringLiteral(" | AI unavailable");
-        } else if (fruc != -1) {
+        } else {
+            // 开着时原样并入滤镜报告（撞 max-fps 上限 → passthrough reason=max-fps）。
             std::lock_guard<std::mutex> lk(frucStatusMtx_);
             if (!frucStatus_.empty())
                 line += " | " + QString::fromStdString(frucStatus_);
@@ -3561,14 +3631,115 @@ QImage PlayerViewModel::previewImage() const {
 // 只服务 UI 的空状态区：opening = "正在打开…"、failed = "无法播放"。
 // 事件（FILE_LOADED / END_FILE）都在观察器/事件线程里，写入一律排队到 GUI 线程。
 void PlayerViewModel::setMediaPhase(int phase, const QString &detail,
-                                    bool isFolder) {
+                                    bool isFolder, const QString &title) {
     if (mediaPhase_ == phase && mediaPhaseDetail_ == detail &&
-        mediaPhaseIsFolder_ == isFolder)
+        mediaPhaseIsFolder_ == isFolder && mediaPhaseTitle_ == title)
         return;
     mediaPhase_ = phase;
     mediaPhaseDetail_ = detail;
     mediaPhaseIsFolder_ = isFolder;
+    mediaPhaseTitle_ = title;
     emit mediaPhaseChanged();
+}
+
+// ── VFX 节点的结构化失败（滤镜 `vfx-error:` 行，见 vfx_fatal.h）──────────
+// 策略（用户 2026-11-27 定）：明确的资源错误与驱动错误 → **停止播放并显示
+// 错误卡**；SDK 缺失 → 直通 + 禁用 VFX 面板；其它引擎失败 → 直通（OSD 状态
+// 行已带 reason）。不做预防性判定，也不静默降级。
+int PlayerViewModel::vfxNodeCostMiB(const QString &node) {
+    // 4K 输出时的上界（本机 1440p 实测：VSR +409、VFG +243、TrueHDR ~0 基线
+    // 噪声；输出按面积放大到 4K 约 ×2.25，再留一档余量）。只用于把
+    // "引擎 Load 失败" 归类成显存问题，宁高不低——偏高的后果是多停一次播放
+    // 并给出提示，偏低则是静默直通（用户明确不接受）。
+    if (node == QLatin1String("vsr")) return 900;
+    if (node == QLatin1String("vfg")) return 600;
+    return 400;   // truehdr
+}
+
+void PlayerViewModel::onVfxError(const QString &line) {
+    auto field = [&line](const char *key) {
+        const QString k = QString::fromLatin1(key) + QLatin1Char('=');
+        const int i = line.indexOf(k);
+        if (i < 0) return QString();
+        int j = line.indexOf(QLatin1Char(' '), i);
+        if (j < 0) j = line.size();
+        return line.mid(i + k.size(), j - i - k.size());
+    };
+    const QString node     = field("node");
+    const QString reason   = field("reason");
+    const QString dims     = field("dims");
+    const qint64 err       = field("err").toLongLong();
+    const qint64 freeMiB   = field("free").toLongLong() / (1024 * 1024);
+    const qint64 totalMiB  = field("total").toLongLong() / (1024 * 1024);
+
+    if (reason == QLatin1String("sdk")) {
+        MLOG_WARN("vfx: node=%s reason=sdk -> VFX controls disabled",
+                  node.toUtf8().constData());
+        if (!vfxUnavailable_) {
+            vfxUnavailable_ = true;
+            emit vfxUnavailableChanged();
+        }
+        return;
+    }
+
+    const char *why = nullptr;   // 归类后的停播原因；nullptr = 只直通
+    if (reason == QLatin1String("resource")) {
+        why = "gpu-memory";
+    } else if (reason == QLatin1String("driver")) {
+        why = "driver";
+    } else if (reason == QLatin1String("engine")) {
+        // 引擎自己拒绝：SDK 的 CUDA 失败码（-1000 及以下）就是显存/驱动层面的
+        // 失败（滤镜侧通常已归成 resource，这里兜一层）；其余码只有当刻空闲
+        // 显存低于该节点开销时才算"显存不足"。
+        if (err <= -1000) {
+            why = "gpu-memory";
+        } else if (freeMiB > 0 && freeMiB < vfxNodeCostMiB(node)) {
+            why = "gpu-memory";
+        }
+    }
+
+    MLOG_WARN("vfx: node=%s reason=%s free=%lldMiB total=%lldMiB err=%lld dims=%s%s%s",
+              node.toUtf8().constData(),
+              why ? why : "passthrough",
+              (long long)freeMiB, (long long)totalMiB, (long long)err,
+              dims.toUtf8().constData(),
+              why ? "" : " (kept playing, node disabled)",
+              "");
+    if (!why)
+        return;
+
+    // Host memory is not handled here on purpose: the system kills a process
+    // that runs out of RAM, so there is no playback left to stop (user 2026-11-28).
+    const QString title = qstrcmp(why, "gpu-memory") == 0
+        ? tr("Out of video memory, playback stopped")
+        : tr("Playback stopped: graphics driver error");
+
+    const QString name = QFileInfo(lastPath_).fileName();
+    // 显存不足**不指向日志**（用户 2026-11-28）：直接给两个可能原因——① VFX 参数
+    // 过高；② 应用自身的显存泄漏。驱动错误仍然带"详见日志"（那种情况日志才有用）。
+    const QString detail = qstrcmp(why, "gpu-memory") == 0
+        ? tr("Possible cause: VFX settings too high / app VRAM leak")
+        : (name.isEmpty()
+           ? tr("See the log for details")
+           : name + QStringLiteral(" · ") + tr("See the log for details"));
+    stopWithFatalError(title, detail);
+}
+
+void PlayerViewModel::stopWithFatalError(const QString &title,
+                                         const QString &detail) {
+    if (!mpv_)
+        return;
+    vfxFatalStop_ = true;
+    playing_ = false;
+    emit playingChanged();
+    setFileLoaded(false);
+    updatePreviewSource();
+    // 与用户按停止同一条 mpv 命令（保留播放列表；END_FILE reason=stop 不会再
+    // 触发"无法播放"卡）。渲染层置黑由 playlistEmptied 承担。
+    mpv_->commandAsync({"stop", "keep-playlist", nullptr});
+    emit playlistEmptied();
+    setMediaPhase(3, detail, false, title);
+    MLOG_WARN("vfx: playback stopped (%s)", title.toUtf8().constData());
 }
 
 
@@ -3635,6 +3806,12 @@ QString PlayerViewModel::loadErrorText(int code) const {
 }
 
 void PlayerViewModel::noteLoadFailed(qint64 entryId, int error) {
+    // 由 vfx-error 触发的停播已经给出更准确的卡片（显存/内存/驱动）——
+    // mark_failed/END_FILE 随后的通用"无法播放"不得覆盖它。
+    if (vfxFatalStop_) {
+        MLOG_INFO("noteLoadFailed ignored (playback already stopped by a VFX error)");
+        return;
+    }
     // mpv 的事实：这个条目载入失败（end-file reason=error，错误码见 error）。
     // 客户端只做两件事——把错误码挂到该条目上；单条目时把它显示出来。
     const QString path = entryPathById_.value(entryId);
@@ -3884,8 +4061,22 @@ void PlayerViewModel::toggleUiElement(int id) {
     switch (id) {
     case 0: setPreviewThumbnails(!previewThumbnails_); break;
     case 1: setMenuHideInvalid(!menuHideInvalid_); break;
+    case 2: setShow3dMenu(!show3dMenu_); break;
     default: break;
     }
+}
+
+bool PlayerViewModel::toggleUpHdr() {
+    const bool on = !upHdrEnabled_.load();
+    setUpHdrEnabled(on);
+    return on;
+}
+
+void PlayerViewModel::setShow3dMenu(bool on) {
+    if (show3dMenu_ == on) return;
+    show3dMenu_ = on;
+    emit show3dMenuChanged();
+    saveSettings("show3dMenu", on);
 }
 
 void PlayerViewModel::setMenuHideInvalid(bool on) {

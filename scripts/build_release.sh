@@ -136,6 +136,21 @@ cp "$CLIENT_DIST/src/client/vsr-player" "$STAGE/vsr-player"
 cp "$MPV_DIST/_build/mpv" "$STAGE/mpv-vsr"
 cp -L "$MPV_DIST/_build/libmpv.so.2" "$STAGE/lib/vsr-player/libmpv.so.2"
 
+# Wayland 伙伴模块（主程序运行时 dlopen）：漏打包 = 静默降级（HDR 自动上屏退 SDR、
+# 空闲抑制回退 D-Bus）。#31 修过一次；0.8.0 的基座 rebase（d46ea88）把这段整块
+# 删掉了，2026-11-28 在无 N 卡机器上部署时复现 → 恢复并保留"缺就失败"的守卫。
+for mod in libvsr-idle-wayland.so libvsr-color-feedback.so; do
+    if [ -f "$CLIENT_DIST/src/client/$mod" ]; then
+        cp "$CLIENT_DIST/src/client/$mod" "$STAGE/lib/vsr-player/"
+        echo "  ✓ $mod"
+    elif [ "$mod" = libvsr-color-feedback.so ]; then
+        echo "  ❌ 缺 $mod —— 打出来的包 HDR 自动上屏会静默失效" >&2
+        exit 1
+    else
+        echo "  ⚠ 缺 $mod（空闲抑制将回退 D-Bus）"
+    fi
+done
+
 # ── Qt 6.12.0 fixes (QTBUG-151831 fullscreen freeze, QTBUG-150279 close deadlock) ──
 # The patched libQt6Quick / libQt6Gui are built from 6.12.0 sources, so they only make
 # sense for a host Qt that is exactly 6.12.0: anything older is ABI-incompatible, and

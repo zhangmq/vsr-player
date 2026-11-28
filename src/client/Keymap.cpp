@@ -18,6 +18,29 @@ Qt::KeyboardModifiers maskMods(Qt::KeyboardModifiers m) { return m & kModMask; }
 /// Key_Plus。所以这类键比较时忽略 Shift，`Ctrl++` 才能真正被按到
 ///（用户 2026-11-02 提过"很多键盘 + 要按 Shift，避免按不出来"）。
 /// 字母/数字/功能键保持严格比较——否则 `Ctrl+O` 与 `Ctrl+Shift+O` 会撞车。
+/// Shift+数字 在**真键盘**上报的是"移位后的 keysym"（Shift+1 → `Key_Exclam`、
+/// Shift+2 → `Key_At`…），而不是 `Key_1` + Shift——Wayland/X11 都这样；只有
+/// `QKeySequence::fromString("Ctrl+Shift+1")`（RPC 注入/键位表解析）才给
+/// `Key_1`+Shift。不归一化的话表里的 `Ctrl+Shift+1` 在真键盘上永远不命中
+/// （2026-11-28 用户报"fruc 快捷键没反应"：`Ctrl+1..4` 正常、带 Shift 的全哑）。
+/// 返回对应的数字键（0-9）；不是移位数字键返回 -1。
+int digitForShiftedKey(int key)
+{
+    switch (key) {
+    case Qt::Key_Exclam:      return 1;
+    case Qt::Key_At:          return 2;
+    case Qt::Key_NumberSign:  return 3;
+    case Qt::Key_Dollar:      return 4;
+    case Qt::Key_Percent:     return 5;
+    case Qt::Key_AsciiCircum: return 6;
+    case Qt::Key_Ampersand:   return 7;
+    case Qt::Key_Asterisk:    return 8;
+    case Qt::Key_ParenLeft:   return 9;
+    case Qt::Key_ParenRight:  return 0;
+    default:                  return -1;
+    }
+}
+
 bool shiftEncodedInKey(int key) {
     if (key < 0x20 || key > 0x7e)
         return false;
@@ -107,7 +130,9 @@ QList<Binding> buildTable()
     t.append(Binding{.id = "sub-delay-up", .seqs = {"Shift+Z"}, .scope = Scope::TwoD,
                      .owner = Owner::Shortcut, .popupOk = true, .allowRepeat = true,
                      .helpKey = "Shift+Z"});
-    t.append(Binding{.id = "sub-delay-reset", .seqs = {"Ctrl+0"}, .scope = Scope::TwoD,
+    // ⚠ Ctrl+0 已让给 VSR auto（用户 2026-11-28 的键位方案），字幕归零挪到
+    // Ctrl+Alt+Z（Z 家族 = 字幕延迟；音频归零仍是 Ctrl+Alt+0，两者不同键）。
+    t.append(Binding{.id = "sub-delay-reset", .seqs = {"Ctrl+Alt+Z"}, .scope = Scope::TwoD,
                      .owner = Owner::Shortcut, .popupOk = true});
     t.append(Binding{.id = "audio-delay-up", .seqs = {"Ctrl++", "Ctrl+="},
                      .scope = Scope::TwoD, .owner = Owner::Shortcut, .popupOk = true,
@@ -121,6 +146,34 @@ QList<Binding> buildTable()
                      .handler = Handler::Qml});
     t.append(Binding{.id = "toggle-fullscreen", .seqs = {"F"},
                      .owner = Owner::Shortcut});
+
+    // ── 画质档位快捷键（用户 2026-11-28 定，2D/3D 通用）─────────────
+    // Ctrl+1..4 = VSR off / ×2 / ×3 / ×4，Ctrl+0 = VSR auto；
+    // 加 Shift 同一组给插帧（VFG 无 auto 档 → Ctrl+Shift+0 = 输出帧率上限
+    // 在 48/60/120 之间循环）；Ctrl+H = SDR→HDR10 上变换开关。
+    // ⚠ Ctrl+0 原本是字幕延迟归零，已挪到 Ctrl+Alt+Z（见上）。
+    t.append(Binding{.id = "vsr-off", .seqs = {"Ctrl+1"}, .owner = Owner::Shortcut,
+                     .helpKey = "Ctrl+1"});
+    t.append(Binding{.id = "vsr-2x", .seqs = {"Ctrl+2"}, .owner = Owner::Shortcut,
+                     .helpKey = "Ctrl+2"});
+    t.append(Binding{.id = "vsr-3x", .seqs = {"Ctrl+3"}, .owner = Owner::Shortcut,
+                     .helpKey = "Ctrl+3"});
+    t.append(Binding{.id = "vsr-4x", .seqs = {"Ctrl+4"}, .owner = Owner::Shortcut,
+                     .helpKey = "Ctrl+4"});
+    t.append(Binding{.id = "vsr-auto", .seqs = {"Ctrl+0"}, .owner = Owner::Shortcut,
+                     .helpKey = "Ctrl+0"});
+    t.append(Binding{.id = "fruc-off", .seqs = {"Ctrl+Shift+1"}, .owner = Owner::Shortcut,
+                     .helpKey = "Ctrl+Shift+1"});
+    t.append(Binding{.id = "fruc-2x", .seqs = {"Ctrl+Shift+2"}, .owner = Owner::Shortcut,
+                     .helpKey = "Ctrl+Shift+2"});
+    t.append(Binding{.id = "fruc-3x", .seqs = {"Ctrl+Shift+3"}, .owner = Owner::Shortcut,
+                     .helpKey = "Ctrl+Shift+3"});
+    t.append(Binding{.id = "fruc-4x", .seqs = {"Ctrl+Shift+4"}, .owner = Owner::Shortcut,
+                     .helpKey = "Ctrl+Shift+4"});
+    t.append(Binding{.id = "fruc-cap", .seqs = {"Ctrl+Shift+0"},
+                     .owner = Owner::Shortcut, .helpKey = "Ctrl+Shift+0"});
+    t.append(Binding{.id = "toggle-up-hdr", .seqs = {"Ctrl+H"}, .owner = Owner::Shortcut,
+                     .helpKey = "Ctrl+H"});
 
     // ── 3D / 单眼：过滤器在 QML 之前吞键（owner=Filter）────────────────
     // 画面比例：A 正序 / Shift+A 逆序，列表照抄 mpv input.conf:156。
@@ -211,9 +264,14 @@ Sequence normalized(int key, Qt::KeyboardModifiers mods)
         mods |= Qt::ShiftModifier;
     }
     mods = maskMods(mods);
-    // 符号键：Shift 已在键值里；小键盘：与主键区等价
-    if (shiftEncodedInKey(s.key))
+    // 移位数字键（真键盘的 Shift+1…Shift+0）→ 数字键 + Shift，与键位表对齐
+    if (const int d = digitForShiftedKey(s.key); d >= 0) {
+        s.key = Qt::Key_0 + d;
+        mods |= Qt::ShiftModifier;
+    } else if (shiftEncodedInKey(s.key)) {
+        // 其余符号键：Shift 已在键值里；小键盘：与主键区等价
         mods &= ~Qt::ShiftModifier;
+    }
     s.mods = mods;
     return s;
 }

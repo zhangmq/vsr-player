@@ -17,6 +17,7 @@
 #include <QCloseEvent>
 #include <QQuickWindow>
 #include <QQuickGraphicsDevice>
+#include <QQuickStyle>
 #include <QVulkanInstance>
 #include <QSurfaceFormat>
 #include <QTranslator>
@@ -173,15 +174,30 @@ protected:
 class PreviewImageProvider : public QQuickImageProvider
 {
 public:
-    explicit PreviewImageProvider(PlayerViewModel *vm)
-        : QQuickImageProvider(QQuickImageProvider::Image), vm_(vm) {}
+    /// win = 显示缩略图的那个窗口。窗口切到 HDR10 交换链时，Qt 会把图像里的
+    /// sRGB 码值直接当 PQ 写进缓冲（Qt Quick 不做色彩管理，见
+    /// docs/hdr-pipeline-investigation.md §23）→ 缩略图发亮发灰；视频由合成节点
+    /// 直接写 PQ 所以正常。这里按**该窗口当前的真实格式**把缩略图预编码成 PQ，
+    /// 让缩略图和画面一致（其余 Qt 绘制的 UI 仍是 sRGB 码值，属 Qt 侧限制）。
+    PreviewImageProvider(PlayerViewModel *vm, QQuickWindow *win)
+        : QQuickImageProvider(QQuickImageProvider::Image), vm_(vm), win_(win) {}
     QImage requestImage(const QString &, QSize *size, const QSize &) override {
-        const QImage img = vm_->previewImage();
+        QImage img = vm_->previewImage();
+        if (!img.isNull() && hdr::windowIsPqOutput(win_)) {
+            // 白点用**合成器自己的 SDR 参考白**：它按这个值把 1.0 映射成屏幕上的
+            // SDR 白，用 203（mpv 口径）整体会暗约 9%。读不到才退 203。
+            const hdr::DisplayInfo d = hdr::displayInfoFor(win_);
+            const float white = (d.valid && d.refLuma > 1.0f) ? d.refLuma : 203.0f;
+            img = hdr::encodeSdrImageToPq(img, white);
+            MLOG_VERBOSE("thumb: pq-encode %dx%d (window output is PQ, sdr white %.0f nit)",
+                         img.width(), img.height(), double(white));
+        }
         if (size) *size = img.size();
         return img;
     }
 private:
     PlayerViewModel *vm_;
+    QQuickWindow *win_;
 };
 
 // 按键派发：键位表在 Keymap.cpp，执行在 KeyRouter（应用级事件过滤器）。
@@ -189,6 +205,14 @@ private:
 // 一份偏移键映射；现在只剩这一条通路（见 Keymap.h 文件头）。
 
 int main(int argc, char *argv[]) {
+    // Qt Quick Controls 的 style 必须由应用自己钉死：默认会跟随会话环境
+    // （KDE Plasma 在会话里设 QT_QUICK_CONTROLS_STYLE=org.kde.desktop），同一份
+    // QML 在别的机器上就会换成另一套控件外观——实测播放列表滚动条在装了
+    // qqc2-desktop-style 的机器上变成"宽、带边线"的原生滚动条（2026-11-28）。
+    // 我们的 UI 是按 Basic 调的（配色/尺寸都在 QML 里写死），这里钉死 Basic，
+    // 行为与"从终端启动、没有该环境变量"的参照环境一致。优先级最高，压过环境变量。
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
+
     setbuf(stdout, nullptr); setbuf(stderr, nullptr);
     MLOG_INFO("=== vsr-player ===");
     // 一次性迁移：旧版本把片源格式（布局/全半）持久化过；现在改为"不跨会话
@@ -578,7 +602,7 @@ int main(int argc, char *argv[]) {
                                                QString::fromLatin1(VSR_VERSION));
         // 两个窗口各自一个 engine → 各注册一份（provider 共享同一个 viewModel）。
         view.engine()->addImageProvider(QStringLiteral("vthumb"),
-                                        new PreviewImageProvider(&viewModel));
+                                        new PreviewImageProvider(&viewModel, &view));
 
         // 桌面 control 窗口：同一份 main.qml，但 controlMode=true → 不创建
         // Video，只保留 UI。3D 时主窗口（Video/VO）去眼镜屏，control 窗口
@@ -600,7 +624,7 @@ int main(int argc, char *argv[]) {
         controlView.rootContext()->setContextProperty("appVersion",
                                                       QString::fromLatin1(VSR_VERSION));
         controlView.engine()->addImageProvider(QStringLiteral("vthumb"),
-                                              new PreviewImageProvider(&viewModel));
+                                              new PreviewImageProvider(&viewModel, &controlView));
         controlView.setSource(QUrl("qrc:/main.qml"));
         if (controlView.status() != QQuickView::Ready) {
             for (const auto &e : controlView.errors())
@@ -749,13 +773,17 @@ int main(int argc, char *argv[]) {
             hooks.statusChanged = [&viewModel] {
                 const QString s = hdr::statusText();
                 viewModel.setHdrStatus(s.toStdString());
+                // 内容（片源）侧单独一行 → OSD 的"源"行（用户 2026-11-28：
+                // 视频源相关信息不留在 HDR 行）。
+                viewModel.setHdrContent(hdr::contentText().toStdString());
                 // OSD 的"输出"行：**实际**输出模式（真实 swapchain 格式，不是策略意图）
                 viewModel.setHdrOutput(hdr::outputText().toStdString());
                 // 状态变更才打日志（INFO = 状态变更；便于无 UI 时核对 OSD 来源）
                 static QString last;
                 if (last != s) {
                     last = s;
-                    MLOG_INFO("hdr status: %s", s.toUtf8().constData());
+                    MLOG_INFO("hdr status: %s · content %s", s.toUtf8().constData(),
+                              hdr::contentText().toUtf8().constData());
                 }
             };
             hdr::installPolicy(&view, hdrPolicy, initialMode, hooks);
@@ -881,9 +909,17 @@ int main(int argc, char *argv[]) {
                 viewModel.setVsrStatus(text + 11);
                 fprintf(stderr, "[mpv status] %s", text);
             } else if (strncmp(text, "truehdr-status:", 15) == 0) {
-                // SDR→HDR10 上变换状态行（诊断/验尸用：mode + cost/fps + 输出
-                // PQ 采样 nit）。OSD 的 HDR 行已带 upconvert 标记，不另设状态段。
+                // SDR→HDR10 上变换状态行（mode + cost/fps + 输出 PQ 采样 nit）：
+                // 与 vsr/vfg 一样并入 OSD（HDR 行），不只是诊断日志。
+                viewModel.setTruehdrStatus(text + 15);
                 fprintf(stderr, "[mpv status] %s", text);
+            } else if (strncmp(text, "vfx-error:", 10) == 0) {
+                // Structured failure from a VFX node (see vfx_fatal.h). The GUI
+                // thread decides whether it stops playback (GPU/host memory,
+                // driver) or only disables the node/panel — see onVfxError.
+                const QString line = QString::fromUtf8(text).trimmed();
+                QMetaObject::invokeMethod(&viewModel, "onVfxError",
+                                          Qt::QueuedConnection, Q_ARG(QString, line));
             } else if (strstr(text, "Cannot seek")) {
                 // 直播/线性流：mpv 拿上次保存的位置去 seek 广播流的滑动窗口
                 //（stream.c "Cannot seek backward in linear streams!" /

@@ -66,6 +66,7 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
     int ret = pfn_NvVFX_CreateEffect("VideoSuperRes", &c->handle);
     if (ret != 0) {
         fprintf(stderr, "VSR: CreateEffect(VideoSuperRes) failed (%d)\n", ret);
+        c->last_err = ret;
         return false;
     }
 
@@ -78,6 +79,7 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
         int er = pfn_NvVFX_SetU32(c->handle, "ImageEncodingMode", 1);
         if (er != 0) {
             fprintf(stderr, "VSR: SetU32(ImageEncodingMode=1) failed (%d)\n", er);
+            c->last_err = er;
             vsr_destroy(c);
             return false;
         }
@@ -100,6 +102,7 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
     fprintf(stderr, "VSR: DstImage0 %s -> %d\n",
             c->bits == VFX_BITS_10 ? "RGB10A2" : "RGBA U8", ret);
     if (ret != 0) {
+        c->last_err = ret;
         vsr_destroy(c);
         return false;
     }
@@ -114,6 +117,7 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
     ret = pfn_NvVFX_SetImage(c->handle, NVVFX_INPUT_IMAGE, &c->in_img);
     if (ret != 0) {
         fprintf(stderr, "VSR: SetImage(input RGBA U8) failed (%d)\n", ret);
+        c->last_err = ret;
         vsr_destroy(c);
         return false;
     }
@@ -152,6 +156,7 @@ bool vsr_init(struct vsr_context *c, int in_w, int in_h,
     ret = pfn_NvVFX_Load(c->handle);
     if (ret != 0) {
         fprintf(stderr, "VSR: Load failed (%d)\n", ret);
+        c->last_err = ret;
         vsr_destroy(c);
         return false;
     }

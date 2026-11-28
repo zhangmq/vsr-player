@@ -14,7 +14,8 @@ QML Shortcut 漏加一条、菜单里另抄一份偏移键映射、某个 id 没
   4. main.qml 不再有 Shortcut / sequence:（键位不能回到 QML）
   5. ContextMenu.qml 不再有按键映射（偏移键只有一份）
   6. handler=cpp 的动作在 KeyRouter.cpp 里真有实现
-  7. 关键键位与用户决定的语义仍在（z / Shift+Z / Ctrl+0 / Ctrl++ / Ctrl+Alt+0 …）
+  7. 关键键位与用户决定的语义仍在（z / Shift+Z / Ctrl+Alt+Z / Ctrl++ / Ctrl+Alt+0、
+     Ctrl+1..4/0 = VSR、Ctrl+Shift+1..4 = 插帧、Ctrl+Shift+0 = 插帧帧率上限循环、Ctrl+H = SDR→HDR10 …）
   8. 弹窗内可用的动作集合就是那 6 个延迟动作
   9. 3D 帮助面板引用的每个动作 id 都能解析出键名
 
@@ -113,6 +114,14 @@ def main() -> int:
     check("Shortcut {" not in main_qml, "main.qml 没有 QML Shortcut")
     check("sequence:" not in main_qml, "main.qml 没有裸 sequence:")
 
+    # ── 3b. 3D 选择器同样走键位表的菜单导航（2026-11-28）──────────
+    picker = (ROOT / "src/client/ui/StereoPicker.qml").read_text(encoding="utf-8")
+    # 只看代码行（注释里会引用 Qt.Key_* 作说明）
+    picker_code = "\n".join(l for l in picker.splitlines()
+                            if not l.strip().startswith("//"))
+    check("Qt.Key_" not in picker_code,
+          "StereoPicker.qml 不再按 Qt.Key_* 判键（改走 keys.menuAction）")
+
     # ── 3. 菜单里不能再有第二份按键映射 ─────────────────────────
     check("Qt.Key_" not in menu_qml, "ContextMenu.qml 不再按 Qt.Key_* 判键")
     for legacy in ('"ctrl+0"', '"shift+z"', '"audio-up"', '"audio-down"',
@@ -130,7 +139,8 @@ def main() -> int:
     pairs = {(r["id"], s) for r in rows for s in r["seqs"]}
     required = [
         ("sub-delay-down", "z"), ("sub-delay-up", "Shift+Z"),
-        ("sub-delay-reset", "Ctrl+0"),
+        # 2026-11-28：Ctrl+0 让给 VSR auto，字幕归零挪到 Ctrl+Alt+Z
+        ("sub-delay-reset", "Ctrl+Alt+Z"),
         ("audio-delay-up", "Ctrl++"), ("audio-delay-up", "Ctrl+="),
         ("audio-delay-down", "Ctrl+-"), ("audio-delay-reset", "Ctrl+Alt+0"),
         ("open-menu", "Menu"), ("open-menu", "Shift+F10"), ("open-menu", "F10"),
@@ -140,6 +150,14 @@ def main() -> int:
         ("toggle-osd", "Tab"), ("play-pause", "Space"),
         ("remove-from-playlist", "Delete"), ("delete-file", "Shift+Delete"),
         ("quit", "Ctrl+Q"),
+        # 画质档位（用户 2026-11-28 定）：Ctrl+数字 = VSR，Ctrl+Shift+数字 = 插帧，
+        # Ctrl+H = SDR→HDR10。
+        ("vsr-off", "Ctrl+1"), ("vsr-2x", "Ctrl+2"), ("vsr-3x", "Ctrl+3"),
+        ("vsr-4x", "Ctrl+4"), ("vsr-auto", "Ctrl+0"),
+        ("fruc-off", "Ctrl+Shift+1"), ("fruc-2x", "Ctrl+Shift+2"),
+        ("fruc-3x", "Ctrl+Shift+3"), ("fruc-4x", "Ctrl+Shift+4"),
+        ("fruc-cap", "Ctrl+Shift+0"),
+        ("toggle-up-hdr", "Ctrl+H"),
     ]
     for pair in required:
         check(pair in pairs, f"键位 {pair[1]} → {pair[0]} 仍在")

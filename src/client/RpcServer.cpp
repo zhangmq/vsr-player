@@ -14,6 +14,8 @@
 #include <QMetaObject>
 #include <QQuickWindow>
 #include <QCursor>
+#include <QCoreApplication>
+#include <QMouseEvent>
 #include <QGuiApplication>
 #include <QWindow>
 #include <QVariant>
@@ -632,6 +634,36 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             snprintf(buf, sizeof buf, "%lldx%lld", (long long)w, (long long)h);
             response = formatResponse("success", "\"" + std::string(buf) + "\"");
         }
+    } else if (cmd == "get-vm") {
+        // 测试/诊断：读 PlayerViewModel 的 Q_PROPERTY（应用层设定，不是 mpv 的
+        // property tree——`get_property scale` 拿到的是 mpv 的缩放滤镜名）。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: get-vm <property>");
+        } else {
+            const QString name = QString::fromStdString(args[0]);
+            QVariant v;
+            PlayerViewModel *v2 = vm;
+            QMetaObject::invokeMethod(v2, [v2, name, &v] {
+                    v = v2->property(name.toUtf8().constData());
+                }, Qt::BlockingQueuedConnection);
+            response = formatResponse("", "\"" + jsonEscape(
+                          v.toString().toStdString()) + "\"");
+        }
+    } else if (cmd == "get-osd") {
+        // 测试/诊断：读当前 OSD 文本（与 3D 下的 pipelineOsd 同源 = osdTextString）。
+        // 断言"状态行/耗时有没有显示"不用截图；osdTextString 在事件线程拉取，
+        // 这里投到 GUI 线程读一次（与其余读状态的 RPC 同款）。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            std::string text;
+            PlayerViewModel *v = vm;
+            QMetaObject::invokeMethod(v, [v, &text] { text = v->osdTextSnapshot(); },
+                                      Qt::BlockingQueuedConnection);
+            response = formatResponse("", "\"" + jsonEscape(text) + "\"");
+        }
     } else if (cmd == "get-menu-state") {
         // 右键菜单的数据源快照（不截图验证"轨道组为什么不显示"这类问题）：
         // 媒体/网络源标志、轨道数、edition 数、当前 edition、两条延迟。
@@ -1019,6 +1051,30 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             QQuickWindow *w = win_;
             QMetaObject::invokeMethod(w, [w, x, y]() {
                 QCursor::setPos(w->mapToGlobal(QPoint(x, y)));
+            }, Qt::QueuedConnection);
+            response = formatResponse("success");
+        }
+    } else if (cmd == "click") {
+        // 测试用：在窗口内 (x,y) 注入一次左键按下 + 松开。
+        // 为什么需要：Wayland 下测试进程无法驱动输入（QCursor::setPos 无效、
+        // 也没有 xdotool），而"点空白处关弹窗/点条目执行动作"这类验收只能靠
+        // 真人点。弹窗的关闭判定是 Qt 侧逻辑（overlay 的事件分发），把鼠标事件
+        // 直接投递给窗口就能走同一条路径——click 用于自动化核对，不用截图。
+        if (!win_) {
+            response = formatResponse("no window");
+        } else if (args.size() < 2) {
+            response = formatResponse("usage: click <x> <y>");
+        } else {
+            const QPoint pos(atoi(args[0].c_str()), atoi(args[1].c_str()));
+            QQuickWindow *w = win_;
+            QMetaObject::invokeMethod(w, [w, pos]() {
+                const QPointF global = w->mapToGlobal(pos);
+                QMouseEvent press(QEvent::MouseButtonPress, QPointF(pos), global,
+                                  Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(w, &press);
+                QMouseEvent release(QEvent::MouseButtonRelease, QPointF(pos), global,
+                                    Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(w, &release);
             }, Qt::QueuedConnection);
             response = formatResponse("success");
         }

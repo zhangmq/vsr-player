@@ -60,14 +60,17 @@ PopupBase {
     /// false → 整个弹窗禁用+变淡（内容全是 AI 设置），并在 Quality 按钮的
     /// tooltip 上说明原因；**不改用户设置**，换到可用设备启动即恢复。
     property bool aiAvailable: true
+    /// VFX SDK 载入失败（滤镜 reason=sdk）：内容全部依赖 SDK → 整体禁用，
+    /// 原因显示在 Quality 按钮的 tooltip 上（与 AI 不可用同一套做法）。
+    property bool vfxUnavailable: false
     property bool upHdrEffective: false
     signal upHdrEnabledPicked(bool v)
     signal advancedRequested()
 
     Column {
         spacing: 12; anchors { left: parent.left; right: parent.right }
-        enabled: root.aiAvailable          // 禁用 = 子项收不到鼠标事件
-        opacity: root.aiAvailable ? 1.0 : 0.4
+        enabled: root.aiAvailable && !root.vfxUnavailable   // 禁用 = 子项收不到鼠标事件
+        opacity: (root.aiAvailable && !root.vfxUnavailable) ? 1.0 : 0.4
 
         Text { text: qsTr("Scale"); color: "#b0b0b0"; font.pixelSize: 13 }
         Row { spacing: 6; anchors { left: parent.left; right: parent.right }

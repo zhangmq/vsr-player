@@ -158,6 +158,61 @@ bool KeyRouter::exec(const QString &id)
     if (id == "delete-file") { vm_->deleteCurrentFile(); return true; }
     if (id == "quit") { quitApplication(); return true; }
 
+    // ── 画质档位（Ctrl+数字 / Ctrl+Shift+数字 / Ctrl+H；2D/3D 通用）────
+    // 提示文案与 OSD 同口径：不翻译（VSR ×2 / FRUC off / SDR→HDR10 on）。
+    // ⚠ AI 不可用（非 N 卡 / VFX SDK 缺失）时只给提示、不改设定。
+    // 每个 id 都显式比较：check_keys.py 会逐条核对"表里的 C++ 动作在这里有实现"。
+    if (id == "vsr-off" || id == "vsr-2x" || id == "vsr-3x" ||
+        id == "vsr-4x" || id == "vsr-auto") {
+        if (!vm_->aiAvailable()) {
+            vm_->flashToast(QStringLiteral("VFX unavailable"));
+            return true;
+        }
+        double scale = -1;
+        QString text = QStringLiteral("VSR off");
+        if (id == "vsr-2x")        { scale = 2; text = QStringLiteral("VSR ×2"); }
+        else if (id == "vsr-3x")   { scale = 3; text = QStringLiteral("VSR ×3"); }
+        else if (id == "vsr-4x")   { scale = 4; text = QStringLiteral("VSR ×4"); }
+        else if (id == "vsr-auto") { scale = 0; text = QStringLiteral("VSR auto"); }
+        vm_->setScale(scale);
+        vm_->flashToast(text);
+        return true;
+    }
+    if (id == "fruc-off" || id == "fruc-2x" || id == "fruc-3x" ||
+        id == "fruc-4x") {
+        if (!vm_->aiAvailable()) {
+            vm_->flashToast(QStringLiteral("VFX unavailable"));
+            return true;
+        }
+        int fps = -1;
+        QString text = QStringLiteral("FRUC off");
+        if (id == "fruc-2x")      { fps = 2; text = QStringLiteral("FRUC ×2"); }
+        else if (id == "fruc-3x") { fps = 3; text = QStringLiteral("FRUC ×3"); }
+        else if (id == "fruc-4x") { fps = 4; text = QStringLiteral("FRUC ×4"); }
+        vm_->setFrucFps(fps);
+        vm_->flashToast(text);
+        return true;
+    }
+    if (id == "fruc-cap") {
+        // VFG 没有 auto 档：这一格 = 输出帧率上限循环（48 → 60 → 120 → 48）。
+        // RIFE 后端无此参数（setFrucMaxFps 对它无意义），提示照发、值不变。
+        static constexpr int caps[] = {48, 60, 120};
+        const int cur = vm_->frucMaxFps();
+        int next = caps[1];                     // 未知/0 → 回到默认 60
+        for (int i = 0; i < 3; ++i) {
+            if (caps[i] == cur) { next = caps[(i + 1) % 3]; break; }
+        }
+        vm_->setFrucMaxFps(next);
+        vm_->flashToast(QStringLiteral("FRUC cap %1").arg(next));
+        return true;
+    }
+    if (id == "toggle-up-hdr") {
+        const bool on = vm_->toggleUpHdr();
+        vm_->flashToast(on ? QStringLiteral("SDR→HDR10 on")
+                           : QStringLiteral("SDR→HDR10 off"));
+        return true;
+    }
+
     // ── 字幕/音频延迟（弹窗内也可用，见 popupOk）───────────────────
     if (id == "sub-delay-down") { vm_->adjustSubDelay(-0.05); return true; }
     if (id == "sub-delay-up") { vm_->adjustSubDelay(0.05); return true; }
@@ -246,10 +301,14 @@ void KeyRouter::logDispatch(const QString &id, int key, int mods, bool fromMenu,
 {
     QString seq = QStringLiteral("-");
     if (key != 0) {
-        const Qt::KeyboardModifiers m = Qt::KeyboardModifiers(mods);
+        // 按**归一化**后的键记日志：真键盘的 Shift+1 报 Key_Exclam，归一化后
+        // 显示成 "Ctrl+Shift+1"（与键位表和帮助面板同一个写法）。
+        const keymap::Sequence nk =
+            keymap::normalized(key, Qt::KeyboardModifiers(mods));
+        const Qt::KeyboardModifiers m = nk.mods;
         // ⚠ `QKeySequence(key, mods)` 是"两段和弦"构造函数（会打印成
         // "Z, Shift+"）；这里必须走 QKeyCombination。
-        seq = QKeySequence(QKeyCombination(m, Qt::Key(key)))
+        seq = QKeySequence(QKeyCombination(m, Qt::Key(nk.key)))
                   .toString(QKeySequence::PortableText);
         // PortableText 把字母一律写成大写（"z" 打印成 "Z"）；日志按物理按键
         // 记，无 Shift 的字母显示小写，免得看日志时以为按的是 Shift+Z。

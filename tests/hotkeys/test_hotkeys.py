@@ -46,12 +46,18 @@ def t3_window_keys(p: Player) -> None:
     rpc = p.rpc
 
     # 音量：↓/↑ 各 5%
-    rpc.call("set_property", "volume", "100")
+    # ⚠ 必须走 app 的音量入口（nudge-volume）：4852c89 起 volume 是"观察器回读 +
+    # requestedVolume_ 为唯一事实源"，mpv 层的 set_property volume 不会改 app 的
+    # 基准值 → ↓/↑ 会从上一次的持久化音量（例如 80）开始走，断言 >99 永不成立。
+    rpc.call("nudge-volume", "1")          # +100% → 夹到 1.0
     wait_until(lambda: abs(rpc.prop("volume") - 100) < 0.6, "音量置 100")
     rpc.key("Down")
     wait_until(lambda: rpc.prop("volume") < 96, "↓ 降低音量")
+    v_down = rpc.prop("volume")
     rpc.key("Up")
-    wait_until(lambda: rpc.prop("volume") > 99, "↑ 恢复音量")
+    # 断言**增量**而不是绝对值：↓/↑ 的基准是 app 的 requestedVolume_（持久化值，
+    # 可能是 80 之类），断言"恢复回 100"只有起点恰好 100 时才成立（启动时序一抖就红）。
+    wait_until(lambda: rpc.prop("volume") >= v_down + 4, "↑ 恢复音量")
     check(True, "↑/↓ 调音量")
     check("id=volume-up" in p.last_dispatch(), "↑ 派发到 volume-up",
           p.last_dispatch())
@@ -68,8 +74,9 @@ def t3_window_keys(p: Player) -> None:
     before2, back = nudge(p, "Left", -1)
     check(4.0 <= before2 - back <= 7.5, "← 后退约 5 秒", f"{before2:.1f}→{back:.1f}")
 
-    # 字幕延迟：z / Shift+Z / Ctrl+0（分开放置，不要一起归零）
-    rpc.key("Ctrl+0")
+    # 字幕延迟：z / Shift+Z / Ctrl+Alt+Z（分开放置，不要一起归零）
+    # ⚠ Ctrl+0 自 2026-11-28 起是 VSR auto，字幕归零挪到 Ctrl+Alt+Z
+    rpc.key("Ctrl+Alt+Z")
     wait_until(lambda: p.menu()["subDelay"] == 0, "字幕延迟归零")
     rpc.key("z")
     wait_until(lambda: p.menu()["subDelay"] == -50, "z → -50ms", timeout=4)
@@ -77,9 +84,9 @@ def t3_window_keys(p: Player) -> None:
     wait_until(lambda: p.menu()["subDelay"] == -100, "z 再按 → -100ms", timeout=4)
     rpc.key("Shift+Z")
     wait_until(lambda: p.menu()["subDelay"] == -50, "Shift+Z → -50ms", timeout=4)
-    rpc.key("Ctrl+0")
-    wait_until(lambda: p.menu()["subDelay"] == 0, "Ctrl+0 → 0", timeout=4)
-    check(True, "字幕延迟 z / Shift+Z / Ctrl+0")
+    rpc.key("Ctrl+Alt+Z")
+    wait_until(lambda: p.menu()["subDelay"] == 0, "Ctrl+Alt+Z → 0", timeout=4)
+    check(True, "字幕延迟 z / Shift+Z / Ctrl+Alt+Z")
 
     # 音频延迟：Ctrl++ / Ctrl+= / Ctrl+- / Ctrl+Alt+0
     rpc.key("Ctrl++")
@@ -96,7 +103,7 @@ def t3_window_keys(p: Player) -> None:
     rpc.key("z")
     wait_until(lambda: p.menu()["subDelay"] == -50, "z 只改字幕", timeout=4)
     expect_eq(p.menu()["audioDelay"], 0, "调字幕不动音频延迟")
-    rpc.key("Ctrl+0")
+    rpc.key("Ctrl+Alt+Z")
     wait_until(lambda: p.menu()["subDelay"] == 0, "字幕归零", timeout=4)
 
     # 播放/暂停
@@ -152,13 +159,13 @@ def t3_popup_gating(p: Player) -> None:
     expect_eq(p.menu()["playlist"], 0, "菜单开着时 P 不开播放列表")
 
     # 但延迟动作照旧可用（popupOk）
-    rpc.key("Ctrl+0")
-    wait_until(lambda: p.menu()["subDelay"] == 0, "菜单内 Ctrl+0 归零", timeout=4)
+    rpc.key("Ctrl+Alt+Z")
+    wait_until(lambda: p.menu()["subDelay"] == 0, "菜单内 Ctrl+Alt+Z 归零", timeout=4)
     rpc.key("z")
     wait_until(lambda: p.menu()["subDelay"] == -50, "菜单内 z → -50ms", timeout=4)
     check("popup=1" in p.last_dispatch(), "延迟键记录为弹窗内派发",
           p.last_dispatch())
-    rpc.key("Ctrl+0")
+    rpc.key("Ctrl+Alt+Z")
     wait_until(lambda: p.menu()["subDelay"] == 0, "菜单内归零", timeout=4)
     p.close_menu()
     expect_eq(p.menu()["popups"], 0, "关菜单后弹窗计数归零")
@@ -236,7 +243,7 @@ def t2_menu_state_machine(p: Player) -> None:
         rpc.key("Down")
     check(landed, "导航到 Subtitle delay 行", p.menu()["currentRow"])
 
-    rpc.key("Ctrl+0")
+    rpc.key("Ctrl+Alt+Z")   # 字幕归零（Ctrl+0 已给 VSR auto）
     wait_until(lambda: p.menu()["msSub"] == 0, "先归零", timeout=4)
     rpc.key("Enter")
     st = settle(p)
@@ -250,8 +257,8 @@ def t2_menu_state_machine(p: Player) -> None:
     rpc.key("Enter")
     st = settle(p)
     expect_eq(st["ctl"], 0, "Enter 退出控件态")
-    rpc.key("Ctrl+0")
-    wait_until(lambda: p.menu()["msSub"] == 0, "Ctrl+0 归零", timeout=4)
+    rpc.key("Ctrl+Alt+Z")
+    wait_until(lambda: p.menu()["msSub"] == 0, "Ctrl+Alt+Z 归零", timeout=4)
     check(True, "延迟行：Enter 控件态 + ←/→ ±50ms")
 
     # 方向键只导航不执行：在延迟行按 ←/→（非控件态）不调值
@@ -447,9 +454,13 @@ def t6_failure_ui(p: Player) -> None:
     expect_eq(st.get("canRetry"), False, "本地源不给重试")
 
     # 网络不可达
-    prev = (phase() or {}).get("detail")
+    # ⚠ 不能用 wait_failed()（它要求 detail **变化**）：本地缺失文件与网络不可达
+    # 的 detail 都是 mpv 的同一句 "Could not load the file" → 永远等不到。
+    # 用 canRetry 区分：只有网络源给出重试。
     rpc.call("open", "http://127.0.0.1:1/none.mp4")
-    st = wait_failed(prev, "网络失败进入 failed")
+    st = wait_until(
+        lambda: (lambda d: d if d.get("phase") == 3 and d.get("canRetry") else None)(phase()),
+        "网络失败进入 failed", timeout=20)
     expect_eq(st.get("phase"), 3, "网络打开失败 → failed")
     check(bool(st.get("detail")), "网络失败原因非空", st.get("detail"))
     expect_eq(st.get("canRetry"), True, "网络源给重试")

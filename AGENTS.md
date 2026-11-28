@@ -2,8 +2,9 @@
 
 > 本文件由 DeepSeek Harness 转写：来源 = 开发机上的 Claude Code 会话记忆（已筛选：保留知识/经验类 6 个主题，移除过程性/过期记录；清洗隐私/密钥后拉入仓库 `docs/memory/`）+ 原 `CLAUDE.md`（已于 2026-08 删除，信息脱节），并已对照 master 代码（`7bae9ce`）修正其中的失效/冲突信息。
 >
-> **⚠ 当前在办任务（接手先读）**：`docs/handover/3d-conversion.md`
-> —— 把 `test.iso` 的 6 个 title 离线转出来（2D 直接压 / 3D 转全宽 SBS），含阻塞点、工具位置、编码参数与已知坑。
+> **⚠ 当前在办（接手先读）**：0.8.0 回归修复已全部完成并合在 PR #80（分支
+> `fix/0.8.0-regression`），**只差发布收尾**（合并 → 重建 standard/full 包 → 重打 tag →
+> 发 release）。现场与验证命令见 `docs/handover/2026-11-28-regression-fixes-handover.md`。
 > （`docs/handover/` 是**不纳入 git 的本地会话笔记**：接手文档会携带大量后续会过期的信息，
 > 只在开发机保留，不随仓库分发、也不出现在 PR 里；清理/换机时不要指望它还在。）
 >
@@ -243,7 +244,6 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   播放器内实测同一文件（30fps k=2、VSR 关）MEDIUM **14.7–15.3**、LOW **4.0**、HIGH **5.5 ms/输出帧**。
   `AFGX_FLOW_RESOLUTION` 是编译期常量、**不是环境变量**（试 1..64 无任何变化）。
   → 竖屏内容应避开 MEDIUM：**HIGH 更快且质量更高**（少数"免费的午餐"），LOW 最省。
-  尚未做：按宽高比自动选档（属于"按局部信息决策"，需用户点头）。
 - **丢帧分支必须 `mark_progress`（2026-10-22 修：坏时间戳老片源卡死）**：`vf_vfg.c` 里
   "重复/倒序/缺 PTS → 丢弃 cur、保留 prev" 的分支原先 `talloc_free(cur); return;` ——
   **消费了输入却没写出输出、也没 `mp_filter_internal_mark_progress(f)`**：mpv 的 process()
@@ -295,8 +295,49 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   或给滤镜加 prepare 通道提前并行 Load（改动/风险大一档）。
   ⚠ **不要再加"首帧前保持 opening 卡片"那套客户端门控**（用户 2026-11-27：
   "这个之前加过，因为判断有问题后来拆掉了"）——纯显示层，收益不值那份状态机。
-- **无性能自动降级**（2026-10-15 移除旧的分级降级：曾是"cost 超预算先降档 60→48→40→30，全档超才直通"）。移除理由：判据是**节点内自测**，只能看到 RIFE 自身 GPU 耗时，而真实短缺通常在该节点下游——VSR 按**输出帧**计费（k=out/src 次/对），加上 VO/渲染通路；实测 1080p29.97 + `fps=60` + `scale=auto` 实际上屏 17.5fps、丢帧 +52/s，而判据报 `cost=16.0ms < budget=21.4ms` 全程沉默。目前 `fruc-status` 的 `cost=` 仅作观测保留。⚠️ 移除的代价：4K 纯 RIFE 过载场景失去唯一有效的回退（24fps → 7.3fps）。**完整记录（现象/根因/同族缺陷/vf 节点能力边界/统一方案的待定问题/复现方法）见 `docs/memory/fruc-auto-degrade-removal.md`**；统一的跨节点性能自适应方案（覆盖 rife/vsr/VFX 新版插帧，以实际达成率判定）**待设计，2026-10-15 搁置**。
+- **无性能自动降级**（2026-10-15 移除旧的分级降级：曾是"cost 超预算先降档 60→48→40→30，全档超才直通"）。移除理由：判据是**节点内自测**，只能看到 RIFE 自身 GPU 耗时，而真实短缺通常在该节点下游——VSR 按**输出帧**计费（k=out/src 次/对），加上 VO/渲染通路；实测 1080p29.97 + `fps=60` + `scale=auto` 实际上屏 17.5fps、丢帧 +52/s，而判据报 `cost=16.0ms < budget=21.4ms` 全程沉默。目前 `fruc-status` 的 `cost=` 仅作观测保留。⚠️ 移除的代价：4K 纯 RIFE 过载场景失去唯一有效的回退（24fps → 7.3fps）。**完整记录（现象/根因/同族缺陷/vf 节点能力边界/复现方法）见 `docs/memory/fruc-auto-degrade-removal.md`**（是否要做跨节点性能自适应由用户后续决定，别自己动手）。
 - 插帧历史决策：NVOFA 硬件光流降级备选（repeat 率太高，有运动对成功率 9.7% vs RIFE 96.3%）；Nano = 两帧平均器已否决（flow 恒零实证）。
+
+### 失败兜底（显存 / 驱动 / SDK，2026-11-28 落地）
+
+**原则**（用户 2026-11-27 定，勿改）：出现显存不足或驱动错误 **直接停止播放并提示**（复用
+`IdleScreen` 的空状态卡，`mediaPhase=3`）；**不做预防性检查、不静默降级**；SDK 缺失才允许降级
+（直通 + 面板禁用）。主机内存不设兜底——系统会直接杀进程，没有"停止播放"可言（2026-11-28 用户明确）。
+
+**链路**：滤镜 `src/mpv/video/filter/vfx_fatal.h` 的 `vfx_report_error()` 打一行结构化日志
+`vfx-error: node=<vsr|vfg|truehdr> reason=<sdk|engine|resource|driver> err=<码> dims=WxH free=<字节> total=<字节>`
+（free/total 是**失败当刻**在滤镜自己的 CUDA context 上 cuMemGetInfo 读的）→ 客户端
+`PlayerViewModel::onVfxError()` 决策：
+
+| reason | 处理 |
+|---|---|
+| `sdk` | 直通 + VFX 面板整体禁用（`vfxUnavailable`；Quality 按钮 tooltip 显示 "VFX unavailable"） |
+| `resource` / `driver` / `engine` 且 `err <= -1000`（SDK 的 CUDA 失败码） | 停止播放 + 显存/驱动错误卡 |
+| `engine` 其它码 | 当刻 free < 节点开销（vsr 900 / vfg 600 / truehdr 400 MiB，4K 上界）→ 停；否则直通（状态行带 `reason=`） |
+
+- 卡片文案：`显存不足，播放已停止` / `播放已停止：图形驱动错误` + `文件名 · 详见日志`（`mediaPhaseTitle`
+  由 C++ 给，IdleScreen 只负责显示；`vfxFatalStop_` 抑制随后的通用"无法播放"卡覆盖它）。
+- VSR 引擎启动失败**不再 mark_failed**（旧实现会把整条链搞挂）：改为当次输入配置直通 + 一次
+  `vfx-error`，输入尺寸/位深变化时重试；VFG/TrueHDR 原有的一次性直通（`engine_failed`/`failed`）保留。
+- ⚠ **坑**：`MpvController` 事件循环原先只把 `level == "status"` 的消息交给 `logCb_`，ERR 级的
+  `vfx-error` 根本到不了客户端（现象：真实的 -1002 失败只在 stderr 里，卡片不弹）。已改为所有
+  转发消息都过 `logCb_`，stderr 转发行为不变。
+- **标准包在无 NVIDIA 驱动的机器上起不来（2026-11-28 实测，`error while loading shared libraries:
+  libcuda.so.1`）**：`libmpv.so.2` 的 NEEDED 里只有 `libcuda.so.1` / `libnvrtc.so.13` 是我们自己的
+  VFX 滤镜带进来的（系统 FFmpeg 的 libavutil/libavcodec **不** NEED libcuda，mpv 的 cuda hwdec 走
+  FFmpeg 的运行时加载；VFX SDK 库本来就是 `vfx_loader.c` dlopen 的）。所以**把滤镜里的 cu*/nvrtc*
+  调用改成运行时 dlopen（照 `CudaProbe` / `vfx_loader` 的函数表模式）可以彻底去掉这两个 NEEDED**，
+  一个包就能在所有机器上启动（无驱动时 `cuda_load_libraries()` 失败 → 按 `reason=sdk` 直通 + 禁用
+  面板）。工作量 = 一张函数表 + 约 30 个调用点机械替换，风险集中在错误路径。
+  **暂缓**：目前没有对无 N 卡机器公开发布的打算（用户 2026-11-28），只为测试保留了
+  `-Dno_rtx=true` 构建路径（见下条）。
+- 无 N 卡机器的测试构建：`NO_RTX=1 MPV_BUILD_DIR=build/mpv-nortx bash scripts/build_mpv.sh` +
+  `VSR_MPV_BUILD=build/mpv-nortx bash scripts/install.sh --dev --no-rtx`（详见脚本头注释）。
+- 验证（2026-11-28，dev 构建）：① 真实显存饥饿（`build/scratch/gpu_hog` 压到 free≈640 MiB，
+  再 `set-vsr scale 4` 使 5120×2880 引擎分配失败）→ 日志 `node=truehdr reason=gpu-memory
+  free=31MiB`、播放停止、卡片显示；释放后 `play` 恢复 phase=2。② 压到 free≈230 MiB 时会先在
+  hwup 的 cuCtxCreate 拿到 700（CUDA illegal address）并在 mpv 自己的 `gpu_tex` 断言崩溃——
+  极端饥饿下上游 Vulkan 路径先挂，不是本兜底能覆盖的（测试用例别再往 300 MiB 以下压）。
 
 ### VSR（超分）
 
@@ -314,7 +355,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **FFmpeg CUDA hwframes 不支持 x2bgr10** → 自建 `hw_frames_ctx` 的 `sw_format` 恒用 `RGBA`，10-bit 由帧参数 `hw_subfmt` 承载（`hwdownload` 软路径会退化成 8-bit，本应用 VO 有 interop 不走）。
 - **mpv 的 ra 不认 X2BGR10** → 补丁 `src/mpv/video/out/placebo/ra_pl.c` 把 libplacebo 的 `rgb10a2` 标成 `special_imgfmt = IMGFMT_X2BGR10`（否则 CUDA interop 失败 → 4K 每帧回读）。
 - **QualityLevel 语义**：1–4 = upscale 档、8–11 = 1:1 denoise 档，混用返回 -7；`vf_vsr` 的 `quality`/`denoise` 分别映射。
-- **已知遗留**：① 4:4:4/4:2:2 hw 帧被 kernel 当 4:2:0 读；② `-Dfruc_backend=rife` 分支冻结在 8-bit（VFG 链才走 10-bit）。~~软解 10-bit 偏暗~~ 已证伪（同机逐像素 mean|Δ|=0）。
+- ~~软解 10-bit 偏暗~~ 已证伪（同机逐像素 mean|Δ|=0）。
 
 ### HDR 上屏（2026-10-17 落地，细节见 `docs/hdr-pipeline-investigation.md` §10-§22）
 
@@ -326,15 +367,67 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - ⚠ **PQ 下 `set_luminances` 的 max_lum 被协议忽略（恒 min+10000）** → 内容峰值必须经 `set_mastering_luminance` + `set_max_cll`/`max_fall` 下发（来源 mpv `video-params/*`，合法性照 `cm_metadata_sanitize()`）；缺了它 KWin 按 10000nit 压 → 对比度变平。
 - **目标色彩空间必须由宿主用 mpv 选项声明**（`target-trc=pq` / `target-prim=bt.2020`）：generic libmpv 路径自己拼 `ra_fbo` 会丢掉 backend 的 `color_space`，gl_video 把 PQ 烘成 gamma2.2 → 偏色。**不要**把合成器亮度填进 `ra_fbo.color_space.hdr.max_luma`（会预 tone map 到 203nit）。
 - **`VSR_HDR_DECLARE=0`（不自己声明）在本机画面发灰**，默认 1；`VSR_HDR=off|auto|hdr10` 默认 auto，`hdr10` 仅用于诊断/逃生舱（SDR 内容会更暗），不暴露 UI。
-- **OSD**：`HDR` 行 = 内容侧（`SDR · content SDR` / `... · content 758nit` / `SDR · content HDR not displayed (<原因>)`），`Output` 行 = 真实 swapchain 格式（`· HDR10` / `· SDR`，取自探测而非策略意图）。
+- **OSD（2026-11-28 用户定的分工）**：三条各管一段，别再混——
+  `Source` = 片源 + **内容侧 HDR 状态**（末尾 `· content 758nit` / `· content SDR` /
+  `· content SDR → HDR10(400nit)` / `· content HDR not displayed (<原因>)`）；
+  `Output` = 视口尺寸/渲染 fps + **真实输出/显示侧**（`· HDR10 · BT.2020/PQ · display 380nit`，
+  取自探测而非策略意图）；`TrueHDR` = 上变换**开关 + 状态**（`on 400nit | mode=active cost=…`）。
+  文本源：`hdr::contentText()` / `hdr::statusText()`（拆成两个函数就是为这条分工）。
+  验 OSD 不用截图：RPC `get-osd` 返回整段 `osdTextString()`（GUI 线程取快照）。
+  ⚠ **三个 VFX 节点（VSR/TrueHDR/FRUC）的状态段判据统一 = 滤镜自己报的 mode，不看设定**
+  （用户 2026-11-28）：有报告就原样并入（`mode=active` 带 cost/fps；`mode=passthrough`
+  带 reason），没有报告 = 节点不在链上/未跑 → 不显示。别再用 `scale`/`denoise`/`fruc`/
+  开关这类设定值当判据（denoise 档就是 scale=-1 但滤镜在跑，曾因此丢掉 cost）。
 - **⚠ 运行期切换的已知坑**：`applyMode` 里模式未变也要 `syncTargets()`（幂等），否则漏设 `target-trc`；`CompositeRenderNode` 必须在渲染阶段从 Video 读 pipeline（缓存句柄会绑定已销毁对象）；SDR↔HDR10 切换仍是同步属性写，软解 + DR 等帧时理论上仍可能死锁（彻底修法 = 异步写）。
+- **HDR10 输出下 Qt 自己的 UI 没有色彩编码（2026-11-28 实测；Qt 侧问题，不归本项目处理）**：Qt Quick 只把
+  `_qt_sg_hdr_format` 用来选交换链格式（`QSGRhiSupport::applySwapChainFormat`），**不做
+  任何 sRGB→PQ 转换**（`src/quick/` 全树无相关代码；QRhi 文档明确"HDR10 = ST2084 缓冲"，
+  写 PQ 码值是应用的责任）。结果：UI 的 sRGB 码值被当 PQ 解释 → 中间调抬起（#808080
+  128→≈170）、高光削顶（#e0e0e0 224→255）、暗部压黑；缩略图最显眼。视频侧
+  （`CompositeRenderNode` 直接写 PQ）不受影响。换 scRGB 也不解决（实测同样写 sRGB 码值）。
+  判定过程/数据/修法选项见 `docs/hdr-pipeline-investigation.md` §23；复跑脚本
+  `build/scratch/ui_hdr_capture.sh`、`build/scratch/scRGB-probe/`。
+  进度条缩略图**已单独修**：`PreviewImageProvider` 按该窗口真实格式把 QImage 预编码成
+  PQ（`hdr::encodeSdrImageToPq()`，8-bit 量化误差 mean 0.13/p99 0.6 码值）。
+  ⚠ **白点必须用合成器的参考白**（`DisplayInfo::refLuma`，本机 249 nit）：它按这个值把
+  1.0 映射成屏幕上的 SDR 白；用 mpv 口径的 203 会整体暗约 9%（实测中位 112→101）。
+  读不到描述才退 203。验证（spectacle 抓屏，同一冻结帧，SDR 输出 vs HDR10 输出）：
+  HDR 片源 缩略图 mean 76.1→74.6 / p50 60→66；SDR 片源 124.6→120.1 / p50 112→110
+  （残差 = 合成器 HDR→SDR tonemap），修前是中间调 +33% + 高光削顶。
+  其余 Qt 绘制的 UI 仍是 sRGB 码值（Qt 侧限制）。
+  ⚠ **抓图陷阱**：`grab-window` 的离屏回读在 HDR10 窗口上是**花的**（10-bit 缓冲被当
+  8-bit 读，整窗噪声；屏幕本身正常）→ 验 HDR 窗口一律用 `spectacle -b -n -a -o x.png`
+  抓屏；定位缩略图面板靠"有/无 `debug-hover` 两张抓屏的差"。
 
 ### SDR→HDR10 上变换（VFX TrueHDR，2026-10-18 落地，**默认关**）
 
 **位置**：链上恒在 `vf_vsr` 之后（`hwup → vsr → truehdr → vfg`；`--fruc-order pre` **不插** → 记日志）。链串恒带占位 `@truehdr:truehdr:enable=no`（⚠ 不能写 `enable=0`，`OPT_BOOL` 只认 yes/no，写错整条 vf 解析失败）。开关 = 内容 SDR ∧ opt-in（`VSR_UPHDR=on` 或 UI）∧ 策略≠off ∧ 链上有滤镜；过滤器另有按帧 transfer 自守卫。细节见 `docs/vfx-truehdr-investigation.md` §8。
 
 - **参数**（5 个，区间是硬约束且越界**静默失败** = SetU32 返 -7 但 Load/Run 仍 0，值不生效）：`Contrast` 100(0-200) / `Saturation` 100(0-200) / `MiddleGray` 50(**10-100**) / `Luminance` 650(**400-2000**，= 面板物理峰值) / `DebandingOff` 0（恒 0，抗色带常开）。三处区间夹取同步：`TrueHdrParams.h`、`vf_truehdr.c` 的 `M_RANGE`、`HdrOutput` 的 clamp。
-- **热更新**：参数走 `NvVFX_SetU32`（实测与 destroy+create 逐位相同）；仅帧尺寸变化 / `DebandingOff` 变化 / SetU32 失败才重建引擎（≈25ms）。
+- **热更新**：参数走 `NvVFX_SetU32`（实测与 destroy+create 逐位相同）；`DebandingOff` 变化 / SetU32 失败才重建引擎（≈25ms）。
+- **尺寸变化也走热换图，不再重建引擎（2026-11-27 修，同时也是 GB 级显存泄漏的根因）**：
+  TrueHDR 支持 Load 之后 `SetU32(InputWidth/InputHeight)` + `SetImage(SrcImage0/DstImage0)`
+  热换尺寸——实测 1707×960 加载后换到 2560×1440，输出与"直接按 2560×1440 新建引擎"
+  **逐字节相同（0.00% 差异）**，且省掉每次 ~13 ms 的 Load。`vf_truehdr.c` 的
+  `engine_resize()` 就是这条路径，SetImage 失败才退回 destroy+create。
+  为什么必须改：**播放中每次尺寸变化都重建引擎会持续吃显存、永不回落**——实测 720p
+  内容 + VSR auto，全屏来回 8 次共 **+752 MB**（每个来回 ~125 MB），文件切换（720p/1080p/4K
+  交替）每次 +85 MB 左右；用户的真实会话累计到 **13.2 GB**（16 GB 卡），最后 VFG/VSR
+  引擎 Load 失败（-1002）→ 静默直通。独立 NvVFX 探针（create+Load+Run+Destroy 循环，
+  含**交替尺寸**）**不泄漏**（空闲显存 13201→13246 MiB），泄漏只在"播放中重建"时出现。
+  修复后同一场景：8 次全屏来回窗口态 4258–4262（平）、10 次文件切换各尺寸稳态一致
+  （720p 4044–4099 / 1080p 4386–4400 / 4K 4668）、30 s 稳态 4032–4063。
+  ⚠ 该泄漏只在 TrueHDR 开启（SDR 内容）时出现；TrueHDR 关时同样折腾尺寸不漏。
+  ⚠ 热换图只解决尺寸；参数仍走 SetU32，`DebandingOff` 仍是 Load 期参数（必须重建）。
+- **seek 时也要保留引擎（2026-11-27 修，第二条泄漏路径）**：`f_reset` 原先在**每次 seek**
+  都 `engine_destroy`（下帧再 Load），这是"只是拖了几次进度条、显存就涨到 8.5 GB"的根因。
+  实测：720p + VSR auto + VFG，20 次精确 seek → 进程显存 **1221 → 3127 MiB（约 +95 MB/次）**；
+  同样 20 次 seek 但 TrueHDR 关掉 → **807 MiB 全程不变**。重复 `create+Load+Run+Destroy`
+  的独立探针**不漏**，所以漏点仍是"播放中重建引擎"这条。修法：`f_reset` 只清
+  `frame_count`，引擎保留（与 `vf_vsr`/`vf_vfg` 的 reset 同款理由：TrueHDR 是逐帧空间操作、
+  无跨 seek 状态；尺寸变化由 `engine_resize()` 处理，参数变化由 `engine_params_apply()`）。
+  修后同一场景：20 次 seek 1221→1205、6 次全屏来回 + 10 次 seek + 6 次来回 = 1359/1247/1359，
+  `engine ready` 只有 1 次、`resize` 12 次。
 - **输出**：`IMGFMT_X2BGR10` + `pl_color_space_hdr10` + `hdr.max_luma = Luminance`（对齐 mpv `vf_d3d11vpp.c`）；上变换生效时给合成器的内容峰值也用该 Luminance。成本 4K ≈ 4.9–5.8 ms/源帧。
 - **UI**：`QualityPopup` 只放开关 + Advanced（`mdi-tune`）→ `TrueHdrAdvancedPopup` 四条 slider + Reset、Debanding 两态；Reset = SDK 默认，Luminance 例外（回面板峰值）；Luminance 有 Auto/Manual 覆盖（Auto 跟面板）。持久化键 `upHdrEnabled/LumOverride/Luminance/Saturation/Contrast/MiddleGray/Debanding`。
 - ⚠ **同步 mpv API 死锁**：`mpv_set_property` 等 core dispatch lock，软解 + `vo=libmpv` 直渲时若 core 卡在等 DR 图像会循环死锁（gdb 实证）。已修：`setHdrTarget` 幂等 + 首帧 `reevaluate` 排队到 GUI 线程；**软解片源做 HDR 切换验收必须覆盖这一格**。
@@ -715,6 +808,34 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   （= 眼视口 = 满屏；比眼视口小 = 有黑边，差值就是黑边）。
 - OSD：默认显示；`Tab` 显隐；`J` 布局、`K` 交换眼、`L` 全/半；标题/键名 Bold、
   正文 DemiBold；左右面板 ±12 logical px 交叉视差（OSD 浮在画面前，独立于视频眼序）。
+- **画质档位快捷键（2026-11-28 用户定）**：`Ctrl+1..4` = VSR off/×2/×3/×4、
+  `Ctrl+0` = VSR auto；`Ctrl+Shift+1..4` = FRUC off/×2/×3/×4、`Ctrl+Shift+0` =
+  插帧输出上限循环（48→60→120→48，只改 cap 不动倍率）；`Ctrl+H` = SDR→HDR10 开关。
+  反馈走 QML `Toast`（底部小面板 1.5 s，2D 一份 / 3D 每眼一份），文案不翻译。
+  ⚠ `Ctrl+0` 原来是字幕延迟归零 → 已挪到 **`Ctrl+Alt+Z`**（音频归零仍 `Ctrl+Alt+0`），
+  `tests/hotkeys/check_keys.py` 的护栏同步改了。⚠ AZERTY/德语布局数字需要 Shift，
+  这组键在那类布局上会和 `Ctrl+Shift+数字` 撞车（本机 QWERTY 无此问题）。
+- **右键菜单的窗口适配（2026-11-28）**：主菜单**高于窗口时滚动**（▲/▼ 小三角 +
+  Flickable，与二级面板的分组滚动同一套外观；键盘移动当前行会 `ensureMainRowVisible()`
+  滚过去），不再被窗口裁掉；可视高上限 = 窗口高 − 8。`showAt()` 的纵向钳位在
+  `height` 还没算出来（首次打开）时用**行模型估算高度** `estimatedPanelH()`，并在
+  `onHeightChanged`/`callLater` 里再钳一次——否则 `height=0` 时钳位等于没做，菜单会
+  按鼠标位置摆出去（历史现象：首次打开被裁、后续正常）。
+  诊断：`get-menu-state player` 的 `pos=/size=/layer=/h=/estH=`（`h` 实际高、`estH` 估算高）。
+- **右键菜单"3D 块"可关**：`Preferences → Interface → Show 3D menu`（持久化键
+  `show3dMenu`，默认开）。关掉时 sep/header/三条入口整块隐藏（`visibleWhen` +
+  `sepShown` 收敛相邻分隔线），只影响一级菜单，3D 状态/按键不受影响。
+- **`Toast` 与 `StereoMessage` 的 `active` 语义**：`active` = 这一份是否值班
+  （2D 主那份 / 3D 每眼那份），`perEye` = 左右两半各画一份。两者必须分开：
+  早先共用 `active` → **2D 会画成左右两个半宽面板**（2026-11-28 加 Toast 时发现并修）。
+- **测试钩子**：`get-vm <property>` 读 view model 的 Q_PROPERTY（`get_property` 只到
+  mpv 属性树）；键位验收用 `key <seq>` + `key-log`（含 `scope=2d|3d`）。
+- **弹窗导航也走同一张键位表**：右键菜单与 3D 选择器（`StereoPicker.qml`）都是
+  `Keys.onPressed → keys.menuAction(key, mods) → menu-up/down/enter`，QML 里不再写
+  `Qt.Key_*`（2026-11-28 统一；`check_keys.py` 有护栏）。**Esc 两边都不用自己处理**：
+  `Popup.closePolicy` 默认带 `CloseOnEscape`，Qt 自己关（`StereoPicker` 原来那段
+  `Qt.Key_Escape → close()` 是多余的，已删）。
+
 - **3D 快捷键帮助面板（HotKeys，2026-10-25/26）**：**两列、一键一行、无分组名**。
   左列 3D：H / J / K / L；右列播放器：Space / ← / → / Shift+← / Shift+→ /
   ↑ / ↓ / Ctrl+← / Ctrl+→（方向键、Shift+方向键、音量上下、上/下一个都各占一行）。
@@ -775,9 +896,9 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   不影响渲染路径，是前向占位（将来接 3D 电视需 SBS-half 拉伸几何、VR 头显需 OpenXR）。
   ⚠ **分组分隔线只在两组之间**（用户 2026-10-26 定）：第一个 header 上方不画线
   （`visible: isHeader && index > 0`），否则面板顶部会多一条贴边线。
-  ⚠ **面板不能超出主菜单高度**：popup 高度 = 主菜单高度，二级面板是自绘子项，
-  超出会被裁掉 → `subY` 按 `mainPanelH - subPanelH` 做底部钳制并整体上移；
-  `subPanelH` 按实际行高累加（header 行矮 4px）。
+  ⚠ **面板仍保持在主菜单的竖直范围内**：面板现在是独立 popup（不会被裁），
+  `subY` 依旧按 `mainPanelH - subPanelH` 做底部钳制并整体上移——这是**排版选择**
+  （与旧版逐像素一致），不是裁切约束；`subPanelH` 按实际行高累加（header 行矮 4px）。
 - **进度提示（2026-10-26）**：`ui/StereoProgress.qml`，与音量提示同一套机制
   （底部居中面板 300×56、1.5s 自动隐藏、3D 左右眼各一份 ±12 logical px 视差、
   `#cc111111` 面板 + `#44ffffff` 轨道 + `#e0e0e0` 填充），显示"当前 / 总时长"+进度条。
@@ -1009,11 +1130,31 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
 - UI：右键菜单 `ContextMenu` 的"Deinterlace"条目 → 右侧二级面板（Off/Auto/Force，
   当前项打勾 ▸ 用 `mdi-check`，条目**不配图标**——用户 2026-10-22 定）。菜单条目
   支持 `submenu: [{label, value}]` 的一般机制见 `ContextMenu.qml`。
-- **二级面板画在同一个 Popup 里**（打开时 popup 加宽、面板占右半边：
-  `width: menuWidth + (subOpen ? gap + subMenuWidth : 0)`，背景用两条 Rectangle
-  分别画主菜单/面板）。⚠ 不要改成嵌套 Popup：两个 popup 各自抢 grab，点面板会被
-  外层判成"点击 outside"→ 菜单自己关掉。`showAt()` 的横向钳制按**展开后的宽度**
-  算，否则面板会顶到屏幕外。
+- **二级面板是独立的子 Popup（2026-11-28 方案 A，取代"画在同一个 Popup 里"）**：
+  `ContextMenu.qml` 的 `subMenu`（`parent: contentRoot`、`focus: false`、
+  `closePolicy: CloseOnPressOutsideParent | CloseMultiple`），开关只有
+  `subVisible` 一个来源（`onSubVisibleChanged` 里 open/close；主菜单关时
+  `onAboutToHide` 必须显式关它——两个 popup 各自注册在窗口 overlay 上，
+  父 popup 关闭只解绑自己的 popupItem，**不会**替子面板收尾）。
+  - **为什么改**：共用 popup 时为了让面板不被裁，popup 要加宽到
+    `主菜单 + 面板`，于是面板上方/下方的空白落在 **popup 内部** →
+    `CloseOnPressOutside` 不触发、也没有行接住按压 → 点空白处菜单不关
+    （用户报的"偶发"其实是"取决于面板行数和从哪一行展开"，PR #79 的
+    TapHandler 补丁是错误的绕法）。
+  - ⚠ **`CloseMultiple` 不能省**：Qt 默认"只有最上层 popup 吃这次点外部"
+    （`QQuickOverlay::childMouseEventFilter` 的 close cascade），少了它
+    子面板关掉后主菜单会留在原地。
+  - ⚠ 子面板的 `parent` 必须是主菜单的 `contentItem`：`CloseOnPressOutsideParent`
+    的"parent"就是它，否则"点主菜单换行"会把面板先闪掉。
+  - `showAt()` 的横向钳制仍按**展开后的宽度**算（面板固定开在右侧）。
+  - 验收（RPC：`open-menu <x> <y> <item-index>` + 新增 `click <x> <y>` +
+    `get-menu-state` 的 `subPopup=`/`subGeom=`）：面板打开时点主菜单行不关菜单、
+    点面板里的 toggle 行菜单保持打开且生效、点面板上方/下方空白（旧实现里
+    落在 popup 内部的那块）整条菜单关闭、Esc 仍是"先收面板再关菜单"。
+    ⚠ Wayland 下测试进程无法驱动真实输入（`QCursor::setPos` 无效、没有
+    xdotool）→ `click` 把 QMouseEvent 直接投递给窗口，走 Qt 同一条分发路径；
+    点面板的响应会晚一帧（popupItem 尺寸在开面板当帧还是旧值），测试里
+    等 0.15–0.2 s 再断言。
 - 时机：`loadSettings()` 读 `deintMode`（夹 0..2）→ `applyPlaybackSettings()` 下发 →
   **`FILE_LOADED` 里再下发一次**（mpv 把 `deinterlace` 记进 watch_later，换片时会
   用该文件上次的值复位，全局开关必须盖回去）。`-- --deinterlace=no|yes|auto`
@@ -1027,6 +1168,29 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
   `● Video` + `vsr: init`，~300 ms 级），多数切换不重建链。
 - Toggle 与 `send_field` 的连带影响：反交错在链最前面 → VSR 按翻倍后的帧数计费；
   VFG 按 `k × 反交错后帧率` 判 `max-fps`（默认 60：50p 源 ×2 = 100 > 60 → 直通）。
+- **"反交错 = 两倍帧率"是对的，而且这不是我们的实现**（2026-11-28 用户问）：
+  mpv 的自动反交错滤镜（`filters/f_auto_filters.c`）在 `deinterlace=yes/auto` 时装的是
+  `bwdif_cuda mode=send_field`（SW 帧走 `bwdif`），**`send_field` = 每个场输出一帧** →
+  30i（30 帧/60 场）进、**60 fps** 出。每个场都是独立时间采样，不是插值。
+  于是 30i 源 + `k=2` + `max-fps=60`：`60×2=120 > 60` → **恒直通**
+  （日志 `vfg: max-fps engaged (src=60.000000 k=2 cap=60)`）。要真插帧只有调 cap（120）
+  或让源按帧率交付（`send_frame`，mpv 固定用 `send_field`，不暴露该选择）。
+- **⚠ force → auto 在上游不会撤掉反交错（2026-11-28 修，用户复现步骤：任意逐行片）**：
+  `filters/f_auto_filters.c` 的 `filter_needed` 带 `|| p->sub.filter`（本意是避免逐帧
+  反复增删）→ 强制装上 bwdif 之后切到 auto **永不撤销**，逐行片也继续按场率出帧；
+  而 `deinterlace-active`（`mp_deint_active`）只看**选项**、不看子滤镜是否存在，
+  于是报 `no` 骗人。后果：链上输入恒为 60fps（30p 源）→ VFG 认为 src=60 →
+  `60×2=120 > cap 60` → 永久 `passthrough reason=max-fps`，输出停 60。
+  修法 = overlay `src/mpv/filters/f_auto_filters.c`：记住上次的 `deinterlace` 选项，
+  **force→auto 跃迁时直接 `mp_subfilter_destroy`**（下一帧交回 auto 逻辑按帧重判；
+  真场帧会立刻重建）。实测：逐行片切 auto 后 `max-fps released (src=30)` → FRUC active；
+  真 30i 片切 auto 仍 `deinterlace-active=yes`、行为不变。
+- **运行中关掉 deinterlace 的时序**（实测，别误判成"开关无效"）：auto 滤镜在**下一帧**
+  就 `mp_subfilter_destroy`（暂停中改也立刻生效，`deinterlace-active` 变 `no`）；
+  但 VFG **退出 cap 需要 60 帧去抖**（≈1s @60fps，`VFG_CAP_EXIT_FRAMES`），状态行本身
+  每 30 帧才发一次 → 这 1s 内 OSD 可能还显示旧的 `passthrough reason=max-fps`。
+  恢复后输出仍是 60fps，但那是**插帧出来的 60**（30×2）。判据看 `mode=active` /
+  `deinterlace-active`，别看 `Output …fps`（两种状态都是 60）。
 
 ### 光盘（蓝光 / DVD）：0.42 起 = 一条盘流 + title 当 edition（2026-11-26 定）
 
