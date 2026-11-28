@@ -18,6 +18,29 @@ Qt::KeyboardModifiers maskMods(Qt::KeyboardModifiers m) { return m & kModMask; }
 /// Key_Plus。所以这类键比较时忽略 Shift，`Ctrl++` 才能真正被按到
 ///（用户 2026-11-02 提过"很多键盘 + 要按 Shift，避免按不出来"）。
 /// 字母/数字/功能键保持严格比较——否则 `Ctrl+O` 与 `Ctrl+Shift+O` 会撞车。
+/// Shift+数字 在**真键盘**上报的是"移位后的 keysym"（Shift+1 → `Key_Exclam`、
+/// Shift+2 → `Key_At`…），而不是 `Key_1` + Shift——Wayland/X11 都这样；只有
+/// `QKeySequence::fromString("Ctrl+Shift+1")`（RPC 注入/键位表解析）才给
+/// `Key_1`+Shift。不归一化的话表里的 `Ctrl+Shift+1` 在真键盘上永远不命中
+/// （2026-11-28 用户报"fruc 快捷键没反应"：`Ctrl+1..4` 正常、带 Shift 的全哑）。
+/// 返回对应的数字键（0-9）；不是移位数字键返回 -1。
+int digitForShiftedKey(int key)
+{
+    switch (key) {
+    case Qt::Key_Exclam:      return 1;
+    case Qt::Key_At:          return 2;
+    case Qt::Key_NumberSign:  return 3;
+    case Qt::Key_Dollar:      return 4;
+    case Qt::Key_Percent:     return 5;
+    case Qt::Key_AsciiCircum: return 6;
+    case Qt::Key_Ampersand:   return 7;
+    case Qt::Key_Asterisk:    return 8;
+    case Qt::Key_ParenLeft:   return 9;
+    case Qt::Key_ParenRight:  return 0;
+    default:                  return -1;
+    }
+}
+
 bool shiftEncodedInKey(int key) {
     if (key < 0x20 || key > 0x7e)
         return false;
@@ -241,9 +264,14 @@ Sequence normalized(int key, Qt::KeyboardModifiers mods)
         mods |= Qt::ShiftModifier;
     }
     mods = maskMods(mods);
-    // 符号键：Shift 已在键值里；小键盘：与主键区等价
-    if (shiftEncodedInKey(s.key))
+    // 移位数字键（真键盘的 Shift+1…Shift+0）→ 数字键 + Shift，与键位表对齐
+    if (const int d = digitForShiftedKey(s.key); d >= 0) {
+        s.key = Qt::Key_0 + d;
+        mods |= Qt::ShiftModifier;
+    } else if (shiftEncodedInKey(s.key)) {
+        // 其余符号键：Shift 已在键值里；小键盘：与主键区等价
         mods &= ~Qt::ShiftModifier;
+    }
     s.mods = mods;
     return s;
 }

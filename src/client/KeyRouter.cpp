@@ -301,10 +301,14 @@ void KeyRouter::logDispatch(const QString &id, int key, int mods, bool fromMenu,
 {
     QString seq = QStringLiteral("-");
     if (key != 0) {
-        const Qt::KeyboardModifiers m = Qt::KeyboardModifiers(mods);
+        // 按**归一化**后的键记日志：真键盘的 Shift+1 报 Key_Exclam，归一化后
+        // 显示成 "Ctrl+Shift+1"（与键位表和帮助面板同一个写法）。
+        const keymap::Sequence nk =
+            keymap::normalized(key, Qt::KeyboardModifiers(mods));
+        const Qt::KeyboardModifiers m = nk.mods;
         // ⚠ `QKeySequence(key, mods)` 是"两段和弦"构造函数（会打印成
         // "Z, Shift+"）；这里必须走 QKeyCombination。
-        seq = QKeySequence(QKeyCombination(m, Qt::Key(key)))
+        seq = QKeySequence(QKeyCombination(m, Qt::Key(nk.key)))
                   .toString(QKeySequence::PortableText);
         // PortableText 把字母一律写成大写（"z" 打印成 "Z"）；日志按物理按键
         // 记，无 Shift 的字母显示小写，免得看日志时以为按的是 Shift+Z。
