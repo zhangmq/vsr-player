@@ -561,124 +561,124 @@
         <translation>输出</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3452"/>
+        <location filename="../PlayerViewModel.cpp" line="3454"/>
         <source>VSR</source>
         <translation>超分</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3474"/>
+        <location filename="../PlayerViewModel.cpp" line="3476"/>
         <source>TrueHDR</source>
         <translation>TrueHDR</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3500"/>
+        <location filename="../PlayerViewModel.cpp" line="3515"/>
         <source>FRUC</source>
         <translation>插帧</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3520"/>
-        <location filename="../PlayerViewModel.cpp" line="3525"/>
+        <location filename="../PlayerViewModel.cpp" line="3537"/>
+        <location filename="../PlayerViewModel.cpp" line="3542"/>
         <source>Decoder</source>
         <translation>解码器</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3530"/>
+        <location filename="../PlayerViewModel.cpp" line="3547"/>
         <source>Speed</source>
         <translation>速度</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3532"/>
+        <location filename="../PlayerViewModel.cpp" line="3549"/>
         <source>Time</source>
         <translation>时间</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3536"/>
+        <location filename="../PlayerViewModel.cpp" line="3553"/>
         <source>Frames</source>
         <translation>帧数</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3540"/>
+        <location filename="../PlayerViewModel.cpp" line="3557"/>
         <source>GPU</source>
         <translation>显卡</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3543"/>
+        <location filename="../PlayerViewModel.cpp" line="3560"/>
         <source>Audio</source>
         <translation>音频</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3694"/>
+        <location filename="../PlayerViewModel.cpp" line="3711"/>
         <source>Out of video memory, playback stopped</source>
         <translation>显存不足，播放已停止</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3695"/>
+        <location filename="../PlayerViewModel.cpp" line="3712"/>
         <source>Playback stopped: graphics driver error</source>
         <translation>播放已停止：图形驱动错误</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3701"/>
+        <location filename="../PlayerViewModel.cpp" line="3718"/>
         <source>Possible cause: VFX settings too high / app VRAM leak</source>
         <translation>可能原因：VFX 参数过高 / 应用显存泄漏</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3703"/>
-        <location filename="../PlayerViewModel.cpp" line="3704"/>
+        <location filename="../PlayerViewModel.cpp" line="3720"/>
+        <location filename="../PlayerViewModel.cpp" line="3721"/>
         <source>See the log for details</source>
         <translation>详见日志</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3773"/>
+        <location filename="../PlayerViewModel.cpp" line="3790"/>
         <source>Unrecognized format</source>
         <translation>无法识别的格式</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3774"/>
+        <location filename="../PlayerViewModel.cpp" line="3791"/>
         <source>Nothing to play</source>
         <translation>没有可播放的内容</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3775"/>
+        <location filename="../PlayerViewModel.cpp" line="3792"/>
         <source>Could not load the file</source>
         <translation>无法载入文件</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3776"/>
+        <location filename="../PlayerViewModel.cpp" line="3793"/>
         <source>Not supported</source>
         <translation>不支持此格式</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3777"/>
+        <location filename="../PlayerViewModel.cpp" line="3794"/>
         <source>Audio output failed to start</source>
         <translation>音频输出初始化失败</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3778"/>
+        <location filename="../PlayerViewModel.cpp" line="3795"/>
         <source>Video output failed to start</source>
         <translation>视频输出初始化失败</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3779"/>
+        <location filename="../PlayerViewModel.cpp" line="3796"/>
         <source>Invalid request</source>
         <translation>无效的请求</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3780"/>
+        <location filename="../PlayerViewModel.cpp" line="3797"/>
         <source>Not implemented</source>
         <translation>尚未实现</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3781"/>
+        <location filename="../PlayerViewModel.cpp" line="3798"/>
         <source>Out of memory</source>
         <translation>内存不足</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3783"/>
+        <location filename="../PlayerViewModel.cpp" line="3800"/>
         <source>Could not open the stream</source>
         <translation>无法打开串流</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3784"/>
+        <location filename="../PlayerViewModel.cpp" line="3801"/>
         <source>Could not open the file</source>
         <translation>无法打开文件</translation>
     </message>

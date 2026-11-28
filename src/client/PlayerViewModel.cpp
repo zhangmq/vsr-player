@@ -3501,6 +3501,17 @@ std::string PlayerViewModel::osdTextString() {
             target = QStringLiteral("%1×").arg(fruc);
         else if (fruc > 0)
             target = QStringLiteral("%1 fps").arg(fruc);
+        // 设定段与 VSR 对齐：倍率后面带质量档（VFG mode = Low/Medium/High）。
+        // RIFE 分支没有这个参数（kModeSelectable=false）→ 不显示。
+        if (fruc != -1 && fruc::kModeSelectable) {
+            const int q = frucQuality_.load();
+            for (std::size_t i = 0; i < fruc::kModePresetCount; ++i) {
+                if (fruc::kModePresets[i].value == q) {
+                    target += QLatin1Char(' ') + tr(fruc::kModePresets[i].label);
+                    break;
+                }
+            }
+        }
         QString line = tag(tr("FRUC")) + target;
         if (fruc == -1) {
             // off 就是 off：不补 `mode=passthrough reason=off`（用户 2026-11-28）。
