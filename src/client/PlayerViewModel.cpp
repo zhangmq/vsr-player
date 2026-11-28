@@ -3502,12 +3502,15 @@ std::string PlayerViewModel::osdTextString() {
         else if (fruc > 0)
             target = QStringLiteral("%1 fps").arg(fruc);
         // 设定段与 VSR 对齐：倍率后面带质量档（VFG mode = Low/Medium/High）。
-        // RIFE 分支没有这个参数（kModeSelectable=false）→ 不显示。
+        // ⚠ 与 VSR 一样**不翻译**（VSR 用 qualityName() 的原样英文；OSD 除
+        // label 外统一不翻译——见 osdTextString 头注释）。RIFE 分支没有这个
+        // 参数（kModeSelectable=false）→ 不显示。
         if (fruc != -1 && fruc::kModeSelectable) {
             const int q = frucQuality_.load();
             for (std::size_t i = 0; i < fruc::kModePresetCount; ++i) {
                 if (fruc::kModePresets[i].value == q) {
-                    target += QLatin1Char(' ') + tr(fruc::kModePresets[i].label);
+                    target += QLatin1Char(' ')
+                            + QLatin1String(fruc::kModePresets[i].label);
                     break;
                 }
             }
