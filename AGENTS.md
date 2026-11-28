@@ -815,6 +815,13 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   ⚠ `Ctrl+0` 原来是字幕延迟归零 → 已挪到 **`Ctrl+Alt+Z`**（音频归零仍 `Ctrl+Alt+0`），
   `tests/hotkeys/check_keys.py` 的护栏同步改了。⚠ AZERTY/德语布局数字需要 Shift，
   这组键在那类布局上会和 `Ctrl+Shift+数字` 撞车（本机 QWERTY 无此问题）。
+- **右键菜单的窗口适配（2026-11-28）**：主菜单**高于窗口时滚动**（▲/▼ 小三角 +
+  Flickable，与二级面板的分组滚动同一套外观；键盘移动当前行会 `ensureMainRowVisible()`
+  滚过去），不再被窗口裁掉；可视高上限 = 窗口高 − 8。`showAt()` 的纵向钳位在
+  `height` 还没算出来（首次打开）时用**行模型估算高度** `estimatedPanelH()`，并在
+  `onHeightChanged`/`callLater` 里再钳一次——否则 `height=0` 时钳位等于没做，菜单会
+  按鼠标位置摆出去（历史现象：首次打开被裁、后续正常）。
+  诊断：`get-menu-state player` 的 `pos=/size=/layer=/h=/estH=`（`h` 实际高、`estH` 估算高）。
 - **右键菜单"3D 块"可关**：`Preferences → Interface → Show 3D menu`（持久化键
   `show3dMenu`，默认开）。关掉时 sep/header/三条入口整块隐藏（`visibleWhen` +
   `sepShown` 收敛相邻分隔线），只影响一级菜单，3D 状态/按键不受影响。
