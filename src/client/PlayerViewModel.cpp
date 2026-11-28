@@ -3439,9 +3439,11 @@ std::string PlayerViewModel::osdTextString() {
         int renderW = renderWidth_.load();
         if (renderW > 0)
             st << QStringLiteral("%1×%2").arg(renderW).arg(renderHeight_.load());
-        // vsr 关闭（scale=-1）时不并入 vsr-status——filter 在链中但无
-        // 处理，status 是切换瞬间的旧值残留（cost/fps 无意义）
-        if (scale > -0.5) {
+        // vsr 完全关闭（scale=-1 **且** denoise=off）时不并入 vsr-status——
+        // filter 在链中但无处理，status 是切换瞬间的旧值残留（cost/fps 无意义）。
+        // ⚠ denoise 档（1:1 降噪）走的就是 scale=-1，但滤镜真的在跑 → 必须
+        // 带上 status（2026-11-28 用户报"denoise 路径没有耗时"）。
+        if (scale > -0.5 || denoise != -1) {
             std::lock_guard<std::mutex> lk(vsrStatusMtx_);
             if (!vsrStatus_.empty())
                 st << QString::fromStdString(vsrStatus_);
