@@ -1,5 +1,7 @@
 # Usage
 
+> [中文](Usage-zh) · English
+
 ## Playing something
 
 ```bash
@@ -39,18 +41,24 @@ plus a margin below it) and hides again when it leaves.
 - **Right-click menu** (`Menu`, `Shift+F10` or `F10`) — groups, in this order: **File**
   (open file / folder / URL, delete the current file), **Playlist** (add file / folder,
   remove the current entry), **Preferences → Interface** (thumbnails, hide unavailable menu
-  items), **Tracks** (video track and network stream, audio, subtitles including loading an
+  items, show the 3D menu block), **Tracks** (video track and network stream, audio, subtitles including loading an
   external file, subtitle delay and audio delay), **Picture processing** (deinterlace,
   rotation), **3D**, **About**, **Quit**. The 3D block is described on
   [3D and Single-Eye](3D-and-Single-Eye); **About** shows the icon, program name, version,
   licence and a clickable repository link. Keyboard: `↑`/`↓` move (skipping separators and
   group headers, wrapping around), `Home`/`End` jump to the first/last entry, `→` opens a
   submenu, `←` closes it, `Enter` activates, `Esc` steps back (delay control → submenu →
-  menu).
+  menu). When the menu is taller than the window it scrolls (▲/▼ triangles, the mouse wheel,
+  or keyboard navigation which keeps the current row visible) instead of being cropped.
 - **Playlist panel** (`P`) — current entry is centred when the panel opens; drag files onto
   the panel to append them without interrupting playback.
-- **OSD** (`Tab`, or `h` in 2D) — source/output resolution, the **actual** output mode
-  (HDR10 or SDR), content HDR state, VSR factor and cost, interpolation status, decoder, speed, GPU.
+- **OSD** (`Tab`, or `h` in 2D) — `Source` (resolution/codec/fps/frames plus the
+  content-side HDR state), `Output` (viewport, render fps and the **actual** output mode:
+  `HDR10 · BT.2020/PQ · display 380nit`), `VSR`, `TrueHDR`, `FRUC`, decoder, speed, GPU.
+  The three VFX rows read `<setting> | <what the filter reports>`: `mode=active cost=…` while
+  the stage runs (VSR also reports the effective scale and fps; interpolation the source and
+  output rate), `mode=passthrough reason=…` when it deliberately idles (e.g. `reason=max-fps`),
+  and just `off` when the stage is switched off.
 - **Aspect ratio** (`A` / `Shift+A`, or the bottom-bar popup) — cycles the same list mpv
   ships with: `16:9` → `4:3` → `2.35:1` → `no`. Use it when a source has a wrong or missing
   display aspect; in 3D mode the value is interpreted as **per-eye** aspect.
@@ -67,7 +75,7 @@ plus a margin below it) and hides again when it leaves.
 | `A` / `Shift+A` | Cycle aspect ratio forward / backward |
 | `V` | Subtitles on / off |
 | `z` / `Shift+Z` | Subtitle delay −50 / +50 ms |
-| `Ctrl+0` | Reset subtitle delay |
+| `Ctrl+Alt+Z` | Reset subtitle delay (`Ctrl+0` is now the upscaling "auto") |
 | `Ctrl++` / `Ctrl+-` | Audio delay +50 / −50 ms |
 | `Ctrl+Alt+0` | Reset audio delay |
 | `S` | Screenshot |
@@ -78,6 +86,9 @@ plus a margin below it) and hides again when it leaves.
 | `Delete` / `Shift+Delete` | Remove the current entry from the playlist / move the file to trash |
 | `Ctrl+O` / `Ctrl+Shift+O` / `Ctrl+L` | Open file / folder / URL |
 | `Menu` / `Shift+F10` / `F10` | Open the right-click menu |
+| `Ctrl+1/2/3/4` / `Ctrl+0` | Upscaling: off / 2× / 3× / 4× / auto |
+| `Ctrl+Shift+1/2/3/4` / `Ctrl+Shift+0` | Interpolation: off / 2× / 3× / 4× / cycle the output cap (48→60→120) |
+| `Ctrl+H` | SDR→HDR10 upconversion on / off |
 | `Ctrl+Q` | Quit |
 | `Esc` | Leave fullscreen / close the playlist (it does not stop playback) |
 | `H` | Toggle the hotkey help overlay (3D presentation) |

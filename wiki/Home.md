@@ -1,5 +1,7 @@
 # VSR Player
 
+> [中文](Home-zh) · English
+
 Real-time AI video processing player for Linux, built directly on the **NVIDIA Video
 Effects SDK**: neural super-resolution + denoising, frame interpolation, and a 10-bit
 HDR pipeline with HDR10 output and SDR→HDR10 upconversion. Built on **libmpv** (demux,
@@ -16,12 +18,33 @@ shared with mpv.
 - **AI super-resolution + denoise** — real-time 2×/3×/4× (`vf_vsr`), denoise also works at scale=1
 - **AI frame interpolation** — VFX `VideoFrameGeneration` ×2/×3/×4 with hot-switchable quality (`vf_vfg`)
 - **10-bit / HDR end to end** — RGB10A2 through the whole chain, automatic HDR10 output for HDR content, opt-in SDR→HDR10 upconversion (`vf_truehdr`)
-- **3D on XR glasses** — play 3D videos (side-by-side or top-and-bottom) on XR glasses in 3D mode: fullscreen picture on the glasses, controls stay on the desktop. Everything else in this release (Blu-ray ISO, 2D output, rotation, playlist naming) is supporting work around it
+- **3D on XR glasses** — play 3D videos (side-by-side or top-and-bottom) on XR glasses in 3D mode: fullscreen picture on the glasses, controls stay on the desktop. Everything else (Blu-ray ISO, 2D output, rotation, playlist naming) is supporting work around it
 - **2D output** — watch one eye of a 3D source as a normal full-frame picture, with VSR applied per eye (`vf_eye`)
 - **Blu-ray ISO** — `.iso` behaves like a folder/m3u: mpv expands it into titles, the player shows them with names and durations
 - **Everyday player** — NVDEC decode, Vulkan rendering, auto-hide QML UI, playlist, loop modes, speed, screenshots, JSON IPC, standalone `mpv-vsr` CLI
 
 ## Recent additions
+
+### 0.8.0
+
+- **mpv 0.42.0 base + upstream's disc model** — a disc is one playlist entry and its titles
+  are mpv editions ("Title" panel in the menu). Playlists listing one `bd://` entry per title
+  from 0.7.x no longer work; reopen the ISO.
+- **Fixed: VRAM grew until the AI engines could no longer load** (13.2 GB measured) —
+  TrueHDR rebuilt its engine on every size change and seek; it now swaps images in place and
+  keeps the engine across seeks.
+- **Fixed: interpolation/upscaling/SDR→HDR10 were silently dead** (filters compiled but not
+  registered, so mpv dropped the whole chain); a rejected chain is now logged.
+- **Fixed: deinterlace "force → auto" stayed on**, which kept a progressive source at the
+  field rate and a ×2 interpolation permanently above its cap.
+- **Quality shortcuts** `Ctrl+1…4`, `Ctrl+0`, `Ctrl+Shift+1…4`, `Ctrl+Shift+0`, `Ctrl+H`
+  with a toast for every change (`Ctrl+0` no longer resets the subtitle delay — that is
+  `Ctrl+Alt+Z`).
+- **OSD split into Source / Output / TrueHDR rows**, all VFX status segments carry the cost.
+- **Context menu can hide the 3D block** (Preferences → Interface) and **scrolls** when it is
+  taller than the window.
+- **Explicit cards for out-of-VRAM and driver errors**; `--no-rtx` source builds for machines
+  without an NVIDIA GPU.
 
 ### 0.7.3
 
@@ -71,7 +94,9 @@ shared with mpv.
   6.12.1); the package ships that fix too.
 - The standard package grows from ~7 MB to ~13 MB because it carries those two Qt
   libraries; they are installed only when the host Qt is 6.12.x and older than 6.12.1,
-  and are skipped automatically once Qt 6.12.1 or newer is installed.
+  and are skipped automatically once Qt 6.12.1 or newer is installed. (Since 0.8.0 the
+  package is back to ~7 MB: it is built on Qt 6.12.1 and no longer ships those libraries —
+  if your distro is still on Qt 6.12.0, use the `full` variant or build from source.)
 
 ### 0.7.0
 
@@ -127,7 +152,7 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ```
 
 **Prebuilt tarball** — `standard` is a thin package: it ships the players, libmpv, the
-Wayland helper modules, the patched Qt libraries and a dependency manifest; FFmpeg, the
+Wayland helper modules and a dependency manifest; FFmpeg, the
 media stack, CUDA, libplacebo and Qt ≥ 6.12 come from the system, VFX is fetched at install
 time:
 
@@ -167,7 +192,7 @@ vsr-player                      # restores the last playlist, loads nothing unti
 | `F` | Fullscreen |
 | `Tab` | OSD info overlay |
 | `S` | Screenshot |
-| `Menu` / `F10` | Right-click menu (keyboard-navigable) |
+| `Menu` / `Shift+F10` / `F10` | Right-click menu (keyboard-navigable) |
 | `Ctrl+Q` | Quit |
 | `3D` mode: `J` / `K` / `L` | Layout (SBS/TAB) · eye order · full/half |
 

@@ -1,5 +1,7 @@
 # 3D and Single-Eye
 
+> [中文](3D-and-Single-Eye-zh) · English
+
 VSR Player can drive XR glasses that take a side-by-side (SBS) framebuffer, and — for when
 you would rather watch flat — output **one eye** as an ordinary full-frame picture.
 
@@ -16,6 +18,12 @@ The right-click menu has a small **3D** group with three independent entries.
 The three entries are deliberately independent — choosing a source layout does not change
 the output mode and vice versa. Only "Output mode" itself is a switch: picking 3D glasses
 starts (and stops the single-eye mode), picking 2D output does the opposite.
+
+## Hiding the 3D block in the menu
+
+Preferences → Interface → **Show 3D menu** removes the whole 3D block (output mode, source
+layout, output option) from the right-click menu when you never use it. The settings are
+kept and the `J`/`K`/`L` shortcuts keep working.
 
 ## 3D glasses mode
 

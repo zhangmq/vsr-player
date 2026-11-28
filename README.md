@@ -50,6 +50,43 @@ be billed ×2/×3/×4.
 
 ## What's new
 
+**0.8.0**
+
+- **Rebased onto mpv 0.42.0 and adopted upstream's title model for discs** — a disc is now
+  a **single** playlist entry, and the titles on it live in the menu's "Title" panel (they
+  are mpv editions), including the disc's own navigation menu. ⚠ Upgrading: playlists that
+  listed one `bd://` entry per title no longer work; just open the ISO again.
+- **Fixed: VRAM was eaten up over a long session** (measured 13.2 GB, after which the AI
+  engines could no longer load and everything silently bypassed) — TrueHDR rebuilt its
+  engine on every size change and on every seek, never returning the memory. Size changes
+  now swap images in place and seeks keep the engine: 8 fullscreen round trips stay flat at
+  4258–4262 MiB, 20 seeks go 1221→1205 MiB.
+- **Fixed: interpolation, upscaling and SDR→HDR10 were all dead** — a build change left the
+  VFX filters compiled but unregistered, so mpv dropped the whole filter chain while playback
+  looked normal. Filters register again, and a rejected chain now logs an error instead of
+  failing silently.
+- **Fixed: deinterlace "force → auto" did not switch off** — a progressive source kept being
+  delivered at the field rate after going back to auto, so a ×2 interpolation stayed above the
+  60 fps cap forever.
+- **Quality shortcuts** — `Ctrl+1/2/3/4` = upscaling off/2×/3×/4×, `Ctrl+0` = auto;
+  `Ctrl+Shift+1/2/3/4` = interpolation off/2×/3×/4×, `Ctrl+Shift+0` cycles the interpolation
+  output cap (48/60/120); `Ctrl+H` toggles SDR→HDR10. Each change shows a short toast at the
+  bottom (one per eye in 3D). ⚠ **`Ctrl+0` used to reset the subtitle delay — that moved to
+  `Ctrl+Alt+Z`.**
+- **OSD reorganised** — `Source` carries the content-side HDR state (content peak, whether
+  upconversion runs), `Output` the real output mode (`HDR10 · BT.2020/PQ · display 380nit`),
+  and a new `TrueHDR` row; the VSR/FRUC/TrueHDR status segments now always carry the cost
+  (`mode=active cost=…`) and show just `off` when the stage is off.
+- **A leaner, scrollable context menu** — Preferences → Interface gained "Show 3D menu"; a
+  menu taller than the window scrolls (▲/▼, wheel and keyboard) instead of being cropped;
+  slider knobs no longer shift under the Basic style.
+- **Explicit out-of-VRAM / driver failures** — playback stops and shows a card: the VRAM card
+  names the two likely causes (VFX settings too high / a VRAM leak in the app), the driver
+  card points at the log. No more silent bypassing.
+- **Builds without an NVIDIA GPU** — source builds accept `--no-rtx` (`-Dno_rtx=true`): the
+  CUDA/VFX part is not compiled, so the player starts on a machine without an N card (the AI
+  features are unavailable). Meant for testing and packaging checks.
+
 **0.7.3**
 
 - **Fixed: dragging the volume slider stuttered the video** — the slider saved the
@@ -141,8 +178,8 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ./scripts/build-from-source.sh
 ```
 
-**Prebuilt tarball** — `standard` is a **thin package (~13 MB)**: it ships the players,
-libmpv, the two Wayland helper modules, the two patched Qt libraries and a machine-readable
+**Prebuilt tarball** — `standard` is a **thin package (~7 MB)**: it ships the players,
+libmpv, the two Wayland helper modules and a machine-readable
 dependency manifest. FFmpeg, the media stack, CUDA, libplacebo and **Qt ≥ 6.12** come from
 your system (VFX is downloaded at install time), and `install.sh` refuses to install when
 the system cannot satisfy a manifest entry — naming the missing library and what needs it:
@@ -185,6 +222,11 @@ vsr-player                      # restore the last playlist, load nothing until 
 | `P` / `F` / `Tab` / `S` | Playlist · fullscreen · OSD · screenshot |
 | `Delete` / `Shift+Delete` | Remove the current entry / move the file to trash |
 | `Menu` / `F10` | Right-click menu (keyboard-navigable) |
+| `Ctrl+1/2/3/4` / `Ctrl+0` | Upscaling: off / 2× / 3× / 4× / auto |
+| `Ctrl+Shift+1/2/3/4` / `Ctrl+Shift+0` | Interpolation: off / 2× / 3× / 4× / cycle the output cap (48·60·120) |
+| `Ctrl+H` | SDR→HDR10 upconversion on / off |
+| `Z` / `Shift+Z` / `Ctrl+Alt+Z` | Subtitle delay −50 ms / +50 ms / reset |
+| `Ctrl++` `Ctrl+-` / `Ctrl+Alt+0` | Audio delay +50 ms / −50 ms / reset |
 | `Ctrl+Q` | Quit |
 | `J` / `K` / `L` | 3D or single-eye mode: layout · eye order · full/half |
 

@@ -1,5 +1,7 @@
 # Video Processing
 
+> [中文](Video-Processing-zh) · English
+
 Everything the NVIDIA Video Effects SDK offers is wired into a single GPU filter chain
 inside mpv:
 
@@ -14,6 +16,44 @@ inside mpv:
 - **Frozen legacy backend** — RIFE (TensorRT) interpolation (`vf_rife`) is kept as a
   **source-build option only** (`-Dfruc_backend=rife`): no prebuilt package, no further
   development
+
+## Switching stages quickly
+
+| Shortcut | Stage |
+|---|---|
+| `Ctrl+1` / `Ctrl+2` / `Ctrl+3` / `Ctrl+4` / `Ctrl+0` | Super-resolution: off / 2× / 3× / 4× / auto |
+| `Ctrl+Shift+1` … `Ctrl+Shift+4` | Interpolation: off / 2× / 3× / 4× |
+| `Ctrl+Shift+0` | Cycle the interpolation output cap: 48 → 60 → 120 fps |
+| `Ctrl+H` | SDR→HDR10 upconversion on / off |
+
+Every change flashes a short toast at the bottom of the picture (one per eye in a 3D
+session), and the OSD rows below show the result. If the AI stack is unavailable the toast
+says so instead of pretending to switch.
+
+## Reading the OSD
+
+The three VFX rows share one shape — `<setting> | <what the filter reports>`:
+
+```
+VSR     2× High   | 2560×1440 mode=active scale=2.00 cost=2.8ms fps=30
+TrueHDR on 400nit | mode=passthrough          ← HDR content, nothing to upconvert
+FRUC    2× Medium | mode=active src=30.00 k=2 out=60.00 cost=0.7ms
+```
+
+- `mode=active` always carries the per-frame cost; `mode=passthrough reason=…` only appears
+  while the stage is enabled and deliberately idling (for interpolation the usual reason is
+  `max-fps`, i.e. `k × source fps` above the cap);
+- a stage that is switched off prints just `off` — no passthrough noise;
+- `Source` carries the content-side HDR state (content peak, whether upconversion runs) and
+  `Output` the real output mode (`HDR10 · BT.2020/PQ · display 380nit` or `SDR`).
+
+## When memory or the driver runs out
+
+If a VFX stage fails with a CUDA out-of-memory or driver error, playback stops and a card
+explains what happened instead of silently bypassing the AI stages: the out-of-VRAM card
+names the two likely causes (VFX settings too high for the GPU, or a memory leak in the
+application — please report it), the driver-error card points at the log. Free memory (or
+lower the settings) and press play to continue.
 
 ## Filter chain
 
@@ -58,7 +98,7 @@ Supporting pieces:
   self-written NVRTC CUDA kernel (NV12/P010/P016 → RGBA8 or packed RGB10A2, D2D).
 - Frontend: Qt 6 + QML (`src/client/`) — `MpvController` (libmpv wrapper),
   `PlayerViewModel` (single source of truth), Vulkan device shared with mpv.
-- mpv patch scheme: `third_party/mpv` (pristine 0.41) + `src/mpv` overlay, merged by
+- mpv patch scheme: `third_party/mpv` (pristine 0.42.0) + `src/mpv` overlay, merged by
   `scripts/build_mpv.sh`.
 
 ## Output leg and HDR

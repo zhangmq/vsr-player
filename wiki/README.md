@@ -4,6 +4,11 @@ Source of truth for the GitHub wiki. The pages in this directory are plain Markd
 GitHub renders `# Title` as the page title and the file name (minus `.md`) as the page
 name, so `3D-and-Single-Eye.md` becomes the page **3D and Single-Eye**.
 
+Every content page has a Simplified Chinese twin, `<Page>-zh.md` (page name `<Page>-zh`).
+Each pair carries a one-line switcher right under its title (`> [English](X) · 中文` /
+`> [中文](X-zh) · English`). When you edit a page, update both or the switcher will point
+at stale content; `scripts/publish-wiki.sh` publishes all of them in one go.
+
 ## Publishing
 
 The wiki is a separate git repository. One-time setup on GitHub:
