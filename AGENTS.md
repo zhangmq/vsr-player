@@ -2,8 +2,9 @@
 
 > 本文件由 DeepSeek Harness 转写：来源 = 开发机上的 Claude Code 会话记忆（已筛选：保留知识/经验类 6 个主题，移除过程性/过期记录；清洗隐私/密钥后拉入仓库 `docs/memory/`）+ 原 `CLAUDE.md`（已于 2026-08 删除，信息脱节），并已对照 master 代码（`7bae9ce`）修正其中的失效/冲突信息。
 >
-> **⚠ 当前在办任务（接手先读）**：`docs/handover/3d-conversion.md`
-> —— 把 `test.iso` 的 6 个 title 离线转出来（2D 直接压 / 3D 转全宽 SBS），含阻塞点、工具位置、编码参数与已知坑。
+> **⚠ 当前在办（接手先读）**：0.8.0 回归修复已全部完成并合在 PR #80（分支
+> `fix/0.8.0-regression`），**只差发布收尾**（合并 → 重建 standard/full 包 → 重打 tag →
+> 发 release）。现场与验证命令见 `docs/handover/2026-11-28-regression-fixes-handover.md`。
 > （`docs/handover/` 是**不纳入 git 的本地会话笔记**：接手文档会携带大量后续会过期的信息，
 > 只在开发机保留，不随仓库分发、也不出现在 PR 里；清理/换机时不要指望它还在。）
 >
@@ -243,7 +244,6 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   播放器内实测同一文件（30fps k=2、VSR 关）MEDIUM **14.7–15.3**、LOW **4.0**、HIGH **5.5 ms/输出帧**。
   `AFGX_FLOW_RESOLUTION` 是编译期常量、**不是环境变量**（试 1..64 无任何变化）。
   → 竖屏内容应避开 MEDIUM：**HIGH 更快且质量更高**（少数"免费的午餐"），LOW 最省。
-  尚未做：按宽高比自动选档（属于"按局部信息决策"，需用户点头）。
 - **丢帧分支必须 `mark_progress`（2026-10-22 修：坏时间戳老片源卡死）**：`vf_vfg.c` 里
   "重复/倒序/缺 PTS → 丢弃 cur、保留 prev" 的分支原先 `talloc_free(cur); return;` ——
   **消费了输入却没写出输出、也没 `mp_filter_internal_mark_progress(f)`**：mpv 的 process()
@@ -295,7 +295,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   或给滤镜加 prepare 通道提前并行 Load（改动/风险大一档）。
   ⚠ **不要再加"首帧前保持 opening 卡片"那套客户端门控**（用户 2026-11-27：
   "这个之前加过，因为判断有问题后来拆掉了"）——纯显示层，收益不值那份状态机。
-- **无性能自动降级**（2026-10-15 移除旧的分级降级：曾是"cost 超预算先降档 60→48→40→30，全档超才直通"）。移除理由：判据是**节点内自测**，只能看到 RIFE 自身 GPU 耗时，而真实短缺通常在该节点下游——VSR 按**输出帧**计费（k=out/src 次/对），加上 VO/渲染通路；实测 1080p29.97 + `fps=60` + `scale=auto` 实际上屏 17.5fps、丢帧 +52/s，而判据报 `cost=16.0ms < budget=21.4ms` 全程沉默。目前 `fruc-status` 的 `cost=` 仅作观测保留。⚠️ 移除的代价：4K 纯 RIFE 过载场景失去唯一有效的回退（24fps → 7.3fps）。**完整记录（现象/根因/同族缺陷/vf 节点能力边界/统一方案的待定问题/复现方法）见 `docs/memory/fruc-auto-degrade-removal.md`**；统一的跨节点性能自适应方案（覆盖 rife/vsr/VFX 新版插帧，以实际达成率判定）**待设计，2026-10-15 搁置**。
+- **无性能自动降级**（2026-10-15 移除旧的分级降级：曾是"cost 超预算先降档 60→48→40→30，全档超才直通"）。移除理由：判据是**节点内自测**，只能看到 RIFE 自身 GPU 耗时，而真实短缺通常在该节点下游——VSR 按**输出帧**计费（k=out/src 次/对），加上 VO/渲染通路；实测 1080p29.97 + `fps=60` + `scale=auto` 实际上屏 17.5fps、丢帧 +52/s，而判据报 `cost=16.0ms < budget=21.4ms` 全程沉默。目前 `fruc-status` 的 `cost=` 仅作观测保留。⚠️ 移除的代价：4K 纯 RIFE 过载场景失去唯一有效的回退（24fps → 7.3fps）。**完整记录（现象/根因/同族缺陷/vf 节点能力边界/复现方法）见 `docs/memory/fruc-auto-degrade-removal.md`**（是否要做跨节点性能自适应由用户后续决定，别自己动手）。
 - 插帧历史决策：NVOFA 硬件光流降级备选（repeat 率太高，有运动对成功率 9.7% vs RIFE 96.3%）；Nano = 两帧平均器已否决（flow 恒零实证）。
 
 ### 失败兜底（显存 / 驱动 / SDK，2026-11-28 落地）
@@ -355,7 +355,7 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - **FFmpeg CUDA hwframes 不支持 x2bgr10** → 自建 `hw_frames_ctx` 的 `sw_format` 恒用 `RGBA`，10-bit 由帧参数 `hw_subfmt` 承载（`hwdownload` 软路径会退化成 8-bit，本应用 VO 有 interop 不走）。
 - **mpv 的 ra 不认 X2BGR10** → 补丁 `src/mpv/video/out/placebo/ra_pl.c` 把 libplacebo 的 `rgb10a2` 标成 `special_imgfmt = IMGFMT_X2BGR10`（否则 CUDA interop 失败 → 4K 每帧回读）。
 - **QualityLevel 语义**：1–4 = upscale 档、8–11 = 1:1 denoise 档，混用返回 -7；`vf_vsr` 的 `quality`/`denoise` 分别映射。
-- **已知遗留**：① 4:4:4/4:2:2 hw 帧被 kernel 当 4:2:0 读；② `-Dfruc_backend=rife` 分支冻结在 8-bit（VFG 链才走 10-bit）。~~软解 10-bit 偏暗~~ 已证伪（同机逐像素 mean|Δ|=0）。
+- ~~软解 10-bit 偏暗~~ 已证伪（同机逐像素 mean|Δ|=0）。
 
 ### HDR 上屏（2026-10-17 落地，细节见 `docs/hdr-pipeline-investigation.md` §10-§22）
 
@@ -373,12 +373,13 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   `Output` = 视口尺寸/渲染 fps + **真实输出/显示侧**（`· HDR10 · BT.2020/PQ · display 380nit`，
   取自探测而非策略意图）；`TrueHDR` = 上变换**开关 + 状态**（`on 400nit | mode=active cost=…`）。
   文本源：`hdr::contentText()` / `hdr::statusText()`（拆成两个函数就是为这条分工）。
+  验 OSD 不用截图：RPC `get-osd` 返回整段 `osdTextString()`（GUI 线程取快照）。
   ⚠ **三个 VFX 节点（VSR/TrueHDR/FRUC）的状态段判据统一 = 滤镜自己报的 mode，不看设定**
   （用户 2026-11-28）：有报告就原样并入（`mode=active` 带 cost/fps；`mode=passthrough`
   带 reason），没有报告 = 节点不在链上/未跑 → 不显示。别再用 `scale`/`denoise`/`fruc`/
   开关这类设定值当判据（denoise 档就是 scale=-1 但滤镜在跑，曾因此丢掉 cost）。
 - **⚠ 运行期切换的已知坑**：`applyMode` 里模式未变也要 `syncTargets()`（幂等），否则漏设 `target-trc`；`CompositeRenderNode` 必须在渲染阶段从 Video 读 pipeline（缓存句柄会绑定已销毁对象）；SDR↔HDR10 切换仍是同步属性写，软解 + DR 等帧时理论上仍可能死锁（彻底修法 = 异步写）。
-- **⚠ HDR10 输出下 Qt 自己的 UI 没有色彩编码（2026-11-28 实测，未修）**：Qt Quick 只把
+- **HDR10 输出下 Qt 自己的 UI 没有色彩编码（2026-11-28 实测；Qt 侧问题，不归本项目处理）**：Qt Quick 只把
   `_qt_sg_hdr_format` 用来选交换链格式（`QSGRhiSupport::applySwapChainFormat`），**不做
   任何 sRGB→PQ 转换**（`src/quick/` 全树无相关代码；QRhi 文档明确"HDR10 = ST2084 缓冲"，
   写 PQ 码值是应用的责任）。结果：UI 的 sRGB 码值被当 PQ 解释 → 中间调抬起（#808080
