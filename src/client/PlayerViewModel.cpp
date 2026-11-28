@@ -3436,15 +3436,17 @@ std::string PlayerViewModel::osdTextString() {
             parts << QStringLiteral("auto %1").arg(qualityName(quality));
         if (denoise != -1)
             parts << QStringLiteral("Denoise %1").arg(denoiseName(denoise));
+        // **off 就是 off**（用户 2026-11-28）：关着时整行只有 `off`，不再带
+        // 输出尺寸 / `mode=passthrough scale=1.00` 这类噪音。开着时状态段 =
+        // 输出尺寸 + 滤镜报告（active 带 cost/fps；passthrough 才说明"为什么
+        // 没干活"，如 auto 判定 1:1）。denoise 档 scale 也是 -1，但它真的在
+        // 跑 → 不算 off。
+        const bool vsrOff = (scale_ < -0.5 && denoise_.load() == -1);
         QStringList st;   // 状态段：输出尺寸 + vsr-status
-        int renderW = renderWidth_.load();
-        if (renderW > 0)
-            st << QStringLiteral("%1×%2").arg(renderW).arg(renderHeight_.load());
-        // 状态段判据 = **滤镜自己报的 mode**，不看设定（用户 2026-11-28：
-        // "正确判据只有是否 off 或 passthrough"）。滤镜有什么就显示什么：
-        // active → 带 cost/fps；passthrough → 带 reason（为什么要直通）；
-        // 没有报告 = 节点不在链上/还没跑 → 不显示。三个 VFX 节点同一条规则。
-        {
+        if (!vsrOff) {
+            int renderW = renderWidth_.load();
+            if (renderW > 0)
+                st << QStringLiteral("%1×%2").arg(renderW).arg(renderHeight_.load());
             std::lock_guard<std::mutex> lk(vsrStatusMtx_);
             if (!vsrStatus_.empty())
                 st << QString::fromStdString(vsrStatus_);
@@ -3472,10 +3474,12 @@ std::string PlayerViewModel::osdTextString() {
                 setting += QStringLiteral(" %1nit").arg(nits, 0, 'f', 0);
         }
         QString line = tag(tr("TrueHDR")) + setting;
-        if (!aiAvailable_.load()) {
+        if (!on) {
+            // off 就是 off：不再补 `mode=passthrough`（用户 2026-11-28）。
+        } else if (!aiAvailable_.load()) {
             line += QStringLiteral(" | AI unavailable");
         } else {
-            // 同 VSR/FRUC：只看滤镜报告（HDR 内容 → mode=passthrough）。
+            // 开着时原样并入滤镜报告（HDR 内容 → mode=passthrough）。
             std::lock_guard<std::mutex> lk(truehdrStatusMtx_);
             if (!truehdrStatus_.empty())
                 line += " | " + QString::fromStdString(truehdrStatus_);
@@ -3498,10 +3502,12 @@ std::string PlayerViewModel::osdTextString() {
         else if (fruc > 0)
             target = QStringLiteral("%1 fps").arg(fruc);
         QString line = tag(tr("FRUC")) + target;
-        if (!aiAvailable_.load()) {
+        if (fruc == -1) {
+            // off 就是 off：不补 `mode=passthrough reason=off`（用户 2026-11-28）。
+        } else if (!aiAvailable_.load()) {
             line += QStringLiteral(" | AI unavailable");
         } else {
-            // 同 VSR：只看滤镜报告（off 时滤镜自己会报 reason=off）。
+            // 开着时原样并入滤镜报告（撞 max-fps 上限 → passthrough reason=max-fps）。
             std::lock_guard<std::mutex> lk(frucStatusMtx_);
             if (!frucStatus_.empty())
                 line += " | " + QString::fromStdString(frucStatus_);
