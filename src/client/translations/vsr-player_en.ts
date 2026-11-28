@@ -1020,37 +1020,37 @@
 <context>
     <name>StereoPicker</name>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="87"/>
+        <location filename="../ui/StereoPicker.qml" line="91"/>
         <source>2D to 3D (prototype)</source>
         <translation>2D to 3D (prototype)</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="88"/>
+        <location filename="../ui/StereoPicker.qml" line="92"/>
         <source>3D playback (prototype)</source>
         <translation>3D playback (prototype)</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="93"/>
+        <location filename="../ui/StereoPicker.qml" line="97"/>
         <source>Switch the target display to its 3D / SBS mode first, then select that display below.</source>
         <translation>Switch the target display to its 3D / SBS mode first, then select that display below.</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="98"/>
+        <location filename="../ui/StereoPicker.qml" line="102"/>
         <source>Select the display that belongs to the glasses:</source>
         <translation>Select the display that belongs to the glasses:</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="136"/>
+        <location filename="../ui/StereoPicker.qml" line="140"/>
         <source>The main UI stays on this desktop; the selected display shows the 3D video and OSD.</source>
         <translation>The main UI stays on this desktop; the selected display shows the 3D video and OSD.</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="147"/>
+        <location filename="../ui/StereoPicker.qml" line="151"/>
         <source>Start</source>
         <translation>Start</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="164"/>
+        <location filename="../ui/StereoPicker.qml" line="168"/>
         <source>Cancel</source>
         <translation>Cancel</translation>
     </message>

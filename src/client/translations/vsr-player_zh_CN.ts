@@ -1020,37 +1020,37 @@
 <context>
     <name>StereoPicker</name>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="87"/>
+        <location filename="../ui/StereoPicker.qml" line="91"/>
         <source>2D to 3D (prototype)</source>
         <translation>2D转3D（原型）</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="88"/>
+        <location filename="../ui/StereoPicker.qml" line="92"/>
         <source>3D playback (prototype)</source>
         <translation>3D 播放（原型）</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="93"/>
+        <location filename="../ui/StereoPicker.qml" line="97"/>
         <source>Switch the target display to its 3D / SBS mode first, then select that display below.</source>
         <translation>先把目标显示器切到 3D / SBS 模式，然后在下面选择该显示器。</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="98"/>
+        <location filename="../ui/StereoPicker.qml" line="102"/>
         <source>Select the display that belongs to the glasses:</source>
         <translation>选择属于眼镜的显示器：</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="136"/>
+        <location filename="../ui/StereoPicker.qml" line="140"/>
         <source>The main UI stays on this desktop; the selected display shows the 3D video and OSD.</source>
         <translation>主界面保留在本桌面；所选显示器显示 3D 视频和 OSD。</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="147"/>
+        <location filename="../ui/StereoPicker.qml" line="151"/>
         <source>Start</source>
         <translation>开始</translation>
     </message>
     <message>
-        <location filename="../ui/StereoPicker.qml" line="164"/>
+        <location filename="../ui/StereoPicker.qml" line="168"/>
         <source>Cancel</source>
         <translation>取消</translation>
     </message>

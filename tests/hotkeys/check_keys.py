@@ -114,6 +114,14 @@ def main() -> int:
     check("Shortcut {" not in main_qml, "main.qml 没有 QML Shortcut")
     check("sequence:" not in main_qml, "main.qml 没有裸 sequence:")
 
+    # ── 3b. 3D 选择器同样走键位表的菜单导航（2026-11-28）──────────
+    picker = (ROOT / "src/client/ui/StereoPicker.qml").read_text(encoding="utf-8")
+    # 只看代码行（注释里会引用 Qt.Key_* 作说明）
+    picker_code = "\n".join(l for l in picker.splitlines()
+                            if not l.strip().startswith("//"))
+    check("Qt.Key_" not in picker_code,
+          "StereoPicker.qml 不再按 Qt.Key_* 判键（改走 keys.menuAction）")
+
     # ── 3. 菜单里不能再有第二份按键映射 ─────────────────────────
     check("Qt.Key_" not in menu_qml, "ContextMenu.qml 不再按 Qt.Key_* 判键")
     for legacy in ('"ctrl+0"', '"shift+z"', '"audio-up"', '"audio-down"',

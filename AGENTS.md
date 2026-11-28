@@ -823,6 +823,11 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   早先共用 `active` → **2D 会画成左右两个半宽面板**（2026-11-28 加 Toast 时发现并修）。
 - **测试钩子**：`get-vm <property>` 读 view model 的 Q_PROPERTY（`get_property` 只到
   mpv 属性树）；键位验收用 `key <seq>` + `key-log`（含 `scope=2d|3d`）。
+- **弹窗导航也走同一张键位表**：右键菜单与 3D 选择器（`StereoPicker.qml`）都是
+  `Keys.onPressed → keys.menuAction(key, mods) → menu-up/down/enter`，QML 里不再写
+  `Qt.Key_*`（2026-11-28 统一；`check_keys.py` 有护栏）。**Esc 两边都不用自己处理**：
+  `Popup.closePolicy` 默认带 `CloseOnEscape`，Qt 自己关（`StereoPicker` 原来那段
+  `Qt.Key_Escape → close()` 是多余的，已删）。
 
 - **3D 快捷键帮助面板（HotKeys，2026-10-25/26）**：**两列、一键一行、无分组名**。
   左列 3D：H / J / K / L；右列播放器：Space / ← / → / Shift+← / Shift+→ /
