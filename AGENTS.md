@@ -2,11 +2,11 @@
 
 > 本文件由 DeepSeek Harness 转写：来源 = 开发机上的 Claude Code 会话记忆（已筛选：保留知识/经验类 6 个主题，移除过程性/过期记录；清洗隐私/密钥后拉入仓库 `docs/memory/`）+ 原 `CLAUDE.md`（已于 2026-08 删除，信息脱节），并已对照 master 代码（`7bae9ce`）修正其中的失效/冲突信息。
 >
-> **⚠ 当前在办（接手先读）**：0.8.0 回归修复已全部完成并合在 PR #80（分支
-> `fix/0.8.0-regression`），**只差发布收尾**（合并 → 重建 standard/full 包 → 重打 tag →
-> 发 release）。现场与验证命令见 `docs/handover/2026-11-28-regression-fixes-handover.md`。
-> （`docs/handover/` 是**不纳入 git 的本地会话笔记**：接手文档会携带大量后续会过期的信息，
-> 只在开发机保留，不随仓库分发、也不出现在 PR 里；清理/换机时不要指望它还在。）
+> **⚠ 当前在办（接手先读）**：0.8.0 已合入 master（PR #80 → `5967d6f`），standard/full
+> 两个包已构建，**只差 tag + release**。测试与构建命令见 `wiki/Development.md` 与
+> `README.md`；发布流程见本文件「版本号先对齐」「发版说明」两条。
+> （临时交接文档一律写在本地 `docs/handover/`、**用完即删**——它不随仓库分发，留着只会
+> 变成过期信息；长期结论按第 12 条分流到本文件 / `docs/` / `wiki/`。）
 >
 > **本文件是项目的唯一权威指令**。原 CLAUDE.md 含未同步的过时内容与幻觉断言历史（modeset、Wayland embedding 两处已被证伪），删除后不再有冲突源；引用任何技术事实前，仍先对照代码验证（通用"证据优先/结论先验证"原则见 `~/.dsh/AGENTS.md`）。
 
@@ -1306,7 +1306,7 @@ slave 打开被我们那条"让 lavf 给 playlist 让路"的补丁拒掉 → **I
 自己做 SSIF 双 PID 关联，见后续评估。
 ⚠ **最终决定（用户 2026-11-03）：播放器内建 MVC 解码不做**——"没必要，离线更合适"。
 3D 蓝光一律**离线转** SBS/TAB 再看（工具链 = `tools/mvc2sbs` + `tools/ssif_to_mvc.py`，
-参数与坑见本地笔记 `docs/handover/3d-conversion.md`，不随仓库分发）；
+工具在 `tools/mvc2sbs`（离线转换已完成，一次性交接文档已清理）；
 不要再提"在播放器里解 MVC"，也不用在这里做 SSIF 关联。
 
 ### 桌面集成（2026-10-17）

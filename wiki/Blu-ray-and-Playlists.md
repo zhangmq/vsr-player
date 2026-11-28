@@ -16,6 +16,9 @@ titles are **editions** of that stream, not separate entries:
   reports what libbluray says instead of failing silently.
 - Both a mounted disc directory and a plain `.iso` file work; the image does not have to be
   mounted.
+- ⚠ Upgrading from 0.7.x: playlists that stored one `bd://mpls/...` entry per title no
+  longer work (0.8.0 follows mpv 0.42, where a disc is a single entry). Open the ISO again
+  and the titles are back in the **Title** panel.
 - A disc can be listed in a hand-written `.m3u` as a **file path**. `bd://mpls/...` URLs
   inside a local playlist are rejected by mpv (its origin check), so don't write them by
   hand.

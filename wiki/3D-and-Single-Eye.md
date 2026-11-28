@@ -17,6 +17,12 @@ The three entries are deliberately independent — choosing a source layout does
 the output mode and vice versa. Only "Output mode" itself is a switch: picking 3D glasses
 starts (and stops the single-eye mode), picking 2D output does the opposite.
 
+## Hiding the 3D block in the menu
+
+Preferences → Interface → **Show 3D menu** removes the whole 3D block (output mode, source
+layout, output option) from the right-click menu when you never use it. The settings are
+kept and the `J`/`K`/`L` shortcuts keep working.
+
 ## 3D glasses mode
 
 - Picking **3D glasses** opens a screen picker (physical resolution, remembered per screen)

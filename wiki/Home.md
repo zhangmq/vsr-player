@@ -23,6 +23,27 @@ shared with mpv.
 
 ## Recent additions
 
+### 0.8.0
+
+- **mpv 0.42.0 base + upstream's disc model** — a disc is one playlist entry and its titles
+  are mpv editions ("Title" panel in the menu). Playlists listing one `bd://` entry per title
+  from 0.7.x no longer work; reopen the ISO.
+- **Fixed: VRAM grew until the AI engines could no longer load** (13.2 GB measured) —
+  TrueHDR rebuilt its engine on every size change and seek; it now swaps images in place and
+  keeps the engine across seeks.
+- **Fixed: interpolation/upscaling/SDR→HDR10 were silently dead** (filters compiled but not
+  registered, so mpv dropped the whole chain); a rejected chain is now logged.
+- **Fixed: deinterlace "force → auto" stayed on**, which kept a progressive source at the
+  field rate and a ×2 interpolation permanently above its cap.
+- **Quality shortcuts** `Ctrl+1…4`, `Ctrl+0`, `Ctrl+Shift+1…4`, `Ctrl+Shift+0`, `Ctrl+H`
+  with a toast for every change (`Ctrl+0` no longer resets the subtitle delay — that is
+  `Ctrl+Alt+Z`).
+- **OSD split into Source / Output / TrueHDR rows**, all VFX status segments carry the cost.
+- **Context menu can hide the 3D block** (Preferences → Interface) and **scrolls** when it is
+  taller than the window.
+- **Explicit cards for out-of-VRAM and driver errors**; `--no-rtx` source builds for machines
+  without an NVIDIA GPU.
+
 ### 0.7.3
 
 - **Fixed: dragging the volume slider stuttered the video** — the slider saved the

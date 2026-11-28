@@ -33,9 +33,12 @@ Custom filters live in `src/mpv/video/filter/`: `vf_hwup`, `vf_vsr`, `vf_truehdr
 | `ninja -C build` | build the Qt client |
 | `./scripts/build-from-source.sh` | end-to-end: deps check → build → install → dependency snapshot |
 | `./scripts/build_release.sh [--variant=standard\|full] [--fruc-backend=vfg\|rife]` | release build + dist RPATH + dependency collection + closure check + tarball |
-| `./scripts/install.sh [--dev] [--no-vfx]` | install to `~/.local` (dev mode reads the build tree; `--dev` forces it) |
+| `./scripts/install.sh [--dev] [--no-vfx] [--no-rtx]` | install to `~/.local` (dev mode reads the build tree; `--dev` forces it; `--no-vfx/--no-rtx` keep the 900 MB VFX runtime out) |
 | `./scripts/check-deps.sh` | compare build-time dependency snapshot with the current system |
 | `./update-translations.sh` / `--check` | refresh `.ts` from sources / verify completeness |
+
+`--no-rtx` (or `-Dno_rtx=true` for the mpv build) also disables the CUDA/VFX half of the
+filter chain, which is how the player is smoke-tested on a machine without an NVIDIA GPU.
 
 Gotchas worth knowing:
 
@@ -58,6 +61,13 @@ Gotchas worth knowing:
 | `tests/fruc/build_rife_full_engine.sh` | builds the frozen RIFE TensorRT engine with the system `trtexec` |
 | `tests/ff2mpv/*.c` | libmpv option/terminal probes used while wiring the browser-integration wrapper |
 | `tools/mvc2sbs` | offline MVC → full-width SBS conversion |
+
+Shortcuts have a single source of truth: `src/client/Keymap.cpp` (one table) executed by
+`KeyRouter`. QML never declares a `Shortcut` or compares `Qt.Key_*` for app actions — the
+context menu and the 3D picker resolve physical keys through the same table
+(`keymap::findMenu` → `keys.menuAction`), so a binding exists exactly once. `check_keys.py`
+(also run by `scripts/precommit.sh`) enforces this and rejects duplicate bindings,
+unimplemented actions and shortcuts leaking back into QML.
 
 The `tests/hotkeys` scripts take over the window, keyboard and audio for their duration, so
 run them when nothing else is playing.

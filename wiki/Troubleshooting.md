@@ -141,6 +141,26 @@ Two different things, both expected on some discs — details in
 - **`Ctrl+M` / the `Disc menu` row does nothing.** The disc masks the menu-call operation;
   mpv does not override the disc's own restriction.
 
+## Playback stopped with an out-of-VRAM or driver-error card
+
+The player refuses to silently degrade: a CUDA out-of-memory or driver failure stops
+playback and shows a card.
+
+- **"Out of video memory, playback stopped"** — the card names the two realistic causes:
+  the VFX settings ask for more than the GPU has (drop the upscaling factor or the
+  interpolation quality, or turn SDR→HDR10 off), or the application leaks VRAM (please
+  report it with the log line). Free memory, then press play again.
+- **"Playback stopped: graphics driver error"** — the log carries the details; a driver
+  reset or a GPU hang usually explains it.
+
+Both are preceded by a `vfx-error: node=… reason=… err=… free=…` line in the log, which is
+what to attach to an issue.
+
+## The 3D block is missing from the right-click menu
+
+Preferences → Interface → **Show 3D menu**. It is remembered; the 3D state itself and the
+`J`/`K`/`L` shortcuts are unaffected.
+
 ## 3D / single-eye oddities
 
 - **Picture does not fill the glasses screen**: the OSD/log line `stereo map:` reports the
