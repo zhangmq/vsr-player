@@ -3665,9 +3665,13 @@ void PlayerViewModel::onVfxError(const QString &line) {
         : tr("Playback stopped: graphics driver error");
 
     const QString name = QFileInfo(lastPath_).fileName();
-    const QString detail = name.isEmpty()
-        ? tr("See the log for details")
-        : name + QStringLiteral(" · ") + tr("See the log for details");
+    // 显存不足**不指向日志**（用户 2026-11-28）：直接给两个可能原因——① VFX 参数
+    // 过高；② 应用自身的显存泄漏。驱动错误仍然带"详见日志"（那种情况日志才有用）。
+    const QString detail = qstrcmp(why, "gpu-memory") == 0
+        ? tr("Possible cause: VFX settings too high / app VRAM leak")
+        : (name.isEmpty()
+           ? tr("See the log for details")
+           : name + QStringLiteral(" · ") + tr("See the log for details"));
     stopWithFatalError(title, detail);
 }
 

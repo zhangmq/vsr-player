@@ -612,63 +612,68 @@
         <translation>播放已停止：图形驱动错误</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3669"/>
-        <location filename="../PlayerViewModel.cpp" line="3670"/>
+        <location filename="../PlayerViewModel.cpp" line="3671"/>
+        <source>Possible cause: VFX settings too high / app VRAM leak</source>
+        <translation>可能原因：VFX 参数过高 / 应用显存泄漏</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="3673"/>
+        <location filename="../PlayerViewModel.cpp" line="3674"/>
         <source>See the log for details</source>
         <translation>详见日志</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3739"/>
+        <location filename="../PlayerViewModel.cpp" line="3743"/>
         <source>Unrecognized format</source>
         <translation>无法识别的格式</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3740"/>
+        <location filename="../PlayerViewModel.cpp" line="3744"/>
         <source>Nothing to play</source>
         <translation>没有可播放的内容</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3741"/>
+        <location filename="../PlayerViewModel.cpp" line="3745"/>
         <source>Could not load the file</source>
         <translation>无法载入文件</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3742"/>
+        <location filename="../PlayerViewModel.cpp" line="3746"/>
         <source>Not supported</source>
         <translation>不支持此格式</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3743"/>
+        <location filename="../PlayerViewModel.cpp" line="3747"/>
         <source>Audio output failed to start</source>
         <translation>音频输出初始化失败</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3744"/>
+        <location filename="../PlayerViewModel.cpp" line="3748"/>
         <source>Video output failed to start</source>
         <translation>视频输出初始化失败</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3745"/>
+        <location filename="../PlayerViewModel.cpp" line="3749"/>
         <source>Invalid request</source>
         <translation>无效的请求</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3746"/>
+        <location filename="../PlayerViewModel.cpp" line="3750"/>
         <source>Not implemented</source>
         <translation>尚未实现</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3747"/>
+        <location filename="../PlayerViewModel.cpp" line="3751"/>
         <source>Out of memory</source>
         <translation>内存不足</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3749"/>
+        <location filename="../PlayerViewModel.cpp" line="3753"/>
         <source>Could not open the stream</source>
         <translation>无法打开串流</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3750"/>
+        <location filename="../PlayerViewModel.cpp" line="3754"/>
         <source>Could not open the file</source>
         <translation>无法打开文件</translation>
     </message>

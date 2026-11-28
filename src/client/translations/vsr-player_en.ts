@@ -670,63 +670,68 @@
         <translation>Playback stopped: graphics driver error</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3669"/>
-        <location filename="../PlayerViewModel.cpp" line="3670"/>
+        <location filename="../PlayerViewModel.cpp" line="3671"/>
+        <source>Possible cause: VFX settings too high / app VRAM leak</source>
+        <translation>Possible cause: VFX settings too high / app VRAM leak</translation>
+    </message>
+    <message>
+        <location filename="../PlayerViewModel.cpp" line="3673"/>
+        <location filename="../PlayerViewModel.cpp" line="3674"/>
         <source>See the log for details</source>
         <translation>See the log for details</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3739"/>
+        <location filename="../PlayerViewModel.cpp" line="3743"/>
         <source>Unrecognized format</source>
         <translation>Unrecognized format</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3740"/>
+        <location filename="../PlayerViewModel.cpp" line="3744"/>
         <source>Nothing to play</source>
         <translation>Nothing to play</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3741"/>
+        <location filename="../PlayerViewModel.cpp" line="3745"/>
         <source>Could not load the file</source>
         <translation>Could not load the file</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3742"/>
+        <location filename="../PlayerViewModel.cpp" line="3746"/>
         <source>Not supported</source>
         <translation>Not supported</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3743"/>
+        <location filename="../PlayerViewModel.cpp" line="3747"/>
         <source>Audio output failed to start</source>
         <translation>Audio output failed to start</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3744"/>
+        <location filename="../PlayerViewModel.cpp" line="3748"/>
         <source>Video output failed to start</source>
         <translation>Video output failed to start</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3745"/>
+        <location filename="../PlayerViewModel.cpp" line="3749"/>
         <source>Invalid request</source>
         <translation>Invalid request</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3746"/>
+        <location filename="../PlayerViewModel.cpp" line="3750"/>
         <source>Not implemented</source>
         <translation>Not implemented</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3747"/>
+        <location filename="../PlayerViewModel.cpp" line="3751"/>
         <source>Out of memory</source>
         <translation>Out of memory</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3749"/>
+        <location filename="../PlayerViewModel.cpp" line="3753"/>
         <source>Could not open the stream</source>
         <translation>Could not open the stream</translation>
     </message>
     <message>
-        <location filename="../PlayerViewModel.cpp" line="3750"/>
+        <location filename="../PlayerViewModel.cpp" line="3754"/>
         <source>Could not open the file</source>
         <translation>Could not open the file</translation>
     </message>
