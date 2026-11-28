@@ -1146,6 +1146,16 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
   于是 30i 源 + `k=2` + `max-fps=60`：`60×2=120 > 60` → **恒直通**
   （日志 `vfg: max-fps engaged (src=60.000000 k=2 cap=60)`）。要真插帧只有调 cap（120）
   或让源按帧率交付（`send_frame`，mpv 固定用 `send_field`，不暴露该选择）。
+- **⚠ force → auto 在上游不会撤掉反交错（2026-11-28 修，用户复现步骤：任意逐行片）**：
+  `filters/f_auto_filters.c` 的 `filter_needed` 带 `|| p->sub.filter`（本意是避免逐帧
+  反复增删）→ 强制装上 bwdif 之后切到 auto **永不撤销**，逐行片也继续按场率出帧；
+  而 `deinterlace-active`（`mp_deint_active`）只看**选项**、不看子滤镜是否存在，
+  于是报 `no` 骗人。后果：链上输入恒为 60fps（30p 源）→ VFG 认为 src=60 →
+  `60×2=120 > cap 60` → 永久 `passthrough reason=max-fps`，输出停 60。
+  修法 = overlay `src/mpv/filters/f_auto_filters.c`：记住上次的 `deinterlace` 选项，
+  **force→auto 跃迁时直接 `mp_subfilter_destroy`**（下一帧交回 auto 逻辑按帧重判；
+  真场帧会立刻重建）。实测：逐行片切 auto 后 `max-fps released (src=30)` → FRUC active；
+  真 30i 片切 auto 仍 `deinterlace-active=yes`、行为不变。
 - **运行中关掉 deinterlace 的时序**（实测，别误判成"开关无效"）：auto 滤镜在**下一帧**
   就 `mp_subfilter_destroy`（暂停中改也立刻生效，`deinterlace-active` 变 `no`）；
   但 VFG **退出 cap 需要 60 帧去抖**（≈1s @60fps，`VFG_CAP_EXIT_FRAMES`），状态行本身
