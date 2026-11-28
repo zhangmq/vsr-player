@@ -48,8 +48,18 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
         // HEVC 虽有探测错误但回退成功。显式 nvdec 稳定（AGENTS.md codec
         // 规则：av1_nvdec/h264_nvdec/hevc_nvdec）。
         mpv_set_option_string(mpv_, "hwdec", "nvdec");
-    if (vf_opt && *vf_opt)
-        mpv_set_option_string(mpv_, "vf", vf_opt);
+    if (vf_opt && *vf_opt) {
+        // ⚠ 返回值必须检查：链里任何一个滤镜名在当前 libmpv 里不存在（例如滤镜
+        // 没被注册的历史构建）都会让整条 vf 被 mpv 丢掉，AI 全静默直通、界面
+        // 不报任何错。这里至少留一条 ERR + 明确原因。
+        const int vf_rc = mpv_set_option_string(mpv_, "vf", vf_opt);
+        if (vf_rc < 0) {
+            MLOG_ERR("mpv rejected the vf chain (%s) -- AI nodes will not run: %s",
+                     mpv_error_string(vf_rc), vf_opt);
+            MLOG_ERR("check that libmpv was built with the vsr-player overlay "
+                     "(filters must list hwup/vsr/vfg/truehdr: mpv --vf=help)");
+        }
+    }
     for (const auto &kv : passthrough)
         mpv_set_option_string(mpv_, kv.first.c_str(), kv.second.c_str());
 
