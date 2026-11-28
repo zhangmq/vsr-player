@@ -1813,6 +1813,23 @@ features += {'trt': has_trt}
 # 必须在下方 features 循环之前。
 features += {'fruc-rife': get_option('fruc_backend') == 'rife'}
 
+# VSR filter (NVIDIA VFX SDK) — requires CUDA toolkit
+cuda_inc = '/opt/cuda/include'
+cuda_lib_dir = '/opt/cuda/lib64'
+cuda_h = cc.has_header('cuda.h', args: '-I' + cuda_inc)
+nvrtc_h = cc.has_header('nvrtc.h', args: '-I' + cuda_inc)
+cuda_lib = cuda_h ? cc.find_library('cuda', required: false) : dependency('', required: false)
+nvrtc_lib = nvrtc_h ? cc.find_library('nvrtc', dirs: cuda_lib_dir, required: false) : dependency('', required: false)
+# -Dno_rtx=true：显式关掉整块 VFX/CUDA（无 N 卡机器用）。没有 CUDA toolkit 的
+# 机器上本来就会因为 cuda_h/nvrtc_h 缺失走到 disabled，这个开关是为了"在有 CUDA
+# 的开发机上也能构建同一个无 CUDA 产物"（发布/测试两种机器都能复现）。
+has_cuda = not get_option('no_rtx') and cuda_h and nvrtc_h and cuda_lib.found() and nvrtc_lib.found()
+features += {'vsr': has_cuda}
+# ⚠ vsr 必须在 features 循环之前并入：config.h 的 HAVE_VSR 就是这条循环生成的，
+#   而 filters/user_filters.c 的 hwup/rot/eye/vsr/vfg/truehdr 注册项靠它门控。
+#   漏了它 = 滤镜编译进去了但一个都不注册 → 整条 vf 被 mpv 丢掉、AI 静默全直通
+#   （2026-11-28 用户报"插帧完全失效"的根因，9364663 引入）。
+
 # Loop over all features in the build, create a define and add them to config.h
 feature_keys = []
 foreach feature, allowed: features
@@ -1872,18 +1889,6 @@ major = client_h_define.split('|')[0].split('<<')[0].strip('() ')
 minor = client_h_define.split('|')[1].strip('() ')
 client_api_version = major + '.' + minor + '.0'
 
-# VSR filter (NVIDIA VFX SDK) — requires CUDA toolkit
-cuda_inc = '/opt/cuda/include'
-cuda_lib_dir = '/opt/cuda/lib64'
-cuda_h = cc.has_header('cuda.h', args: '-I' + cuda_inc)
-nvrtc_h = cc.has_header('nvrtc.h', args: '-I' + cuda_inc)
-cuda_lib = cuda_h ? cc.find_library('cuda', required: false) : dependency('', required: false)
-nvrtc_lib = nvrtc_h ? cc.find_library('nvrtc', dirs: cuda_lib_dir, required: false) : dependency('', required: false)
-# -Dno_rtx=true：显式关掉整块 VFX/CUDA（无 N 卡机器用）。没有 CUDA toolkit 的
-# 机器上本来就会因为 cuda_h/nvrtc_h 缺失走到 disabled，这个开关是为了"在有 CUDA
-# 的开发机上也能构建同一个无 CUDA 产物"（发布/测试两种机器都能复现）。
-has_cuda = not get_option('no_rtx') and cuda_h and nvrtc_h and cuda_lib.found() and nvrtc_lib.found()
-features += {'vsr': has_cuda}
 if features['vsr']
     dependencies += [cuda_lib, nvrtc_lib]
     sources += files(
@@ -1891,6 +1896,10 @@ if features['vsr']
         'video/filter/vsr_proc.c',
         'video/filter/vfx_loader.c',
         'video/filter/vf_hwup.c',
+        # VSR 本体（AI 超分）。⚠ 必须留在这里：9364663 删掉了上面的"无条件
+        # 加入"，若这里也不列它，链接期才会以 `undefined reference to vf_vsr`
+        # 暴露（HAVE_VSR 修好之前则更糟：整条链静默消失）。
+        'video/filter/vf_vsr.c',
         # CUDA 零拷贝旋转（hwup 之后、vsr/vfg 之前；angle=0 时直通）。
         'video/filter/vf_rot.c',
         # 单眼输出（SBS/TAB → 一只眼的 2D 画面；eye=off 时直通）。
