@@ -371,9 +371,12 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
   `Source` = 片源 + **内容侧 HDR 状态**（末尾 `· content 758nit` / `· content SDR` /
   `· content SDR → HDR10(400nit)` / `· content HDR not displayed (<原因>)`）；
   `Output` = 视口尺寸/渲染 fps + **真实输出/显示侧**（`· HDR10 · BT.2020/PQ · display 380nit`，
-  取自探测而非策略意图）；`TrueHDR` = 上变换**开关 + 状态**（`on 400nit | mode=active cost=…`
-  / `off`，与 `VSR`/`FRUC` 同款"设定 | 状态"，开关关时不带状态段）。
+  取自探测而非策略意图）；`TrueHDR` = 上变换**开关 + 状态**（`on 400nit | mode=active cost=…`）。
   文本源：`hdr::contentText()` / `hdr::statusText()`（拆成两个函数就是为这条分工）。
+  ⚠ **三个 VFX 节点（VSR/TrueHDR/FRUC）的状态段判据统一 = 滤镜自己报的 mode，不看设定**
+  （用户 2026-11-28）：有报告就原样并入（`mode=active` 带 cost/fps；`mode=passthrough`
+  带 reason），没有报告 = 节点不在链上/未跑 → 不显示。别再用 `scale`/`denoise`/`fruc`/
+  开关这类设定值当判据（denoise 档就是 scale=-1 但滤镜在跑，曾因此丢掉 cost）。
 - **⚠ 运行期切换的已知坑**：`applyMode` 里模式未变也要 `syncTargets()`（幂等），否则漏设 `target-trc`；`CompositeRenderNode` 必须在渲染阶段从 Video 读 pipeline（缓存句柄会绑定已销毁对象）；SDR↔HDR10 切换仍是同步属性写，软解 + DR 等帧时理论上仍可能死锁（彻底修法 = 异步写）。
 - **⚠ HDR10 输出下 Qt 自己的 UI 没有色彩编码（2026-11-28 实测，未修）**：Qt Quick 只把
   `_qt_sg_hdr_format` 用来选交换链格式（`QSGRhiSupport::applySwapChainFormat`），**不做

@@ -3439,11 +3439,11 @@ std::string PlayerViewModel::osdTextString() {
         int renderW = renderWidth_.load();
         if (renderW > 0)
             st << QStringLiteral("%1×%2").arg(renderW).arg(renderHeight_.load());
-        // vsr 完全关闭（scale=-1 **且** denoise=off）时不并入 vsr-status——
-        // filter 在链中但无处理，status 是切换瞬间的旧值残留（cost/fps 无意义）。
-        // ⚠ denoise 档（1:1 降噪）走的就是 scale=-1，但滤镜真的在跑 → 必须
-        // 带上 status（2026-11-28 用户报"denoise 路径没有耗时"）。
-        if (scale > -0.5 || denoise != -1) {
+        // 状态段判据 = **滤镜自己报的 mode**，不看设定（用户 2026-11-28：
+        // "正确判据只有是否 off 或 passthrough"）。滤镜有什么就显示什么：
+        // active → 带 cost/fps；passthrough → 带 reason（为什么要直通）；
+        // 没有报告 = 节点不在链上/还没跑 → 不显示。三个 VFX 节点同一条规则。
+        {
             std::lock_guard<std::mutex> lk(vsrStatusMtx_);
             if (!vsrStatus_.empty())
                 st << QString::fromStdString(vsrStatus_);
@@ -3471,9 +3471,10 @@ std::string PlayerViewModel::osdTextString() {
                 setting += QStringLiteral(" %1nit").arg(nits, 0, 'f', 0);
         }
         QString line = tag(tr("TrueHDR")) + setting;
-        if (on && !aiAvailable_.load()) {
+        if (!aiAvailable_.load()) {
             line += QStringLiteral(" | AI unavailable");
-        } else if (on) {
+        } else {
+            // 同 VSR/FRUC：只看滤镜报告（HDR 内容 → mode=passthrough）。
             std::lock_guard<std::mutex> lk(truehdrStatusMtx_);
             if (!truehdrStatus_.empty())
                 line += " | " + QString::fromStdString(truehdrStatus_);
@@ -3496,9 +3497,10 @@ std::string PlayerViewModel::osdTextString() {
         else if (fruc > 0)
             target = QStringLiteral("%1 fps").arg(fruc);
         QString line = tag(tr("FRUC")) + target;
-        if (!aiAvailable_.load() && fruc != -1) {
+        if (!aiAvailable_.load()) {
             line += QStringLiteral(" | AI unavailable");
-        } else if (fruc != -1) {
+        } else {
+            // 同 VSR：只看滤镜报告（off 时滤镜自己会报 reason=off）。
             std::lock_guard<std::mutex> lk(frucStatusMtx_);
             if (!frucStatus_.empty())
                 line += " | " + QString::fromStdString(frucStatus_);
