@@ -114,7 +114,11 @@ echo "  ✅ build/src/client/vsr-player"
 
 step "[4/5] 安装到 ~/.local"
 if [ "$DO_INSTALL" -eq 1 ]; then
-    bash scripts/install.sh "${INSTALL_ARGS[@]}" || fail "安装失败"
+    # ⚠ 必须带 --dev：本脚本装的是**当前源码树**的产物。不带的话 install.sh
+    # 见到 build/client-dist/（上次 build_release.sh 留下的 dist 树）就会改用它，
+    # 把旧版本/别的后端装回去——`--no-rtx` 下尤其致命（装回去的是带 VFX 的
+    # libmpv，AI 其实还在跑，而界面/日志都说是"无 RTX 测试安装"）。
+    bash scripts/install.sh --dev "${INSTALL_ARGS[@]}" || fail "安装失败"
 else
     echo "  （--no-install：跳过）"
 fi

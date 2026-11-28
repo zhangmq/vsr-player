@@ -54,10 +54,14 @@ bool MpvController::init(VkInstance inst, VkPhysicalDevice pd, VkDevice dev,
         // 不报任何错。这里至少留一条 ERR + 明确原因。
         const int vf_rc = mpv_set_option_string(mpv_, "vf", vf_opt);
         if (vf_rc < 0) {
-            MLOG_ERR("mpv rejected the vf chain (%s) -- AI nodes will not run: %s",
+            // 两种可能，日志里都要能区分：
+            //  · libmpv 用 -Dno_rtx=true 构建（无 N 卡测试安装）→ 预期行为，WARN；
+            //  · 正常构建但滤镜漏注册（2026-11-28 的回归）→ 必须当 ERR 查。
+            MLOG_ERR("mpv rejected the vf chain (%s): %s",
                      mpv_error_string(vf_rc), vf_opt);
-            MLOG_ERR("check that libmpv was built with the vsr-player overlay "
-                     "(filters must list hwup/vsr/vfg/truehdr: mpv --vf=help)");
+            MLOG_WARN("playing without AI. Expected for a -Dno_rtx=true build; "
+                      "otherwise the filters are missing from libmpv "
+                      "(check: mpv --vf=help lists hwup/vsr/vfg/truehdr)");
         }
     }
     for (const auto &kv : passthrough)

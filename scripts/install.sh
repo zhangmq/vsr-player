@@ -422,6 +422,25 @@ vfx_fail() {   # VFX 不可用 → 明确报错并退出（手动方式一并给
     exit 1
 }
 VFX_READY=0
+# --no-rtx / --no-vfx：库里**不能留着**上一次带 VFX 安装的残留（实测 ~950 MB）。
+# 否则"无 RTX 安装"名不副实，而且下面这段检查会照样报"VFX SDK 已就位"——
+# 用户看到 ✅ 就以为 AI 还在（2026-11-28 实测：本机装完仍是 963 MB + `[VFX:✅]`）。
+if [ "$NO_VFX" -eq 1 ]; then
+    removed=0
+    for f in "$LIB_DIR"/libNVCVImage* "$LIB_DIR"/libVideoFX* "$LIB_DIR"/libnvVFX* \
+             "$LIB_DIR"/libnvidia-ngx-* "$LIB_DIR"/libnpp* "$LIB_DIR"/libcudnn* \
+             "$LIB_DIR"/libcudart* "$LIB_DIR"/libnvrtc* "$LIB_DIR"/libnvinfer* \
+             "$LIB_DIR"/libnvonnxparser* "$LIB_DIR"/libcublas* "$LIB_DIR"/libcufft* \
+             "$LIB_DIR"/libnvngxruntime* ; do
+        [ -e "$f" ] || continue
+        rm -f "$f" && removed=$((removed + 1))
+    done
+    if [ -d "$VFX_SIBLING" ]; then
+        rm -rf "$VFX_SIBLING"
+        echo "  - 移除遗留的 VFX 兄弟目录（$VFX_SIBLING）"
+    fi
+    [ "$removed" -gt 0 ] && echo "  - 移除遗留的 VFX 运行时（$removed 个文件，--no-vfx/--no-rtx）"
+fi
 if [ -f "$LIB_DIR/libNVCVImage.so" ]; then
     if ls "$VFX_SIBLING"/libcudart-*.so.* >/dev/null 2>&1; then
         VFX_READY=1
