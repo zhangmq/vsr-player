@@ -773,13 +773,17 @@ int main(int argc, char *argv[]) {
             hooks.statusChanged = [&viewModel] {
                 const QString s = hdr::statusText();
                 viewModel.setHdrStatus(s.toStdString());
+                // 内容（片源）侧单独一行 → OSD 的"源"行（用户 2026-11-28：
+                // 视频源相关信息不留在 HDR 行）。
+                viewModel.setHdrContent(hdr::contentText().toStdString());
                 // OSD 的"输出"行：**实际**输出模式（真实 swapchain 格式，不是策略意图）
                 viewModel.setHdrOutput(hdr::outputText().toStdString());
                 // 状态变更才打日志（INFO = 状态变更；便于无 UI 时核对 OSD 来源）
                 static QString last;
                 if (last != s) {
                     last = s;
-                    MLOG_INFO("hdr status: %s", s.toUtf8().constData());
+                    MLOG_INFO("hdr status: %s · content %s", s.toUtf8().constData(),
+                              hdr::contentText().toUtf8().constData());
                 }
             };
             hdr::installPolicy(&view, hdrPolicy, initialMode, hooks);

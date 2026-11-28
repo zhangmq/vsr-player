@@ -367,7 +367,13 @@ Linux 桌面视频播放器：**NVIDIA VFX SDK 实时 AI 超分 / 插帧 / SDR�
 - ⚠ **PQ 下 `set_luminances` 的 max_lum 被协议忽略（恒 min+10000）** → 内容峰值必须经 `set_mastering_luminance` + `set_max_cll`/`max_fall` 下发（来源 mpv `video-params/*`，合法性照 `cm_metadata_sanitize()`）；缺了它 KWin 按 10000nit 压 → 对比度变平。
 - **目标色彩空间必须由宿主用 mpv 选项声明**（`target-trc=pq` / `target-prim=bt.2020`）：generic libmpv 路径自己拼 `ra_fbo` 会丢掉 backend 的 `color_space`，gl_video 把 PQ 烘成 gamma2.2 → 偏色。**不要**把合成器亮度填进 `ra_fbo.color_space.hdr.max_luma`（会预 tone map 到 203nit）。
 - **`VSR_HDR_DECLARE=0`（不自己声明）在本机画面发灰**，默认 1；`VSR_HDR=off|auto|hdr10` 默认 auto，`hdr10` 仅用于诊断/逃生舱（SDR 内容会更暗），不暴露 UI。
-- **OSD**：`HDR` 行 = 内容侧（`SDR · content SDR` / `... · content 758nit` / `SDR · content HDR not displayed (<原因>)`），`Output` 行 = 真实 swapchain 格式（`· HDR10` / `· SDR`，取自探测而非策略意图）。
+- **OSD（2026-11-28 用户定的分工）**：三条各管一段，别再混——
+  `Source` = 片源 + **内容侧 HDR 状态**（末尾 `· content 758nit` / `· content SDR` /
+  `· content SDR → HDR10(400nit)` / `· content HDR not displayed (<原因>)`）；
+  `Output` = 视口尺寸/渲染 fps + **真实输出/显示侧**（`· HDR10 · BT.2020/PQ · display 380nit`，
+  取自探测而非策略意图）；`TrueHDR` = 上变换**开关 + 状态**（`on 400nit | mode=active cost=…`
+  / `off`，与 `VSR`/`FRUC` 同款"设定 | 状态"，开关关时不带状态段）。
+  文本源：`hdr::contentText()` / `hdr::statusText()`（拆成两个函数就是为这条分工）。
 - **⚠ 运行期切换的已知坑**：`applyMode` 里模式未变也要 `syncTargets()`（幂等），否则漏设 `target-trc`；`CompositeRenderNode` 必须在渲染阶段从 Video 读 pipeline（缓存句柄会绑定已销毁对象）；SDR↔HDR10 切换仍是同步属性写，软解 + DR 等帧时理论上仍可能死锁（彻底修法 = 异步写）。
 - **⚠ HDR10 输出下 Qt 自己的 UI 没有色彩编码（2026-11-28 实测，未修）**：Qt Quick 只把
   `_qt_sg_hdr_format` 用来选交换链格式（`QSGRhiSupport::applySwapChainFormat`），**不做

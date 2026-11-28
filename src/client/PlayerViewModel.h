@@ -665,6 +665,7 @@ public slots:
     /// HDR 上屏状态行（`hdr::statusText()`，OSD 显示）。
     /// 由 GUI 线程在 hdr 策略钩子里设置；osdTextString 在事件线程读 → 加锁。
     void setHdrStatus(const std::string &s);
+    void setHdrContent(const std::string &s);
     /// OSD 文本快照（RPC `get-osd` / 诊断用）。⚠ 只在 GUI 线程有状态一致性：
     /// 调用方应投递到 GUI 线程（RPC 侧用 BlockingQueuedConnection）。
     std::string osdTextSnapshot() { return osdTextString(); }
@@ -1103,6 +1104,8 @@ private:
     std::string frucStatus_;            // 最新 FRUC 状态行（OSD 显示；前缀随后端）
     std::string vsrStatus_;             // 最新 vsr 状态行（OSD 显示）
     std::mutex  vsrStatusMtx_;
+    std::string hdrContent_;            // 内容(片源)侧 HDR 状态（OSD "源"行末尾）
+    std::mutex  hdrContentMtx_;
     std::string truehdrStatus_;         // 最新 truehdr 状态行（OSD HDR 行；仅上变换启用时显示）
     std::mutex  truehdrStatusMtx_;
     std::string hdrStatus_;             // HDR 上屏状态行（OSD 显示）

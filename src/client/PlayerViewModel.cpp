@@ -1832,6 +1832,12 @@ void PlayerViewModel::setVsrStatus(const std::string &s) {
     stripEol(vsrStatus_);
 }
 
+void PlayerViewModel::setHdrContent(const std::string &s) {
+    std::lock_guard<std::mutex> lk(hdrContentMtx_);
+    hdrContent_ = s;
+    stripEol(hdrContent_);
+}
+
 void PlayerViewModel::setTruehdrStatus(const std::string &s) {
     std::lock_guard<std::mutex> lk(truehdrStatusMtx_);
     truehdrStatus_ = s;
@@ -3371,9 +3377,18 @@ std::string PlayerViewModel::osdTextString() {
         int bd = videoBitDepth_.load();
         QString bdStr = bd > 0 ? QStringLiteral("%1bit").arg(bd)
                                : QStringLiteral("–");
-        lines << tag(tr("Source")) + QStringLiteral("%1×%2 %3 %4 %5fps · %6f")
+        QString srcLine = tag(tr("Source")) + QStringLiteral("%1×%2 %3 %4 %5fps · %6f")
             .arg(videoWidth_.load()).arg(videoHeight_.load())
             .arg(videoCodec_).arg(bdStr).arg(fpsStr).arg(decodedFrames_.load());
+        // 内容(片源)侧的 HDR 状态（峰值 / 上变换标记 / 未上屏原因）——归"源"行
+        //（用户 2026-11-28；HDR 行只留输出/显示侧）。
+        {
+            std::lock_guard<std::mutex> lk(hdrContentMtx_);
+            if (!hdrContent_.empty())
+                srcLine += QStringLiteral(" · content ")
+                         + QString::fromStdString(hdrContent_);
+        }
+        lines << srcLine;
     }
 
     // Output：视频视口物理尺寸 + 实际渲染视频帧率（Δt 实测差值）
@@ -3390,32 +3405,20 @@ std::string PlayerViewModel::osdTextString() {
         QString out = QStringLiteral("%1×%2 %3fps")
             .arg(viewportWidth_.load()).arg(viewportHeight_.load())
             .arg(renderFps_.load(), 0, 'f', 1);
-        // 实际输出模式（HDR10/SDR，来自 hdr::outputText() = 真实 swapchain 格式）
-        // 并入本行——语义 = "输出到显示的是什么"（HDR 行讲的是内容侧状态）。
+        // 实际输出模式 + 显示能力（`HDR10 · BT.2020/PQ · display 380nit` / `SDR`）：
+        // 语义 = "输出到显示的是什么"。HDR 行现在讲 TrueHDR 开关/状态（用户
+        // 2026-11-28），显示侧信息全部归本行。
         {
-            std::lock_guard<std::mutex> lk(hdrOutputMtx_);
-            if (!hdrOutput_.empty())
-                out += QStringLiteral(" · ") + QString::fromStdString(hdrOutput_);
+            std::lock_guard<std::mutex> lk(hdrStatusMtx_);
+            if (!hdrStatus_.empty())
+                out += QStringLiteral(" · ") + QString::fromStdString(hdrStatus_);
+            else {
+                std::lock_guard<std::mutex> lk2(hdrOutputMtx_);
+                if (!hdrOutput_.empty())
+                    out += QStringLiteral(" · ") + QString::fromStdString(hdrOutput_);
+            }
         }
         lines << tag(tr("Output")) + out;
-    }
-
-    // HDR：上屏状态（SDR / HDR10 + 显示峰值 + 内容峰值/未上屏原因）。
-    // 文本由 hdr::statusText() 给出（英文，不翻译），平台无关地反映实际状态。
-    {
-        std::lock_guard<std::mutex> lk(hdrStatusMtx_);
-        QString hdrLine = tag(tr("HDR")) + QString::fromStdString(hdrStatus_);
-        // SDR→HDR10 上变换（VFX TrueHDR）的实际状态：与 vsr/vfg 同一条约定——
-        // 滤镜状态行原样并入（HDR 内容 → mode=passthrough；真正在上变换 →
-        // mode=active cost=…）。判据用**用户开关**而不是策略的 upconvertOn_：
-        // HDR 内容时策略本来就会把它关掉，而用户要看到"为什么没上变换"
-        //（passthrough）；开关本身关着时不并入，否则 OSD 会多一条与"没开"矛盾的行。
-        if (upHdrEnabled_.load()) {
-            std::lock_guard<std::mutex> lk2(truehdrStatusMtx_);
-            if (!truehdrStatus_.empty())
-                hdrLine += " | " + QString::fromStdString(truehdrStatus_);
-        }
-        lines << hdrLine;
     }
 
     // VSR：设定 | 状态（原 Render 行合并：输出帧尺寸——倍率由设定段
@@ -3451,6 +3454,28 @@ std::string PlayerViewModel::osdTextString() {
             line += QStringLiteral(" | AI unavailable");
         else if (!st.isEmpty())
             line += " | " + st.join(" ");
+        lines << line;
+    }
+
+    // TrueHDR：设定（开关 + 峰值）| 实际状态（滤镜状态行，同 vsr/vfg 的约定：
+    // HDR 内容 → mode=passthrough；真正在上变换 → mode=active cost=…）。
+    // 开关关着时不显示状态段（与 VSR off / FRUC off 同口径）。
+    {
+        const bool on = upHdrEnabled_.load();
+        QString setting = on ? QStringLiteral("on") : QStringLiteral("off");
+        if (on) {
+            const float nits = effectiveUpHdrLuminance();
+            if (nits > 0)
+                setting += QStringLiteral(" %1nit").arg(nits, 0, 'f', 0);
+        }
+        QString line = tag(tr("TrueHDR")) + setting;
+        if (on && !aiAvailable_.load()) {
+            line += QStringLiteral(" | AI unavailable");
+        } else if (on) {
+            std::lock_guard<std::mutex> lk(truehdrStatusMtx_);
+            if (!truehdrStatus_.empty())
+                line += " | " + QString::fromStdString(truehdrStatus_);
+        }
         lines << line;
     }
 

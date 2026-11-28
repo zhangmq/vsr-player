@@ -169,16 +169,18 @@ void setContentHdr(bool hdr);
 /// 当前决策出的目标模式（诊断/OSD 用）。
 Mode targetMode();
 
-/// 当前 HDR 状态的一行文本（OSD 用；**不翻译**，与 OSD 其余状态段一致）。
-/// 形如：
-///   `HDR10 · BT.2020/PQ · display 400nit · content 758nit`（正在 HDR10 上屏）
-///   `HDR10 · BT.2020/PQ · display 400nit · content SDR → HDR10(400nit[, manual])`
-///     （HDR 面板：SDR 内容经 TrueHDR 上变换成 HDR10 信号后上屏）
-///   `SDR · content SDR → HDR10(400nit[, manual])`
-///     （**面板非 HDR**：上变换照跑，输出面仍是 SDR，末端由 mpv tone map 回 SDR）
-///   `SDR · content HDR not displayed (display SDR)`（HDR 片源但未上屏 + 原因）
-///   `SDR · content SDR`（SDR 片源、无上变换）
+/// **输出侧**的 HDR 状态（OSD 的 HDR 行；**不翻译**，与 OSD 其余状态段一致）。
+/// 形如：`HDR10 · BT.2020/PQ · display 400nit` / `SDR`（可带 `(forced)`）。
+/// ⚠ 内容（片源）侧的状态拆到了 `contentText()`，由 OSD 的"源"行显示
+///（用户 2026-11-28：视频源相关信息归到"源"行）。
 QString statusText();
+
+/// **内容（片源）侧**的 HDR 状态，拼在 OSD "源"行末尾（不翻译）。取值：
+///   `758nit`（HDR 片源，静态元数据峰值）
+///   `SDR → HDR10(400nit[, manual])`（SDR 内容经 TrueHDR 上变换）
+///   `SDR`（SDR 内容、无上变换）
+///   `HDR not displayed (display SDR)`（HDR 片源但没上屏 + 原因）
+QString contentText();
 
 /// **实际输出**模式的一行短文本（OSD 的"输出"行用，不翻译）：`HDR10` / `SDR`。
 /// 与 `statusText()` 的区别：那是**内容侧**状态（内容是不是 HDR、有没有上变换），

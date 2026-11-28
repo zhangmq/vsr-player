@@ -831,40 +831,43 @@ static QString upconvertContentTag() {
 
 QString statusText() {
     PolicyState &st = policyState();
-    const ContentMeta &cm = st.contentMeta;
-    // 内容峰值：优先 MaxCLL（= KWin 用的口径），退回 mastering max
-    const double contentPeak = cm.maxCll > 0 ? cm.maxCll : cm.maxMastering;
-    const bool haveContent = cm.valid && contentPeak > 0;
-    QString contentStr = haveContent
-        ? QStringLiteral("%1nit").arg(contentPeak, 0, 'f', 0)
-        : QStringLiteral("HDR");   // HDR 片源但暂无静态元数据（合成器按 10000nit 口径）
-
     if (st.applied == Mode::Hdr10) {
         QStringList parts;
         parts << QStringLiteral("HDR10 · BT.2020/PQ");
         if (st.display.valid && st.display.maxLuma > 0)
             parts << QStringLiteral("display %1nit").arg(st.display.maxLuma, 0, 'f', 0);
-        // 内容状态：真 HDR 片源 → content Xnit；SDR 内容经上变换 → content SDR → HDR10
-        parts << QStringLiteral("content %1")
-                     .arg(st.contentHdr ? contentStr
-                          : st.upconvert ? upconvertContentTag()
-                                         : QStringLiteral("SDR"));
         if (st.policy == Policy::ForceHdr10)
             parts << QStringLiteral("(forced)");
         return parts.join(QStringLiteral(" · "));
     }
-    // SDR 输出。上变换在跑时内容标记同样是 `SDR → HDR10`——**面板非 HDR 的那一格**
-    //（此时输出面仍是 SDR，末端由 mpv 把 HDR10 帧 tone map 回 SDR）。
-    if (!st.contentHdr) {
-        QString s = QStringLiteral("SDR · content %1")
-                        .arg(st.upconvert ? upconvertContentTag()
-                                          : QStringLiteral("SDR"));
-        if (st.policy == Policy::ForceHdr10)
-            s += QStringLiteral(" (forced)");
-        return s;
+    // SDR 输出：输出侧只有 `SDR`（上变换/内容状态在 contentText()）。
+    QString s = QStringLiteral("SDR");
+    if (st.policy == Policy::ForceHdr10)
+        s += QStringLiteral(" (forced)");
+    return s;
+}
+
+QString contentText() {
+    PolicyState &st = policyState();
+    const ContentMeta &cm = st.contentMeta;
+    // 内容峰值：优先 MaxCLL（= KWin 用的口径），退回 mastering max
+    const double contentPeak = cm.maxCll > 0 ? cm.maxCll : cm.maxMastering;
+    const bool haveContent = cm.valid && contentPeak > 0;
+    const QString contentStr = haveContent
+        ? QStringLiteral("%1nit").arg(contentPeak, 0, 'f', 0)
+        : QStringLiteral("HDR");   // HDR 片源但暂无静态元数据（合成器按 10000nit 口径）
+    if (st.contentHdr) {
+        // HDR 片源：正在上屏 → 峰值；没上屏（面板 SDR / 策略 off）→ 带原因
+        if (st.applied == Mode::Hdr10)
+            return contentStr;
+        return QStringLiteral("HDR not displayed (%1)")
+            .arg(st.shortReason.isEmpty() ? QStringLiteral("?") : st.shortReason);
     }
-    return QStringLiteral("SDR · content HDR not displayed (%1)")
-        .arg(st.shortReason.isEmpty() ? QStringLiteral("?") : st.shortReason);
+    // SDR 内容：上变换在跑时标记 `SDR → HDR10(...)`（面板非 HDR 那一格也一样：
+    // 输出面仍是 SDR，末端由 mpv tone map 回 SDR）。
+    if (st.upconvert)
+        return upconvertContentTag();
+    return QStringLiteral("SDR");
 }
 
 // ── 只读探测 ──────────────────────────────────────────────────────────
