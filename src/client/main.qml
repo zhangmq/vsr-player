@@ -676,7 +676,12 @@ Item {
                      "ctlWin=" + (controlMode ? 1 : 0),
                      "subOpen=" + (c.subVisible ? 1 : 0),
                      "subPopup=" + (c.subPopupOpened ? 1 : 0),
-                     "pos=" + Math.round(c.x) + "," + Math.round(c.y)
+                     "pos=" + Math.round(c.x) + "," + Math.round(c.y),
+                     // 钳位输入（首次打开"没按窗口适配"要能看到这些值）：
+                     // layer = 宿主 uiLayer 尺寸，h = 菜单实际高度，
+                     // estH = 行模型估算高度（首次布局前用它钳位）
+                     "layer=" + Math.round(uiLayer.width) + "x" + Math.round(uiLayer.height),
+                     "h=" + Math.round(c.height) + " estH=" + Math.round(c.estimatedPanelH())
                             + " size=" + Math.round(c.width) + "x" + Math.round(c.height),
                      "subGeom=" + (c.subGeom ? c.subGeom.x + "," + c.subGeom.y
                                              + "," + c.subGeom.w + "x" + c.subGeom.h : "-"),

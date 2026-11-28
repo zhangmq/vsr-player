@@ -1117,14 +1117,56 @@ PopupBase {
     /// 在 item 坐标系 (x,y)（即鼠标位置）弹出，屏幕边缘钳制。
     /// 横向按**展开二级菜单后的宽度**钳制：面板只在悬停时出现，但这时 popup
     /// 已经加宽，若不预留空间会把面板顶到屏幕外。
+    /// 这一次要开在哪（窗口坐标）；钳位可重入，靠它重算。
+    property point pendingPos: Qt.point(-1, -1)
+
+    /// 主菜单高度估算（不依赖布局）。首次打开时 Popup 的内容/布局可能还没
+    /// 成型，`root.height` 会是 0 —— 用 0 钳位等于没钳，菜单会跑到窗口外被裁
+    /// （用户 2026-11-28 报"第一次用鼠标打开不按窗口适配，后续弹出正常"）。
+    /// 行高规则与委托一致：分隔线 1、分组标题 rowH-4、其余 rowH；隐藏行不计。
+    function estimatedPanelH() {
+        var h = 2 * root.padY
+        var items = root.items || []
+        for (var i = 0; i < items.length; ++i) {
+            var it = items[i]
+            if (!root.itemShown(it)) continue
+            if (it.sep === true) h += 1
+            else if (it.header !== undefined) h += root.rowH - 4
+            else h += root.rowH
+        }
+        return h
+    }
+
+    /// 把 pendingPos 钳进窗口（"尽可能在窗口内"：菜单比窗口还高时贴顶）。
+    function clampedPos() {
+        var fullW = root.menuWidth + root.subMenuGap + root.subMenuWidth
+        var h = root.height > 0 ? root.height : root.estimatedPanelH()
+        return Qt.point(
+            Math.min(Math.max(pendingPos.x, 4), Math.max(4, parent.width - fullW - 4)),
+            Math.min(Math.max(pendingPos.y, 4), Math.max(4, parent.height - h - 4)))
+    }
+
+    /// 首次打开后真实高度才可用时再钳一次（高度没变则不动，避免抖动）。
+    function reclamp() {
+        if (!root.visible || pendingPos.x < 0 || !parent) return
+        var c = root.clampedPos()
+        if (Math.abs(c.x - root.x) > 0.5) root.x = c.x
+        if (Math.abs(c.y - root.y) > 0.5) root.y = c.y
+    }
+
     function showAt(item, x, y) {
         if (!item || !parent) return
-        var p = item.mapToItem(parent, x, y)
-        var fullW = root.menuWidth + root.subMenuGap + root.subMenuWidth
-        root.x = Math.min(Math.max(p.x, 4), Math.max(4, parent.width - fullW - 4))
-        root.y = Math.min(Math.max(p.y, 4), Math.max(4, parent.height - root.height - 4))
+        pendingPos = item.mapToItem(parent, x, y)
+        var c = clampedPos()
+        root.x = c.x
+        root.y = c.y
         open()
+        // 内容晚一帧布局时（首次打开）高度才准 → 下一轮事件循环再钳一次
+        Qt.callLater(root.reclamp)
     }
+
+    /// 高度变化（首次测量完成 / 行数变化）时重新钳位
+    onHeightChanged: root.reclamp()
 
     background: Rectangle {
         color: "#d9111111"; radius: 8
