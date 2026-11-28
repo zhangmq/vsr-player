@@ -80,6 +80,13 @@ Item {
     Slider {
         id: slider
         anchors { left: parent.left; right: parent.right; top: lab.bottom; topMargin: 4 }
+        // ⚠ 四边 padding 必须自己钉成 0：Qt Quick Controls 的 Slider 默认 padding
+        // 由**当前 style** 决定（Basic 是 6，org.kde.desktop 是 0/另一套），而我们的
+        // handle/background 是按"整块都是轨道"画的 → 用 style 的 padding 会让旋钮整体
+        // 偏移、两端到不了头（2026-11-28：钉死 Basic 后进度/音量滑块错位）。
+        // 几何只依赖控件自身尺寸，换 style 不再影响。
+        padding: 0
+
         from: root.from
         to: root.to
         stepSize: 1
