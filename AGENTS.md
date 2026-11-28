@@ -1139,6 +1139,19 @@ RPC：`preview <png> <秒>`、`get-preview-state`、`get-chapters`、`get|set-pr
   `● Video` + `vsr: init`，~300 ms 级），多数切换不重建链。
 - Toggle 与 `send_field` 的连带影响：反交错在链最前面 → VSR 按翻倍后的帧数计费；
   VFG 按 `k × 反交错后帧率` 判 `max-fps`（默认 60：50p 源 ×2 = 100 > 60 → 直通）。
+- **"反交错 = 两倍帧率"是对的，而且这不是我们的实现**（2026-11-28 用户问）：
+  mpv 的自动反交错滤镜（`filters/f_auto_filters.c`）在 `deinterlace=yes/auto` 时装的是
+  `bwdif_cuda mode=send_field`（SW 帧走 `bwdif`），**`send_field` = 每个场输出一帧** →
+  30i（30 帧/60 场）进、**60 fps** 出。每个场都是独立时间采样，不是插值。
+  于是 30i 源 + `k=2` + `max-fps=60`：`60×2=120 > 60` → **恒直通**
+  （日志 `vfg: max-fps engaged (src=60.000000 k=2 cap=60)`）。要真插帧只有调 cap（120）
+  或让源按帧率交付（`send_frame`，mpv 固定用 `send_field`，不暴露该选择）。
+- **运行中关掉 deinterlace 的时序**（实测，别误判成"开关无效"）：auto 滤镜在**下一帧**
+  就 `mp_subfilter_destroy`（暂停中改也立刻生效，`deinterlace-active` 变 `no`）；
+  但 VFG **退出 cap 需要 60 帧去抖**（≈1s @60fps，`VFG_CAP_EXIT_FRAMES`），状态行本身
+  每 30 帧才发一次 → 这 1s 内 OSD 可能还显示旧的 `passthrough reason=max-fps`。
+  恢复后输出仍是 60fps，但那是**插帧出来的 60**（30×2）。判据看 `mode=active` /
+  `deinterlace-active`，别看 `Output …fps`（两种状态都是 60）。
 
 ### 光盘（蓝光 / DVD）：0.42 起 = 一条盘流 + title 当 edition（2026-11-26 定）
 
