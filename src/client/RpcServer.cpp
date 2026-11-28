@@ -634,6 +634,19 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             snprintf(buf, sizeof buf, "%lldx%lld", (long long)w, (long long)h);
             response = formatResponse("success", "\"" + std::string(buf) + "\"");
         }
+    } else if (cmd == "get-osd") {
+        // 测试/诊断：读当前 OSD 文本（与 3D 下的 pipelineOsd 同源 = osdTextString）。
+        // 断言"状态行/耗时有没有显示"不用截图；osdTextString 在事件线程拉取，
+        // 这里投到 GUI 线程读一次（与其余读状态的 RPC 同款）。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else {
+            std::string text;
+            PlayerViewModel *v = vm;
+            QMetaObject::invokeMethod(v, [v, &text] { text = v->osdTextSnapshot(); },
+                                      Qt::BlockingQueuedConnection);
+            response = formatResponse("", "\"" + jsonEscape(text) + "\"");
+        }
     } else if (cmd == "get-menu-state") {
         // 右键菜单的数据源快照（不截图验证"轨道组为什么不显示"这类问题）：
         // 媒体/网络源标志、轨道数、edition 数、当前 edition、两条延迟。

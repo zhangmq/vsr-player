@@ -905,8 +905,9 @@ int main(int argc, char *argv[]) {
                 viewModel.setVsrStatus(text + 11);
                 fprintf(stderr, "[mpv status] %s", text);
             } else if (strncmp(text, "truehdr-status:", 15) == 0) {
-                // SDR→HDR10 上变换状态行（诊断/验尸用：mode + cost/fps + 输出
-                // PQ 采样 nit）。OSD 的 HDR 行已带 upconvert 标记，不另设状态段。
+                // SDR→HDR10 上变换状态行（mode + cost/fps + 输出 PQ 采样 nit）：
+                // 与 vsr/vfg 一样并入 OSD（HDR 行），不只是诊断日志。
+                viewModel.setTruehdrStatus(text + 15);
                 fprintf(stderr, "[mpv status] %s", text);
             } else if (strncmp(text, "vfx-error:", 10) == 0) {
                 // Structured failure from a VFX node (see vfx_fatal.h). The GUI

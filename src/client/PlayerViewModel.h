@@ -267,8 +267,8 @@ class PlayerViewModel : public QObject {
                WRITE setPreviewDebugHoverMs NOTIFY previewDebugHoverMsChanged)
 
     // ── TrueHDR 参数（getter；setter 见 public slots）──────────────────
-    bool upHdrEnabled() const { return upHdrEnabled_; }
-    bool upHdrEffective() const { return upconvertOn_; }
+    bool upHdrEnabled() const { return upHdrEnabled_.load(); }
+    bool upHdrEffective() const { return upconvertOn_.load(); }
     int  upHdrAutoLuminance() const { return (int)lroundf(upHdrAutoNits_); }
     bool upHdrLuminanceOverride() const { return upHdrLumOverride_; }
     int  upHdrLuminance() const { return upHdrLuminance_; }
@@ -661,9 +661,13 @@ public slots:
     /// VFG "vfg-status:" / RIFE "fruc-status:"，见 FrucBackend.h）
     void setFrucStatus(const std::string &s);
     void setVsrStatus(const std::string &s);
+    void setTruehdrStatus(const std::string &s);
     /// HDR 上屏状态行（`hdr::statusText()`，OSD 显示）。
     /// 由 GUI 线程在 hdr 策略钩子里设置；osdTextString 在事件线程读 → 加锁。
     void setHdrStatus(const std::string &s);
+    /// OSD 文本快照（RPC `get-osd` / 诊断用）。⚠ 只在 GUI 线程有状态一致性：
+    /// 调用方应投递到 GUI 线程（RPC 侧用 BlockingQueuedConnection）。
+    std::string osdTextSnapshot() { return osdTextString(); }
     /// **实际输出**模式（`hdr::outputText()` = HDR10/SDR，OSD 的"输出"行用）。
     /// 同 `setHdrStatus`：GUI 线程写、事件线程读 → 加锁。
     void setHdrOutput(const std::string &s);
@@ -876,7 +880,7 @@ private:
     /// 检测 / denoise→passthrough 判定）。参数调用时同步复制，无需保活。
     void pushVf(const char *filter, const char *param, const std::string &value);
 
-    bool upconvertOn() const { return upconvertOn_; }
+    bool upconvertOn() const { return upconvertOn_.load(); }
     /// FRUC 滤镜名（编译期分支的单一出口：vf 串 label、vf-command 目标）。
     /// 定义见 FrucBackend.h（VFG "vfg" / RIFE "rife"）。
     const char *frucFilterName() const;
@@ -1028,8 +1032,8 @@ private:
     //  · upconvertOn_ = HDR 策略**实际**判定（Hdr10 ∧ 内容 SDR ∧ 总开关）→ enable
     //  · upHdrAutoNits_ = 面板物理峰值（策略经 setUpconvert 传入，运行期量，不持久化）
     //  · 其余 = 用户在 UI 里设定的参数（持久化；syncVfOptions/vfOption 重放）
-    bool  upconvertOn_ = false;
-    bool  upHdrEnabled_ = false;
+    std::atomic<bool> upconvertOn_{false};   // 读方含事件线程（osdTextString）
+    std::atomic<bool> upHdrEnabled_{false};   // 读方含事件线程（osdTextString）
     bool  upHdrLumOverride_ = false;
     int   upHdrLuminance_ = 650;
     int   upHdrSaturation_ = 100;
@@ -1099,6 +1103,8 @@ private:
     std::string frucStatus_;            // 最新 FRUC 状态行（OSD 显示；前缀随后端）
     std::string vsrStatus_;             // 最新 vsr 状态行（OSD 显示）
     std::mutex  vsrStatusMtx_;
+    std::string truehdrStatus_;         // 最新 truehdr 状态行（OSD HDR 行；仅上变换启用时显示）
+    std::mutex  truehdrStatusMtx_;
     std::string hdrStatus_;             // HDR 上屏状态行（OSD 显示）
     std::mutex  hdrStatusMtx_;
     std::string hdrOutput_;             // 实际输出模式 HDR10/SDR（OSD"输出"行）

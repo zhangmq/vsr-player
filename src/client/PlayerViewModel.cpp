@@ -1832,6 +1832,12 @@ void PlayerViewModel::setVsrStatus(const std::string &s) {
     stripEol(vsrStatus_);
 }
 
+void PlayerViewModel::setTruehdrStatus(const std::string &s) {
+    std::lock_guard<std::mutex> lk(truehdrStatusMtx_);
+    truehdrStatus_ = s;
+    stripEol(truehdrStatus_);
+}
+
 void PlayerViewModel::setHdrStatus(const std::string &s) {
     std::lock_guard<std::mutex> lk(hdrStatusMtx_);
     hdrStatus_ = s;
@@ -2856,7 +2862,7 @@ void PlayerViewModel::setUpconvert(bool on, float autoNit, float effectiveNit) {
         effectiveNit = autoNit;
 
     bool changed = false;
-    if (on != upconvertOn_) {
+    if (on != upconvertOn_.load()) {
         upconvertOn_ = on;
         changed = true;
         emit upHdrEffectiveChanged();
@@ -2929,10 +2935,10 @@ void PlayerViewModel::initTrueHdr() {
     // 上变换不可能发生，OSD 的内容标记必须跟着关掉（否则声称 SDR → HDR10 却
     // 没有帧被处理）。frucOrderPre 只由 CLI 决定，此刻已是终值。
     hdr::setUpconvertInChain(!frucOrderPre());
-    hdr::setUpconvertOptIn(upHdrEnabled_);
+    hdr::setUpconvertOptIn(upHdrEnabled_.load());
     hdr::setUpconvertLuminanceOverride(upHdrLumOverride_, upHdrLuminance_);
     MLOG_INFO("truehdr: params = %s, saturation=%d contrast=%d middle-gray=%d "
-              "debanding=%s, peak=%s", upHdrEnabled_ ? "on" : "off",
+              "debanding=%s, peak=%s", upHdrEnabled_.load() ? "on" : "off",
               upHdrSaturation_, upHdrContrast_, upHdrMiddleGray_,
               upHdrDebanding_ ? "on" : "off(diagnostic)",
               upHdrLumOverride_ ? "user override" : "auto (panel)");
@@ -2947,7 +2953,7 @@ void PlayerViewModel::persistUpHdrParams() {
 
 void PlayerViewModel::setUpHdrEnabled(bool on) {
     if (on && !aiAllowed("truehdr")) return;
-    if (upHdrEnabled_ == on) return;
+    if (upHdrEnabled_.load() == on) return;
     upHdrEnabled_ = on;
     emit upHdrEnabledChanged();
     saveSettings("upHdrEnabled", on);
@@ -3112,7 +3118,7 @@ void PlayerViewModel::syncVfOptions() {
     // SDR→HDR10 上变换（VFX TrueHDR）：vf-command 只改 filter 实例 opts，
     // 链重建（stop/换片）后回到链串默认 enable=no → 必须重放策略状态，
     // 否则"上变换开了但重播就没了"。
-    pushVf("truehdr", "enable", upconvertOn_ ? "1" : "0");
+    pushVf("truehdr", "enable", upconvertOn_.load() ? "1" : "0");
     pushTrueHdrParams();   // 5 个参数全量重放（链重建后回到链串默认值）
     // 旋转：链重建后回到链串里的 angle（初始值 = 持久化值，正常情况
     // 无需重放；这里仍推一次，保证运行期改过角度后换片不丢）。
@@ -3127,7 +3133,7 @@ void PlayerViewModel::syncVfOptions() {
                      + (eyeHalf_.load() ? "half" : "full"));
     }
     MLOG_INFO("syncVfOptions: truehdr enable=%d lum=%d sat=%d contrast=%d mg=%d deband=%d",
-              int(upconvertOn_), effectiveUpHdrLuminance(), upHdrSaturation_,
+              int(upconvertOn_.load()), effectiveUpHdrLuminance(), upHdrSaturation_,
               upHdrContrast_, upHdrMiddleGray_, int(upHdrDebanding_));
 }
 
@@ -3398,7 +3404,18 @@ std::string PlayerViewModel::osdTextString() {
     // 文本由 hdr::statusText() 给出（英文，不翻译），平台无关地反映实际状态。
     {
         std::lock_guard<std::mutex> lk(hdrStatusMtx_);
-        lines << tag(tr("HDR")) + QString::fromStdString(hdrStatus_);
+        QString hdrLine = tag(tr("HDR")) + QString::fromStdString(hdrStatus_);
+        // SDR→HDR10 上变换（VFX TrueHDR）的实际状态：与 vsr/vfg 同一条约定——
+        // 滤镜状态行原样并入（HDR 内容 → mode=passthrough；真正在上变换 →
+        // mode=active cost=…）。判据用**用户开关**而不是策略的 upconvertOn_：
+        // HDR 内容时策略本来就会把它关掉，而用户要看到"为什么没上变换"
+        //（passthrough）；开关本身关着时不并入，否则 OSD 会多一条与"没开"矛盾的行。
+        if (upHdrEnabled_.load()) {
+            std::lock_guard<std::mutex> lk2(truehdrStatusMtx_);
+            if (!truehdrStatus_.empty())
+                hdrLine += " | " + QString::fromStdString(truehdrStatus_);
+        }
+        lines << hdrLine;
     }
 
     // VSR：设定 | 状态（原 Render 行合并：输出帧尺寸——倍率由设定段
