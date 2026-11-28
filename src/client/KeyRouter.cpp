@@ -161,42 +161,47 @@ bool KeyRouter::exec(const QString &id)
     // ── 画质档位（Ctrl+数字 / Ctrl+Shift+数字 / Ctrl+H；2D/3D 通用）────
     // 提示文案与 OSD 同口径：不翻译（VSR ×2 / FRUC off / SDR→HDR10 on）。
     // ⚠ AI 不可用（非 N 卡 / VFX SDK 缺失）时只给提示、不改设定。
-    if (id.startsWith("vsr-")) {
+    // 每个 id 都显式比较：check_keys.py 会逐条核对"表里的 C++ 动作在这里有实现"。
+    if (id == "vsr-off" || id == "vsr-2x" || id == "vsr-3x" ||
+        id == "vsr-4x" || id == "vsr-auto") {
         if (!vm_->aiAvailable()) {
             vm_->flashToast(QStringLiteral("VFX unavailable"));
             return true;
         }
-        double scale = 0;
-        QString text;
-        if (id == "vsr-off")        { scale = -1; text = QStringLiteral("VSR off"); }
-        else if (id == "vsr-2x")    { scale = 2;  text = QStringLiteral("VSR ×2"); }
-        else if (id == "vsr-3x")    { scale = 3;  text = QStringLiteral("VSR ×3"); }
-        else if (id == "vsr-4x")    { scale = 4;  text = QStringLiteral("VSR ×4"); }
-        else                        { scale = 0;  text = QStringLiteral("VSR auto"); }
+        double scale = -1;
+        QString text = QStringLiteral("VSR off");
+        if (id == "vsr-2x")        { scale = 2; text = QStringLiteral("VSR ×2"); }
+        else if (id == "vsr-3x")   { scale = 3; text = QStringLiteral("VSR ×3"); }
+        else if (id == "vsr-4x")   { scale = 4; text = QStringLiteral("VSR ×4"); }
+        else if (id == "vsr-auto") { scale = 0; text = QStringLiteral("VSR auto"); }
         vm_->setScale(scale);
         vm_->flashToast(text);
         return true;
     }
-    if (id.startsWith("fruc-")) {
+    if (id == "fruc-off" || id == "fruc-2x" || id == "fruc-3x" ||
+        id == "fruc-4x") {
         if (!vm_->aiAvailable()) {
             vm_->flashToast(QStringLiteral("VFX unavailable"));
             return true;
         }
-        if (id == "fruc-default") {
-            // VFG 没有 auto 档：这一格 = 恢复默认（×2 + 输出上限 60）。
-            vm_->setFrucFps(2);
-            vm_->setFrucMaxFps(60);
-            vm_->flashToast(QStringLiteral("FRUC ×2 · cap 60"));
-            return true;
-        }
         int fps = -1;
-        QString text;
-        if (id == "fruc-off")      { fps = -1; text = QStringLiteral("FRUC off"); }
-        else if (id == "fruc-2x")  { fps = 2;  text = QStringLiteral("FRUC ×2"); }
-        else if (id == "fruc-3x")  { fps = 3;  text = QStringLiteral("FRUC ×3"); }
-        else                       { fps = 4;  text = QStringLiteral("FRUC ×4"); }
+        QString text = QStringLiteral("FRUC off");
+        if (id == "fruc-2x")      { fps = 2; text = QStringLiteral("FRUC ×2"); }
+        else if (id == "fruc-3x") { fps = 3; text = QStringLiteral("FRUC ×3"); }
+        else if (id == "fruc-4x") { fps = 4; text = QStringLiteral("FRUC ×4"); }
         vm_->setFrucFps(fps);
         vm_->flashToast(text);
+        return true;
+    }
+    if (id == "fruc-default") {
+        if (!vm_->aiAvailable()) {
+            vm_->flashToast(QStringLiteral("VFX unavailable"));
+            return true;
+        }
+        // VFG 没有 auto 档：这一格 = 恢复默认（×2 + 输出上限 60）。
+        vm_->setFrucFps(2);
+        vm_->setFrucMaxFps(60);
+        vm_->flashToast(QStringLiteral("FRUC ×2 · cap 60"));
         return true;
     }
     if (id == "toggle-up-hdr") {
