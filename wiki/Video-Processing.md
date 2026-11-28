@@ -1,5 +1,7 @@
 # Video Processing
 
+> [中文](Video-Processing-zh) · English
+
 Everything the NVIDIA Video Effects SDK offers is wired into a single GPU filter chain
 inside mpv:
 

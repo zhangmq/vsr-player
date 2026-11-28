@@ -1,5 +1,7 @@
 # Blu-ray and Playlists
 
+> [中文](Blu-ray-and-Playlists-zh) · English
+
 ## Blu-ray discs
 
 A `.iso` file or a BDMV directory is **one playlist entry** — one mpv stream. The disc's

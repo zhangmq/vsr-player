@@ -116,7 +116,7 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ./scripts/build-from-source.sh
 ```
 
-**预编译包** —— `standard` 是**薄包（约 7 MB）**：带播放器本体、libmpv、两个 Wayland 辅助模块、两个修补过的 Qt 库，以及机器可读的依赖清单；FFmpeg、光盘媒体栈、CUDA、libplacebo 与 **Qt ≥ 6.12** 全部来自系统（VFX 运行时在安装时下载）。系统满足不了清单时 `install.sh` 会直接失败，并指出缺哪个库、谁需要它：
+**预编译包** —— `standard` 是**薄包（约 7 MB）**：带播放器本体、libmpv、两个 Wayland 辅助模块，以及机器可读的依赖清单；FFmpeg、光盘媒体栈、CUDA、libplacebo 与 **Qt ≥ 6.12** 全部来自系统（VFX 运行时在安装时下载）。系统满足不了清单时 `install.sh` 会直接失败，并指出缺哪个库、谁需要它：
 
 ```bash
 tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
@@ -132,7 +132,7 @@ tar -xJf vsr-player-<ver>-linux-x86_64.tar.xz
 | GPU | RTX 20 系 | 超分需 RTX 20+；默认插帧后端需 **Ada/Blackwell**（冻结的 RIFE 源码构建需 Ampere+） |
 | 驱动 | 570+ | Wayland 开箱可用 |
 | VFX SDK | 1.3（`nvidia-vfx` 0.2.0.0） | `install.sh` 从 NVIDIA 官方索引获取，不进任何 Python 环境 |
-| Qt | 6.12+ | 否则自行构建 `full` 变体。Arch/CachyOS 现已到 **6.12.1**（无需修复库）；包内仍带 6.12.0 的修复库，只在系统 Qt 恰为 6.12.0 时生效 |
+| Qt | 6.12+ | 否则自行构建 `full` 变体。⚠ 0.8.0 的 `standard` 包**不再随附 Qt 6.12.0 修复库**（构建机已是 6.12.1）；若你的发行版仍是 Qt **6.12.0**，请升级 Qt，或改用自带 Qt 的 `full` 包 |
 
 ## 播放
 

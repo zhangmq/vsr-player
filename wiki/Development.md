@@ -1,5 +1,7 @@
 # Development
 
+> [中文](Development-zh) · English
+
 ## Repository layout
 
 ```
@@ -35,7 +37,7 @@ Custom filters live in `src/mpv/video/filter/`: `vf_hwup`, `vf_vsr`, `vf_truehdr
 | `./scripts/build_release.sh [--variant=standard\|full] [--fruc-backend=vfg\|rife]` | release build + dist RPATH + dependency collection + closure check + tarball |
 | `./scripts/install.sh [--dev] [--no-vfx] [--no-rtx]` | install to `~/.local` (dev mode reads the build tree; `--dev` forces it; `--no-vfx/--no-rtx` keep the 900 MB VFX runtime out) |
 | `./scripts/check-deps.sh` | compare build-time dependency snapshot with the current system |
-| `./update-translations.sh` / `--check` | refresh `.ts` from sources / verify completeness |
+| `./scripts/update-translations.sh` / `--check` | refresh `.ts` from sources / verify completeness |
 
 `--no-rtx` (or `-Dno_rtx=true` for the mpv build) also disables the CUDA/VFX half of the
 filter chain, which is how the player is smoke-tested on a machine without an NVIDIA GPU.

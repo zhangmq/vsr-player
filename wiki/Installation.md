@@ -1,5 +1,7 @@
 # Installation
 
+> [中文](Installation-zh) · English
+
 Three paths, in order of preference.
 
 ## Requirements
@@ -50,7 +52,7 @@ For when you would rather not compile, or your distro lacks FFmpeg 9.x developme
 
 | | standard (the only distributed prebuilt package) | full (source build only — `--variant=full`) |
 |---|---|---|
-| What it ships | **thin (~7 MB)**: `vsr-player`, `mpv-vsr`, `libmpv.so.2`, the two Wayland helper modules (`libvsr-color-feedback`, `libvsr-idle-wayland`), the two patched Qt 6.12.0 libraries (used only when the system Qt is still 6.12.0 — Arch/CachyOS are on 6.12.1 now), `deps.manifest` (machine-readable list of what the system must provide), icon font, translations, licenses, desktop assets, `COMPONENTS.md` | the same **+ everything that has actually broken on distro upgrades**: FFmpeg ×7, CUDA runtime, Qt6 (libraries / platform plugins / QML modules), the optical-media stack, libplacebo + its shader stack, libmujs, libsndio |
+| What it ships | **thin (~7 MB)**: `vsr-player`, `mpv-vsr`, `libmpv.so.2`, the two Wayland helper modules (`libvsr-color-feedback`, `libvsr-idle-wayland`), `deps.manifest` (machine-readable list of what the system must provide), icon font, translations, licenses, desktop assets, `COMPONENTS.md` | the same **+ everything that has actually broken on distro upgrades**: FFmpeg ×7, CUDA runtime, Qt6 (libraries / platform plugins / QML modules), the optical-media stack, libplacebo + its shader stack, libmujs, libsndio |
 | Comes from the system | **everything else**: FFmpeg 9.x (`libav*`, `NEEDED` de-versioned and checked at install time), CUDA driver/runtime, Vulkan loader, Wayland/X11 client libs, the audio stack (PipeWire/Pulse/ALSA/JACK), the media stack (libcdio/libdvd/libbluray), libplacebo, libass, libarchive, …, plus **Qt ≥ 6.12** | only the ABI that cannot be carried: glibc/C++ runtime, NVIDIA driver, Vulkan loader, DRM/GBM, X11/Wayland client libs, the audio server libraries |
 | VFX runtime | **never bundled** (NVIDIA's SLA forbids redistribution) — `install.sh` downloads it from NVIDIA's index, or you place it in `~/.local/lib/vsr-player/` yourself | same |
 | For | rolling-release distros (Arch/CachyOS/Fedora…) with FFmpeg 9.x and Qt ≥ 6.12 | distros with Qt < 6.12, or when you want a self-contained Qt |

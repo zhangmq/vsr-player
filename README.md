@@ -179,7 +179,7 @@ git clone https://github.com/zhangmq/vsr-player && cd vsr-player
 ```
 
 **Prebuilt tarball** — `standard` is a **thin package (~7 MB)**: it ships the players,
-libmpv, the two Wayland helper modules, the two patched Qt libraries and a machine-readable
+libmpv, the two Wayland helper modules and a machine-readable
 dependency manifest. FFmpeg, the media stack, CUDA, libplacebo and **Qt ≥ 6.12** come from
 your system (VFX is downloaded at install time), and `install.sh` refuses to install when
 the system cannot satisfy a manifest entry — naming the missing library and what needs it:

@@ -1,5 +1,7 @@
 # 3D and Single-Eye
 
+> [中文](3D-and-Single-Eye-zh) · English
+
 VSR Player can drive XR glasses that take a side-by-side (SBS) framebuffer, and — for when
 you would rather watch flat — output **one eye** as an ordinary full-frame picture.
 

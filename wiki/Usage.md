@@ -1,5 +1,7 @@
 # Usage
 
+> [中文](Usage-zh) · English
+
 ## Playing something
 
 ```bash

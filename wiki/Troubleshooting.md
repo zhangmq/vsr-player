@@ -1,5 +1,7 @@
 # Troubleshooting
 
+> [中文](Troubleshooting-zh) · English
+
 ## Multiple GPUs (iGPU + dGPU, or two NVIDIA cards): black picture / no AI / no hardware decoding
 
 The whole AI chain is **CUDA output → zero-copy Vulkan import**, so the **CUDA device and the
@@ -169,5 +171,6 @@ Preferences → Interface → **Show 3D menu**. It is remembered; the 3D state i
 - **Eyes are swapped**: `K` (in 3D mode) swaps them; the setting is per session.
 - **Wrong packing**: set **Source layout** to the actual packing (SBS/TAB, full/half). A TAB
   source interpreted as SBS looks squashed and doubled.
-- **Aspect looks wrong in 2D output**: the value in the aspect popup is the *per-eye* aspect
-  while in 3D mode; press `A` or set `no` to fall back to the source aspect.
+- **Aspect looks wrong in 2D output**: the aspect popup stores the *per-eye* aspect, so the
+  value you picked while in 3D mode is also applied when only one eye is shown. Press `A`
+  to cycle, or set `no` to fall back to the source aspect.
