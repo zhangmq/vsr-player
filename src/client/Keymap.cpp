@@ -126,8 +126,8 @@ QList<Binding> buildTable()
 
     // ── 画质档位快捷键（用户 2026-11-28 定，2D/3D 通用）─────────────
     // Ctrl+1..4 = VSR off / ×2 / ×3 / ×4，Ctrl+0 = VSR auto；
-    // 加 Shift 同一组给插帧（VFG 无 auto 档 → Ctrl+Shift+0 = 恢复默认
-    // ×2 + cap 60）；Ctrl+H = SDR→HDR10 上变换开关。
+    // 加 Shift 同一组给插帧（VFG 无 auto 档 → Ctrl+Shift+0 = 输出帧率上限
+    // 在 48/60/120 之间循环）；Ctrl+H = SDR→HDR10 上变换开关。
     // ⚠ Ctrl+0 原本是字幕延迟归零，已挪到 Ctrl+Alt+Z（见上）。
     t.append(Binding{.id = "vsr-off", .seqs = {"Ctrl+1"}, .owner = Owner::Shortcut,
                      .helpKey = "Ctrl+1"});
@@ -147,7 +147,7 @@ QList<Binding> buildTable()
                      .helpKey = "Ctrl+Shift+3"});
     t.append(Binding{.id = "fruc-4x", .seqs = {"Ctrl+Shift+4"}, .owner = Owner::Shortcut,
                      .helpKey = "Ctrl+Shift+4"});
-    t.append(Binding{.id = "fruc-default", .seqs = {"Ctrl+Shift+0"},
+    t.append(Binding{.id = "fruc-cap", .seqs = {"Ctrl+Shift+0"},
                      .owner = Owner::Shortcut, .helpKey = "Ctrl+Shift+0"});
     t.append(Binding{.id = "toggle-up-hdr", .seqs = {"Ctrl+H"}, .owner = Owner::Shortcut,
                      .helpKey = "Ctrl+H"});

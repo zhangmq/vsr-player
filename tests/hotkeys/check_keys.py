@@ -15,7 +15,7 @@ QML Shortcut 漏加一条、菜单里另抄一份偏移键映射、某个 id 没
   5. ContextMenu.qml 不再有按键映射（偏移键只有一份）
   6. handler=cpp 的动作在 KeyRouter.cpp 里真有实现
   7. 关键键位与用户决定的语义仍在（z / Shift+Z / Ctrl+Alt+Z / Ctrl++ / Ctrl+Alt+0、
-     Ctrl+1..4/0 = VSR、Ctrl+Shift+1..4/0 = 插帧、Ctrl+H = SDR→HDR10 …）
+     Ctrl+1..4/0 = VSR、Ctrl+Shift+1..4 = 插帧、Ctrl+Shift+0 = 插帧帧率上限循环、Ctrl+H = SDR→HDR10 …）
   8. 弹窗内可用的动作集合就是那 6 个延迟动作
   9. 3D 帮助面板引用的每个动作 id 都能解析出键名
 
@@ -148,7 +148,7 @@ def main() -> int:
         ("vsr-4x", "Ctrl+4"), ("vsr-auto", "Ctrl+0"),
         ("fruc-off", "Ctrl+Shift+1"), ("fruc-2x", "Ctrl+Shift+2"),
         ("fruc-3x", "Ctrl+Shift+3"), ("fruc-4x", "Ctrl+Shift+4"),
-        ("fruc-default", "Ctrl+Shift+0"),
+        ("fruc-cap", "Ctrl+Shift+0"),
         ("toggle-up-hdr", "Ctrl+H"),
     ]
     for pair in required:

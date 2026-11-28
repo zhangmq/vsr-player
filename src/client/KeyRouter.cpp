@@ -193,15 +193,17 @@ bool KeyRouter::exec(const QString &id)
         vm_->flashToast(text);
         return true;
     }
-    if (id == "fruc-default") {
-        if (!vm_->aiAvailable()) {
-            vm_->flashToast(QStringLiteral("VFX unavailable"));
-            return true;
+    if (id == "fruc-cap") {
+        // VFG 没有 auto 档：这一格 = 输出帧率上限循环（48 → 60 → 120 → 48）。
+        // RIFE 后端无此参数（setFrucMaxFps 对它无意义），提示照发、值不变。
+        static constexpr int caps[] = {48, 60, 120};
+        const int cur = vm_->frucMaxFps();
+        int next = caps[1];                     // 未知/0 → 回到默认 60
+        for (int i = 0; i < 3; ++i) {
+            if (caps[i] == cur) { next = caps[(i + 1) % 3]; break; }
         }
-        // VFG 没有 auto 档：这一格 = 恢复默认（×2 + 输出上限 60）。
-        vm_->setFrucFps(2);
-        vm_->setFrucMaxFps(60);
-        vm_->flashToast(QStringLiteral("FRUC ×2 · cap 60"));
+        vm_->setFrucMaxFps(next);
+        vm_->flashToast(QStringLiteral("FRUC cap %1").arg(next));
         return true;
     }
     if (id == "toggle-up-hdr") {

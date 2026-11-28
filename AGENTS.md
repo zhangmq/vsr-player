@@ -808,6 +808,22 @@ GPU 占用：1080p 每眼 SBS（VSR 直通）+ VFG×2 @60fps = **13%**（RTX 506
   （= 眼视口 = 满屏；比眼视口小 = 有黑边，差值就是黑边）。
 - OSD：默认显示；`Tab` 显隐；`J` 布局、`K` 交换眼、`L` 全/半；标题/键名 Bold、
   正文 DemiBold；左右面板 ±12 logical px 交叉视差（OSD 浮在画面前，独立于视频眼序）。
+- **画质档位快捷键（2026-11-28 用户定）**：`Ctrl+1..4` = VSR off/×2/×3/×4、
+  `Ctrl+0` = VSR auto；`Ctrl+Shift+1..4` = FRUC off/×2/×3/×4、`Ctrl+Shift+0` =
+  插帧输出上限循环（48→60→120→48，只改 cap 不动倍率）；`Ctrl+H` = SDR→HDR10 开关。
+  反馈走 QML `Toast`（底部小面板 1.5 s，2D 一份 / 3D 每眼一份），文案不翻译。
+  ⚠ `Ctrl+0` 原来是字幕延迟归零 → 已挪到 **`Ctrl+Alt+Z`**（音频归零仍 `Ctrl+Alt+0`），
+  `tests/hotkeys/check_keys.py` 的护栏同步改了。⚠ AZERTY/德语布局数字需要 Shift，
+  这组键在那类布局上会和 `Ctrl+Shift+数字` 撞车（本机 QWERTY 无此问题）。
+- **右键菜单"3D 块"可关**：`Preferences → Interface → Show 3D menu`（持久化键
+  `show3dMenu`，默认开）。关掉时 sep/header/三条入口整块隐藏（`visibleWhen` +
+  `sepShown` 收敛相邻分隔线），只影响一级菜单，3D 状态/按键不受影响。
+- **`Toast` 与 `StereoMessage` 的 `active` 语义**：`active` = 这一份是否值班
+  （2D 主那份 / 3D 每眼那份），`perEye` = 左右两半各画一份。两者必须分开：
+  早先共用 `active` → **2D 会画成左右两个半宽面板**（2026-11-28 加 Toast 时发现并修）。
+- **测试钩子**：`get-vm <property>` 读 view model 的 Q_PROPERTY（`get_property` 只到
+  mpv 属性树）；键位验收用 `key <seq>` + `key-log`（含 `scope=2d|3d`）。
+
 - **3D 快捷键帮助面板（HotKeys，2026-10-25/26）**：**两列、一键一行、无分组名**。
   左列 3D：H / J / K / L；右列播放器：Space / ← / → / Shift+← / Shift+→ /
   ↑ / ↓ / Ctrl+← / Ctrl+→（方向键、Shift+方向键、音量上下、上/下一个都各占一行）。
