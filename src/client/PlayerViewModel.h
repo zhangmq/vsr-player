@@ -251,6 +251,11 @@ class PlayerViewModel : public QObject {
     /// （UI 术语里多指窗口/焦点）。
     Q_PROPERTY(bool menuHideInvalid READ menuHideInvalid WRITE setMenuHideInvalid
                NOTIFY menuHideInvalidChanged)
+    /// 右键菜单里要不要显示「3D」那一块（Preferences → Interface 的第三个
+    /// toggle，用户 2026-11-28："右键菜单有些臃肿"）。关掉只影响主菜单的一级
+    /// 条目，3D 的内部状态/按键（J/K/L/H）不受影响，重新打开即恢复。
+    Q_PROPERTY(bool show3dMenu READ show3dMenu WRITE setShow3dMenu
+               NOTIFY show3dMenuChanged)
     /// 缩略图**渲染**宽（物理像素）= 逻辑宽 × DPR；WRITE 只给 RPC/测试的显式
     /// 覆盖用（跳过后面的换算），**不开放 UI、不落盘**（用户 2026-11-15）。
     Q_PROPERTY(int previewThumbWidth READ previewThumbWidth WRITE setPreviewThumbWidth
@@ -541,8 +546,15 @@ public:
     void setPreviewThumbnails(bool on);
     bool menuHideInvalid() const { return menuHideInvalid_; }
     void setMenuHideInvalid(bool on);
-    /// 右键菜单「界面」二级项：按 id 翻转界面元素（0 = 缩略图）。
+    bool show3dMenu() const { return show3dMenu_; }
+    void setShow3dMenu(bool on);
+    /// 快捷键用：翻转 SDR→HDR10 总开关，返回**新**状态（提示文案要用）。
+    bool toggleUpHdr();
+    /// 右键菜单「界面」二级项：按 id 翻转界面元素
+    ///（0 = 缩略图，1 = 隐藏无效项，2 = 显示 3D 菜单）。
     Q_INVOKABLE void toggleUiElement(int id);
+    /// 弹出瞬态提示（键位反馈；测试也可用 RPC 触发）。
+    Q_INVOKABLE void flashToast(const QString &text) { emit toastFlashed(text); }
     /// 缩略图的**渲染**宽（物理像素）：逻辑宽 × DPR，不随窗口尺寸变化
     /// （用户 2026-11-15 取消了"按窗口比例 + 上下限"）。
     int previewThumbWidth() const { return previewThumbWidth_; }
@@ -748,6 +760,11 @@ signals:
     void previewThumbWidthChanged();
     void previewThumbnailsChanged();
     void menuHideInvalidChanged();
+    void show3dMenuChanged();
+    /// 键位操作的瞬态提示（VSR/FRUC/SDR→HDR 档位切换）：QML 底部小面板，
+    /// 1.5 s 自动隐藏，2D 与 3D（每眼各一份）都显示。文本不翻译（与 OSD 状态
+    /// 行同口径：`VSR ×2` / `FRUC off` / `SDR→HDR10 on`）。
+    void toastFlashed(const QString &text);
     void chaptersChanged();
     void previewDebugHoverMsChanged();
     void playingChanged();
@@ -914,6 +931,7 @@ private:
     PreviewThumbnailer *preview_ = nullptr;   ///< 懒创建；benchmark 下不创建
     bool previewThumbnails_ = true;
     bool menuHideInvalid_ = false;
+    bool show3dMenu_ = true;
     QString openFilename_;   ///< mpv stream-open-filename（yt-dlp 解析后的真实流）
     /// 主实例当前的 HTTP 头（ytdl_hook 设的文件级选项）→ 传给预览实例
     QString previewUserAgent_;

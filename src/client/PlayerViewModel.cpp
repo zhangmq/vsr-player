@@ -1039,6 +1039,7 @@ void PlayerViewModel::loadSettings() {
     previewThumbWidth_ = thumbRenderWidth();
     previewThumbnails_ = settings_.value("previewThumbnails", true).toBool();
     menuHideInvalid_ = settings_.value("menuHideInvalid", false).toBool();
+    show3dMenu_ = settings_.value("show3dMenu", true).toBool();
 }
 
 void PlayerViewModel::applyDiscOptions() {
@@ -4040,8 +4041,22 @@ void PlayerViewModel::toggleUiElement(int id) {
     switch (id) {
     case 0: setPreviewThumbnails(!previewThumbnails_); break;
     case 1: setMenuHideInvalid(!menuHideInvalid_); break;
+    case 2: setShow3dMenu(!show3dMenu_); break;
     default: break;
     }
+}
+
+bool PlayerViewModel::toggleUpHdr() {
+    const bool on = !upHdrEnabled_.load();
+    setUpHdrEnabled(on);
+    return on;
+}
+
+void PlayerViewModel::setShow3dMenu(bool on) {
+    if (show3dMenu_ == on) return;
+    show3dMenu_ = on;
+    emit show3dMenuChanged();
+    saveSettings("show3dMenu", on);
 }
 
 void PlayerViewModel::setMenuHideInvalid(bool on) {

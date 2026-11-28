@@ -634,6 +634,23 @@ void RpcServer::handleLine(int fd, const std::string &line) {
             snprintf(buf, sizeof buf, "%lldx%lld", (long long)w, (long long)h);
             response = formatResponse("success", "\"" + std::string(buf) + "\"");
         }
+    } else if (cmd == "get-vm") {
+        // 测试/诊断：读 PlayerViewModel 的 Q_PROPERTY（应用层设定，不是 mpv 的
+        // property tree——`get_property scale` 拿到的是 mpv 的缩放滤镜名）。
+        if (!vm) {
+            response = formatResponse("no view model");
+        } else if (args.empty()) {
+            response = formatResponse("usage: get-vm <property>");
+        } else {
+            const QString name = QString::fromStdString(args[0]);
+            QVariant v;
+            PlayerViewModel *v2 = vm;
+            QMetaObject::invokeMethod(v2, [v2, name, &v] {
+                    v = v2->property(name.toUtf8().constData());
+                }, Qt::BlockingQueuedConnection);
+            response = formatResponse("", "\"" + jsonEscape(
+                          v.toString().toStdString()) + "\"");
+        }
     } else if (cmd == "get-osd") {
         // 测试/诊断：读当前 OSD 文本（与 3D 下的 pipelineOsd 同源 = osdTextString）。
         // 断言"状态行/耗时有没有显示"不用截图；osdTextString 在事件线程拉取，

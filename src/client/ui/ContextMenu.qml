@@ -212,11 +212,15 @@ PopupBase {
              {label: qsTr("270°"), value: 270}
          ]},
         // ── 立体（3D 分组 = 一级菜单里的小块，三条入口）──────────────────
-        {sep: true},
-        {header: qsTr("3D")},
+        // 整块受 Preferences → Interface →「Show 3D menu」控制（默认开）；
+        // 关掉时 5 行（含首尾分隔线）都不占高度，相邻两组的分隔线由
+        // sepShown() 收敛成一条。
+        {sep: true, visibleWhen: function() { return viewModel.show3dMenu }},
+        {header: qsTr("3D"), visibleWhen: function() { return viewModel.show3dMenu }},
         {icon: "", text: qsTr("Output mode"),
          hint: function() { return root.stereoModeLabel() },
          subSig: "stereoSelected",
+         visibleWhen: function() { return viewModel.show3dMenu },
          current: function(g) { return g === 0 ? root.stereoOutputMode() : -1 },
          submenu: [
              {label: qsTr("Off"),        value: 0, group: 0},
@@ -226,6 +230,7 @@ PopupBase {
         {icon: "", text: qsTr("Source layout"),
          hint: function() { return root.layoutLabel() },
          subSig: "stereoSelected",
+         visibleWhen: function() { return viewModel.show3dMenu },
          current: function(g) { return g === 1 ? root.layoutIndex() : -1 },
          submenu: [
              {label: qsTr("Side by side · full"), value: 0, group: 1},
@@ -236,12 +241,13 @@ PopupBase {
         {icon: "", text: qsTr("Output option"),
          hint: function() { return root.eyeLabel() },
          subSig: "stereoSelected",
+         visibleWhen: function() { return viewModel.show3dMenu },
          current: function(g) { return g === 2 ? viewModel.eyePref : -1 },
          submenu: [
              {label: qsTr("Left eye"),  value: 0, group: 2},
              {label: qsTr("Right eye"), value: 1, group: 2}
          ]},
-        {sep: true},
+        {sep: true, visibleWhen: function() { return viewModel.show3dMenu }},
         {icon: "󰋽", text: qsTr("About"),              sig: "aboutRequested"},
         {icon: "󰐥", text: qsTr("Quit"),               hint: "Ctrl+Q", sig: "quitRequested"}
     ]
@@ -306,7 +312,12 @@ PopupBase {
              subSig: "uiElementToggled", value: 0},
             {label: qsTr("Hide unavailable menu items"),
              toggle: viewModel.menuHideInvalid,
-             subSig: "uiElementToggled", value: 1}
+             subSig: "uiElementToggled", value: 1},
+            // 一级菜单里的「3D」块（输出方式 / 片源格式 / 输出选项）在不用 3D
+            // 时是纯噪音（用户 2026-11-28："右键菜单有些臃肿"）→ 可关。
+            {label: qsTr("Show 3D menu"),
+             toggle: viewModel.show3dMenu,
+             subSig: "uiElementToggled", value: 2}
         ]
     }
 

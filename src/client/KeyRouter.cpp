@@ -158,6 +158,54 @@ bool KeyRouter::exec(const QString &id)
     if (id == "delete-file") { vm_->deleteCurrentFile(); return true; }
     if (id == "quit") { quitApplication(); return true; }
 
+    // ── 画质档位（Ctrl+数字 / Ctrl+Shift+数字 / Ctrl+H；2D/3D 通用）────
+    // 提示文案与 OSD 同口径：不翻译（VSR ×2 / FRUC off / SDR→HDR10 on）。
+    // ⚠ AI 不可用（非 N 卡 / VFX SDK 缺失）时只给提示、不改设定。
+    if (id.startsWith("vsr-")) {
+        if (!vm_->aiAvailable()) {
+            vm_->flashToast(QStringLiteral("VFX unavailable"));
+            return true;
+        }
+        double scale = 0;
+        QString text;
+        if (id == "vsr-off")        { scale = -1; text = QStringLiteral("VSR off"); }
+        else if (id == "vsr-2x")    { scale = 2;  text = QStringLiteral("VSR ×2"); }
+        else if (id == "vsr-3x")    { scale = 3;  text = QStringLiteral("VSR ×3"); }
+        else if (id == "vsr-4x")    { scale = 4;  text = QStringLiteral("VSR ×4"); }
+        else                        { scale = 0;  text = QStringLiteral("VSR auto"); }
+        vm_->setScale(scale);
+        vm_->flashToast(text);
+        return true;
+    }
+    if (id.startsWith("fruc-")) {
+        if (!vm_->aiAvailable()) {
+            vm_->flashToast(QStringLiteral("VFX unavailable"));
+            return true;
+        }
+        if (id == "fruc-default") {
+            // VFG 没有 auto 档：这一格 = 恢复默认（×2 + 输出上限 60）。
+            vm_->setFrucFps(2);
+            vm_->setFrucMaxFps(60);
+            vm_->flashToast(QStringLiteral("FRUC ×2 · cap 60"));
+            return true;
+        }
+        int fps = -1;
+        QString text;
+        if (id == "fruc-off")      { fps = -1; text = QStringLiteral("FRUC off"); }
+        else if (id == "fruc-2x")  { fps = 2;  text = QStringLiteral("FRUC ×2"); }
+        else if (id == "fruc-3x")  { fps = 3;  text = QStringLiteral("FRUC ×3"); }
+        else                       { fps = 4;  text = QStringLiteral("FRUC ×4"); }
+        vm_->setFrucFps(fps);
+        vm_->flashToast(text);
+        return true;
+    }
+    if (id == "toggle-up-hdr") {
+        const bool on = vm_->toggleUpHdr();
+        vm_->flashToast(on ? QStringLiteral("SDR→HDR10 on")
+                           : QStringLiteral("SDR→HDR10 off"));
+        return true;
+    }
+
     // ── 字幕/音频延迟（弹窗内也可用，见 popupOk）───────────────────
     if (id == "sub-delay-down") { vm_->adjustSubDelay(-0.05); return true; }
     if (id == "sub-delay-up") { vm_->adjustSubDelay(0.05); return true; }

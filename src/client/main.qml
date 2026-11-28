@@ -796,11 +796,36 @@ Item {
         anchors.fill: parent
         z: 98
         active: !controlMode && !stereo.active
+        perEye: false
     }
     Connections {
         target: viewModel
         function onMessageFlashed(value) {
             if (!stereo.active) messageOsd2d.flash(value)
+        }
+    }
+
+    // 画质档位提示（VSR / FRUC / SDR→HDR10 开关）：与 StereoMessage 同款
+    // 底部小面板。2D 一份、3D 每眼一份（`眼睛屏`上也要看得到）。
+    Toast {
+        id: toastOsd2d
+        anchors.fill: parent
+        z: 99
+        active: !controlMode && !stereo.active
+        perEye: false
+    }
+    Toast {
+        id: toastOsd3d
+        anchors.fill: parent
+        z: 99
+        active: !controlMode && stereo.active
+        perEye: true
+    }
+    Connections {
+        target: viewModel
+        function onToastFlashed(text) {
+            if (stereo.active) toastOsd3d.flash(text)
+            else toastOsd2d.flash(text)
         }
     }
 
@@ -820,6 +845,7 @@ Item {
         anchors.fill: parent
         z: 99
         active: !controlMode && stereo.active
+        perEye: true
     }
     Connections {
         target: viewModel

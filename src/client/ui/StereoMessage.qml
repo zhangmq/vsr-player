@@ -13,7 +13,11 @@ import QtQuick
 
 Item {
     id: root
-    property bool active: false          // true = 3D（presentation 内，双眼各一份）
+    property bool active: false          // 这一份是否值班（2D 主那份 / 3D 每眼那份）
+    /// true = 3D：左右两半各画一份（±12px 视差）。⚠ 必须与 active 分开：
+    /// 2D 值班时 active 也是 true，早先两者共用一个属性 → 2D 会画成
+    /// 左右各一个半宽面板（2026-11-28 加 Toast 时发现的同类问题）。
+    property bool perEye: false
     property bool shown: false
     property string value: ""            // "no" | "16:9" | "4:3" | "2.35:1"
     property string perEyeLabel: qsTr("Per-eye aspect %1")
@@ -25,7 +29,7 @@ Item {
 
     readonly property string text: value === "no"
         ? (active ? qsTr("Per-eye aspect: no override") : qsTr("Aspect: no override"))
-        : (active ? perEyeLabel.arg(value) : label.arg(value))
+        : (perEye ? perEyeLabel.arg(value) : label.arg(value))
 
     function flash(v) {
         if (!active)
@@ -45,15 +49,15 @@ Item {
         model: 2
         delegate: Item {
             // 2D：只留一份、占满整宽、居中；3D：左右两半各一份
-            visible: root.active || index === 0
-            x: root.active ? index * root.width / 2 : 0
-            width: root.active ? root.width / 2 : root.width
+            visible: root.perEye || index === 0
+            x: root.perEye ? index * root.width / 2 : 0
+            width: root.perEye ? root.width / 2 : root.width
             height: root.height
 
             Rectangle {
                 id: panel
                 anchors.horizontalCenter: parent.horizontalCenter
-                anchors.horizontalCenterOffset: root.active ? (index === 0 ? 1 : -1) * 12 : 0
+                anchors.horizontalCenterOffset: root.perEye ? (index === 0 ? 1 : -1) * 12 : 0
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 96
                 width: msg.implicitWidth + 32
