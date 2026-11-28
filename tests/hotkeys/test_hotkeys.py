@@ -53,8 +53,11 @@ def t3_window_keys(p: Player) -> None:
     wait_until(lambda: abs(rpc.prop("volume") - 100) < 0.6, "音量置 100")
     rpc.key("Down")
     wait_until(lambda: rpc.prop("volume") < 96, "↓ 降低音量")
+    v_down = rpc.prop("volume")
     rpc.key("Up")
-    wait_until(lambda: rpc.prop("volume") > 99, "↑ 恢复音量")
+    # 断言**增量**而不是绝对值：↓/↑ 的基准是 app 的 requestedVolume_（持久化值，
+    # 可能是 80 之类），断言"恢复回 100"只有起点恰好 100 时才成立（启动时序一抖就红）。
+    wait_until(lambda: rpc.prop("volume") >= v_down + 4, "↑ 恢复音量")
     check(True, "↑/↓ 调音量")
     check("id=volume-up" in p.last_dispatch(), "↑ 派发到 volume-up",
           p.last_dispatch())
