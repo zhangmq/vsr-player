@@ -11,7 +11,9 @@
 #
 # 无 NVIDIA 机器（测试/开发用，不做发布包）：
 #   NO_RTX=1 构建 + ./scripts/install.sh --dev --no-rtx
-#   --no-rtx 只做两件事：不因缺 libcuda 中止；不自动下载 VFX（等价 --no-vfx）。
+#   --no-rtx 只做两件事：不因缺 libcuda 中止；不装 VFX（等价 --no-vfx）——
+#   既不下��� wheel，也**不复制** dev 树里已有的 third_party/nvvfx/lib（那里是
+#   NPP/cuDNN/cudart，共 ~900 MB，无 N 卡机器上装进去纯属负担：实测 957 MB → 32 MB）。
 #   **前提是 libmpv 本身不带 CUDA**（scripts/build_mpv.sh 的 NO_RTX=1 会打
 #   -Dno_rtx=true，滤镜不编、无 libcuda/libnvrtc NEEDED），否则装完起不来。
 #
@@ -243,6 +245,14 @@ elif [ "$SYS_QT" = "6.12.0" ]; then
     QT_FIX_REASON="host Qt $SYS_QT"
 fi
 
+# dev 模式的 LIB_SRC 就是 VFX 目录（third_party/nvvfx/lib）：--no-vfx/--no-rtx 时
+# 绝不能拷 —— 那是 NPP/cuDNN/cudart 共 ~900 MB，无 N 卡机器上纯属负担（"不下载 VFX"
+# 的承诺应当同样覆盖"不复制开发树里已有的 VFX"）。libmpv / Wayland 伙伴模块另走
+# MPV_LIB_SRC 与下面的 partner 循环，不受影响。
+if [ -d "$LIB_SRC" ] && [ "$MODE" = dev ] && [ "$NO_VFX" -eq 1 ]; then
+    echo "  - skip VFX 目录（--no-vfx/--no-rtx）：$LIB_SRC"
+    LIB_SRC=""
+fi
 if [ -d "$LIB_SRC" ]; then
     # ⚠ 必须**原子替换**（临时文件 + rename）：`cp` 直接覆盖会被
     # **正在运行的播放器** mmap 着——截断的瞬间进程收到 SIGBUS（实测 2026-10-26：
